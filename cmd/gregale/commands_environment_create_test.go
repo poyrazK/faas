@@ -30,3 +30,26 @@ func TestEnvCreateUsesLinkedProject(t *testing.T) {
 		t.Fatalf("request path=%s body=%s", f.sawPath, f.sawBody)
 	}
 }
+
+func TestEnvCreatePlanIsReadOnly(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"production","to_environment":"staging","share_resources":false,"can_clone":true,"can_promote":true,"workload_count":1,"actions":[{"resource":"customer_secrets","action":"copy_sealed","count":1,"reason":"values are never shown"}],"blocking_reasons":[],"warnings":[]}`, http.StatusOK)
+	root := t.TempDir()
+	if _, err := saveProjectContext(root, localProjectContext{Version: projectContextVersion, Project: "shop"}); err != nil {
+		t.Fatal(err)
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(root, ".gregale")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if code := envCreate([]string{"--plan", "staging", "--from", "production"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/clone-preview" || f.sawQuery != "to=staging" {
+		t.Fatalf("request method=%s path=%s?%s, want read-only clone preview", f.sawMethod, f.sawPath, f.sawQuery)
+	}
+}

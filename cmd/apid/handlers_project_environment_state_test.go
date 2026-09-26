@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -204,5 +205,76 @@ func TestProjectEnvironmentDiffRejectsSameEnvironment(t *testing.T) {
 	srv.diffProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProjectEnvironmentClonePreviewIsReadOnlyAndSecretSafe(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	createProjectEnvironmentConfigFixture(t, store, acct.ID, project.ID, "production", `{"region":"us"}`)
+	if err := store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, "production", "MODE", "production"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "production", "STRIPE_KEY", "age1-production", "1111111111111111", []byte("sealed-secret-material")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Scope: "production", Status: state.DeployLive, ImageDigest: "sha256:release",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/clone-preview?to=staging", "shop", nil)
+	req.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentClone(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clone preview status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var plan api.ProjectEnvironmentClonePlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if !plan.CanClone || !plan.CanPromote || plan.FromEnvironment != "production" || plan.ToEnvironment != "staging" || plan.WorkloadCount != 1 {
+		t.Fatalf("clone plan=%+v", plan)
+	}
+	if strings.Contains(rec.Body.String(), "sealed-secret-material") || strings.Contains(rec.Body.String(), "STRIPE_KEY") {
+		t.Fatalf("clone plan leaked secret material or key: %s", rec.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("read-only clone plan created the target: %v", err)
+	}
+	var sawSecretCopy, sawReleasePromotion bool
+	for _, action := range plan.Actions {
+		if action.Resource == "customer_secrets" && action.Action == "copy_sealed" && action.Count == 1 {
+			sawSecretCopy = true
+		}
+		if action.Resource == "live_release" && action.Action == "promote" {
+			sawReleasePromotion = true
+		}
+	}
+	if !sawSecretCopy || !sawReleasePromotion {
+		t.Fatalf("clone actions do not describe secrets/releases: %+v", plan.Actions)
+	}
+}
+
+func TestProjectEnvironmentClonePreviewBlocksExistingTarget(t *testing.T) {
+	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	if _, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/clone-preview?to=staging", "shop", nil)
+	req.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentClone(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clone preview status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var plan api.ProjectEnvironmentClonePlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.CanClone || len(plan.BlockingReasons) != 1 {
+		t.Fatalf("existing target plan=%+v", plan)
 	}
 }

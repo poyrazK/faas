@@ -1453,6 +1453,7 @@ Clone a project environment with isolated managed data by default
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
+| `--plan` | show a read-only clone plan without creating the environment |  |
 
 ### env pull
 

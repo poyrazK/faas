@@ -79,6 +79,32 @@ type ProjectEnvironmentCloneResponse struct {
 	SharedResources     []string `json:"shared_resources"`
 }
 
+// ProjectEnvironmentClonePlanResponse is a read-only preflight for cloning an
+// environment. It contains counts and actions only; secret material and secret
+// keys are deliberately excluded.
+type ProjectEnvironmentClonePlanResponse struct {
+	ProjectSlug     string                                      `json:"project_slug"`
+	FromEnvironment string                                      `json:"from_environment"`
+	ToEnvironment   string                                      `json:"to_environment"`
+	ShareResources  bool                                        `json:"share_resources"`
+	CanClone        bool                                        `json:"can_clone"`
+	CanPromote      bool                                        `json:"can_promote"`
+	WorkloadCount   int                                         `json:"workload_count"`
+	Actions         []ProjectEnvironmentClonePlanActionResponse `json:"actions"`
+	BlockingReasons []string                                    `json:"blocking_reasons"`
+	Warnings        []string                                    `json:"warnings"`
+}
+
+// ProjectEnvironmentClonePlanActionResponse explains one resource's clone
+// behavior without exposing customer values or provider credentials.
+type ProjectEnvironmentClonePlanActionResponse struct {
+	WorkloadSlug string `json:"workload_slug,omitempty"`
+	Resource     string `json:"resource"`
+	Action       string `json:"action"`
+	Count        int    `json:"count,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
 // ProjectEnvironmentReleaseListResponse is the current non-secret release
 // inventory for one project environment. It intentionally reports every
 // project workload, including workloads that have not been deployed there.

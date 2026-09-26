@@ -1611,6 +1611,16 @@ func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, tar
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// GetProjectEnvironmentClonePlan preflights a clone without creating resources.
+func (c *Client) GetProjectEnvironmentClonePlan(ctx context.Context, projectSlug, sourceEnvironment, targetEnvironment string, shareResources bool) (ProjectEnvironmentClonePlanResponse, error) {
+	var out ProjectEnvironmentClonePlanResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(sourceEnvironment) + "/clone-preview?to=" + url.QueryEscape(targetEnvironment)
+	if shareResources {
+		path += "&share_resources=true"
+	}
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse

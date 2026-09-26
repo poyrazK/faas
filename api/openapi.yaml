@@ -12140,8 +12140,12 @@ paths:
         customer secrets. Managed PostgreSQL and object-storage bindings receive
         fresh target-scoped credentials and isolated data by default. Set
         share_resources to attach fresh credentials to the source resources
-        instead. Provider-issued credential bytes are never copied. Domains,
-        routes, and policies remain application-scoped and are shared.
+        instead. Provider-issued credential bytes are never copied. Explicitly
+        environment-owned routes and edge-policy groups are copied; application-
+        owned fallbacks remain shared. Bound custom domains are not copied because
+        DNS ownership and certificate verification are hostname-specific. Live
+        releases are not copied by create; use environment promotion to deploy
+        the same immutable source artifacts into the new environment.
       requestBody:
         required: true
         content:
@@ -12328,6 +12332,49 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectEnvironmentStateResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/clone-preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose environment clone is preflighted.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Source environment to clone.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: to
+        in: query
+        required: true
+        description: New target environment slug.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: share_resources
+        in: query
+        required: false
+        description: Plan fresh target credentials over shared database and object data instead of isolated copies.
+        schema: { type: boolean, default: false }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentClonePreview
+      summary: Preflight an environment clone without creating resources.
+      description: |
+        Reports non-secret resource actions, known provider blockers, and
+        whether every source workload has a live release available for a later
+        promotion. Account quotas are rechecked during create and are not
+        reserved by this read-only endpoint. Secret values and keys are never
+        included.
+      responses:
+        '200':
+          description: Read-only environment clone plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentClonePlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -26923,6 +26970,41 @@ components:
         shared_resources:
           type: array
           items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
+
+    ProjectEnvironmentClonePlanResponse:
+      description: Read-only, non-secret preflight of one environment clone.
+      type: object
+      required: [project_slug, from_environment, to_environment, share_resources, can_clone, can_promote, workload_count, actions, blocking_reasons, warnings]
+      properties:
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        share_resources: { type: boolean }
+        can_clone: { type: boolean, description: False when the target exists or a managed-resource prerequisite is not met. Quotas are checked again during creation. }
+        can_promote: { type: boolean, description: True when every source workload has a live release available for subsequent promotion. }
+        workload_count: { type: integer, minimum: 0 }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentClonePlanActionResponse' }
+        blocking_reasons:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+
+    ProjectEnvironmentClonePlanActionResponse:
+      description: Non-secret summary of how one resource behaves during a clone.
+      type: object
+      required: [resource, action]
+      properties:
+        workload_slug: { type: string }
+        resource: { type: string }
+        action:
+          type: string
+          enum: [copy, copy_sealed, isolate, share, reuse, promote, not_available, shared, skip]
+        count: { type: integer, minimum: 0 }
+        reason: { type: string }
 
     ProjectEnvironmentReleaseListResponse:
       description: Current non-secret release inventory for a project environment.

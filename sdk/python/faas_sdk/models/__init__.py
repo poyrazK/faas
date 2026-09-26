@@ -1092,6 +1092,9 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_clone_plan_action_response import ProjectEnvironmentClonePlanActionResponse
+from .project_environment_clone_plan_action_response_action import ProjectEnvironmentClonePlanActionResponseAction
+from .project_environment_clone_plan_response import ProjectEnvironmentClonePlanResponse
 from .project_environment_clone_response import ProjectEnvironmentCloneResponse
 from .project_environment_clone_response_shared_resources_item import ProjectEnvironmentCloneResponseSharedResourcesItem
 from .project_environment_config_change import ProjectEnvironmentConfigChange
@@ -2609,6 +2612,9 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentClonePlanActionResponse",
+    "ProjectEnvironmentClonePlanActionResponseAction",
+    "ProjectEnvironmentClonePlanResponse",
     "ProjectEnvironmentCloneResponse",
     "ProjectEnvironmentCloneResponseSharedResourcesItem",
     "ProjectEnvironmentConfigChange",

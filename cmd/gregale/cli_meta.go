@@ -1132,6 +1132,7 @@ var cliCommands = []cliCommand{
 				{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
 				{Name: "protected", Short: "protect the new environment"},
 				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
+				{Name: "plan", Short: "show a read-only clone plan without creating the environment"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
