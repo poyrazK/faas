@@ -423,6 +423,12 @@ func TestStatusForCode_ImageCodes(t *testing.T) {
 	}
 }
 
+func TestStatusForCode_ReleasePhaseUnavailable(t *testing.T) {
+	if got := StatusForCode(CodeReleasePhaseUnavailable); got != http.StatusUnprocessableEntity {
+		t.Errorf("StatusForCode(%q) = %d, want %d", CodeReleasePhaseUnavailable, got, http.StatusUnprocessableEntity)
+	}
+}
+
 // TestStatusForCode_AuthCodes locks the HTTP status mapping for the
 // dashboard-auth codes added in PR #1 (issue #165, ADR-032). Both
 // invalid_credentials and email_not_verified must collapse to 401 so

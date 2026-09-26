@@ -407,7 +407,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REGION", Owners: []string{"meterd", "shared"}, Source: EnvSourceDefault, Note: "optional host region for meterd; the scheduler also injects the platform-authored workload identity value"},
 	{Name: "FAAS_REKEY_ENABLED", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_REKEY_PROGRESS_FILE", Owners: []string{"apid"}, Source: EnvSourceDefault},
-	{Name: "FAAS_RELEASE_PHASE_ENABLED", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "exact opt-in for pre-boot release commands; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd"},
+	{Name: "FAAS_RELEASE_PHASE_ENABLED", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "exact opt-in for pre-boot release commands; deployments declaring a release command fail with `release_phase_unavailable` while off; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd"},
 	{Name: "FAAS_REQUEST_TELEMETRY_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REQUIRE_SHARED_ARTIFACTS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},

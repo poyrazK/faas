@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ type releaseGateFixture struct {
 }
 
 func seedReleaseGate(t *testing.T, enabled bool) releaseGateFixture {
+	return seedReleaseGateWithIntent(t, enabled, true)
+}
+
+func seedReleaseGateWithIntent(t *testing.T, enabled, hasReleaseCommand bool) releaseGateFixture {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -46,10 +51,14 @@ func seedReleaseGate(t *testing.T, enabled bool) releaseGateFixture {
 	if err := store.MarkDeploymentLive(ctx, previous.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive(previous): %v", err)
 	}
-	candidate, err := store.CreateDeployment(ctx, state.Deployment{
+	candidateParams := state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate",
-		Status: state.DeploySnapshotting, ReleaseCommand: []string{"bin/migrate", "--safe"},
-	})
+		Status: state.DeploySnapshotting,
+	}
+	if hasReleaseCommand {
+		candidateParams.ReleaseCommand = []string{"bin/migrate", "--safe"}
+	}
+	candidate, err := store.CreateDeployment(ctx, candidateParams)
 	if err != nil {
 		t.Fatalf("CreateDeployment(candidate): %v", err)
 	}
@@ -181,16 +190,45 @@ func TestReleaseGateFailurePreservesPreviousLiveDeployment(t *testing.T) {
 	}
 }
 
-func TestReleaseGateDisabledKeepsExistingPrimePath(t *testing.T) {
+func TestReleaseGateDisabledFailsCandidateWithReleaseIntent(t *testing.T) {
 	fx := seedReleaseGate(t, false)
-	if err := fx.handler.handoffSnapshotPrime(context.Background(), fx.app, fx.candidate); err != nil {
+	ctx := context.Background()
+	if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, fx.candidate); err != nil {
+		t.Fatalf("handoffSnapshotPrime: %v", err)
+	}
+	if findNotify(fx.notifier, db.NotifySnapshotPrime) != nil {
+		t.Fatal("disabled release gate emitted snapshot_prime and skipped the command")
+	}
+	if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("disabled release gate task lookup = %v, want ErrNotFound", err)
+	}
+	candidate, err := fx.store.DeploymentByID(ctx, fx.candidate.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(candidate): %v", err)
+	}
+	if candidate.Status != state.DeployFailed || candidate.ErrorCode != api.CodeReleasePhaseUnavailable {
+		t.Fatalf("candidate after unavailable release phase = %+v", candidate)
+	}
+	if !strings.Contains(candidate.Error, "FAAS_RELEASE_PHASE_ENABLED=1") || !strings.Contains(candidate.Error, "FAAS_APP_TASK_DISPATCH=1") {
+		t.Fatalf("unavailable release detail is not actionable: %q", candidate.Error)
+	}
+	previous, err := fx.store.DeploymentByID(ctx, fx.previous.ID)
+	if err != nil || previous.Status != state.DeployLive {
+		t.Fatalf("previous deployment = %+v, err=%v; want live", previous, err)
+	}
+}
+
+func TestReleaseGateDisabledPreservesPrimePathWithoutReleaseIntent(t *testing.T) {
+	fx := seedReleaseGateWithIntent(t, false, false)
+	ctx := context.Background()
+	if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, fx.candidate); err != nil {
 		t.Fatalf("handoffSnapshotPrime: %v", err)
 	}
 	if findNotify(fx.notifier, db.NotifySnapshotPrime) == nil {
-		t.Fatal("disabled release gate did not preserve snapshot_prime")
+		t.Fatal("deployment without release intent did not emit snapshot_prime")
 	}
-	if _, err := fx.store.ReleaseAppTaskByDeployment(context.Background(), fx.candidate.ID); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("disabled release gate task lookup = %v, want ErrNotFound", err)
+	if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("release task lookup = %v, want ErrNotFound", err)
 	}
 }
 

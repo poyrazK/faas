@@ -1531,6 +1531,11 @@ const (
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
 	CodeReleaseCommandFailed = "release_command_failed"
+	// CodeReleasePhaseUnavailable means a deployment declares a release command
+	// but this imaged host has release-phase execution disabled. The candidate
+	// fails before serving VMs are booted so the command cannot be silently
+	// skipped.
+	CodeReleasePhaseUnavailable = "release_phase_unavailable"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -1968,7 +1973,8 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeDeploymentSmokeFailed,
-		CodeReleaseCommandFailed:
+		CodeReleaseCommandFailed,
+		CodeReleasePhaseUnavailable:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
