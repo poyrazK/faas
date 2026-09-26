@@ -63,11 +63,11 @@ class CreateAppRequest:
     """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
     normalized to lowercase, sorted, and deduplicated."""
     service_binding_targets: list[str] | Unset = UNSET
-    """Standalone outbound target app slugs (ADR-268). Names are normalized, sorted, and deduplicated; the platform
+    """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
     derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no
     bindings."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
-    """Standalone caller authorization (ADR-268). Omit for legacy same-account reachability; declared permits only
+    """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET

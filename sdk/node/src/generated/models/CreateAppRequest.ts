@@ -25,11 +25,11 @@ export type CreateAppRequest = {
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Standalone outbound target app slugs (ADR-268). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no bindings.
+   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
   /**
-   * Standalone caller authorization (ADR-268). Omit for legacy same-account reachability; declared permits only service_binding_targets.
+   * Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only service_binding_targets.
    */
   service_binding_policy?: 'account' | 'declared';
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';

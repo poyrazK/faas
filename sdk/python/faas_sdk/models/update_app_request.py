@@ -135,7 +135,7 @@ class UpdateAppRequest:
     """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
     restore same-account access. Project-managed and preview apps reject this PATCH."""
     service_binding_targets: list[str] | None | Unset = UNSET
-    """Replace standalone outbound target app slugs (ADR-268). Omit or null to keep unchanged; [] clears all
+    """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
     bindings. Project-managed and preview apps reject non-null changes."""
     service_binding_policy: (
         None
@@ -144,7 +144,7 @@ class UpdateAppRequest:
         | UpdateAppRequestServiceBindingPolicyType2Type1
         | UpdateAppRequestServiceBindingPolicyType3Type1
     ) = UNSET
-    """Set standalone caller authorization (ADR-268). Omit or null to keep unchanged; account restores same-account
+    """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
     reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    """
     ram_mb: int | None | Unset = UNSET
