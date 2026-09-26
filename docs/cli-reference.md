@@ -1385,12 +1385,13 @@ List edge rules
 
 ### edge-rules trace
 
-Simulate composed edge-rule outcomes for a request
+Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--config <file|->` | load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags |  |
+| `--app <slug>` | app slug (required unless --config is used) |  |
+| `--url <URL>` | absolute HTTP(S) request URL (required unless --config is used) |  |
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |

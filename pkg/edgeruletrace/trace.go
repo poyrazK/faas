@@ -13,6 +13,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/redact"
 )
 
 const (
@@ -21,8 +23,12 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline edge-rule CORS is simulated from Origin and preflight request headers; preset-backed CORS rules are incomplete because resolved preset settings are not returned to the trace. App-level default CORS, app-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
+
+const redactedHeaderValue = "[REDACTED]"
+
+var traceOutputRedactor = redact.New(1 << 20)
 
 // Input is the request context that can be simulated without contacting the
 // gateway or app runtime. Call NormalizeInput before Simulate.
@@ -35,6 +41,33 @@ type Input struct {
 	Country  string
 	Headers  http.Header
 	Body     []byte
+	// CorsPresets supplies caller-resolved presets for preset-backed CORS
+	// rules. Missing or cross-account presets remain incomplete instead of
+	// being guessed.
+	CorsPresets []api.CorsPresetResponse
+	// AppCORSDefaultsLoaded distinguishes a known-disabled app setting from
+	// app metadata that was not available to the caller. When a request has an
+	// Origin but no matching edge-rule CORS rule, missing app settings stop the
+	// trace as incomplete instead of silently skipping the gateway fallback.
+	AppCORSDefaultsLoaded bool
+	CORSDefaultEnabled    *bool
+	CORSDefaultOrigins    []string
+	// AppMaintenanceLoaded distinguishes a known-disabled maintenance gate
+	// from app metadata that was not available to the caller. Unlike CORS, this
+	// app-wide gate applies to every request and is evaluated before edge-rule
+	// maintenance and later edge-rule phases.
+	AppMaintenanceLoaded bool
+	AppMaintenanceMode   bool
+	// OnlyAllowDeclaredRoutes enables the same pre-auth route gate used by the
+	// gateway. Explicit routes take precedence over the imported OpenAPI doc.
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []api.DeclaredRoute
+	// DeclaredRouteDocumentLoaded distinguishes a loaded OpenAPI document from
+	// a caller that could not retrieve it. A missing document is tracked
+	// separately because the gateway treats that configured policy as a 503.
+	DeclaredRouteDocumentLoaded  bool
+	DeclaredRouteDocumentMissing bool
+	DeclaredRouteOpenAPIDoc      []byte
 	// BodyProvided distinguishes an intentionally empty body from omitted
 	// request-body context. Validate rules remain incomplete when omitted.
 	BodyProvided bool
@@ -61,6 +94,7 @@ type Result struct {
 type Simulation struct {
 	Status            string                 `json:"status"`
 	Outcome           string                 `json:"outcome"`
+	ProblemCode       string                 `json:"problem_code,omitempty"`
 	FinalPath         string                 `json:"final_path"`
 	RequestHeaders    map[string][]string    `json:"request_headers,omitempty"`
 	ResponseHeaderOps []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
@@ -84,6 +118,7 @@ type SimulationStep struct {
 	PathBefore        string                 `json:"path_before,omitempty"`
 	PathAfter         string                 `json:"path_after,omitempty"`
 	StatusCode        int                    `json:"status_code,omitempty"`
+	ProblemCode       string                 `json:"problem_code,omitempty"`
 	Location          string                 `json:"location,omitempty"`
 	RedirectHeaders   map[string]string      `json:"redirect_headers,omitempty"`
 	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
@@ -181,8 +216,9 @@ func NormalizeInput(input Input) (Input, error) {
 	return input, nil
 }
 
-// ParseRequestHeaders parses repeated Name:Value inputs. It retains repeated
-// values and compares their bytes exactly, as edge-rule selectors do.
+// ParseRequestHeaders parses repeated Name:Value inputs. It trims HTTP optional
+// whitespace around each field value as a wire parser does, retains repeated
+// values, and compares the resulting bytes exactly as edge-rule selectors do.
 func ParseRequestHeaders(items []string) (http.Header, error) {
 	headers := make(http.Header)
 	for _, raw := range items {
@@ -191,6 +227,7 @@ func ParseRequestHeaders(items []string) (http.Header, error) {
 			return nil, fmt.Errorf("%q: expected Name:Value", raw)
 		}
 		name, value := raw[:index], raw[index+1:]
+		value = strings.Trim(value, " \t")
 		normalized, err := api.NormalizeEdgeRuleMatchHeaders(map[string]string{name: value})
 		if err != nil {
 			return nil, err
@@ -209,6 +246,28 @@ func Simulate(input Input, rules []api.EdgeRuleResponse) (Result, error) {
 		return Result{}, err
 	}
 	return previewNormalized(normalized, rules), nil
+}
+
+// RequiresCorsPresetData reports whether any CORS rule references a preset so
+// callers can avoid fetching preset configuration for inline-only traces.
+func RequiresCorsPresetData(rules []api.EdgeRuleResponse) bool {
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Kind != "cors" {
+			continue
+		}
+		action, ok := decodeAction[api.EdgeRuleCORSAction](rule.Action, "cors")
+		if ok && action.CorsPresetID != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiresAppCORSDefaultData reports whether a trace request includes an
+// Origin header. The app-level CORS fallback only has an effect for such a
+// request, so callers need not load app metadata for ordinary requests.
+func RequiresAppCORSDefaultData(headers http.Header) bool {
+	return headers.Get("Origin") != ""
 }
 
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
@@ -236,7 +295,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		row := RuleRow{
 			ID: rule.ID, Kind: rule.Kind, Priority: rule.Priority,
 			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
-			MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
+			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
 		switch {
 		case !rule.Enabled:
@@ -283,6 +342,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		result.Rules = append(result.Rules, row)
 	}
 	result.Simulation = simulateRequest(input, sorted)
+	redactTraceOutput(&result)
 	return result
 }
 
@@ -291,7 +351,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		Status: "complete", Outcome: "continue", FinalPath: input.Path,
 		RequestHeaders: headerSnapshot(cloneHeaders(input.Headers)),
 		Reason:         "no simulated edge-rule action terminated the request; downstream app and gateway behavior is outside this simulation",
-		Steps:          make([]SimulationStep, 0, 6),
+		Steps:          make([]SimulationStep, 0, 7),
 	}
 	workingHeaders := cloneHeaders(input.Headers)
 	requestPath := input.Path
@@ -310,8 +370,71 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
 	for _, phase := range phases {
+		if phase == "app_maintenance" {
+			if !input.AppMaintenanceLoaded {
+				stopped := stop("incomplete", "needs_app_maintenance", phase, "app maintenance settings were not loaded, so the gateway-wide gate cannot be evaluated", nil)
+				stopped.Steps[len(stopped.Steps)-1].Kind = phase
+				return stopped
+			}
+			if input.AppMaintenanceMode {
+				retryAfter := api.EdgeRuleMaintenanceRetryAfterSeconds
+				problem := api.ErrAppMaintenanceMode(retryAfter, input.App)
+				message := problem.Detail
+				reason := fmt.Sprintf("when this gate is reached after earlier routing and gateway gates, app-wide maintenance would return HTTP %d with Retry-After: %d before per-rule maintenance and later edge-rule phases", problem.Status, retryAfter)
+				step := SimulationStep{
+					Phase: phase, Kind: phase, Outcome: phase,
+					PathBefore: requestPath, PathAfter: requestPath,
+					StatusCode: problem.Status, ProblemCode: problem.Code,
+					RetryAfterSeconds: retryAfter, Message: message, Reason: reason,
+				}
+				simulation.Status, simulation.Outcome = "complete", phase
+				simulation.ProblemCode = problem.Code
+				simulation.StatusCode, simulation.RetryAfterSeconds = problem.Status, retryAfter
+				simulation.Message, simulation.StoppedAt, simulation.Reason = message, phase, reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			}
+			continue
+		}
+		if phase == "declared_routes" {
+			if !input.OnlyAllowDeclaredRoutes {
+				continue
+			}
+			allowed, unavailable, loaded := declaredRouteAllowed(input, input.Path, input.Method)
+			if !loaded {
+				stopped := stop("incomplete", "needs_declared_route_policy", phase, "declared-route policy data was not loaded, so the gateway route gate cannot be evaluated", nil)
+				stopped.Steps[len(stopped.Steps)-1].Kind = phase
+				return stopped
+			}
+			if unavailable {
+				message := "the configured OpenAPI document or route list could not be loaded"
+				reason := fmt.Sprintf("the gateway would return HTTP %d because the enabled declared-route policy is unavailable", http.StatusServiceUnavailable)
+				stopped := stop("complete", "declared_route_policy_unavailable", phase, reason, nil)
+				stopped.ProblemCode, stopped.StatusCode, stopped.Message = api.CodeDeclaredRoutePolicyUnavailable, http.StatusServiceUnavailable, message
+				step := &stopped.Steps[len(stopped.Steps)-1]
+				step.Kind, step.StatusCode, step.ProblemCode, step.Message = phase, http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable, message
+				return stopped
+			}
+			if !allowed {
+				message := fmt.Sprintf("%s %s is not declared for this app", input.Method, input.Path)
+				reason := fmt.Sprintf("the original public request does not match the enabled app route contract; the gateway would return HTTP %d before authentication or wake", http.StatusNotFound)
+				stopped := stop("complete", "undeclared_route", phase, reason, nil)
+				stopped.ProblemCode, stopped.StatusCode, stopped.Message = api.CodeUndeclaredRoute, http.StatusNotFound, message
+				step := &stopped.Steps[len(stopped.Steps)-1]
+				step.Kind, step.PathBefore, step.PathAfter = phase, input.Path, requestPath
+				step.StatusCode, step.ProblemCode, step.Message = http.StatusNotFound, api.CodeUndeclaredRoute, message
+				return stopped
+			}
+			simulation.Steps = append(simulation.Steps, SimulationStep{
+				Phase: phase, Kind: phase, Outcome: "allowed",
+				PathBefore: input.Path, PathAfter: requestPath,
+				Reason: "the original public request matches the declared route contract; request continues to authentication and later gateway gates",
+			})
+			continue
+		}
 		matchMethod := input.Method
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
@@ -321,6 +444,17 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
 		if rule == nil {
+			if phase == "cors" && RequiresAppCORSDefaultData(workingHeaders) {
+				if !input.AppCORSDefaultsLoaded {
+					stopped := stop("incomplete", "needs_app_cors_defaults", phase, "app CORS defaults were not loaded, so the gateway fallback cannot be evaluated", nil)
+					stopped.Steps[len(stopped.Steps)-1].Kind = "app_default_cors"
+					return stopped
+				}
+				step, responseOps := previewAppCORSDefault(input, workingHeaders)
+				step.PathBefore, step.PathAfter = requestPath, requestPath
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, responseOps...)
+			}
 			continue
 		}
 		row := RuleRow{Status: "first_candidate"}
@@ -404,7 +538,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				simulation.Steps = append(simulation.Steps, step)
 				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 				return simulation
-			case "needs_cors_preset":
+			case "needs_cors_preset", "invalid_cors_preset_policy":
 				return stop("incomplete", outcome, phase, reason, rule)
 			default:
 				return stop("incomplete", outcome, phase, reason, rule)
@@ -470,6 +604,163 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 	simulation.FinalPath = requestPath
 	simulation.RequestHeaders = headerSnapshot(workingHeaders)
 	return simulation
+}
+
+// declaredRouteAllowed mirrors gatewayd-internal's declared route matcher.
+// The public path/method are supplied separately from the rewritten path so
+// edge rewrites cannot change the app's public contract.
+func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
+	if len(input.DeclaredRoutes) > 0 {
+		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
+		return allowed, err != nil, true
+	}
+	if input.DeclaredRouteDocumentMissing {
+		return false, true, true
+	}
+	if !input.DeclaredRouteDocumentLoaded {
+		return false, false, false
+	}
+	routes, err := declaredRoutesFromOpenAPI(input.DeclaredRouteOpenAPIDoc)
+	if err != nil {
+		return false, true, true
+	}
+	allowed, err = matchDeclaredRoutes(routes, requestPath, requestMethod)
+	return allowed, err != nil, true
+}
+
+func declaredRoutesFromOpenAPI(doc []byte) ([]api.DeclaredRoute, error) {
+	spec, err := openapidiff.LoadBytes(doc)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]api.DeclaredRoute, 0, len(spec.Paths))
+	for routePath, item := range spec.Paths {
+		if item == nil {
+			continue
+		}
+		methods := make([]string, 0, len(item.Methods))
+		for method := range item.Methods {
+			methods = append(methods, strings.ToUpper(method))
+		}
+		routes = append(routes, api.DeclaredRoute{Path: routePath, Methods: methods})
+	}
+	return routes, nil
+}
+
+func matchDeclaredRoutes(routes []api.DeclaredRoute, requestPath, requestMethod string) (bool, error) {
+	type compiledRoute struct {
+		path    string
+		methods map[string]struct{}
+	}
+	compiled := make([]compiledRoute, 0, len(routes))
+	for _, route := range routes {
+		routePath := normalizeDeclaredPath(route.Path)
+		if routePath == "" {
+			return false, fmt.Errorf("declared route path must start with '/': %q", route.Path)
+		}
+		methods := make(map[string]struct{}, len(route.Methods))
+		for _, method := range route.Methods {
+			method = strings.ToUpper(strings.TrimSpace(method))
+			if method != "" {
+				methods[method] = struct{}{}
+			}
+		}
+		if len(methods) == 0 {
+			return false, fmt.Errorf("declared route %q has no HTTP methods", routePath)
+		}
+		compiled = append(compiled, compiledRoute{path: routePath, methods: methods})
+	}
+	requestPath = normalizeDeclaredPath(requestPath)
+	if requestPath == "" {
+		return false, nil
+	}
+	method := strings.ToUpper(strings.TrimSpace(requestMethod))
+	for _, route := range compiled {
+		if _, ok := route.methods[method]; !ok {
+			// HEAD is implicitly allowed wherever GET is declared, matching
+			// gateway behavior for ordinary net/http handlers.
+			if method != http.MethodHead {
+				continue
+			}
+			if _, ok := route.methods[http.MethodGet]; !ok {
+				continue
+			}
+		}
+		if declaredPathMatches(route.path, requestPath) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func normalizeDeclaredPath(routePath string) string {
+	routePath = strings.TrimSpace(routePath)
+	if routePath == "" || !strings.HasPrefix(routePath, "/") || strings.ContainsAny(routePath, "?#") {
+		return ""
+	}
+	if routePath != "/" {
+		routePath = strings.TrimRight(routePath, "/")
+	}
+	return routePath
+}
+
+func declaredPathMatches(template, request string) bool {
+	templateParts := splitDeclaredPath(template)
+	requestParts := splitDeclaredPath(request)
+	if len(templateParts) != len(requestParts) {
+		return false
+	}
+	for i, segment := range templateParts {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") && len(segment) > 2 {
+			if requestParts[i] == "" {
+				return false
+			}
+			continue
+		}
+		if segment != requestParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func splitDeclaredPath(routePath string) []string {
+	if routePath == "/" {
+		return nil
+	}
+	return strings.Split(strings.TrimPrefix(routePath, "/"), "/")
+}
+
+// previewAppCORSDefault mirrors the gateway's soft app-level CORS fallback:
+// it runs only after an edge-rule CORS miss, stamps response headers when the
+// origin is allowed, and never short-circuits an OPTIONS preflight.
+func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []api.EdgeRuleHeaderOp) {
+	step := SimulationStep{Phase: "cors", Kind: "app_default_cors"}
+	if input.CORSDefaultEnabled == nil || !*input.CORSDefaultEnabled || len(input.CORSDefaultOrigins) == 0 {
+		step.Outcome = "cors_default_disabled"
+		step.Reason = "no enabled per-app default CORS allowlist is configured; request continues without default CORS headers"
+		return step, nil
+	}
+	origin := headers.Get("Origin")
+	allowedOrigin := api.MatchEdgeRuleCORSOrigin(input.CORSDefaultOrigins, origin)
+	if allowedOrigin == "" {
+		step.Outcome = "cors_default_origin_not_allowed"
+		step.Reason = fmt.Sprintf("Origin %q is not in the per-app default CORS allowlist; request continues without default CORS headers", origin)
+		return step, nil
+	}
+	responseOps := []api.EdgeRuleHeaderOp{
+		{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin},
+		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
+		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+	}
+	step.Outcome = "cors_default_applied"
+	step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), responseOps...)
+	step.Reason = fmt.Sprintf("would stamp %d per-app default CORS response-header operation(s) and continue the request to the app", len(responseOps))
+	if input.Method == http.MethodOptions {
+		step.Reason += "; OPTIONS is not short-circuited by the app-level default"
+	}
+	return step, responseOps
 }
 
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
@@ -611,7 +902,7 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 // rule against Access-Control-Request-Method, but only when Origin is present.
 func corsMatchMethod(method string, headers http.Header) (matchMethod, requestedMethod string) {
 	matchMethod = method
-	if method == http.MethodOptions && headers.Get("Origin") != "" {
+	if method == http.MethodOptions && strings.TrimSpace(headers.Get("Origin")) != "" {
 		requestedMethod = strings.TrimSpace(headers.Get("Access-Control-Request-Method"))
 		if requestedMethod != "" {
 			matchMethod = requestedMethod
@@ -626,7 +917,11 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 	}
 	if action.CorsPresetID != nil {
-		return "needs_cors_preset", "CORS policy references a preset whose resolved settings are not included in the edge-rule response", nil
+		var outcome, reason string
+		action, outcome, reason = resolveCORSPreset(rule, action, input.CorsPresets)
+		if reason != "" {
+			return outcome, reason, nil
+		}
 	}
 
 	_, requestedMethod := corsMatchMethod(input.Method, input.Headers)
@@ -645,7 +940,7 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		}
 	}
 
-	origin := input.Headers.Get("Origin")
+	origin := strings.TrimSpace(input.Headers.Get("Origin"))
 	allowedOrigin := api.MatchEdgeRuleCORSOrigin(action.AllowOrigins, origin)
 	if origin != "" && allowedOrigin == "" {
 		return "cors_origin_not_allowed", preflightContext + "Origin is not allowed, so the gateway adds no CORS headers and continues the request", &ActionPreview{Type: "cors"}
@@ -678,6 +973,50 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		return "cors_no_origin", "CORS rule matches but the request has no Origin header, so no CORS response headers are added", preview
 	}
 	return "cors_applied", fmt.Sprintf("would apply %d CORS response-header operation(s)", len(preview.ResponseHeaderOps)), preview
+}
+
+// resolveCORSPreset mirrors state.MergeCorsPresetIntoRule's zero-value
+// fallback and account guard without coupling this shared simulator to state.
+func resolveCORSPreset(rule api.EdgeRuleResponse, action *api.EdgeRuleCORSAction, presets []api.CorsPresetResponse) (*api.EdgeRuleCORSAction, string, string) {
+	presetID := *action.CorsPresetID
+	var preset *api.CorsPresetResponse
+	for i := range presets {
+		if presets[i].ID == presetID && presets[i].AccountID == rule.AccountID {
+			preset = &presets[i]
+			break
+		}
+	}
+	if preset == nil {
+		return nil, "needs_cors_preset", "referenced CORS preset is not available to this trace or is not visible to the rule's account"
+	}
+
+	resolved := *action
+	if len(resolved.AllowOrigins) == 0 {
+		resolved.AllowOrigins = append([]string(nil), preset.AllowOrigins...)
+	}
+	if len(resolved.AllowMethods) == 0 {
+		resolved.AllowMethods = append([]string(nil), preset.AllowMethods...)
+	}
+	if len(resolved.AllowHeaders) == 0 {
+		resolved.AllowHeaders = append([]string(nil), preset.AllowHeaders...)
+	}
+	if len(resolved.ExposeHeaders) == 0 {
+		resolved.ExposeHeaders = append([]string(nil), preset.ExposeHeaders...)
+	}
+	if !resolved.AllowCredentials {
+		resolved.AllowCredentials = preset.AllowCredentials
+	}
+	if resolved.MaxAgeSeconds == 0 {
+		resolved.MaxAgeSeconds = preset.MaxAgeSeconds
+	}
+	if resolved.AllowCredentials {
+		for _, origin := range resolved.AllowOrigins {
+			if origin == "*" {
+				return nil, "invalid_cors_preset_policy", "merged CORS preset policy combines wildcard origin * with credentials; gateway compilation drops this rule"
+			}
+		}
+	}
+	return &resolved, "", ""
 }
 
 func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
@@ -914,7 +1253,7 @@ func matchedSelectors(rule api.EdgeRuleResponse) string {
 		sort.Strings(headerNames)
 		var conditions []string
 		for _, name := range headerNames {
-			conditions = append(conditions, fmt.Sprintf("%s=%q", name, rule.MatchHeaders[name]))
+			conditions = append(conditions, fmt.Sprintf("%s=%q", name, redactTraceHeaderValue(name, rule.MatchHeaders[name])))
 		}
 		selectors += ", headers [" + strings.Join(conditions, ", ") + "]"
 	}
@@ -928,7 +1267,9 @@ func headerSnapshot(headers http.Header) map[string][]string {
 	out := make(map[string][]string, len(headers))
 	for name, values := range headers {
 		key := strings.ToLower(name)
-		out[key] = append(out[key], values...)
+		for _, value := range values {
+			out[key] = append(out[key], redactTraceHeaderValue(key, value))
+		}
 	}
 	return out
 }
@@ -942,10 +1283,160 @@ func headerMismatch(expected map[string]string, actual http.Header) string {
 	for _, name := range names {
 		value := expected[name]
 		if !api.EdgeRuleRequestHeadersMatch(map[string]string{name: value}, actual) {
-			return fmt.Sprintf("request header %q has no value equal to %q", name, value)
+			return fmt.Sprintf("request header %q has no value equal to %q", name, redactTraceHeaderValue(name, value))
 		}
 	}
 	return "request headers do not match"
+}
+
+func redactTraceOutput(result *Result) {
+	if result == nil {
+		return
+	}
+	result.Headers = redactHeaderSnapshot(result.Headers)
+	for i := range result.Rules {
+		row := &result.Rules[i]
+		row.MatchHeaders = redactHeaderValues(row.MatchHeaders)
+		row.Reason = redactTraceText(row.Reason)
+		row.OutcomeReason = redactTraceText(row.OutcomeReason)
+		if row.ActionPreview != nil {
+			redactActionPreview(row.ActionPreview)
+		}
+	}
+	redactSimulation(&result.Simulation)
+}
+
+func redactSimulation(simulation *Simulation) {
+	if simulation == nil {
+		return
+	}
+	simulation.RequestHeaders = redactHeaderSnapshot(simulation.RequestHeaders)
+	simulation.ResponseHeaderOps = redactHeaderOps(simulation.ResponseHeaderOps)
+	simulation.RedirectHeaders = redactHeaderValues(simulation.RedirectHeaders)
+	simulation.Location = redactTraceText(simulation.Location)
+	simulation.Message = redactTraceText(simulation.Message)
+	simulation.Reason = redactTraceText(simulation.Reason)
+	for i := range simulation.Steps {
+		step := &simulation.Steps[i]
+		step.RedirectHeaders = redactHeaderValues(step.RedirectHeaders)
+		step.RequestOps = redactHeaderOps(step.RequestOps)
+		step.ResponseOps = redactHeaderOps(step.ResponseOps)
+		step.Location = redactTraceText(step.Location)
+		step.Message = redactTraceText(step.Message)
+		step.Reason = redactTraceText(step.Reason)
+	}
+}
+
+func redactActionPreview(preview *ActionPreview) {
+	if preview == nil {
+		return
+	}
+	preview.RedirectHeaders = redactHeaderValues(preview.RedirectHeaders)
+	preview.RequestHeaderOps = redactHeaderOps(preview.RequestHeaderOps)
+	preview.ResponseHeaderOps = redactHeaderOps(preview.ResponseHeaderOps)
+	preview.Location = redactTraceText(preview.Location)
+	preview.Message = redactTraceText(preview.Message)
+}
+
+func redactHeaderSnapshot(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		for _, value := range values {
+			out[name] = append(out[name], redactTraceHeaderValue(name, value))
+		}
+	}
+	return out
+}
+
+func redactHeaderValues(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		out[name] = redactTraceHeaderValue(name, value)
+	}
+	return out
+}
+
+func redactHeaderOps(ops []api.EdgeRuleHeaderOp) []api.EdgeRuleHeaderOp {
+	if len(ops) == 0 {
+		return ops
+	}
+	out := append([]api.EdgeRuleHeaderOp(nil), ops...)
+	for i := range out {
+		out[i].Value = redactTraceHeaderValue(out[i].Name, out[i].Value)
+	}
+	return out
+}
+
+func redactTraceHeaderValue(name, value string) string {
+	if isSensitiveTraceHeader(name) && value != "" {
+		return redactedHeaderValue
+	}
+	return redactTraceText(value)
+}
+
+func redactTraceText(value string) string {
+	redacted, _ := traceOutputRedactor.Apply(value)
+	return redacted
+}
+
+func isSensitiveTraceHeader(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "access-control-allow-credentials" {
+		return false
+	}
+	compact := strings.NewReplacer("-", "", "_", "", ".", "").Replace(name)
+	for _, marker := range []string{
+		"auth", "cookie", "token", "apikey", "accesskey", "secret", "password", "passwd",
+		"credential", "session", "signature", "privatekey", "clientkey", "refresh",
+	} {
+		if strings.Contains(compact, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactHeaderInputForDisplay masks credential-like request header values
+// before submitted form data is echoed back into the dashboard.
+func RedactHeaderInputForDisplay(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	for i, line := range lines {
+		newline := ""
+		if strings.HasSuffix(line, "\n") {
+			newline = "\n"
+			line = strings.TrimSuffix(line, newline)
+		}
+		carriageReturn := ""
+		if strings.HasSuffix(line, "\r") {
+			carriageReturn = "\r"
+			line = strings.TrimSuffix(line, carriageReturn)
+		}
+		if strings.TrimSpace(line) == "" {
+			lines[i] = line + carriageReturn + newline
+			continue
+		}
+		colon := strings.IndexByte(line, ':')
+		if colon <= 0 {
+			lines[i] = redactedHeaderValue + carriageReturn + newline
+			continue
+		}
+		valueStart := colon + 1
+		for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
+			valueStart++
+		}
+		value := redactTraceHeaderValue(line[:colon], line[valueStart:])
+		lines[i] = line[:valueStart] + value + carriageReturn + newline
+	}
+	return strings.Join(lines, "")
 }
 
 // HostMatches mirrors the edge-rule store's exact-host and leading-subdomain
