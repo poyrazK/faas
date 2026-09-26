@@ -53,8 +53,12 @@ export type ScopedAppSecretResponse = {
   last_runtime_reload_error_code?: 'projection_failed' | 'signal_failed';
   last_runtime_reload_instance_id?: string;
   /**
-   * Latest guest-init outcome from each active reporting runtime. Missing reports are unknown, and successful signals do not prove application acknowledgement.
+   * For this scope, includes every active runtime authorized for the secret by its deployment, even before the runtime reports.
    */
   runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
+  /**
+   * Indicates whether this scoped row contains a complete authorized target set. Older control planes omit the marker, so acknowledgement waiters must fail closed.
+   */
+  runtime_reload_targets_complete?: boolean;
 };
 

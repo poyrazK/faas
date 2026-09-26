@@ -2437,6 +2437,10 @@ type Store interface {
 	// apid call site is unchanged.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
+	// SetDeploymentSecretReloadSignal persists the immutable image opt-in on
+	// the deployment so the secret-status surface can determine which active
+	// authorized runtimes can participate in an application reload barrier.
+	SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
 	// returns the per-app 1-based ordinal of the deployment row,
@@ -5602,6 +5606,11 @@ type Store interface {
 	// Only non-sensitive version, instance and guest-init outcome metadata is
 	// returned; absence of a report is not proof that the runtime lacks access.
 	ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error)
+	// ListAppSecretRuntimeReloadTargets returns every active instance that is
+	// authorized for each secret by its deployment scope and allowlist. Missing
+	// guest reports are included as Reported=false; reload support may be
+	// disabled or unknown for deployments that cannot join a hot-reload barrier.
+	ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

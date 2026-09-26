@@ -434,6 +434,22 @@ type AppSecret struct {
 	ManagedObjectStorageCredentialID pgtype.UUID
 }
 
+type AppSecretRuntimeReloadObservation struct {
+	AppID                   pgtype.UUID
+	Scope                   string
+	Key                     string
+	InstanceID              pgtype.UUID
+	SecretVersion           int64
+	Projection              string
+	Signal                  string
+	ObservedAt              pgtype.Timestamptz
+	ErrorCode               pgtype.Text
+	ApplicationAckVersion   pgtype.Int8
+	ApplicationAckStatus    pgtype.Text
+	ApplicationAckAt        pgtype.Timestamptz
+	ApplicationAckErrorCode pgtype.Text
+}
+
 type AppTrustedSigner struct {
 	AccountID        pgtype.UUID
 	AppID            pgtype.UUID
@@ -838,6 +854,7 @@ type Deployment struct {
 	ScanStatus               pgtype.Text
 	ScannedAt                pgtype.Timestamptz
 	OverrideLivenessProbe    []byte
+	SecretReloadSignal       pgtype.Text
 	ParkedReason             pgtype.Text
 	ParkedAt                 pgtype.Timestamptz
 	TrafficPercent           int32

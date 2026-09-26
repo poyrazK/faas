@@ -22599,6 +22599,66 @@ func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, ac
 	return out, rows.Err()
 }
 
+func (s *PgStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error {
+	if id == "" || !validSecretReloadSignal(signal) {
+		return ErrInvalidArgument
+	}
+	updated, err := sqlc.New().SetDeploymentSecretReloadSignal(ctx, s.pool,
+		sqlc.SetDeploymentSecretReloadSignalParams{ID: mustPgUUID(id), Signal: signal})
+	if err != nil {
+		return mapErr(err)
+	}
+	if updated == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error) {
+	if accountID == "" || appID == "" {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListAppSecretRuntimeReloadTargets(ctx, s.pool,
+		sqlc.ListAppSecretRuntimeReloadTargetsParams{
+			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope,
+		})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]AppSecretRuntimeReloadTarget, 0, len(rows))
+	for _, row := range rows {
+		target := AppSecretRuntimeReloadTarget{
+			Scope: row.Scope, Key: row.Key, InstanceID: row.InstanceID,
+			RuntimeState: row.RuntimeState, ReloadSupport: row.ReloadSupport,
+			Reported: row.SecretVersion.Valid, ErrorCode: row.ErrorCode.String,
+			ApplicationAck:          SecretApplicationReloadAckStatus(row.ApplicationAckStatus.String),
+			ApplicationAckErrorCode: row.ApplicationAckErrorCode.String,
+		}
+		if row.SecretVersion.Valid {
+			target.Version = row.SecretVersion.Int64
+		}
+		if row.Projection.Valid {
+			target.Projection = SecretReloadProjectionStatus(row.Projection.String)
+		}
+		if row.Signal.Valid {
+			target.Signal = SecretReloadSignalStatus(row.Signal.String)
+		}
+		if row.ObservedAt.Valid {
+			observedAt := row.ObservedAt.Time
+			target.ObservedAt = &observedAt
+		}
+		if row.ApplicationAckVersion.Valid {
+			target.ApplicationAckVersion = row.ApplicationAckVersion.Int64
+		}
+		if row.ApplicationAckAt.Valid {
+			ackAt := row.ApplicationAckAt.Time
+			target.ApplicationAckAt = &ackAt
+		}
+		out = append(out, target)
+	}
+	return out, nil
+}
+
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
 //
 // Mirror of the sealed-secrets shape (lines 6446-6551) keyed by

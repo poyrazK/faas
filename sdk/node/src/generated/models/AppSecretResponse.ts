@@ -67,8 +67,12 @@ export type AppSecretResponse = {
    */
   last_runtime_reload_instance_id?: string;
   /**
-   * For this scope, the array contains only active runtimes that reported; it is not an inventory of every active or authorized runtime.
+   * Complete current roster of active runtimes authorized for this secret by the deployment scope and env_secrets allowlist. Missing guest reports are represented explicitly.
    */
   runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
+  /**
+   * True when this response includes the complete active, secret-authorized runtime roster. The field is absent from older control-plane responses; callers must fail closed when waiting for acknowledgements.
+   */
+  runtime_reload_targets_complete?: boolean;
 };
 

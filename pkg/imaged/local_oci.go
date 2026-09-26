@@ -544,6 +544,9 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}
+	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
+		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
+	}
 
 	be, err := h.storageFor()
 	if err != nil {

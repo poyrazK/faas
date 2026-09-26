@@ -82,8 +82,11 @@ class AppSecretResponse:
     last_runtime_reload_instance_id: str | Unset = UNSET
     """Runtime instance that reported this projection/signal outcome."""
     runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
-    """For this scope, the array contains only active runtimes that reported; it is not an inventory of every
-    active or authorized runtime."""
+    """Complete current roster of active runtimes authorized for this secret by the deployment scope and
+    env_secrets allowlist. Missing guest reports are represented explicitly."""
+    runtime_reload_targets_complete: bool | Unset = UNSET
+    """True when this response includes the complete active, secret-authorized runtime roster. The field is absent
+    from older control-plane responses; callers must fail closed when waiting for acknowledgements."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,6 +151,8 @@ class AppSecretResponse:
                 runtime_reload_observations_item = runtime_reload_observations_item_data.to_dict()
                 runtime_reload_observations.append(runtime_reload_observations_item)
 
+        runtime_reload_targets_complete = self.runtime_reload_targets_complete
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -190,6 +195,8 @@ class AppSecretResponse:
             field_dict["last_runtime_reload_instance_id"] = last_runtime_reload_instance_id
         if runtime_reload_observations is not UNSET:
             field_dict["runtime_reload_observations"] = runtime_reload_observations
+        if runtime_reload_targets_complete is not UNSET:
+            field_dict["runtime_reload_targets_complete"] = runtime_reload_targets_complete
 
         return field_dict
 
@@ -290,6 +297,8 @@ class AppSecretResponse:
 
                 runtime_reload_observations.append(runtime_reload_observations_item)
 
+        runtime_reload_targets_complete = d.pop("runtime_reload_targets_complete", UNSET)
+
         app_secret_response = cls(
             key=key,
             scope=scope,
@@ -312,6 +321,7 @@ class AppSecretResponse:
             last_runtime_reload_error_code=last_runtime_reload_error_code,
             last_runtime_reload_instance_id=last_runtime_reload_instance_id,
             runtime_reload_observations=runtime_reload_observations,
+            runtime_reload_targets_complete=runtime_reload_targets_complete,
         )
 
         app_secret_response.additional_properties = d

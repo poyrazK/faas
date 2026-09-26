@@ -24,10 +24,13 @@ type PutAppSecretRequest struct {
 // signal outcome with an optional separately-versioned application ack.
 type SecretRuntimeReloadObservation struct {
 	InstanceID              string `json:"instance_id"`
-	Version                 int64  `json:"version"`
-	Projection              string `json:"projection"`
-	Signal                  string `json:"signal"`
-	ObservedAt              string `json:"observed_at"`
+	RuntimeState            string `json:"runtime_state"`
+	ReloadSupport           string `json:"reload_support"`
+	Reported                bool   `json:"reported"`
+	Version                 int64  `json:"version,omitempty"`
+	Projection              string `json:"projection,omitempty"`
+	Signal                  string `json:"signal,omitempty"`
+	ObservedAt              string `json:"observed_at,omitempty"`
 	ErrorCode               string `json:"error_code,omitempty"`
 	ApplicationAckVersion   int64  `json:"application_ack_version,omitempty"`
 	ApplicationAck          string `json:"application_ack,omitempty"`
@@ -95,16 +98,17 @@ type AppSecretResponse struct {
 	LastDeliveredWakeID     string `json:"last_delivered_wake_id,omitempty"`
 	LastDeliveredInstanceID string `json:"last_delivered_instance_id,omitempty"`
 	// LastRuntimeReload fields preserve the original single-latest-report
-	// surface for compatibility. RuntimeReloadObservations carries one latest
-	// guest-init outcome per active reporting runtime; neither shape is an
-	// application-level acknowledgement.
-	LastRuntimeReloadVersion    int64                            `json:"last_runtime_reload_version,omitempty"`
-	LastRuntimeReloadProjection string                           `json:"last_runtime_reload_projection,omitempty"`
-	LastRuntimeReloadSignal     string                           `json:"last_runtime_reload_signal,omitempty"`
-	LastRuntimeReloadAt         string                           `json:"last_runtime_reload_at,omitempty"`
-	LastRuntimeReloadErrorCode  string                           `json:"last_runtime_reload_error_code,omitempty"`
-	LastRuntimeReloadInstanceID string                           `json:"last_runtime_reload_instance_id,omitempty"`
-	RuntimeReloadObservations   []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	// surface for compatibility. RuntimeReloadObservations carries one row per
+	// active authorized target, including targets that have not reported;
+	// neither shape alone is an application-level acknowledgement.
+	LastRuntimeReloadVersion     int64                            `json:"last_runtime_reload_version,omitempty"`
+	LastRuntimeReloadProjection  string                           `json:"last_runtime_reload_projection,omitempty"`
+	LastRuntimeReloadSignal      string                           `json:"last_runtime_reload_signal,omitempty"`
+	LastRuntimeReloadAt          string                           `json:"last_runtime_reload_at,omitempty"`
+	LastRuntimeReloadErrorCode   string                           `json:"last_runtime_reload_error_code,omitempty"`
+	LastRuntimeReloadInstanceID  string                           `json:"last_runtime_reload_instance_id,omitempty"`
+	RuntimeReloadObservations    []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	RuntimeReloadTargetsComplete bool                             `json:"runtime_reload_targets_complete"`
 }
 
 // ScopedAppSecretResponse is the per-row shape for the nested
@@ -132,22 +136,23 @@ type ScopedAppSecretResponse struct {
 	Kid       string `json:"kid,omitempty"`
 	// ValueHash — see AppSecretResponse.ValueHash for the
 	// semantics. omitempty so pre-PR-C clients see no field.
-	ValueHash                   string                           `json:"value_hash,omitempty"`
-	DeliveryVersion             int64                            `json:"delivery_version"`
-	DeliveredVersion            int64                            `json:"delivered_version,omitempty"`
-	DeliveryStatus              string                           `json:"delivery_status"`
-	LastDeliveryAttemptAt       string                           `json:"last_delivery_attempt_at,omitempty"`
-	LastDeliveredAt             string                           `json:"last_delivered_at,omitempty"`
-	LastDeliveryErrorCode       string                           `json:"last_delivery_error_code,omitempty"`
-	LastDeliveredWakeID         string                           `json:"last_delivered_wake_id,omitempty"`
-	LastDeliveredInstanceID     string                           `json:"last_delivered_instance_id,omitempty"`
-	LastRuntimeReloadVersion    int64                            `json:"last_runtime_reload_version,omitempty"`
-	LastRuntimeReloadProjection string                           `json:"last_runtime_reload_projection,omitempty"`
-	LastRuntimeReloadSignal     string                           `json:"last_runtime_reload_signal,omitempty"`
-	LastRuntimeReloadAt         string                           `json:"last_runtime_reload_at,omitempty"`
-	LastRuntimeReloadErrorCode  string                           `json:"last_runtime_reload_error_code,omitempty"`
-	LastRuntimeReloadInstanceID string                           `json:"last_runtime_reload_instance_id,omitempty"`
-	RuntimeReloadObservations   []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	ValueHash                    string                           `json:"value_hash,omitempty"`
+	DeliveryVersion              int64                            `json:"delivery_version"`
+	DeliveredVersion             int64                            `json:"delivered_version,omitempty"`
+	DeliveryStatus               string                           `json:"delivery_status"`
+	LastDeliveryAttemptAt        string                           `json:"last_delivery_attempt_at,omitempty"`
+	LastDeliveredAt              string                           `json:"last_delivered_at,omitempty"`
+	LastDeliveryErrorCode        string                           `json:"last_delivery_error_code,omitempty"`
+	LastDeliveredWakeID          string                           `json:"last_delivered_wake_id,omitempty"`
+	LastDeliveredInstanceID      string                           `json:"last_delivered_instance_id,omitempty"`
+	LastRuntimeReloadVersion     int64                            `json:"last_runtime_reload_version,omitempty"`
+	LastRuntimeReloadProjection  string                           `json:"last_runtime_reload_projection,omitempty"`
+	LastRuntimeReloadSignal      string                           `json:"last_runtime_reload_signal,omitempty"`
+	LastRuntimeReloadAt          string                           `json:"last_runtime_reload_at,omitempty"`
+	LastRuntimeReloadErrorCode   string                           `json:"last_runtime_reload_error_code,omitempty"`
+	LastRuntimeReloadInstanceID  string                           `json:"last_runtime_reload_instance_id,omitempty"`
+	RuntimeReloadObservations    []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	RuntimeReloadTargetsComplete bool                             `json:"runtime_reload_targets_complete"`
 }
 
 // SecretByScope is the nested map shape returned under `secrets_by_scope`

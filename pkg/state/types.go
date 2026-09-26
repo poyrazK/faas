@@ -2258,6 +2258,11 @@ type Deployment struct {
 	// live row per (app_id, scope)). A scope change requires a
 	// NEW deployment — there is no update-time scope change.
 	Scope string `json:"scope,omitempty"`
+	// SecretReloadSignal is the OCI opt-in copied from the built app manifest.
+	// Known distinguishes an explicit empty value (no reload support) from a
+	// legacy deployment whose support has not been recorded yet.
+	SecretReloadSignal      string `json:"-"`
+	SecretReloadSignalKnown bool   `json:"-"`
 	// Revision (ADR-198) is the per-AppID monotonic counter that makes
 	// an immutable deployment row addressable as `v42` instead of a
 	// uuid. Assigned inside CreateDeployment's existing `FOR UPDATE`
@@ -6032,6 +6037,29 @@ type AppSecretRuntimeReloadObservation struct {
 	Projection              SecretReloadProjectionStatus
 	Signal                  SecretReloadSignalStatus
 	ObservedAt              time.Time
+	ErrorCode               string
+	ApplicationAckVersion   int64
+	ApplicationAck          SecretApplicationReloadAckStatus
+	ApplicationAckAt        *time.Time
+	ApplicationAckErrorCode string
+}
+
+// AppSecretRuntimeReloadTarget is one active runtime authorized for a secret
+// key in its deployment scope. Reported is false when the runtime has not
+// supplied a reload outcome for the current row; absence is never inferred as
+// success. ReloadSupport is enabled, disabled, or unknown for deployments
+// predating persistence of the image opt-in.
+type AppSecretRuntimeReloadTarget struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	RuntimeState            string
+	ReloadSupport           string
+	Reported                bool
+	Version                 int64
+	Projection              SecretReloadProjectionStatus
+	Signal                  SecretReloadSignalStatus
+	ObservedAt              *time.Time
 	ErrorCode               string
 	ApplicationAckVersion   int64
 	ApplicationAck          SecretApplicationReloadAckStatus
