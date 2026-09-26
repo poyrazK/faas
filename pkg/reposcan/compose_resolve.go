@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -234,6 +235,17 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 			}
 			(*candidate.AllowedServiceCallers)[i] = resolved
 		}
+	}
+	if candidate.AllowedServiceCallScopes != nil {
+		resolvedScopes := make(api.ServiceCallerScopes, len(*candidate.AllowedServiceCallScopes))
+		for caller, scope := range *candidate.AllowedServiceCallScopes {
+			resolved, err := interpolateComposeString(caller, values, source, service, "x-gregale-allow-call-scopes")
+			if err != nil {
+				return err
+			}
+			resolvedScopes[resolved] = scope
+		}
+		candidate.AllowedServiceCallScopes = &resolvedScopes
 	}
 	return nil
 }

@@ -127,6 +127,25 @@ func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
 	}
 }
 
+func TestTargetCallerScopesSurviveManifestRoundTrip(t *testing.T) {
+	scopes := api.ServiceCallerScopes{}
+	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallScopes: &scopes})
+	if manifest.IsZero() {
+		t.Fatal("deny-all scope manifest must not be considered empty")
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AppManifest
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.AllowedServiceCallScopes == nil || len(*decoded.AllowedServiceCallScopes) != 0 {
+		t.Fatalf("deny-all caller scopes lost across JSON round-trip: %s", encoded)
+	}
+}
+
 func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

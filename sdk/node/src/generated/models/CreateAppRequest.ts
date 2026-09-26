@@ -5,6 +5,7 @@
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -25,6 +26,10 @@ export type CreateAppRequest = {
    * Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
    */
   allowed_service_callers?: Array<string>;
+  /**
+   * Optional target-side per-caller method/path grants (ADR-278). When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
   /**
    * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
    */

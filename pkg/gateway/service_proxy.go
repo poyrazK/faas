@@ -137,6 +137,9 @@ type ServiceCaller struct {
 	// RequireHTTPS is set when the caller selected the HTTPS service-binding
 	// transport. Plain-HTTP calls are denied before endpoint lookup or wake.
 	RequireHTTPS bool
+	// CallScope is the target-owned method/path grant for this logical caller.
+	// Nil preserves the existing app-level authorization contract.
+	CallScope *api.ServiceCallScope
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
@@ -571,6 +574,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
+	}
+	if !probe && callerInfo.CallScope != nil && !callerInfo.CallScope.Allows(r.Method, targetPath) {
+		p.metrics.IncServiceCall(ServiceCallScopeDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "target service does not allow this caller method and path")
+		return
 	}
 	if callerInfo.RequireHTTPS && r.TLS == nil {
 		p.metrics.IncServiceCall(ServiceCallTransportDenied)

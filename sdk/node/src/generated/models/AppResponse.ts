@@ -15,6 +15,7 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -113,6 +114,10 @@ export type AppResponse = {
    * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
    */
   allowed_service_callers?: Array<string>;
+  /**
+   * Per-caller HTTP grants for requests reaching this app through a service binding (ADR-278). A missing caller entry denies that caller; any allowed_service_callers entry must also match.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */

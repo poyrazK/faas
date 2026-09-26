@@ -123,6 +123,7 @@ if TYPE_CHECKING:
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -146,6 +147,9 @@ class UpdateAppRequest:
     allowed_service_callers: list[str] | None | Unset = UNSET
     """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
     restore same-account access. Project-managed and preview apps reject this PATCH."""
+    allowed_service_call_scopes: None | ServiceCallerScopes | Unset = UNSET
+    """Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to
+    clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
     service_binding_targets: list[str] | None | Unset = UNSET
     """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
     bindings. Project-managed and preview apps reject non-null changes."""
@@ -341,6 +345,7 @@ class UpdateAppRequest:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -362,6 +367,14 @@ class UpdateAppRequest:
 
         else:
             allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | None | Unset
+        if isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        elif isinstance(self.allowed_service_call_scopes, ServiceCallerScopes):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+        else:
+            allowed_service_call_scopes = self.allowed_service_call_scopes
 
         service_binding_targets: list[str] | None | Unset
         if isinstance(self.service_binding_targets, Unset):
@@ -744,6 +757,8 @@ class UpdateAppRequest:
             field_dict["visibility"] = visibility
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if service_binding_targets is not UNSET:
             field_dict["service_binding_targets"] = service_binding_targets
         if service_binding_policy is not UNSET:
@@ -859,6 +874,7 @@ class UpdateAppRequest:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -929,6 +945,23 @@ class UpdateAppRequest:
             return cast(list[str] | None | Unset, data)
 
         allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
+
+        def _parse_allowed_service_call_scopes(data: object) -> None | ServiceCallerScopes | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                allowed_service_call_scopes_type_0 = ServiceCallerScopes.from_dict(data)
+
+                return allowed_service_call_scopes_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceCallerScopes | Unset, data)
+
+        allowed_service_call_scopes = _parse_allowed_service_call_scopes(d.pop("allowed_service_call_scopes", UNSET))
 
         def _parse_service_binding_targets(data: object) -> list[str] | None | Unset:
             if data is None:
@@ -1765,6 +1798,7 @@ class UpdateAppRequest:
         update_app_request = cls(
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             service_binding_targets=service_binding_targets,
             service_binding_policy=service_binding_policy,
             service_binding_transport=service_binding_transport,

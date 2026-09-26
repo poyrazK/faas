@@ -3312,6 +3312,9 @@ const (
 	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
 	// ServiceCallCallerDenied — the target rejected the caller by its allowlist.
 	ServiceCallCallerDenied ServiceCallOutcome = "caller_denied"
+	// ServiceCallScopeDenied — the target policy rejected this caller's method
+	// or path before endpoint lookup or wake.
+	ServiceCallScopeDenied ServiceCallOutcome = "scope_denied"
 	// ServiceCallNotFound — the service name resolves to no app.
 	ServiceCallNotFound ServiceCallOutcome = "not_found"
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not
@@ -3331,7 +3334,7 @@ const (
 var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
-	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallTransportDenied, ServiceCallBindingDenied, ServiceCallCallerDenied,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallTransportDenied, ServiceCallBindingDenied, ServiceCallCallerDenied, ServiceCallScopeDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
 	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
 }

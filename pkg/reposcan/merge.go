@@ -1,6 +1,10 @@
 package reposcan
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // mergeByKey collapses workloadSeeds with the same (RootDir, Name)
 // into a single Workload. Merge semantics, verbatim from impl
@@ -57,6 +61,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		serviceBindingTransport   ServiceBindingTransport
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
 		allowedServiceCallers     *[]string
+		allowedServiceCallScopes  *api.ServiceCallerScopes
 
 		schedules []CronSchedule
 		ports     []int
@@ -73,6 +78,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		serviceBindingTransportSet   bool
 		previewServiceCallsPolicySet bool
 		allowedServiceCallersSet     bool
+		allowedServiceCallScopesSet  bool
 
 		dfSet     bool
 		imageSet  bool
@@ -165,6 +171,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.allowedServiceCallers = &callers
 			b.allowedServiceCallersSet = true
 		}
+		if !b.allowedServiceCallScopesSet && s.allowedServiceCallScopes != nil {
+			b.allowedServiceCallScopes = cloneServiceCallerScopes(s.allowedServiceCallScopes)
+			b.allowedServiceCallScopesSet = true
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -218,6 +228,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			ServiceBindingTransport:   b.serviceBindingTransport,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
 			AllowedServiceCallers:     b.allowedServiceCallers,
+			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 
 			Class:     cls,
 			Schedule:  primarySchedule,
@@ -236,6 +247,20 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		})
 	}
 	return out
+}
+
+func cloneServiceCallerScopes(value *api.ServiceCallerScopes) *api.ServiceCallerScopes {
+	if value == nil {
+		return nil
+	}
+	clone := make(api.ServiceCallerScopes, len(*value))
+	for caller, scope := range *value {
+		clone[caller] = api.ServiceCallScope{
+			Methods:      append([]string(nil), scope.Methods...),
+			PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+		}
+	}
+	return &clone
 }
 
 func containsDetectionCandidate(xs []detectionCandidate, want detectionCandidate) bool {
