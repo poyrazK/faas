@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -9,15 +10,22 @@ from ...client import AuthenticatedClient, Client
 from ...models.invoke_request import InvokeRequest
 from ...models.invoke_response import InvokeResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     *,
     body: InvokeRequest,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_gregale_revision, Unset):
+        headers["X-Gregale-Revision"] = x_gregale_revision
+
+    if not isinstance(x_gregale_release, Unset):
+        headers["X-Gregale-Release"] = x_gregale_release
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -89,6 +97,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[InvokeResponse | Problem]:
     """Sync-invoke an app; long-poll for the result.
 
@@ -100,6 +110,8 @@ def sync_detailed(
 
     Args:
         slug (str):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -114,6 +126,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = client.get_httpx_client().request(
@@ -128,6 +142,8 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> InvokeResponse | Problem | None:
     """Sync-invoke an app; long-poll for the result.
 
@@ -139,6 +155,8 @@ def sync(
 
     Args:
         slug (str):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -154,6 +172,8 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     ).parsed
 
 
@@ -162,6 +182,8 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[InvokeResponse | Problem]:
     """Sync-invoke an app; long-poll for the result.
 
@@ -173,6 +195,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -187,6 +211,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -199,6 +225,8 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> InvokeResponse | Problem | None:
     """Sync-invoke an app; long-poll for the result.
 
@@ -210,6 +238,8 @@ async def asyncio(
 
     Args:
         slug (str):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -226,5 +256,7 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            x_gregale_revision=x_gregale_revision,
+            x_gregale_release=x_gregale_release,
         )
     ).parsed

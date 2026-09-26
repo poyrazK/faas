@@ -144,6 +144,9 @@ class AppResponse:
     version_affinity_managed_cookie: bool | Unset = False
     """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
     exclusive with version_affinity_cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -345,6 +348,8 @@ class AppResponse:
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         route_metrics_enabled = self.route_metrics_enabled
 
         only_allow_declared_routes = self.only_allow_declared_routes
@@ -521,6 +526,8 @@ class AppResponse:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -757,6 +764,8 @@ class AppResponse:
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
 
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
         only_allow_declared_routes = d.pop("only_allow_declared_routes", UNSET)
@@ -983,6 +992,7 @@ class AppResponse:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

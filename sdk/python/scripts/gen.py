@@ -137,7 +137,7 @@ def regen(overwrite: bool = True) -> None:
     # the spec (e.g. a route that was removed between regens).
     # Stash hand-written wrapper modules before `rmtree` wipes them.
     # The wrapper (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    # `_transport.py`, `idempotency.py`) lives INSIDE `faas_sdk/`
+    # `_transport.py`, `idempotency.py`, `release_context.py`) lives INSIDE `faas_sdk/`
     # because it imports the generated service classes, but the
     # regen deletes the whole tree. We copy them to a temp dir,
     # rmtree, run the generator, then copy them back so the
@@ -153,6 +153,7 @@ def regen(overwrite: bool = True) -> None:
             "_transport.py",
             "idempotency.py",
             "executions.py",
+            "release_context.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -239,7 +240,7 @@ def regen(overwrite: bool = True) -> None:
     # replaced by our hand-written wrapper) and OVERWRITE the
     # generated `__init__.py` with the hand-written barrel that
     # re-exports the wrapper's `FaaSClient` + sentinels + idempotency
-    # helpers + SSE helpers. The generated service functions still
+    # helpers + SSE and release-context helpers. The generated service functions still
     # ship under `faas_sdk.api.<tag>.` and are reached through the
     # wrapper's `client.inner`.
     #
@@ -612,6 +613,8 @@ Public surface:
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
 * `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
   resumable streams for disposable agent executions.
+* `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
+  request's project release to managed service calls.
 """
 
 from ._rfc7807 import (
@@ -638,6 +641,15 @@ from .idempotency import (
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .release_context import (
+    GREGALE_RELEASE_HEADER,
+    GREGALE_REVISION_HEADER,
+    AsyncGregaleReleaseTransport,
+    GregaleReleaseMiddleware,
+    GregaleReleaseTransport,
+    current_gregale_release,
+    with_gregale_release,
+)
 
 __version__ = "0.1.0"
 
@@ -653,6 +665,13 @@ __all__ = (
     "with_idempotency_key",
     "mint_idempotency_key",
     "current_idempotency_key",
+    "GREGALE_RELEASE_HEADER",
+    "GREGALE_REVISION_HEADER",
+    "GregaleReleaseMiddleware",
+    "GregaleReleaseTransport",
+    "AsyncGregaleReleaseTransport",
+    "current_gregale_release",
+    "with_gregale_release",
     "Problem",
     "FaasError",
     "FaasProblemError",
@@ -702,7 +721,8 @@ def _canonicalise_to_head(
     --exit-code` still surfaces real schema drift.
 
     Wrapper files (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    `_transport.py`, `idempotency.py`, `executions.py`, `__init__.py`) are
+    `_transport.py`, `idempotency.py`, `executions.py`,
+    `release_context.py`, `__init__.py`) are
     unaffected: they are restored from `wrapper_stash` /
     overwritten by `_rewrite_init_py` to equal HEAD bytes, so their
     regen SHA matches HEAD's and the loop's `continue` fires.
