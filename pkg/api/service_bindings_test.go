@@ -125,3 +125,27 @@ func TestServiceBindingEnvHTTPSFirstKeepsHTTPSAlias(t *testing.T) {
 		t.Fatalf("HTTPS-first env = %#v, want %#v", got, want)
 	}
 }
+
+func TestNormalizeServiceBindingSmokePath(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "absolute path", in: "/health", want: "/health"},
+		{name: "query retained for request", in: "/health?ready=1", want: "/health?ready=1"},
+		{name: "escaped path", in: "/v1/a%2Fb", want: "/v1/a%2Fb"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := NormalizeServiceBindingSmokePath(test.in)
+			if err != nil || got != test.want {
+				t.Fatalf("NormalizeServiceBindingSmokePath(%q) = %q, %v; want %q", test.in, got, err, test.want)
+			}
+		})
+	}
+	for _, invalid := range []string{"", "health", "//outside.example/path", "https://outside.example/health", "/health#ready", "/bad\\path", "/health\r\nHost: outside.example", strings.Repeat("/", ServiceBindingSmokePathMaxBytes+1)} {
+		if _, err := NormalizeServiceBindingSmokePath(invalid); err == nil {
+			t.Errorf("accepted invalid smoke path %q", invalid)
+		}
+	}
+}

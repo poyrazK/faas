@@ -305,17 +305,32 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List app bindings and verify one or all bound HTTPS services from the caller guest",
+		Short:       "List bindings, verify connectivity, or smoke-test a pinned private service deployment",
 		Positionals: []string{"<app>"},
-		Subcommands: []cliSub{{
-			Name:        "verify",
-			Short:       "Check DNS, TLS, authorization, and live routing for a bound service",
-			Positionals: []string{"<app>", "<service>"},
-			Flags: []cliFlag{
-				{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
-				{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
+		Subcommands: []cliSub{
+			{
+				Name:        "verify",
+				Short:       "Check DNS, TLS, authorization, and live routing for one or all bound services",
+				Positionals: []string{"<app>", "[<service>]"},
+				Flags: []cliFlag{
+					{Name: "all", Short: "verify every declared service binding"},
+					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
+					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
+				},
 			},
-		}},
+			{
+				Name:        "smoke",
+				Short:       "Invoke a path on one exact live target deployment over the private HTTPS binding",
+				Positionals: []string{"<app>", "<service>"},
+				Flags: []cliFlag{
+					{Name: "deployment", Short: "exact live target deployment to invoke", Req: true, Value: "ID"},
+					{Name: "path", Short: "absolute path on the target service", Req: true, Value: "PATH"},
+					{Name: "expect-status", Short: "require this exact HTTP status; default accepts any 2xx response", Value: "CODE"},
+					{Name: "poll-interval", Short: "status polling interval while the smoke task runs", Value: "D"},
+					{Name: "wait-timeout", Short: "maximum time to wait for the smoke task", Value: "D"},
+				},
+			},
+		},
 	},
 	{
 		Name:    "capabilities",

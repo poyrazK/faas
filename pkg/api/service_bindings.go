@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -139,7 +140,27 @@ const (
 	ServiceBindingProbeStageHeader = "X-Gregale-Service-Binding-Probe-Stage"
 	// ServiceBindingProbeVersion versions the probe marker and response.
 	ServiceBindingProbeVersion = "v1"
+	// ServiceBindingSmokePathMaxBytes bounds the origin-form request URI
+	// accepted by the caller-side handler smoke test.
+	ServiceBindingSmokePathMaxBytes = 2048
 )
+
+// NormalizeServiceBindingSmokePath accepts only an origin-form request URI
+// for a private service call. The result never carries a host or scheme, so a
+// smoke task cannot be redirected to an arbitrary URL by its path argument.
+func NormalizeServiceBindingSmokePath(raw string) (string, error) {
+	if raw == "" || len(raw) > ServiceBindingSmokePathMaxBytes ||
+		!strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") ||
+		strings.ContainsAny(raw, "\\\r\n#") {
+		return "", fmt.Errorf("path must be an absolute service path without a host, fragment, or backslash")
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" || parsed.Fragment != "" ||
+		!strings.HasPrefix(parsed.Path, "/") {
+		return "", fmt.Errorf("path must be a valid origin-form service request URI")
+	}
+	return parsed.RequestURI(), nil
+}
 
 // ServiceBindingProbeCheck is one independently observable stage in an
 // HTTPS service-binding canary.
@@ -168,6 +189,24 @@ type ServiceBindingProbeReport struct {
 func (r ServiceBindingProbeReport) Passed() bool {
 	return r.DNS.Status == "passed" && r.TLS.Status == "passed" &&
 		r.Authorization.Status == "passed" && r.Routing.Status == "passed"
+}
+
+// ServiceBindingSmokeReport contains bounded, non-secret diagnostics from an
+// explicitly requested GET to one pinned service deployment. It intentionally
+// excludes the request query and response body.
+type ServiceBindingSmokeReport struct {
+	App                string `json:"app,omitempty"`
+	Service            string `json:"service"`
+	TargetDeploymentID string `json:"target_deployment_id"`
+	URL                string `json:"url"`
+	Path               string `json:"path,omitempty"`
+	TaskID             string `json:"task_id,omitempty"`
+	CallerDeploymentID string `json:"caller_deployment_id,omitempty"`
+	HTTPStatus         int    `json:"http_status,omitempty"`
+	ExpectedStatus     string `json:"expected_status"`
+	ElapsedMillis      int64  `json:"elapsed_ms,omitempty"`
+	Passed             bool   `json:"passed"`
+	Error              string `json:"error,omitempty"`
 }
 
 // ServiceBindingsForTargets derives platform-owned binding keys from

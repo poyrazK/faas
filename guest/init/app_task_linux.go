@@ -155,6 +155,9 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	if isServiceBindingProbeCommand(req) {
 		return executeServiceBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
+	if isServiceBindingSmokeCommand(req) {
+		return executeServiceBindingSmokeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	argv := append([]string(nil), req.Command...)
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
 	env = StampWorkloadIdentityEnv(env)

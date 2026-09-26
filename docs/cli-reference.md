@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | List app bindings and verify one or all bound HTTPS services from the caller guest |
+| [`bindings`](#bindings) | List bindings, verify connectivity, or smoke-test a pinned private service deployment |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -171,20 +171,35 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-List app bindings and verify one or all bound HTTPS services from the caller guest
+List bindings, verify connectivity, or smoke-test a pinned private service deployment
 
 `gregale bindings [<subcommand>] <app>`
 
 ### bindings verify
 
-Check DNS, TLS, authorization, and live routing for a bound service
+Check DNS, TLS, authorization, and live routing for one or all bound services
 
-`gregale bindings verify <app> <service> [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale bindings verify <app> [<service>] [--all] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--all` | verify every declared service binding |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+
+### bindings smoke
+
+Invoke a path on one exact live target deployment over the private HTTPS binding
+
+`gregale bindings smoke <app> <service> --deployment <ID> --path <PATH> [--expect-status <CODE>] [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | exact live target deployment to invoke | required |
+| `--path <PATH>` | absolute path on the target service | required |
+| `--expect-status <CODE>` | require this exact HTTP status; default accepts any 2xx response |  |
+| `--poll-interval <D>` | status polling interval while the smoke task runs |  |
+| `--wait-timeout <D>` | maximum time to wait for the smoke task |  |
 
 
 ## capabilities
