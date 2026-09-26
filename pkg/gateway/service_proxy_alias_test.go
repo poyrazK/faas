@@ -13,7 +13,7 @@ import (
 )
 
 // adr: 269
-// adr: 273
+// adr: 275
 func TestServiceProxyAliasRequiresBindingEvenWithDirectHost(t *testing.T) {
 	allowed := false
 	resolveCalls := 0
