@@ -181,7 +181,8 @@ func (m *MemStore) enqueuePlatformTenantStatementFinalizedWebhooksLocked(stateme
 		lines = append(lines, api.PlatformTenantStatementLineResponse{
 			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID,
 			JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart,
-			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID, Currency: line.Currency,
+			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID,
+			PlatformTenantRateCardID: line.PlatformTenantRateCardID, Currency: line.Currency,
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,
 		})
 	}

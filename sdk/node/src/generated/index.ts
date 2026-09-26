@@ -198,6 +198,7 @@ export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
 export type { CreateOutboundIntegrationRequest } from './models/CreateOutboundIntegrationRequest.js';
 export type { CreatePlatformTenantAccessTokenRequest } from './models/CreatePlatformTenantAccessTokenRequest.js';
 export type { CreatePlatformTenantAccessTokenResponse } from './models/CreatePlatformTenantAccessTokenResponse.js';
+export type { CreatePlatformTenantRateCardRequest } from './models/CreatePlatformTenantRateCardRequest.js';
 export type { CreatePlatformTenantRequest } from './models/CreatePlatformTenantRequest.js';
 export type { CreatePlatformTenantWebhookRequest } from './models/CreatePlatformTenantWebhookRequest.js';
 export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
@@ -557,6 +558,8 @@ export type { PlatformTenantCredentialResult } from './models/PlatformTenantCred
 export type { PlatformTenantCredentialsResponse } from './models/PlatformTenantCredentialsResponse.js';
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
+export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
+export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './models/PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js';
 export type { PlatformTenantSelfStatementListResponse } from './models/PlatformTenantSelfStatementListResponse.js';

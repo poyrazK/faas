@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
-from ...models.platform_tenant_statement_response import PlatformTenantStatementResponse
+from ...models.create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
+from ...models.platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -16,7 +16,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     id: UUID,
     *,
-    body: CreateAPIConsumerUsageStatementRequest,
+    body: CreatePlatformTenantRateCardRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -25,7 +25,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/account/platform-tenants/{id}/usage-statements".format(
+        "url": "/v1/account/platform-tenants/{id}/rate-cards".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -40,14 +40,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> PlatformTenantStatementResponse | Problem | None:
-    if response.status_code == 200:
-        response_200 = PlatformTenantStatementResponse.from_dict(response.json())
-
-        return response_200
-
+) -> PlatformTenantRateCardResponse | Problem | None:
     if response.status_code == 201:
-        response_201 = PlatformTenantStatementResponse.from_dict(response.json())
+        response_201 = PlatformTenantRateCardResponse.from_dict(response.json())
 
         return response_201
 
@@ -61,6 +56,11 @@ def _parse_response(
 
         return response_409
 
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -69,7 +69,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[PlatformTenantStatementResponse | Problem]:
+) -> Response[PlatformTenantRateCardResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -82,28 +82,27 @@ def sync_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateAPIConsumerUsageStatementRequest,
+    body: CreatePlatformTenantRateCardRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[PlatformTenantStatementResponse | Problem]:
-    """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+) -> Response[PlatformTenantRateCardResponse | Problem]:
+    """Set an immutable cross-app customer price.
 
-     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
-    before the tenant's first effective card, app pricing remains the fallback. A draft replays
-    unchanged. After finalization, new units create the next revision; no new units replay the latest
-    revision. Mixed effective currencies are rejected.
+     Appends a version that overrides app-level prices for this tenant from its effective UTC minute.
+    Before the first tenant version takes effect, statement pricing falls back to each app's rate card.
+    A tenant can use only one currency; finalized statement revisions are never rewritten.
 
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
-            an immutable usage statement.
+        body (CreatePlatformTenantRateCardRequest): Immutable tenant-wide price per attributed
+            request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[PlatformTenantStatementResponse | Problem]
+        Response[PlatformTenantRateCardResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -123,28 +122,27 @@ def sync(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateAPIConsumerUsageStatementRequest,
+    body: CreatePlatformTenantRateCardRequest,
     idempotency_key: str | Unset = UNSET,
-) -> PlatformTenantStatementResponse | Problem | None:
-    """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+) -> PlatformTenantRateCardResponse | Problem | None:
+    """Set an immutable cross-app customer price.
 
-     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
-    before the tenant's first effective card, app pricing remains the fallback. A draft replays
-    unchanged. After finalization, new units create the next revision; no new units replay the latest
-    revision. Mixed effective currencies are rejected.
+     Appends a version that overrides app-level prices for this tenant from its effective UTC minute.
+    Before the first tenant version takes effect, statement pricing falls back to each app's rate card.
+    A tenant can use only one currency; finalized statement revisions are never rewritten.
 
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
-            an immutable usage statement.
+        body (CreatePlatformTenantRateCardRequest): Immutable tenant-wide price per attributed
+            request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        PlatformTenantStatementResponse | Problem
+        PlatformTenantRateCardResponse | Problem
     """
 
     return sync_detailed(
@@ -159,28 +157,27 @@ async def asyncio_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateAPIConsumerUsageStatementRequest,
+    body: CreatePlatformTenantRateCardRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[PlatformTenantStatementResponse | Problem]:
-    """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+) -> Response[PlatformTenantRateCardResponse | Problem]:
+    """Set an immutable cross-app customer price.
 
-     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
-    before the tenant's first effective card, app pricing remains the fallback. A draft replays
-    unchanged. After finalization, new units create the next revision; no new units replay the latest
-    revision. Mixed effective currencies are rejected.
+     Appends a version that overrides app-level prices for this tenant from its effective UTC minute.
+    Before the first tenant version takes effect, statement pricing falls back to each app's rate card.
+    A tenant can use only one currency; finalized statement revisions are never rewritten.
 
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
-            an immutable usage statement.
+        body (CreatePlatformTenantRateCardRequest): Immutable tenant-wide price per attributed
+            request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[PlatformTenantStatementResponse | Problem]
+        Response[PlatformTenantRateCardResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -198,28 +195,27 @@ async def asyncio(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateAPIConsumerUsageStatementRequest,
+    body: CreatePlatformTenantRateCardRequest,
     idempotency_key: str | Unset = UNSET,
-) -> PlatformTenantStatementResponse | Problem | None:
-    """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+) -> PlatformTenantRateCardResponse | Problem | None:
+    """Set an immutable cross-app customer price.
 
-     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
-    before the tenant's first effective card, app pricing remains the fallback. A draft replays
-    unchanged. After finalization, new units create the next revision; no new units replay the latest
-    revision. Mixed effective currencies are rejected.
+     Appends a version that overrides app-level prices for this tenant from its effective UTC minute.
+    Before the first tenant version takes effect, statement pricing falls back to each app's rate card.
+    A tenant can use only one currency; finalized statement revisions are never rewritten.
 
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
-            an immutable usage statement.
+        body (CreatePlatformTenantRateCardRequest): Immutable tenant-wide price per attributed
+            request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        PlatformTenantStatementResponse | Problem
+        PlatformTenantRateCardResponse | Problem
     """
 
     return (

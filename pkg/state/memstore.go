@@ -589,6 +589,9 @@ type MemStore struct {
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
 	apiConsumerRateCards map[string]APIConsumerRateCard
+	// platformTenantRateCards is keyed by card ID and unique per tenant and
+	// effective minute, matching the immutable Postgres commercial tariff log.
+	platformTenantRateCards map[string]PlatformTenantRateCard
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
@@ -1107,6 +1110,7 @@ func NewMemStore() *MemStore {
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:            map[string]struct{}{},
 		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
+		platformTenantRateCards:           map[string]PlatformTenantRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
 		platformTenantStatements:          map[string]PlatformTenantStatement{},

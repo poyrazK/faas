@@ -25,16 +25,17 @@ type PlatformTenantStatementStore interface {
 const PlatformTenantStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 
 type PlatformTenantStatementLine struct {
-	AppID                  string    `json:"app_id"`
-	ConsumerID             string    `json:"consumer_id,omitempty"`
-	SurfaceID              string    `json:"surface_id,omitempty"`
-	JWTAuthorizationRuleID string    `json:"jwt_authorization_rule_id,omitempty"`
-	WindowStart            time.Time `json:"window_start"`
-	BillableUnits          int64     `json:"billable_units"`
-	RateCardID             string    `json:"rate_card_id,omitempty"`
-	Currency               string    `json:"currency,omitempty"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	AppID                    string    `json:"app_id"`
+	ConsumerID               string    `json:"consumer_id,omitempty"`
+	SurfaceID                string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID   string    `json:"jwt_authorization_rule_id,omitempty"`
+	WindowStart              time.Time `json:"window_start"`
+	BillableUnits            int64     `json:"billable_units"`
+	RateCardID               string    `json:"rate_card_id,omitempty"`
+	PlatformTenantRateCardID string    `json:"platform_tenant_rate_card_id,omitempty"`
+	Currency                 string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit   int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents         int64     `json:"amount_millicents"`
 }
 
 type PlatformTenantStatement struct {
@@ -184,7 +185,7 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			return ErrInvalidArgument
 		}
 		seen[key] = true
-		if line.RateCardID == "" {
+		if line.RateCardID == "" && line.PlatformTenantRateCardID == "" {
 			if line.Currency != "" || line.PriceMillicentsPerUnit != 0 || line.AmountMillicents != 0 {
 				return ErrInvalidArgument
 			}
@@ -193,7 +194,14 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			}
 			unpriced += line.BillableUnits
 		} else {
-			if _, err := uuid.Parse(line.RateCardID); err != nil {
+			if line.RateCardID != "" && line.PlatformTenantRateCardID != "" {
+				return ErrInvalidArgument
+			}
+			cardID := line.RateCardID
+			if cardID == "" {
+				cardID = line.PlatformTenantRateCardID
+			}
+			if _, err := uuid.Parse(cardID); err != nil {
 				return ErrInvalidArgument
 			}
 			if line.Currency != in.Currency || !isUpperASCIICurrency(line.Currency) ||

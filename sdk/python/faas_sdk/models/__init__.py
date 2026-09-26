@@ -395,6 +395,7 @@ from .create_platform_tenant_access_token_request import CreatePlatformTenantAcc
 from .create_platform_tenant_access_token_request_scopes_item import CreatePlatformTenantAccessTokenRequestScopesItem
 from .create_platform_tenant_access_token_response import CreatePlatformTenantAccessTokenResponse
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
+from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
@@ -1070,6 +1071,9 @@ from .platform_tenant_credentials_response import PlatformTenantCredentialsRespo
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
+from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
+from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
 from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
@@ -1996,6 +2000,7 @@ __all__ = (
     "CreatePlatformTenantAccessTokenRequestScopesItem",
     "CreatePlatformTenantAccessTokenResponse",
     "CreatePlatformTenantAccessTokenResponseScopesItem",
+    "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
@@ -2663,6 +2668,9 @@ __all__ = (
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantListResponse",
+    "PlatformTenantRateCardListResponse",
+    "PlatformTenantRateCardResponse",
+    "PlatformTenantRateCardResponseUnit",
     "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",

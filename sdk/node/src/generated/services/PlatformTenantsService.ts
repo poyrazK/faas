@@ -13,6 +13,7 @@ import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPICo
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePlatformTenantAccessTokenRequest.js';
 import type { CreatePlatformTenantAccessTokenResponse } from '../models/CreatePlatformTenantAccessTokenResponse.js';
+import type { CreatePlatformTenantRateCardRequest } from '../models/CreatePlatformTenantRateCardRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
@@ -24,6 +25,8 @@ import type { PlatformTenantActivityResponse } from '../models/PlatformTenantAct
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
+import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
+import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
@@ -307,6 +310,71 @@ export class PlatformTenantsService {
     });
   }
   /**
+   * List immutable customer prices applied across linked apps.
+   * @returns PlatformTenantRateCardListResponse Tenant tariff history ordered by effective minute.
+   * @throws ApiError
+   */
+  public static listPlatformTenantRateCards({
+    id,
+  }: {
+    /**
+     * Customer whose cross-app commercial tariff is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantRateCardListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/rate-cards',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set an immutable cross-app customer price.
+   * Appends a version that overrides app-level prices for this tenant from its effective UTC minute. Before the first tenant version takes effect, statement pricing falls back to each app's rate card. A tenant can use only one currency; finalized statement revisions are never rewritten.
+   * @returns PlatformTenantRateCardResponse New immutable tenant rate-card version.
+   * @throws ApiError
+   */
+  public static createPlatformTenantRateCard({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Customer whose cross-app commercial tariff is managed.
+     */
+    id: string,
+    requestBody: CreatePlatformTenantRateCardRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantRateCardResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/rate-cards',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
    * Read durable cross-app usage for linked consumers.
    * Raw usage only; app-specific rate cards and invoices are not aggregated.
    * @returns PlatformTenantUsageResponse Usage for the requested bounded UTC window.
@@ -444,7 +512,7 @@ export class PlatformTenantsService {
   }
   /**
    * Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
-   * A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed currencies are rejected.
+   * For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
    * @returns PlatformTenantStatementResponse Existing draft or latest unchanged revision.
    * @throws ApiError
    */
