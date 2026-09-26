@@ -614,7 +614,11 @@ var cliCommands = []cliCommand{
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule"},
-			{Name: "runs", Short: "Show execution history"},
+			{Name: "runs", Short: "Show execution history", Flags: []cliFlag{
+				{Name: "before", Short: "pagination cursor for older runs", Value: "CURSOR"},
+				{Name: "limit", Short: "max runs to show (1..100)", Value: "N"},
+				{Name: "run", Short: "show details and captured output for one command run", Value: "TASK-ID"},
+			}},
 		},
 	},
 	{

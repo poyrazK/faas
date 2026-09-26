@@ -25,6 +25,11 @@ func TestAppTaskClientLifecycle(t *testing.T) {
 			_, _ = w.Write([]byte(`{"tasks":[],"limit":10,"offset":20,"next_offset":-1}`))
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/crons/cron-id/runs/run-id" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"run-id","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"abcdef0123456789abcdef0123456789","deployment_scope":"default","kind":"cron","command":["bin/task"],"command_shell":false,"status":"succeeded","timeout_seconds":600,"max_output_bytes":1048576,"attempt_count":1,"stdout_tail":"ok\n","output_truncated":false,"created_at":"2026-09-23T00:00:00Z","updated_at":"2026-09-23T00:00:01Z"}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"2bdd4251-f567-4a48-9f66-a155bbfa7751","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"abcdef0123456789abcdef0123456789","deployment_scope":"default","kind":"manual","command":["bin/task"],"command_shell":false,"status":"queued","timeout_seconds":600,"max_output_bytes":1048576,"output_truncated":false,"created_at":"2026-09-23T00:00:00Z","updated_at":"2026-09-23T00:00:00Z"}`))
 	}))
@@ -41,6 +46,9 @@ func TestAppTaskClientLifecycle(t *testing.T) {
 	if _, err := client.GetAppTask(ctx, "my-app", "task-1"); err != nil {
 		t.Fatalf("GetAppTask: %v", err)
 	}
+	if _, err := client.GetCronCommandRun(ctx, "cron-id", "run-id"); err != nil {
+		t.Fatalf("GetCronCommandRun: %v", err)
+	}
 	if _, err := client.CancelAppTask(ctx, "my-app", "task-1"); err != nil {
 		t.Fatalf("CancelAppTask: %v", err)
 	}
@@ -48,6 +56,7 @@ func TestAppTaskClientLifecycle(t *testing.T) {
 		"POST /v1/apps/my-app/tasks",
 		"GET /v1/apps/my-app/tasks",
 		"GET /v1/apps/my-app/tasks/task-1",
+		"GET /v1/crons/cron-id/runs/run-id",
 		"DELETE /v1/apps/my-app/tasks/task-1",
 	}
 	if len(methods) != len(want) {
