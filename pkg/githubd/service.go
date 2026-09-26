@@ -106,6 +106,12 @@ type WriteAppCheckFunc func(ctx context.Context, installationID int64, repoFullN
 // environments yet.
 type WriteScopedAppCheckFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, appSlug, scope string, phase githubdgrpc.CheckPhase, summary string) error
 
+// ProjectPreviewEnvironmentReconciler routes verified PR lifecycle events to
+// apid, which owns the secret-safe environment clone and cleanup operations.
+type ProjectPreviewEnvironmentReconciler interface {
+	ReconcileProjectPreviewEnvironment(ctx context.Context, accountID string, installationID int64, repoFullName string, prNumber int, headSHA, action string) error
+}
+
 // WriteSkippedCheckForInstallationFunc writes the neutral production Check
 // Run used when a commit explicitly opts out of deployment.
 type WriteSkippedCheckForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error
@@ -201,6 +207,10 @@ type Service struct {
 	// preview status comment. It is installation-scoped so a repository
 	// can never accidentally publish another customer's preview details.
 	WritePreviewCommentForInstallation WritePreviewCommentForInstallationFunc
+	// ProjectPreviewEnvironments is optional. When configured with a source
+	// environment, same-repository PR events create, refresh, and close durable
+	// project environments through apid.
+	ProjectPreviewEnvironments ProjectPreviewEnvironmentReconciler
 	// Lifecycle reconciles GitHub App installation and repository access
 	// changes. It is optional for embedded/test services; production wires
 	// the Postgres-backed adapter so revoked access fails closed.
@@ -1334,6 +1344,13 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	policy, err := s.githubDeployPolicy(ctx, previewProject)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
+	}
+	if s.ProjectPreviewEnvironments != nil && (ev.Action == PullRequestActionClosed || (policy.PreviewEnabled && policy.PreviewEnvironmentFrom != "")) {
+		if err := s.ProjectPreviewEnvironments.ReconcileProjectPreviewEnvironment(ctx,
+			binding.AccountID, install.InstallationID, ev.Repository.FullName,
+			ev.Number, ev.PullRequest.HeadSHA, string(ev.Action)); err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: reconcile project PR preview environment: %w", err)
+		}
 	}
 	if !policy.PreviewEnabled && ev.Action != PullRequestActionClosed {
 		result := reconcile.Result{WasIgnored: true}

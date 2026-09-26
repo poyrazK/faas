@@ -26,5 +26,12 @@ export type GitHubDeploymentPolicy = {
    *
    */
   preview_service_policy: 'deny' | 'allow_marked';
+  /**
+   * When non-empty, same-repository pull requests create a durable
+   * `pr-N` project environment cloned from this environment. Empty
+   * disables durable project-environment previews.
+   *
+   */
+  preview_environment_from: string;
 };
 

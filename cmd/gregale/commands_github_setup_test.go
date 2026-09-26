@@ -77,9 +77,18 @@ func TestGithubSetupPreviewServicePolicy(t *testing.T) {
 			t.Errorf("validGithubSetupPreviewServicePolicy(%q) = %t, want %t", tc.value, got, tc.want)
 		}
 	}
-	patch := githubSetupPolicyPatch(false, false, 0, "", nil, githubSetupPreviewServicesDeny)
+	patch := githubSetupPolicyPatch(false, false, 0, "", nil, githubSetupPreviewServicesDeny, "", false)
 	if patch == nil || patch.PreviewServicePolicy == nil || *patch.PreviewServicePolicy != githubSetupPreviewServicesDeny {
 		t.Fatalf("preview service policy patch = %+v", patch)
+	}
+
+	patch = githubSetupPolicyPatch(false, false, 0, "", nil, "", "staging", false)
+	if patch == nil || patch.PreviewEnvironmentFrom == nil || *patch.PreviewEnvironmentFrom != "staging" {
+		t.Fatalf("preview environment source patch = %+v", patch)
+	}
+	patch = githubSetupPolicyPatch(false, false, 0, "", nil, "", "", true)
+	if patch == nil || patch.PreviewEnvironmentFrom == nil || *patch.PreviewEnvironmentFrom != "" {
+		t.Fatalf("clear preview environment source patch = %+v", patch)
 	}
 }
 

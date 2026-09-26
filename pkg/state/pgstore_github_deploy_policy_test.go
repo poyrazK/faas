@@ -26,30 +26,31 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours || defaults.PreviewServicePolicy != state.PreviewServicePolicyDeny {
+	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours || defaults.PreviewServicePolicy != state.PreviewServicePolicyDeny || defaults.PreviewEnvironmentFrom != "" {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 	policy := state.GitHubDeployPolicy{
-		ProjectID:            project.ID,
-		AccountID:            acct.ID,
-		RootDir:              "apps/web",
-		IgnoredPaths:         []string{"docs/**", "README.md"},
-		PreviewEnabled:       false,
-		PreviewTTLHours:      72,
-		PreviewServicePolicy: state.PreviewServicePolicyAllowMarked,
+		ProjectID:              project.ID,
+		AccountID:              acct.ID,
+		RootDir:                "apps/web",
+		IgnoredPaths:           []string{"docs/**", "README.md"},
+		PreviewEnabled:         false,
+		PreviewTTLHours:        72,
+		PreviewServicePolicy:   state.PreviewServicePolicyAllowMarked,
+		PreviewEnvironmentFrom: "staging",
 	}
 	stored, err := store.UpsertGitHubDeployPolicy(ctx, policy)
 	if err != nil {
 		t.Fatalf("UpsertGitHubDeployPolicy: %v", err)
 	}
-	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled || stored.PreviewServicePolicy != state.PreviewServicePolicyAllowMarked {
+	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled || stored.PreviewServicePolicy != state.PreviewServicePolicyAllowMarked || stored.PreviewEnvironmentFrom != policy.PreviewEnvironmentFrom {
 		t.Fatalf("stored policy = %+v", stored)
 	}
 	got, err := store.GetGitHubDeployPolicy(ctx, project.ID, acct.ID)
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(stored): %v", err)
 	}
-	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 {
+	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 || got.PreviewEnvironmentFrom != "staging" {
 		t.Fatalf("round trip = %+v", got)
 	}
 	if _, err := store.UpsertGitHubDeployPolicy(ctx, state.GitHubDeployPolicy{

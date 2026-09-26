@@ -68,9 +68,27 @@ type githubdBridgeActivityStore interface {
 	OrgByPersonalAccount(context.Context, string) (state.Org, error)
 }
 
+type githubdProjectPreviewRequest struct {
+	AccountID      string
+	InstallationID int64
+	RepoFullName   string
+	PRNumber       int
+	HeadSHA        string
+	Action         string
+}
+
+type githubdProjectPreviewResult struct {
+	Reconciled  bool
+	Environment state.ProjectEnvironment
+}
+
+type githubdProjectPreviewReconciler interface {
+	ReconcileGitHubProjectPreviewEnvironment(context.Context, githubdProjectPreviewRequest) (githubdProjectPreviewResult, error)
+}
+
 // githubdBridge is the in-package server implementation of
-// githubdpb.GithubdServer (just the EnqueueBuild RPC; the rest of
-// the githubdpb surface is unused on the apid side). Wired by
+// githubdpb.GithubdServer (EnqueueBuild and project-preview reconciliation;
+// the rest of the githubdpb surface is unused on the apid side). Wired by
 // registerGithubdBridge onto a *grpc.Server that runGithubdBridgeServer
 // in main.go owns.
 type githubdBridge struct {
@@ -82,6 +100,7 @@ type githubdBridge struct {
 	spool       string // build-spool root for the build.log path
 	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+	previews    githubdProjectPreviewReconciler
 }
 
 // stagingPathAllowed reports whether sourcePath is under one of the
@@ -576,9 +595,59 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 	}
 }
 
-// registerGithubdBridge binds the GithubdServer (only EnqueueBuild
-// is implemented; the rest is UnimplementedGithubdServer) onto a
-// gRPC server. Called from runGithubdBridgeServer in main.go
+func (g *githubdBridge) ReconcileProjectPreviewEnvironment(ctx context.Context, req *githubdpb.ReconcileProjectPreviewEnvironmentRequest) (*githubdpb.ReconcileProjectPreviewEnvironmentResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "ReconcileProjectPreviewEnvironment: nil request")
+	}
+	if req.AccountId == "" || req.InstallationId <= 0 || req.RepoFullName == "" || req.PullRequestNumber <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "ReconcileProjectPreviewEnvironment: account_id, positive installation_id, repo_full_name, and positive pull_request_number are required")
+	}
+	if err := validateGithubdBridgeRepo(req.RepoFullName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "ReconcileProjectPreviewEnvironment: %v", err)
+	}
+	if req.Action != "opened" && req.Action != "synchronize" && req.Action != "reopened" && req.Action != "closed" {
+		return nil, status.Errorf(codes.InvalidArgument, "ReconcileProjectPreviewEnvironment: unsupported pull request action %q", req.Action)
+	}
+	if req.Action != "closed" && !isCanonicalCommitSHA(req.HeadSha) {
+		return nil, status.Error(codes.InvalidArgument, "ReconcileProjectPreviewEnvironment: head_sha must be a full lowercase commit SHA")
+	}
+	if g.previews == nil {
+		return nil, status.Error(codes.FailedPrecondition, "ReconcileProjectPreviewEnvironment: project preview handler is unavailable")
+	}
+	result, err := g.previews.ReconcileGitHubProjectPreviewEnvironment(ctx, githubdProjectPreviewRequest{
+		AccountID: req.AccountId, InstallationID: req.InstallationId, RepoFullName: req.RepoFullName,
+		PRNumber: int(req.PullRequestNumber), HeadSHA: req.HeadSha, Action: req.Action,
+	})
+	if err != nil {
+		if g.log != nil {
+			g.log.Error("githubd bridge project preview reconciliation failed", "account_id", req.AccountId,
+				"repo", req.RepoFullName, "pull_request", req.PullRequestNumber, "action", req.Action, "err", err)
+		}
+		return nil, status.Errorf(codes.Internal, "ReconcileProjectPreviewEnvironment: reconciliation failed: %v", err)
+	}
+	return &githubdpb.ReconcileProjectPreviewEnvironmentResponse{
+		Reconciled:      result.Reconciled,
+		EnvironmentSlug: result.Environment.Slug,
+		State:           result.Environment.PreviewState,
+	}, nil
+}
+
+func validateGithubdBridgeRepo(repo string) error {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return errors.New("repo_full_name must be OWNER/NAME")
+	}
+	for _, part := range parts {
+		if part == "." || part == ".." || strings.TrimSpace(part) != part || strings.ContainsAny(part, "\\\x00\r\n") {
+			return errors.New("repo_full_name contains an invalid owner or repository name")
+		}
+	}
+	return nil
+}
+
+// registerGithubdBridge binds the GithubdServer (EnqueueBuild and
+// project-preview reconciliation are implemented) onto a gRPC server.
+// Called from runGithubdBridgeServer in main.go
 // alongside the HTTP server lifecycle.
 //
 // stagingRoot is the githubd-side workdir (FAAS_GITHUBD_WORK_DIR,
@@ -588,7 +657,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, previews githubdProjectPreviewReconciler) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -597,5 +666,6 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spool:       spool,
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
+		previews:    previews,
 	})
 }

@@ -284,7 +284,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// when FAAS_APID_GITHUBD_BRIDGE_SOCK is empty, so
 	// the dispatcher stays safe on a dev box where the
 	// apid daemon isn't running.
-	webhookSvc.Enqueuer = NewApidEnqueuer(newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log), log)
+	apidBridge := newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log)
+	webhookSvc.Enqueuer = NewApidEnqueuer(apidBridge, log)
+	webhookSvc.ProjectPreviewEnvironments = apidBridge
 
 	// Slice 8 RealService (OAuth + Checks). Auth may be nil if
 	// the GitHub App credentials aren't provisioned — the daemon

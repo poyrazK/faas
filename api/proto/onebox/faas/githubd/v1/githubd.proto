@@ -173,6 +173,12 @@ service Githubd {
   // updates for one account-owned app. The customer-facing action returns
   // counts only; queue identifiers, payloads, and worker errors stay private.
   rpc RetryAppActivity(RetryAppActivityRequest) returns (RetryAppActivityResponse);
+
+  // ReconcileProjectPreviewEnvironment mirrors a verified, same-repository
+  // pull_request event into a durable project environment. The apid receiver
+  // owns cloning so customer secrets and managed resource credentials remain
+  // inside the control plane.
+  rpc ReconcileProjectPreviewEnvironment(ReconcileProjectPreviewEnvironmentRequest) returns (ReconcileProjectPreviewEnvironmentResponse);
 }
 
 message ListRecoveryQueueItemsRequest {
@@ -557,4 +563,19 @@ message StreamSourceRefChunk {
   // selected for the requested ref. It is repeated on the terminal
   // metadata frame so apid can stamp immutable provenance.
   string resolved_commit_sha = 4;
+}
+
+message ReconcileProjectPreviewEnvironmentRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  string repo_full_name = 3;
+  int32 pull_request_number = 4;
+  string head_sha = 5;
+  string action = 6;
+}
+
+message ReconcileProjectPreviewEnvironmentResponse {
+  bool reconciled = 1;
+  string environment_slug = 2;
+  string state = 3;
 }

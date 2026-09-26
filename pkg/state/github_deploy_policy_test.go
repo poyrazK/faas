@@ -23,7 +23,7 @@ func TestGitHubDeployPolicyDefaultsAndIgnorePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours || got.PreviewServicePolicy != PreviewServicePolicyDeny {
+	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours || got.PreviewServicePolicy != PreviewServicePolicyDeny || got.PreviewEnvironmentFrom != "" {
 		t.Fatalf("defaults = %+v", got)
 	}
 	got.RootDir = "apps/web"
@@ -80,6 +80,7 @@ func TestGitHubDeployPolicyValidationCoverage(t *testing.T) {
 		{name: "ttl too low", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMinPreviewTTLHours - 1 }},
 		{name: "ttl too high", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMaxPreviewTTLHours + 1 }},
 		{name: "invalid preview service policy", edit: func(p *GitHubDeployPolicy) { p.PreviewServicePolicy = "allow" }},
+		{name: "invalid preview environment source", edit: func(p *GitHubDeployPolicy) { p.PreviewEnvironmentFrom = "../production" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,7 +122,7 @@ func TestGitHubDeployPolicyMemStoreErrorsAndCopy(t *testing.T) {
 	if _, err := m.GetGitHubDeployPolicy(ctx, project.ID, "wrong-account"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("wrong account lookup error = %v", err)
 	}
-	policy := GitHubDeployPolicy{ProjectID: project.ID, AccountID: acct.ID, IgnoredPaths: []string{"docs/**"}, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyAllowMarked}
+	policy := GitHubDeployPolicy{ProjectID: project.ID, AccountID: acct.ID, IgnoredPaths: []string{"docs/**"}, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyAllowMarked, PreviewEnvironmentFrom: "staging"}
 	if _, err := m.UpsertGitHubDeployPolicy(ctx, GitHubDeployPolicy{ProjectID: "missing", AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyDeny}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing project upsert error = %v", err)
 	}
@@ -139,5 +140,8 @@ func TestGitHubDeployPolicyMemStoreErrorsAndCopy(t *testing.T) {
 	}
 	if again.IgnoredPaths[0] != "docs/**" {
 		t.Fatalf("stored ignored paths were not copied: %+v", again.IgnoredPaths)
+	}
+	if again.PreviewEnvironmentFrom != "staging" {
+		t.Fatalf("preview environment source was not persisted: %+v", again)
 	}
 }

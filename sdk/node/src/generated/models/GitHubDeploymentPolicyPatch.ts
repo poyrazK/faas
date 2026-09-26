@@ -11,5 +11,9 @@ export type GitHubDeploymentPolicyPatch = {
   preview_enabled?: boolean;
   preview_ttl_hours?: number;
   preview_service_policy?: 'deny' | 'allow_marked';
+  /**
+   * Set to an empty string to disable durable project-environment previews.
+   */
+  preview_environment_from?: string;
 };
 
