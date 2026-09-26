@@ -2257,6 +2257,7 @@ type Store interface {
 	// slugs return ErrConflict.
 	ListProjectEnvironments(ctx context.Context, accountID, projectID string) ([]ProjectEnvironment, error)
 	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error)
+	ProjectEnvironmentByPreviewPR(ctx context.Context, accountID, projectID string, prNumber int) (ProjectEnvironment, error)
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
 	// DeleteProjectEnvironment removes an unprotected, non-production

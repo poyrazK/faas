@@ -6195,17 +6195,19 @@ type Project struct {
 }
 
 // ProjectEnvironment is a durable, account-scoped environment registry entry.
-// It intentionally does not own workloads yet; that attachment is a later
-// promotion step. The registry makes environment identity and protection
-// policy explicit without changing deploy or routing behavior.
+// It intentionally does not own workloads; that attachment is a separate
+// promotion step. Optional PR identity marks a cloned environment as the
+// exact preview target for a GitHub pull request.
 type ProjectEnvironment struct {
-	ID        string
-	AccountID string
-	ProjectID string
-	Slug      string
-	Protected bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID              string
+	AccountID       string
+	ProjectID       string
+	Slug            string
+	Protected       bool
+	PreviewPRNumber int
+	PreviewHeadSHA  string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ProjectEnvironmentApproval binds a short-lived approval credential to the

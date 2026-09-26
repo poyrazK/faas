@@ -19,5 +19,13 @@ export type CreateProjectEnvironmentRequest = {
    * Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
    */
   share_resources?: boolean;
+  /**
+   * GitHub pull request number for a preview environment.
+   */
+  preview_pr_number?: number;
+  /**
+   * Lowercase full commit SHA for the pull request head; supply it with preview_pr_number.
+   */
+  preview_head_sha?: string;
 };
 

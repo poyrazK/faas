@@ -661,6 +661,7 @@ export class ProjectsService {
     environment,
     to,
     shareResources = false,
+    previewPrNumber,
   }: {
     /**
      * Project whose environment clone is preflighted.
@@ -678,6 +679,10 @@ export class ProjectsService {
      * Plan fresh target credentials over shared database and object data instead of isolated copies.
      */
     shareResources?: boolean,
+    /**
+     * Optional PR identity to check for an existing project preview environment.
+     */
+    previewPrNumber?: number,
   }): CancelablePromise<ProjectEnvironmentClonePlanResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -689,6 +694,7 @@ export class ProjectsService {
       query: {
         'to': to,
         'share_resources': shareResources,
+        'preview_pr_number': previewPrNumber,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

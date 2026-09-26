@@ -172,6 +172,54 @@ func TestProjectEnvironmentRegistryLifecycleAndOwnership(t *testing.T) {
 	}
 }
 
+func TestProjectEnvironmentPRPreviewIdentity(t *testing.T) {
+	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.UpdateProjectBinding(ctx, acct.ID, project.ID, "acme/shop", "main", 42); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 40)
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop",
+		[]byte(`{"slug":"pr-381","from_environment":"production","preview_pr_number":381,"preview_head_sha":"`+sha+`"}`))
+	srv.createProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created api.ProjectEnvironmentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.PreviewPRNumber != 381 || created.PreviewHeadSHA != sha {
+		t.Fatalf("created PR preview = %+v", created)
+	}
+	byPR, err := store.ProjectEnvironmentByPreviewPR(ctx, acct.ID, project.ID, 381)
+	if err != nil || byPR.ID != created.ID {
+		t.Fatalf("environment by PR = %+v err=%v", byPR, err)
+	}
+
+	req, rec = projectRequest(http.MethodPatch, "/v1/projects/shop/environments/pr-381", "shop", []byte(`{"protected":true}`))
+	req.SetPathValue("environment", "pr-381")
+	srv.updateProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("protect preview status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/clone-preview?to=pr-382&preview_pr_number=381", "shop", nil)
+	req.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentClone(rec, req, acct)
+	var plan api.ProjectEnvironmentClonePlanResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &plan) != nil || plan.CanClone || plan.PreviewPRNumber != 381 {
+		t.Fatalf("duplicate PR clone plan status=%d plan=%+v body=%s", rec.Code, plan, rec.Body.String())
+	}
+
+	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop",
+		[]byte(`{"slug":"pr-381-copy","from_environment":"production","preview_pr_number":381,"preview_head_sha":"`+sha+`"}`))
+	srv.createProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate PR create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()

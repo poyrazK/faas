@@ -23,6 +23,10 @@ class CreateProjectEnvironmentRequest:
     share_resources: bool | Unset = False
     """Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-
     storage resources; data remains shared."""
+    preview_pr_number: int | Unset = UNSET
+    """GitHub pull request number for a preview environment."""
+    preview_head_sha: str | Unset = UNSET
+    """Lowercase full commit SHA for the pull request head; supply it with preview_pr_number."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +37,10 @@ class CreateProjectEnvironmentRequest:
         from_environment = self.from_environment
 
         share_resources = self.share_resources
+
+        preview_pr_number = self.preview_pr_number
+
+        preview_head_sha = self.preview_head_sha
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -47,6 +55,10 @@ class CreateProjectEnvironmentRequest:
             field_dict["from_environment"] = from_environment
         if share_resources is not UNSET:
             field_dict["share_resources"] = share_resources
+        if preview_pr_number is not UNSET:
+            field_dict["preview_pr_number"] = preview_pr_number
+        if preview_head_sha is not UNSET:
+            field_dict["preview_head_sha"] = preview_head_sha
 
         return field_dict
 
@@ -61,11 +73,17 @@ class CreateProjectEnvironmentRequest:
 
         share_resources = d.pop("share_resources", UNSET)
 
+        preview_pr_number = d.pop("preview_pr_number", UNSET)
+
+        preview_head_sha = d.pop("preview_head_sha", UNSET)
+
         create_project_environment_request = cls(
             slug=slug,
             protected=protected,
             from_environment=from_environment,
             share_resources=share_resources,
+            preview_pr_number=preview_pr_number,
+            preview_head_sha=preview_head_sha,
         )
 
         create_project_environment_request.additional_properties = d

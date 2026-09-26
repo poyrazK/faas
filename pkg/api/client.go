@@ -1613,10 +1613,20 @@ func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, tar
 
 // GetProjectEnvironmentClonePlan preflights a clone without creating resources.
 func (c *Client) GetProjectEnvironmentClonePlan(ctx context.Context, projectSlug, sourceEnvironment, targetEnvironment string, shareResources bool) (ProjectEnvironmentClonePlanResponse, error) {
+	return c.GetProjectEnvironmentClonePlanForPreview(ctx, projectSlug, sourceEnvironment, targetEnvironment, shareResources, 0)
+}
+
+// GetProjectEnvironmentClonePlanForPreview also checks that the PR does not
+// already own another project environment. A zero PR number keeps the plan
+// equivalent to an ordinary environment clone.
+func (c *Client) GetProjectEnvironmentClonePlanForPreview(ctx context.Context, projectSlug, sourceEnvironment, targetEnvironment string, shareResources bool, previewPRNumber int) (ProjectEnvironmentClonePlanResponse, error) {
 	var out ProjectEnvironmentClonePlanResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(sourceEnvironment) + "/clone-preview?to=" + url.QueryEscape(targetEnvironment)
 	if shareResources {
 		path += "&share_resources=true"
+	}
+	if previewPRNumber > 0 {
+		path += "&preview_pr_number=" + strconv.Itoa(previewPRNumber)
 	}
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }

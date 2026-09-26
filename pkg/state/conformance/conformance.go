@@ -506,6 +506,26 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate environment err = %v, want ErrConflict", err)
 	}
+	preview, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "pr-381",
+		PreviewPRNumber: 381, PreviewHeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironment(preview): %v", err)
+	}
+	byPR, err := fx.Store.ProjectEnvironmentByPreviewPR(fx.Ctx, fx.Account.ID, project.ID, 381)
+	if err != nil || byPR.ID != preview.ID {
+		t.Fatalf("ProjectEnvironmentByPreviewPR = %+v err=%v", byPR, err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "pr-381-copy",
+		PreviewPRNumber: 381, PreviewHeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate PR preview err = %v, want ErrConflict", err)
+	}
+	if _, err := fx.Store.ProjectEnvironmentByPreviewPR(fx.Ctx, uuid.NewString(), project.ID, 381); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account preview lookup err = %v, want ErrNotFound", err)
+	}
 
 	got, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, "staging")
 	if err != nil {

@@ -25,9 +25,11 @@ func envCreate(args []string) int {
 	yes := fs.Bool("yes", false, "confirm clone and deployment")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying clone/deployment operations")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (requires --deploy)")
+	previewPR := fs.Int("preview-pr", 0, "associate the clone with a GitHub pull request")
+	previewSHA := fs.String("preview-sha", "", "exact pull request head commit SHA (requires --preview-pr)")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for deployment readiness")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources] [--plan | --deploy [--yes] [--idempotency-key KEY] [--progress] [--timeout SECONDS]]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources] [--preview-pr NUMBER --preview-sha SHA] [--plan | --deploy [--yes] [--idempotency-key KEY] [--progress] [--timeout SECONDS]]", "env")
 		return 1
 	}
 	if !api.ValidProjectEnvironmentSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || positional[0] == *from {
@@ -35,6 +37,18 @@ func envCreate(args []string) int {
 	}
 	if *planOnly && *deploy {
 		return printErr("Invalid clone options", errors.New("--plan and --deploy cannot be used together"))
+	}
+	if *previewPR < 0 || (*previewPR == 0) != (strings.TrimSpace(*previewSHA) == "") {
+		return printErr("Invalid preview identity", errors.New("--preview-pr and --preview-sha must be supplied together"))
+	}
+	if *previewPR > 0 && *protected {
+		return printErr("Invalid preview environment", errors.New("a PR preview environment cannot be protected"))
+	}
+	if *previewPR > 0 && *deploy {
+		return printErr("Invalid preview deployment", errors.New("--deploy promotes the source environment's live artifacts; create the PR environment, then deploy the exact PR checkout with --environment"))
+	}
+	if *previewPR > 0 && !validPreviewCommitSHA(*previewSHA) {
+		return printErr("Invalid preview commit", errors.New("--preview-sha must be a full 40-character hexadecimal commit SHA"))
 	}
 	if *progress && !*deploy {
 		return printErr("Invalid wait options", errors.New("--progress requires --deploy"))
@@ -54,7 +68,7 @@ func envCreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if *planOnly {
-		plan, planErr := client.GetProjectEnvironmentClonePlan(context.Background(), projectSlug, *from, positional[0], *shareResources)
+		plan, planErr := client.GetProjectEnvironmentClonePlanForPreview(context.Background(), projectSlug, *from, positional[0], *shareResources, *previewPR)
 		if planErr != nil {
 			return printErr("Clone plan failed", planErr)
 		}
@@ -71,7 +85,7 @@ func envCreate(args []string) int {
 		return 0
 	}
 	if *deploy {
-		plan, planErr := client.GetProjectEnvironmentClonePlan(context.Background(), projectSlug, *from, positional[0], *shareResources)
+		plan, planErr := client.GetProjectEnvironmentClonePlanForPreview(context.Background(), projectSlug, *from, positional[0], *shareResources, *previewPR)
 		if planErr != nil {
 			return printErr("Clone preflight failed", planErr)
 		}
@@ -110,6 +124,7 @@ func envCreate(args []string) int {
 	}
 	environment, err := client.CreateProjectEnvironment(createCtx, projectSlug, api.CreateProjectEnvironmentRequest{
 		Slug: positional[0], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
+		PreviewPRNumber: *previewPR, PreviewHeadSHA: strings.ToLower(strings.TrimSpace(*previewSHA)),
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -174,4 +189,17 @@ func environmentProjectSlug(explicit string) (string, error) {
 		return "", err
 	}
 	return linked.Project, nil
+}
+
+func validPreviewCommitSHA(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != 40 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }

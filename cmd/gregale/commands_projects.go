@@ -720,9 +720,13 @@ func cmdProjectsEnvironmentsList(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeNDJSON(environments))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-24s %-12s %s\n", "SLUG", "PROTECTED", "UPDATED")
+	_, _ = fmt.Fprintf(osStdout, "%-24s %-12s %-14s %s\n", "SLUG", "PROTECTED", "PREVIEW", "UPDATED")
 	for _, environment := range environments {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-12t %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+		preview := "-"
+		if environment.PreviewPRNumber > 0 {
+			preview = fmt.Sprintf("PR #%d", environment.PreviewPRNumber)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-12t %-14s %s\n", environment.Slug, environment.Protected, preview, environment.UpdatedAt)
 	}
 	return 0
 }
@@ -733,8 +737,10 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
 	from := fs.String("from", "", "source environment to clone")
 	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data")
+	previewPR := fs.Int("preview-pr", 0, "associate the clone with a GitHub pull request")
+	previewSHA := fs.String("preview-sha", "", "exact pull request head commit SHA (requires --preview-pr)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources] [--preview-pr NUMBER --preview-sha SHA]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
@@ -746,12 +752,22 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	if *shareResources && *from == "" {
 		return printErr("Invalid resource sharing option", fmt.Errorf("--share-resources requires --from"))
 	}
+	if *previewPR < 0 || (*previewPR == 0) != (strings.TrimSpace(*previewSHA) == "") {
+		return printErr("Invalid preview identity", fmt.Errorf("--preview-pr and --preview-sha must be supplied together"))
+	}
+	if *previewPR > 0 && (*from == "" || *protected) {
+		return printErr("Invalid preview environment", fmt.Errorf("PR previews require --from and cannot be protected"))
+	}
+	if *previewPR > 0 && !validPreviewCommitSHA(*previewSHA) {
+		return printErr("Invalid preview commit", fmt.Errorf("--preview-sha must be a full 40-character hexadecimal commit SHA"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
 		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
+		PreviewPRNumber: *previewPR, PreviewHeadSHA: strings.ToLower(strings.TrimSpace(*previewSHA)),
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -784,6 +800,13 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 		return jsonOut(writeJSON(environment))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	if environment.PreviewPRNumber > 0 {
+		sha := environment.PreviewHeadSHA
+		if len(sha) > 12 {
+			sha = sha[:12]
+		}
+		_, _ = fmt.Fprintf(osStdout, "  preview: PR #%d @ %s\n", environment.PreviewPRNumber, sha)
+	}
 	if environment.Clone != nil {
 		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",
 			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,

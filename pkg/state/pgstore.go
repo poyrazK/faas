@@ -4600,7 +4600,7 @@ func scanProjectEnvironment(row pgx.Row) (ProjectEnvironment, error) {
 	var env ProjectEnvironment
 	if err := row.Scan(
 		&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
-		&env.CreatedAt, &env.UpdatedAt,
+		&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.CreatedAt, &env.UpdatedAt,
 	); err != nil {
 		return ProjectEnvironment{}, mapErr(err)
 	}
@@ -4613,7 +4613,7 @@ func scanProjectEnvironments(rows pgx.Rows) ([]ProjectEnvironment, error) {
 		var env ProjectEnvironment
 		if err := rows.Scan(
 			&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
-			&env.CreatedAt, &env.UpdatedAt,
+			&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.CreatedAt, &env.UpdatedAt,
 		); err != nil {
 			return nil, mapErr(err)
 		}
@@ -4915,6 +4915,7 @@ func (s *PgStore) ListProjectEnvironments(ctx context.Context, accountID, projec
 	}
 	rows, err := s.pool.Query(ctx, `
 		select e.id, e.account_id, e.project_id, e.slug, e.protected,
+		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
 		       e.created_at, e.updated_at
 		  from project_environments e
 		  join projects p on p.id = e.project_id
@@ -4944,6 +4945,7 @@ func (s *PgStore) projectByIDForAccount(ctx context.Context, accountID, projectI
 func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select e.id, e.account_id, e.project_id, e.slug, e.protected,
+		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
 		       e.created_at, e.updated_at
 		  from project_environments e
 		  join projects p on p.id = e.project_id
@@ -4952,27 +4954,47 @@ func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, proje
 	return scanProjectEnvironment(row)
 }
 
+func (s *PgStore) ProjectEnvironmentByPreviewPR(ctx context.Context, accountID, projectID string, prNumber int) (ProjectEnvironment, error) {
+	if prNumber <= 0 {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		select e.id, e.account_id, e.project_id, e.slug, e.protected,
+		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
+		       e.created_at, e.updated_at
+		  from project_environments e
+		  join projects p on p.id = e.project_id
+		 where p.account_id = $1 and e.project_id = $2 and e.preview_pr_number = $3
+	`, accountID, projectID, prNumber)
+	return scanProjectEnvironment(row)
+}
+
 // ProjectEnvironmentByID is the identity lookup for a platform-owned
 // environment hostname. The router separately verifies its account/project
 // association with the workload encoded in the same hostname.
 func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, account_id, project_id, slug, protected, created_at, updated_at
+		select id, account_id, project_id, slug, protected,
+		       coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''), created_at, updated_at
 		  from project_environments where id = $1
 	`, id)
 	return scanProjectEnvironment(row)
 }
 
 func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+	if !validProjectEnvironmentPreviewIdentity(env.PreviewPRNumber, env.PreviewHeadSHA, env.Protected) {
+		return ProjectEnvironment{}, ErrInvalidArgument
+	}
 	project, err := s.ProjectByID(ctx, env.ProjectID)
 	if err != nil || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
 	}
 	row := s.pool.QueryRow(ctx, `
-		insert into project_environments (account_id, project_id, slug, protected)
-		values ($1, $2, $3, $4)
-		returning id, account_id, project_id, slug, protected, created_at, updated_at
-	`, env.AccountID, env.ProjectID, env.Slug, env.Protected)
+		insert into project_environments (account_id, project_id, slug, protected, preview_pr_number, preview_head_sha)
+		values ($1, $2, $3, $4, nullif($5, 0), nullif($6, ''))
+		returning id, account_id, project_id, slug, protected,
+		          coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''), created_at, updated_at
+	`, env.AccountID, env.ProjectID, env.Slug, env.Protected, env.PreviewPRNumber, env.PreviewHeadSHA)
 	created, err := scanProjectEnvironment(row)
 	if err != nil {
 		return ProjectEnvironment{}, mapErr(err)
@@ -4981,6 +5003,15 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 }
 
 func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+	if protected {
+		existing, err := s.ProjectEnvironmentBySlug(ctx, accountID, projectID, slug)
+		if err != nil {
+			return ProjectEnvironment{}, err
+		}
+		if existing.PreviewPRNumber > 0 {
+			return ProjectEnvironment{}, ErrConflict
+		}
+	}
 	row := s.pool.QueryRow(ctx, `
 		update project_environments e
 		   set protected = $4, updated_at = now()
@@ -4988,6 +5019,7 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 		 where p.id = e.project_id and p.account_id = $1
 		   and e.project_id = $2 and e.slug = $3
 		returning e.id, e.account_id, e.project_id, e.slug, e.protected,
+		          coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
 		          e.created_at, e.updated_at
 	`, accountID, projectID, slug, protected)
 	return scanProjectEnvironment(row)

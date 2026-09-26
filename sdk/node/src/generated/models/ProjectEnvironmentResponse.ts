@@ -14,6 +14,14 @@ export type ProjectEnvironmentResponse = {
    */
   slug: string;
   protected: boolean;
+  /**
+   * GitHub pull request number for preview environments.
+   */
+  preview_pr_number?: number;
+  /**
+   * Full lowercase commit SHA recorded for the preview environment.
+   */
+  preview_head_sha?: string;
   created_at: string;
   updated_at: string;
   cloned_from?: string;

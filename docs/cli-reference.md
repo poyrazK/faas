@@ -1451,6 +1451,8 @@ Clone a project environment with isolated managed data by default
 |---|---|---|
 | `--from <ENV>` | source environment | required |
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--preview-pr <NUMBER>` | associate the clone with a GitHub pull request |  |
+| `--preview-sha <SHA>` | exact pull request head commit SHA (requires --preview-pr) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 | `--plan` | show a read-only clone plan without creating the environment |  |
