@@ -2302,8 +2302,8 @@ Rotate a secret and optionally wait for runtime application
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
-| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret |  |
-| `--timeout <DURATION>` | maximum time to wait for application acknowledgements |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
+| `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
 
 
 ## slo

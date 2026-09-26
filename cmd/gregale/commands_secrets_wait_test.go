@@ -52,6 +52,34 @@ func TestSecretAckProgressAcceptsCurrentApplicationProofForLegacyTarget(t *testi
 	}
 }
 
+func TestSecretAckProgressWaitsForUnsupportedTargetAfterRestart(t *testing.T) {
+	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
+		InstanceID: "legacy", ReloadSupport: "disabled",
+	}}}
+	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 1 {
+		t.Fatalf("unacknowledged restart progress = targets %d pending %d err %v, want 1/1/nil", targets, pending, err)
+	}
+	secret.RuntimeReloadObservations[0].ApplicationAckVersion = 2
+	secret.RuntimeReloadObservations[0].ApplicationAck = "applied"
+	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 0 {
+		t.Fatalf("acknowledged restart progress = targets %d pending %d err %v, want 1/0/nil", targets, pending, err)
+	}
+}
+
+func TestSecretAckProgressDefersPriorRuntimeFailureAfterRestart(t *testing.T) {
+	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{
+		{InstanceID: "old-instance", ReloadSupport: "disabled", ApplicationAckVersion: 2, ApplicationAck: "failed"},
+		{InstanceID: "fresh-instance", ReloadSupport: "disabled", ApplicationAckVersion: 2, ApplicationAck: "applied"},
+	}}
+	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 1 {
+		t.Fatalf("restart progress = targets %d pending %d err %v, want 2/1/nil", targets, pending, err)
+	}
+	secret.RuntimeReloadObservations[1].ApplicationAck = "failed"
+	if _, _, err := secretAckProgressWithRestart(secret, "fresh-instance"); err == nil {
+		t.Fatal("fresh runtime application failure unexpectedly accepted")
+	}
+}
+
 func TestSecretAckProgressSurfacesApplicationFailure(t *testing.T) {
 	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
 		InstanceID: "one", ReloadSupport: "enabled", Reported: true, Version: 2,
@@ -100,6 +128,21 @@ func TestWaitForSecretApplicationAckSucceedsForEmptyCompleteRoster(t *testing.T)
 	defer cancel()
 	if count, err := waitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err != nil || count != 0 {
 		t.Fatalf("wait returned count %d err %v, want 0/nil", count, err)
+	}
+}
+
+func TestWaitForSecretApplicationAckAfterRestartRejectsEmptyRoster(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+			Key: "DATABASE_URL", Scope: "prod", DeliveryVersion: 3, RuntimeReloadTargetsComplete: true,
+		}}})
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := waitForSecretApplicationAckAfterRestart(ctx, client, "app", "DATABASE_URL", "prod", "instance-1"); err == nil {
+		t.Fatal("restart with no authorized runtime unexpectedly succeeded")
 	}
 }
 

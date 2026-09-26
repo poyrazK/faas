@@ -11,6 +11,17 @@ import (
 const secretAckPollInterval = 2 * time.Second
 
 func waitForSecretApplicationAck(ctx context.Context, client *api.Client, app, key, scope string) (int, error) {
+	return waitForSecretApplicationAckWithRestart(ctx, client, app, key, scope, "")
+}
+
+func waitForSecretApplicationAckAfterRestart(ctx context.Context, client *api.Client, app, key, scope, restartInstanceID string) (int, error) {
+	if restartInstanceID == "" {
+		return 0, fmt.Errorf("restart reached a running instance without an instance ID")
+	}
+	return waitForSecretApplicationAckWithRestart(ctx, client, app, key, scope, restartInstanceID)
+}
+
+func waitForSecretApplicationAckWithRestart(ctx context.Context, client *api.Client, app, key, scope, restartInstanceID string) (int, error) {
 	ticker := time.NewTicker(secretAckPollInterval)
 	defer ticker.Stop()
 	pending, targetCount := 0, 0
@@ -29,9 +40,12 @@ func waitForSecretApplicationAck(ctx context.Context, client *api.Client, app, k
 		if !secret.RuntimeReloadTargetsComplete {
 			return targetCount, fmt.Errorf("server did not provide a complete authorized runtime roster; upgrade the control plane before waiting for acknowledgements")
 		}
-		targetCount, pending, err = secretAckProgress(secret)
+		targetCount, pending, err = secretAckProgressWithRestart(secret, restartInstanceID)
 		if err != nil {
 			return targetCount, err
+		}
+		if restartInstanceID != "" && targetCount == 0 {
+			return targetCount, fmt.Errorf("restart reached a running instance, but no active runtime is authorized for secret %s/%s; check the deployment scope and secret allowlist", scopeOrDefault(scope), key)
 		}
 		if pending == 0 {
 			return targetCount, nil
@@ -54,6 +68,11 @@ func findSecretStatus(list api.AppSecretListResponse, key, scope string) (api.Ap
 }
 
 func secretAckProgress(secret api.AppSecretResponse) (targetCount, pending int, err error) {
+	return secretAckProgressWithRestart(secret, "")
+}
+
+func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceID string) (targetCount, pending int, err error) {
+	afterRestart := restartInstanceID != ""
 	for _, target := range secret.RuntimeReloadObservations {
 		targetCount++
 		if target.ApplicationAckVersion == secret.DeliveryVersion {
@@ -61,14 +80,26 @@ func secretAckProgress(secret api.AppSecretResponse) (targetCount, pending int, 
 			case "applied":
 				continue
 			case "failed":
+				if afterRestart && target.InstanceID != restartInstanceID {
+					pending++
+					continue
+				}
 				return targetCount, pending, fmt.Errorf("runtime %s reported that it could not apply the rotated secret", target.InstanceID)
 			}
 		}
 		if target.ReloadSupport != "enabled" {
+			if afterRestart {
+				pending++
+				continue
+			}
 			return targetCount, pending, fmt.Errorf("runtime %s has reload support %s; redeploy with com.gregale.secret-reload-signal or use --restart", target.InstanceID, target.ReloadSupport)
 		}
 		if target.Reported && target.Version == secret.DeliveryVersion &&
 			(target.Projection == "failed" || target.Signal == "failed") {
+			if afterRestart && target.InstanceID != restartInstanceID {
+				pending++
+				continue
+			}
 			return targetCount, pending, fmt.Errorf("runtime %s could not deliver the rotated secret to the application", target.InstanceID)
 		}
 		pending++

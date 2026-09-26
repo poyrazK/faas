@@ -1694,7 +1694,7 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
 			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret"}, {Name: "timeout", Short: "maximum time to wait for application acknowledgements", Value: "DURATION"}}},
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},
 		},
 	},
 	{

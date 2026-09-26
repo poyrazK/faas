@@ -7,7 +7,7 @@ values are never returned, logged, or included in deployment receipts.
 ```bash
 gregale secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
-gregale secrets rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --wait-for-ack --timeout 2m
+gregale secrets rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart --wait-for-ack --timeout 2m
 gregale secrets list --app my-api
 gregale secrets unset --app my-api STRIPE_SECRET_KEY
 ```
@@ -38,10 +38,12 @@ the CLI polls the complete active authorized-runtime roster until every
 reload-enabled runtime self-attests that it applied the current version. It
 exits non-zero on an application-reported failure, timeout, or if a target
 without a current app-applied acknowledgement has disabled/unknown reload
-support; use `--restart` for those deployments.
-`--wait-for-ack` and `--restart` are mutually exclusive. If no active runtime
-is currently authorized for that key, the command succeeds and the rotation
-will be delivered on the next cold wake.
+support. Combine `--restart --wait-for-ack` for apps without live-reload
+support: the CLI waits for the correlated restart to reach a running instance,
+then waits until every active authorized runtime acknowledges the current
+secret version. Missing or unsupported capability stays pending on this path;
+it is never treated as success. If no runtime is active without `--restart`,
+the command succeeds and the rotation will be delivered on the next cold wake.
 
 Apps that can reload credentials in-process may opt in via an OCI image label:
 
