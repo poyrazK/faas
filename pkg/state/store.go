@@ -4013,6 +4013,10 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListAsyncInvocationsForAccount returns the account-scoped, newest-first
+	// async HTTP invocation history for the dashboard. Its cursor is an
+	// Invocation.ID and the query is backed by the async-source partial index.
+	ListAsyncInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
 	// ListDelayedTasksForApp is the customer-facing delayed-task collection.
 	// It is app- and source-scoped and uses the same stable invocation-id cursor
 	// ordering as ListInvocationsForAccount.

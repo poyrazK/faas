@@ -602,16 +602,19 @@ type AppInstancesData struct {
 }
 
 // JobsQueuesData is the dashboard-facing payload for the account-level jobs
-// and queues page. Jobs and runs are account-scoped; queue sections are
-// app-scoped and include bounded pending/dead-letter samples.
+// and queues page. Jobs, runs, and async invocation history are account-scoped;
+// queue sections are app-scoped and include bounded pending/dead-letter samples.
 type JobsQueuesData struct {
-	Jobs         []JobPageItem
-	Runs         []JobRunPageItem
-	Queues       []QueuePageItem
-	SelectedApp  string
-	ActionCSRF   string
-	Action       string
-	ErrorMessage string
+	Jobs                    []JobPageItem
+	Runs                    []JobRunPageItem
+	Queues                  []QueuePageItem
+	AsyncInvocations        []AsyncInvocationPageItem
+	NextAsyncInvocationsURL string
+	AsyncInvocationError    string
+	SelectedApp             string
+	ActionCSRF              string
+	Action                  string
+	ErrorMessage            string
 }
 
 // FailedEventsData backs the account-level Failed Events inbox. The handler
@@ -996,6 +999,22 @@ type QueueMessageItem struct {
 	Payload    string
 	LastError  string
 	Replayable bool
+}
+
+// AsyncInvocationPageItem is the metadata-only dashboard projection of one
+// durable asynchronous HTTP request. Payloads, headers, and results are
+// intentionally omitted from the account-wide history table.
+type AsyncInvocationPageItem struct {
+	ID          string
+	AppSlug     string
+	Method      string
+	Path        string
+	State       string
+	StateClass  string
+	Outcome     string
+	Attempts    int
+	CreatedAt   string
+	CompletedAt string
 }
 
 // InstancePageItem is the safe dashboard projection of one instance. It

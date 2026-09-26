@@ -22,6 +22,7 @@
     .badge.running, .badge.succeeded, .badge.active { background: #d1fae5; color: #065f46; }
     .badge.failed, .badge.dead_letter, .badge.cancelled { background: #fee2e2; color: #991b1b; }
     .badge.queued, .badge.pending, .badge.paused { background: #fef3c7; color: #92400e; }
+    .badge.unknown { background: #eee; color: #555; }
     .queue { border: 1px solid #ddd; border-radius: 6px; padding: 0.8rem; margin: 1rem 0; }
     .queue h3 { margin-top: 0; }
     .actions form { display: inline; }
@@ -87,6 +88,33 @@
         </tbody>
       </table>
     {{else}}<p class="muted">No job runs yet.</p>{{end}}
+
+    {{if not .Data.SelectedApp}}
+      <h2>Recent async invocations</h2>
+      <p class="muted">Durable HTTP requests accepted from async routes. Request payloads and headers are not shown here; inspect an invocation with <code>gregale invocations get &lt;id&gt;</code>.</p>
+      {{if .Data.AsyncInvocationError}}
+        <div class="flash error" role="alert">{{.Data.AsyncInvocationError}}</div>
+      {{else if .Data.AsyncInvocations}}
+        <table aria-label="Recent async invocations">
+          <thead><tr><th>App / invocation</th><th>Request</th><th>Status / outcome</th><th>Attempts</th><th>Accepted</th><th>Finished</th></tr></thead>
+          <tbody>
+            {{range .Data.AsyncInvocations}}
+              <tr>
+                <td>{{if eq .AppSlug "deleted app"}}<span class="muted">{{.AppSlug}}</span>{{else}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+                <td><code>{{.Method}} {{.Path}}</code></td>
+                <td><span class="badge {{.StateClass}}">{{.State}}</span>{{if .Outcome}}<br><small class="muted">{{.Outcome}}</small>{{end}}</td>
+                <td>{{.Attempts}}</td>
+                <td class="nowrap">{{.CreatedAt}}</td>
+                <td class="nowrap">{{if .CompletedAt}}{{.CompletedAt}}{{else}}—{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{if .Data.NextAsyncInvocationsURL}}<nav class="pagination" aria-label="Async invocation pagination"><a href="{{.Data.NextAsyncInvocationsURL}}">Older async invocations</a></nav>{{end}}
+      {{else}}
+        <p class="muted">No async invocations yet. Calls accepted by an async route will appear here with their durable invocation ID.</p>
+      {{end}}
+    {{end}}
 
     <h2>Application queues</h2>
     {{if .Data.Queues}}
