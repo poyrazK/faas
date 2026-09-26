@@ -10,15 +10,15 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	oldStarted := time.Now().UTC().Add(-time.Hour)
 	now := time.Now().UTC()
 	src := Deployment{
-		ID:                 "failed-service",
-		AppID:              "app-service",
-		Status:             DeployFailed,
-		CanaryPreset:       "none",
-		CanaryTotalSteps:   0,
-		TrafficPercent:     0,
-		RolloutState:       "rolling_out",
-		RolloutStartedAt:   &oldStarted,
-		RolloutCompletedAt: &oldStarted,
+		ID:                     "failed-service",
+		AppID:                  "app-service",
+		Status:                 DeployFailed,
+		CanaryPreset:           "none",
+		CanaryTotalSteps:       0,
+		TrafficPercent:         0,
+		RolloutState:           "rolling_out",
+		RolloutStartedAt:       &oldStarted,
+		RolloutCompletedAt:     &oldStarted,
 		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
 	}
 
