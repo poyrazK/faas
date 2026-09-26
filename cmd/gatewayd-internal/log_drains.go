@@ -116,8 +116,8 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 		spoolRoot:  envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
 		httpClient: newAppLogDrainHTTPClient(),
 		workers:    make(map[string]*appLogDrainWorker),
-		active:    make(map[string]int),
-		health:    make(map[string]state.AppLogDrainHealth),
+		active:     make(map[string]int),
+		health:     make(map[string]state.AppLogDrainHealth),
 	}
 }
 
