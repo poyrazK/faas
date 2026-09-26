@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -173,26 +174,37 @@ func TestPg_UpsertAccountSpendSnapshot_InsertAndUpsert(t *testing.T) {
 	}
 }
 
-func TestPg_MTDSpendEurCents_SumsAcrossSources(t *testing.T) {
+// TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage — the metric used to sum
+// account_spend_snapshot, which no production code writes, so the enabled
+// "Spend exceeds €20" preset could never fire. It now reads the month's
+// usage beyond the plan allowance; snapshot rows alone move nothing.
+func TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)
-	acctID, _ := seedTestAccount(t, s, ctx, "mtd")
+	acctID, appID := seedTestAccount(t, s, ctx, "mtd")
 
 	now := time.Now().UTC()
-	// Two closed-set sources, two periods, both inside the MTD
-	// window. The MTD aggregator walks SUM(eur_cents) across
-	// every source, so 'running_seconds' + 'overage' both count.
 	if err := s.UpsertAccountSpendSnapshot(ctx, acctID, now, now.Add(time.Minute), 1.0, 100, "running_seconds"); err != nil {
-		t.Fatalf("UpsertAccountSpendSnapshot (a): %v", err)
-	}
-	if err := s.UpsertAccountSpendSnapshot(ctx, acctID, now, now.Add(2*time.Minute), 2.0, 250, "overage"); err != nil {
-		t.Fatalf("UpsertAccountSpendSnapshot (b): %v", err)
+		t.Fatalf("UpsertAccountSpendSnapshot: %v", err)
 	}
 	got, err := s.MTDSpendEurCents(ctx, acctID)
 	if err != nil {
 		t.Fatalf("MTDSpendEurCents: %v", err)
 	}
-	if got != 350 {
-		t.Errorf("total = %d; want 350 (100 + 250)", got)
+	if got != 0 {
+		t.Fatalf("spend with no usage = %d cents; want 0", got)
+	}
+
+	// Pro includes 250 GB-h; 12 GB-h beyond it is 12 cents of overage.
+	included := int64(api.PlanPro.PlanIncludedGBHours()) * api.SecondsPerGBHour
+	if err := s.AppendUsage(ctx, acctID, appID, uuid.NewString(), now.Truncate(time.Minute), included+12*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	got, err = s.MTDSpendEurCents(ctx, acctID)
+	if err != nil {
+		t.Fatalf("MTDSpendEurCents: %v", err)
+	}
+	if got != 12 {
+		t.Fatalf("spend = %d cents; want 12 (12 GB-h beyond the Pro allowance)", got)
 	}
 }
 

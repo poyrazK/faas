@@ -13540,27 +13540,18 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	return exists, nil
 }
 
-// MTDSpendEurCents returns the SUM(eur_cents) of every
-// account_spend_snapshot row for the account whose period_start
-// is within the current UTC month-to-date window. Used by the
-// alert evaluator's account_spend_eur metric case (issue #1233,
-// ADR-123).
-//
-// MTD boundary is computed at evaluation time (now() at the UTC
-// midnight of the first day of the current month) so the window
-// is stable across meterd restarts. The (account_id, period_start
-// DESC) partial index at migrations/00350 keeps the scan bounded.
+// MTDSpendEurCents returns the account's month-to-date usage spend beyond
+// its plan's included allowance, in cents. Used by the alert evaluator's
+// account_spend_eur metric case (issue #1233, ADR-123).
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
-	var total int64
-	row := s.pool.QueryRow(ctx, `
-		select coalesce(sum(eur_cents), 0)::bigint from account_spend_snapshot
-		 where account_id = $1
-		   and period_start >= date_trunc('month', now() at time zone 'utc')`,
-		accountID)
-	if err := row.Scan(&total); err != nil {
-		return 0, err
-	}
-	return total, nil
+	// account_spend_snapshot has no production writer (only
+	// UpsertAccountSpendSnapshot, which nothing calls), so summing it
+	// returned 0 for every account: the enabled "Spend exceeds €20"
+	// preset and the meterd_account_spend_eur gauge could never move.
+	// Read the month-to-date usage spend beyond the plan's included
+	// allowance from usage_minutes — the same figure the billing page
+	// shows as this month's overage.
+	return s.CurrentMonthOverageCents(ctx, accountID)
 }
 
 // CountNewErrorFingerprintsSince counts app_errors groups whose fingerprint

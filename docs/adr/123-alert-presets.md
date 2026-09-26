@@ -113,6 +113,11 @@ lines 473-531) gains 5 new cases:
 - **`account_spend_eur`** — Postgres path via `MTDSpendEurCents(ctx,
   accountID) int64` summing `account_spend_snapshot.eur_cents` for the
   current UTC month.
+  *Amendment (2026-09-26):* no production code ever wrote
+  `account_spend_snapshot`, so the metric was always 0 and the enabled
+  `spend_eur_20` preset could not fire. `MTDSpendEurCents` now returns the
+  month-to-date usage spend beyond the plan's included allowance, read from
+  `usage_minutes` (the billing page's current-month overage).
 - **`deployment_failed`** — Postgres path mirroring `CountFailedInvocationsSince`
   via `CountFailedDeploymentsSince(ctx, accountID, appID, since) int`.
 - **`cert_expiry_seconds`** — PromQL path; the gauge

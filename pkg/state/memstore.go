@@ -20443,25 +20443,11 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 	return false, nil
 }
 
-// MTDSpendEurCents mirrors the pgstore SUM(eur_cents) over
-// account_spend_snapshot. Returns 0 when no rows exist.
-func (m *MemStore) MTDSpendEurCents(_ context.Context, accountID string) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	monthStart := time.Now().UTC().Add(-time.Duration(time.Now().UTC().Day()-1) * 24 * time.Hour)
-	// Snap to UTC midnight of day 1 — date_trunc equivalent.
-	monthStart = time.Date(monthStart.Year(), monthStart.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var total int64
-	for _, s := range m.accountSpendSnapshots {
-		if s.AccountID != accountID {
-			continue
-		}
-		if s.PeriodStart.Before(monthStart) {
-			continue
-		}
-		total += s.EurCents
-	}
-	return total, nil
+// MTDSpendEurCents mirrors PgStore.MTDSpendEurCents.
+func (m *MemStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
+	// Mirrors PgStore: the month-to-date overage, not the never-written
+	// account_spend_snapshot rows.
+	return m.CurrentMonthOverageCents(ctx, accountID)
 }
 
 // UpsertAccountSpendSnapshot is the memstore mirror of the pg

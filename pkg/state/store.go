@@ -3804,11 +3804,11 @@ type Store interface {
 	// contract; a cold-start app with no invocations returns false.
 	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
 
-	// MTDSpendEurCents returns the SUM(eur_cents) of every
-	// account_spend_snapshot row for the account whose
-	// period_start is within the current UTC month-to-date window.
+	// MTDSpendEurCents returns the account's usage spend beyond its
+	// plan's included allowance for the current UTC month, in cents.
 	// Used by the alert evaluator's account_spend_eur metric
-	// branch (issue #1233, ADR-123).
+	// branch and the meterd_account_spend_eur gauge (issue #1233,
+	// ADR-123).
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
 
 	// CountNewErrorFingerprintsSince counts distinct app error groups first
