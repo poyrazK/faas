@@ -2095,6 +2095,9 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
+	// OverrideReadinessProbe is the optional reversible primary-app traffic
+	// readiness probe. It is independent of startup healthcheck and liveness.
+	OverrideReadinessProbe json.RawMessage `json:"override_readiness_probe,omitempty"`
 	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
 	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is

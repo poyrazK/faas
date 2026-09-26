@@ -1878,7 +1878,7 @@ type CreateDeploymentOverrides struct {
 	// vmmd waitReady + runners ships in PR-C; PR-A persists the
 	// column and surfaces it on the response.
 	Port int `json:"port,omitempty"`
-	// Healthcheck is the optional readiness probe. PR-A persists
+	// Healthcheck is the optional startup readiness probe. PR-A persists
 	// the shape; PR-B stamps AppManifest.Healthz at deploy time;
 	// PR-D activates the runtime half — pkg/fcvm/vmm.go::waitReady
 	// issues an HTTP GET against <HostIP>:8080<Healthcheck.Path>
@@ -1887,6 +1887,10 @@ type CreateDeploymentOverrides struct {
 	// TimeoutS / Retries are stored + validated here but remain
 	// dormant until a v2 contract lands them on the wire.
 	Healthcheck *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// ReadinessProbe is the optional steady-state probe. Unlike Healthcheck,
+	// which gates startup, this probe can withdraw a live instance from routing
+	// and restore it after recovery without restarting the VM.
+	ReadinessProbe *DeploymentReadinessProbe `json:"readiness_probe,omitempty"`
 	// LivenessProbe is the optional liveness probe override
 	// (issue #554 / ADR-078). Per-deployment override wins over
 	// the parent app's per-plan defaults (Hobby/Pro/Scale → 5s /
@@ -1912,7 +1916,7 @@ type CreateDeploymentOverrides struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// DeploymentHealthcheck is the readiness-probe shape on the
+// DeploymentHealthcheck is the startup readiness-probe shape on the
 // override object. Exactly one of Path or GRPC must be configured.
 // Defaults: interval 5s, timeout 2s, retries 3.
 //
@@ -1933,6 +1937,17 @@ type DeploymentHealthcheck struct {
 // primary-app readiness. An empty service checks the overall server health.
 type DeploymentGRPCHealthcheck struct {
 	Service string `json:"service,omitempty"`
+}
+
+// DeploymentReadinessProbe is a reversible, steady-state traffic gate for
+// the primary app. It is distinct from Healthcheck (startup admission) and
+// LivenessProbe (which restarts a wedged VM).
+type DeploymentReadinessProbe struct {
+	Path             string                     `json:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -2142,6 +2157,45 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.retries must be >= 0; got %d.", o.Healthcheck.Retries))
+		}
+	}
+
+	// readiness_probe: exactly one HTTP or standard gRPC health action. Zero
+	// timing/threshold values inherit safe host defaults; explicit values are
+	// bounded to keep one slow endpoint from pinning a vmmd probe goroutine.
+	if o.ReadinessProbe != nil {
+		probe := o.ReadinessProbe
+		pathSet := probe.Path != ""
+		grpcSet := probe.GRPC != nil
+		if pathSet == grpcSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"readiness_probe must set exactly one of path or grpc.")
+		}
+		if pathSet && (!strings.HasPrefix(probe.Path, "/") || strings.ContainsAny(probe.Path, "\r\n")) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.path must start with %q and contain no line breaks; got %q.", "/", probe.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(probe.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if probe.PeriodS < 0 || probe.PeriodS > MaxReadinessPeriodSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.period_s must be 0 (default) or in [1, %d]; got %d.", MaxReadinessPeriodSeconds, probe.PeriodS))
+		}
+		if probe.TimeoutS < 0 || probe.TimeoutS > 5 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.timeout_s must be 0 (default) or in [1, 5]; got %d.", probe.TimeoutS))
+		}
+		if probe.FailureThreshold < 0 || probe.FailureThreshold > 10 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.failure_threshold must be 0 (default) or in [1, 10]; got %d.", probe.FailureThreshold))
 		}
 	}
 
@@ -2505,9 +2559,12 @@ type DeploymentResponse struct {
 	// OverridePort is the listen-port override (0 = absent /
 	// fall back to image default). ADR-053 §Decision 1.
 	OverridePort int `json:"override_port,omitempty"`
-	// OverrideHealthcheck is the readiness-probe override
+	// OverrideHealthcheck is the startup readiness-probe override
 	// verbatim. Persisted; the actual HTTP probe is a follow-up.
 	OverrideHealthcheck *DeploymentHealthcheck `json:"override_healthcheck,omitempty"`
+	// OverrideReadinessProbe is the optional continuous primary-app traffic
+	// readiness probe echoed for audit/debugging.
+	OverrideReadinessProbe *DeploymentReadinessProbe `json:"override_readiness_probe,omitempty"`
 	// OverrideLivenessProbe is the liveness-probe override
 	// verbatim (issue #554 / ADR-078). nil when the deployment
 	// used the per-plan default (Hobby/Pro/Scale → 5s / 3

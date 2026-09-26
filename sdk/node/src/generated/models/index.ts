@@ -287,6 +287,7 @@ export type { DeploymentListResponse } from './DeploymentListResponse.js';
 export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayload.js';
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
+export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
 export type { DevPostgresRequest } from './DevPostgresRequest.js';

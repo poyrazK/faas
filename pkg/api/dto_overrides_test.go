@@ -72,7 +72,8 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 					// shape as env keys / sealed-secret keys, no drift.
 					"DB_URL": "secret:DB_URL",
 				},
-				Port: 9090,
+				Port:           9090,
+				ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz"},
 				Healthcheck: &DeploymentHealthcheck{
 					Path:      "/healthz",
 					IntervalS: 5,
@@ -348,6 +349,60 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 			},
 			wantStatus: http.StatusBadRequest,
 			wantInBody: "healthcheck.grpc.service must be at most 256 characters",
+		},
+		// Continuous primary-app readiness validation.
+		{
+			name: "readiness-probe-defaults-http",
+			overrides: &CreateDeploymentOverrides{
+				ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz"},
+			},
+		},
+		{
+			name: "readiness-probe-grpc",
+			overrides: &CreateDeploymentOverrides{
+				ReadinessProbe: &DeploymentReadinessProbe{
+					GRPC:    &DeploymentGRPCHealthcheck{Service: "catalog.v1.Catalog"},
+					PeriodS: 10, TimeoutS: 3, FailureThreshold: 2,
+				},
+			},
+		},
+		{
+			name:       "readiness-probe-requires-exactly-one-action",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe must set exactly one of path or grpc",
+		},
+		{
+			name: "readiness-probe-rejects-both-actions",
+			overrides: &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{
+				Path: "/readyz", GRPC: &DeploymentGRPCHealthcheck{},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe must set exactly one of path or grpc",
+		},
+		{
+			name:       "readiness-probe-path-must-start-with-slash",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "readyz"}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: `readiness_probe.path must start with "/"`,
+		},
+		{
+			name:       "readiness-probe-period-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", PeriodS: 61}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.period_s must be 0 (default) or in [1, 60]",
+		},
+		{
+			name:       "readiness-probe-timeout-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", TimeoutS: 6}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.timeout_s must be 0 (default) or in [1, 5]",
+		},
+		{
+			name:       "readiness-probe-failure-threshold-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", FailureThreshold: 11}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.failure_threshold must be 0 (default) or in [1, 10]",
 		},
 		// Issue #554 / ADR-078: liveness_probe validation.
 		{

@@ -346,6 +346,11 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 			dep.OverrideHealthcheck = b
 		}
 	}
+	if o.ReadinessProbe != nil {
+		if b, err := json.Marshal(o.ReadinessProbe); err == nil {
+			dep.OverrideReadinessProbe = b
+		}
+	}
 	// Liveness probe override (issue #554 / ADR-078). Persist
 	// the JSONB body so cmd/vmmd's liveness_recv goroutine can
 	// pick it up at every BringUp via the resolved struct

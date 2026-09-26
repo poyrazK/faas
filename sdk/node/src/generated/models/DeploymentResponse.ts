@@ -5,6 +5,7 @@
 import type { BuildPlan } from './BuildPlan.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
+import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
@@ -104,9 +105,13 @@ export type DeploymentResponse = {
    */
   override_port?: number;
   /**
-   * Readiness-probe override. Persisted verbatim; the actual HTTP probe is a follow-up — today waitReady stays a bare TCP accept.
+   * Startup readiness-probe override echoed verbatim.
    */
   override_healthcheck?: (DeploymentHealthcheck | null);
+  /**
+   * Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted.
+   */
+  override_readiness_probe?: (DeploymentReadinessProbe | null);
   /**
    * Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so the customer can audit which probe the host (cmd/vmmd) is running against the VM.
    */

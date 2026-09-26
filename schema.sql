@@ -2455,6 +2455,7 @@ CREATE TABLE public.deployments (
     scan_status text,
     scanned_at timestamp with time zone,
     override_liveness_probe jsonb,
+    override_readiness_probe jsonb,
     parked_reason text,
     parked_at timestamp with time zone,
     traffic_percent integer DEFAULT 100 NOT NULL,

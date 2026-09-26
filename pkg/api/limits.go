@@ -4112,6 +4112,13 @@ const (
 	ColdBootBudgetSeconds    = 30
 	MinLivenessPeriodSeconds = 1
 	MaxLivenessPeriodSeconds = 60
+	// Readiness probes are traffic gates rather than restart triggers. A short
+	// default keeps unhealthy instances out of the pool promptly while the
+	// threshold dampens transient failures.
+	DefaultReadinessPeriodSeconds    = 5
+	DefaultReadinessTimeoutSeconds   = 2
+	DefaultReadinessFailureThreshold = 3
+	MaxReadinessPeriodSeconds        = 60
 
 	// Autoscale (issue #169 / §17 G8). ScaleUpDecisionIntervalSeconds
 	// is the trigger's tick rate — 1 s balances "admit the Nth
