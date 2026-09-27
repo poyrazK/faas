@@ -69,8 +69,8 @@ func isSyntheticInvocation(ctx context.Context) bool {
 // minted after resolving and authorizing a service caller. Customer-supplied
 // x-faas-* headers remain stripped at the guest boundary; only this
 // platform-authored assertion may cross it.
-func withTrustedServiceCallerAssertion(ctx context.Context) context.Context {
-	return context.WithValue(ctx, trustedServiceCallerAssertionContextKey{}, true)
+func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
 }
 
 func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {

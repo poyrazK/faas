@@ -131,7 +131,7 @@ func TestRawRequestHeadForwardsOnlyTrustedServiceCallerAssertion(t *testing.T) {
 			req.Header.Set("Upgrade", "websocket")
 			req.Header.Set(ServiceCallerAssertionHeader, "signed-token")
 			if tc.trusted {
-				req = req.WithContext(withTrustedServiceCallerAssertion(req.Context()))
+				req = withTrustedServiceCallerAssertion(req)
 			}
 
 			head, err := rawRequestHead(req)

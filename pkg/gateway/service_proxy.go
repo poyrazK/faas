@@ -1130,7 +1130,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 		}
 	}
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
-		request = request.WithContext(withTrustedServiceCallerAssertion(request.Context()))
+		request = withTrustedServiceCallerAssertion(request)
 	}
 	return request
 }
