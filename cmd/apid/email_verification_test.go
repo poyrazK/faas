@@ -110,6 +110,9 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 			{http.MethodPost, "/v1/projects/blocked/environments/prod/promote", `{}`},
 			{http.MethodPost, "/v1/apps/blocked-app/github/bind", `{}`},
 			{http.MethodPost, "/v1/apps/blocked-app/github/sync", `{}`},
+			// A developer session creates an app and can provision a
+			// managed Postgres database; both routes require verification.
+			{http.MethodPut, "/v1/dev/sessions/blocked-project", `{}`},
 		}
 		for _, tc := range cases {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
