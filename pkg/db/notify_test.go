@@ -69,6 +69,27 @@ func TestParseRuntimeConfigChangedPayload(t *testing.T) {
 	}
 }
 
+func TestParseAppEgressPolicyChangedPayload(t *testing.T) {
+	const appID = "b4384cf7-c484-4cf8-a22f-0cbda3f8c90a"
+	got, err := ParseAppEgressPolicyChangedPayload(`{"app_id":"` + appID + `","revision":7}`)
+	if err != nil {
+		t.Fatalf("parse valid payload: %v", err)
+	}
+	if got.AppID != appID || got.Revision != 7 {
+		t.Fatalf("payload = %+v, want app %s revision 7", got, appID)
+	}
+	for _, raw := range []string{
+		`{"app_id":"` + appID + `"}`,
+		`{"app_id":"not-a-uuid","revision":1}`,
+		`{"app_id":"` + appID + `","revision":0}`,
+		`not-json`,
+	} {
+		if _, err := ParseAppEgressPolicyChangedPayload(raw); err == nil {
+			t.Errorf("parse invalid payload %q: got nil error", raw)
+		}
+	}
+}
+
 // TestSubscribeWithReconnect_ClosesOnCtxCancel ensures the wrapper's outer
 // channel shuts down cleanly when the caller's context is cancelled (the
 // one path the wrapper exposes its own close on).

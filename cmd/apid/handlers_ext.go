@@ -58,6 +58,14 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+	} else if errors.Is(err, state.ErrNotFound) {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+	} else {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
 		resp.Status = api.AppStatusUndeployed
 	} else if err != nil {
@@ -112,6 +120,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
 			return api.ErrPlanInternalIngressNotAllowed(acct.Plan)
 		}
+	}
+	// The app-wide edge bucket is a tightening-only runtime policy. Zero
+	// restores the plan default; a positive override cannot exceed the plan
+	// ceiling. Keep validation here so malformed direct store callers are still
+	// protected by the database constraint as a second line of defense.
+	if req.RequestRateLimitRPS != nil && (*req.RequestRateLimitRPS < 0 || *req.RequestRateLimitRPS > limits.RateLimitRPS) {
+		return api.ErrValidation(fmt.Sprintf("request_rate_limit_rps must be 0..%d (0 restores the plan default); got %d", limits.RateLimitRPS, *req.RequestRateLimitRPS))
+	}
+	if req.RequestRateLimitBurst != nil && (*req.RequestRateLimitBurst < 0 || *req.RequestRateLimitBurst > limits.RateLimitBurst) {
+		return api.ErrValidation(fmt.Sprintf("request_rate_limit_burst must be 0..%d (0 restores the plan default); got %d", limits.RateLimitBurst, *req.RequestRateLimitBurst))
 	}
 	if manifest, changed := mergedLifecycleManifest(app, req); changed {
 		maxConcurrency := app.MaxConcurrency
@@ -1355,11 +1373,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// (enabled=true + nil/empty origins) case so
 		// reaching this branch with enabled=true means
 		// a valid non-empty list is in hand.
-		CORSDefaultEnabled:    req.CORSDefaultEnabled,
-		SetCORSDefaultEnabled: req.CORSDefaultEnabled != nil,
-		CORSDefaultOrigins:    req.CORSDefaultOrigins,
-		SetCORSDefaultOrigins: req.CORSDefaultEnabled != nil && *req.CORSDefaultEnabled,
-		Manifest:              lifecycleManifest,
+		CORSDefaultEnabled:       req.CORSDefaultEnabled,
+		SetCORSDefaultEnabled:    req.CORSDefaultEnabled != nil,
+		CORSDefaultOrigins:       req.CORSDefaultOrigins,
+		SetCORSDefaultOrigins:    req.CORSDefaultEnabled != nil && *req.CORSDefaultEnabled,
+		RequestRateLimitRPS:      req.RequestRateLimitRPS,
+		SetRequestRateLimitRPS:   req.RequestRateLimitRPS != nil,
+		RequestRateLimitBurst:    req.RequestRateLimitBurst,
+		SetRequestRateLimitBurst: req.RequestRateLimitBurst != nil,
+		Manifest:                 lifecycleManifest,
 	}
 	if req.PublicAuth != nil {
 		// params.PublicAuth is unset when req.PublicAuth is
@@ -1406,6 +1428,18 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.MaxConcurrency != nil {
 		oldApp["max_concurrency"] = app.MaxConcurrency
 		newApp["max_concurrency"] = updated.MaxConcurrency
+	}
+	if req.RequestRateLimitRPS != nil {
+		oldRPS, _ := appRequestRateLimits(app, acct.Plan)
+		newRPS, _ := appRequestRateLimits(updated, acct.Plan)
+		oldApp["request_rate_limit_rps"] = oldRPS
+		newApp["request_rate_limit_rps"] = newRPS
+	}
+	if req.RequestRateLimitBurst != nil {
+		_, oldBurst := appRequestRateLimits(app, acct.Plan)
+		_, newBurst := appRequestRateLimits(updated, acct.Plan)
+		oldApp["request_rate_limit_burst"] = oldBurst
+		newApp["request_rate_limit_burst"] = newBurst
 	}
 	if req.IdleTimeoutS != nil {
 		oldApp["idle_timeout_s"] = app.IdleTimeoutS

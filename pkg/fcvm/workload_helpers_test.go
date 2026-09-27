@@ -28,12 +28,13 @@ import (
 // for older apid or hand-crafted WakeRequests in metal tests.
 func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 	req := WakeRequest{
-		LayerKey:   "apps/main.ext4",
-		VcpuCount:  2,
-		MemSizeMiB: 256,
-		Port:       8080,
+		LayerKey:      "apps/main.ext4",
+		VcpuCount:     2,
+		MemSizeMiB:    256,
+		CPUMillicores: 500,
+		Port:          8080,
 		Sidecars: []WorkloadSpec{
-			{Name: "metrics", Type: "sidecar", StorageKey: "apps/metrics.ext4", DriveID: "layer-sidecar-0", RamMB: 64, Port: 9090, Essential: true},
+			{Name: "metrics", Type: "sidecar", StorageKey: "apps/metrics.ext4", DriveID: "layer-sidecar-0", RamMB: 64, CPUMillicores: 250, Port: 9090, Essential: true},
 			{Name: "main", Type: "sidecar", StorageKey: "apps/evil.ext4", DriveID: "layer-sidecar-1", RamMB: 32, Port: 9091, Essential: false},
 			{Name: "logger", Type: "sidecar", StorageKey: "apps/logger.ext4", DriveID: "layer-sidecar-2", RamMB: 32, Port: 9092, Essential: true},
 		},
@@ -48,8 +49,14 @@ func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 	if got[0].Type != "main" {
 		t.Errorf("got[0].Type = %q, want %q", got[0].Type, "main")
 	}
+	if got[0].CPUMillicores != 0 {
+		t.Errorf("main workload CPU = %d, want inherit app's live-updatable VM ceiling", got[0].CPUMillicores)
+	}
 	if got[1].Name != "metrics" {
 		t.Errorf("got[1].Name = %q, want %q", got[1].Name, "metrics")
+	}
+	if got[1].CPUMillicores != 250 {
+		t.Errorf("sidecar CPU = %d, want independent 250m workload policy", got[1].CPUMillicores)
 	}
 	if got[2].Name != "logger" {
 		t.Errorf("got[2].Name = %q, want %q", got[2].Name, "logger")

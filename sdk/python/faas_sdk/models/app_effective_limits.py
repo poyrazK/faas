@@ -42,9 +42,10 @@ class AppEffectiveLimits:
     concurrency_queue_wait_ms: int
     """Effective maximum warm saturation wait in milliseconds."""
     app_request_rate_rps: int
-    """Per-app edge token-bucket refill rate, in requests per second."""
+    """Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime
+    override."""
     app_request_burst: int
-    """Per-app edge token-bucket burst capacity."""
+    """Effective per-app edge token-bucket burst capacity after any app-level runtime override."""
     account_request_rate_rpm: int
     """Account-wide edge token-bucket refill rate across all apps, in requests per minute."""
     request_budget_ms: int

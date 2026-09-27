@@ -504,6 +504,13 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
+	requestRateLimitRPS, requestRateLimitBurst := 0, 0
+	if app.RequestRateLimitRPS != nil {
+		requestRateLimitRPS = *app.RequestRateLimitRPS
+	}
+	if app.RequestRateLimitBurst != nil {
+		requestRateLimitBurst = *app.RequestRateLimitBurst
+	}
 	return gateway.App{
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
@@ -522,6 +529,8 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		AutoscaleTargetRPS:           app.AutoscaleTargetRPS,
 		IdleTimeoutS:                 app.IdleTimeoutS,
 		RequestTimeoutS:              app.Manifest.RequestTimeoutS,
+		RequestRateLimitRPS:          requestRateLimitRPS,
+		RequestRateLimitBurst:        requestRateLimitBurst,
 		Slug:                         app.Slug,
 		IsPreview:                    app.PreviewOfSlug != "",
 		StreamingEnabled:             app.StreamingEnabled,
@@ -802,9 +811,10 @@ type invalidator interface {
 	// transient CA failure.
 	RequestCertForSurface(ctx context.Context, surfaceID string) error
 	// ResetCorsPresets (issue #975 #4 PR-B / ADR-129 D4) drops
-	// the per-host edge-rule LRU for the affected account so
-	// the next request recompiles and re-fetches the up-to-date
-	// preset via state.GetCorsPresetByID. Wholesale reset is
+	// the per-host edge-rule LRU and response cache so the next
+	// request recompiles and re-fetches the up-to-date preset via
+	// state.GetCorsPresetByID, and cannot serve cached old CORS
+	// headers. Wholesale reset is
 	// correct: the per-rule compile path re-reads the preset
 	// on every cache miss, so the post-reset compile produces
 	// resolved actions against the latest row. The account_id
@@ -1286,9 +1296,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// allow_origins / allow_methods / etc. into the
 		// resolved EdgeRuleCORSResolved slice at compile
 		// time, so a preset edit leaves stale resolved
-		// shapes in the per-host LRU. Wholesale
-		// ResetEdgeRules drops the LRU so the next request
-		// recompiles and re-fetches the preset from PG.
+		// shapes in the per-host LRU. ResetCorsPresets also
+		// purges the response cache so old CORS headers cannot
+		// survive in cached responses.
 		// The account_id payload is informational; the
 		// LRU is per-host keyed, not per-account, so a
 		// surgical per-account eviction would require a

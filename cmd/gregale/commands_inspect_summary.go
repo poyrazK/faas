@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 )
 
-const inspectSummarySchemaVersion = 1
+const inspectSummarySchemaVersion = 2
 
 type inspectSummary struct {
 	SchemaVersion   int                     `json:"schema_version"`
@@ -28,14 +28,15 @@ type inspectSummary struct {
 }
 
 type inspectAppSummary struct {
-	ID            string `json:"id"`
-	Slug          string `json:"slug"`
-	URL           string `json:"url"`
-	Status        string `json:"status"`
-	Type          string `json:"type"`
-	Runtime       string `json:"runtime,omitempty"`
-	WorkloadClass string `json:"workload_class,omitempty"`
-	Protocol      string `json:"protocol,omitempty"`
+	ID                     string                        `json:"id"`
+	Slug                   string                        `json:"slug"`
+	URL                    string                        `json:"url"`
+	Status                 string                        `json:"status"`
+	DeploymentAvailability api.AppDeploymentAvailability `json:"deployment_availability,omitempty"`
+	Type                   string                        `json:"type"`
+	Runtime                string                        `json:"runtime,omitempty"`
+	WorkloadClass          string                        `json:"workload_class,omitempty"`
+	Protocol               string                        `json:"protocol,omitempty"`
 }
 
 type inspectRuntimeSummary struct {
@@ -202,7 +203,8 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		SchemaVersion: inspectSummarySchemaVersion,
 		App: inspectAppSummary{
 			ID: app.ID, Slug: app.Slug, URL: canonicalAppURL(app), Status: app.Status,
-			Type: app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
+			DeploymentAvailability: app.DeploymentAvailability,
+			Type:                   app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
 		},
 		Resources:   inspectResources(app),
 		API:         inspectOpenAPI(in.OpenAPIRaw),
@@ -445,7 +447,9 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	add := func(code, severity, message, next string) {
 		out = append(out, inspectRecommendation{Code: code, Severity: severity, Message: message, Next: next})
 	}
-	if !summary.Release.Available && !containsString(summary.Unavailable, "deployment") {
+	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")
+	} else if !summary.Release.Available && !containsString(summary.Unavailable, "deployment") {
 		add("deploy_required", "warning", "No deployment was found for this app.", "Run `gregale deploy` from the application source directory.")
 	} else if summary.Release.Status == "failed" {
 		add("deployment_failed", "error", "The latest deployment failed.", "Run `gregale inspect "+summary.App.Slug+" --errors` for the persisted explanation.")
@@ -510,7 +514,11 @@ func containsString(values []string, want string) bool {
 
 func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 	_, _ = fmt.Fprintf(w, "%s\n", summary.App.Slug)
-	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s\n", fallback(summary.App.Status), fallback(summary.App.Type), fallback(summary.App.WorkloadClass))
+	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(summary.App.Status), fallback(summary.App.Type), fallback(summary.App.WorkloadClass))
+	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
+	}
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "  url:       %s\n", fallback(summary.App.URL))
 	renderInspectRuntime(w, summary.Runtime)
 	renderInspectResources(w, summary.Resources)

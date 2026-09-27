@@ -771,6 +771,23 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist)
 }
 
+// UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept
+// outside RoutedVMM so existing scheduler lifecycle fakes remain source
+// compatible; the durable CPU-policy subscriber opts into this capability.
+func (r *VMMRouter) UpdateAppCPULimit(ctx context.Context, nodeID, appID string, revision int64, cpuMillicores int) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateAppCPULimit(context.Context, string, int64, int) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: app CPU policy update unsupported by node %q", nodeID)
+	}
+	return updater.UpdateAppCPULimit(ctx, appID, revision, cpuMillicores)
+}
+
 // UpdatePrivateNetwork routes a provider-verified private-network update to
 // the vmmd owning the live instance. Kept outside RoutedVMM for compatibility
 // with existing scheduler fakes; callers opt into this additive capability via

@@ -965,6 +965,20 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	return nil
 }
 
+// UpdateAppCPULimit pushes a validated, complete app CPU quota to vmmd. The
+// gRPC operation updates live host cgroups without guest restart; RAM and vCPU
+// topology remain cold-boot attributes.
+func (c *VMMClient) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if _, err := c.cli.UpdateAppCPULimit(ctx, &vmmdpb.UpdateAppCPULimitRequest{
+		AppId:         appID,
+		CpuMillicores: int32(cpuMillicores),
+		Revision:      revision,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // UpdatePrivateNetwork applies the provider-verified private destination set
 // to all live instances of an app on this vmmd.
 func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {

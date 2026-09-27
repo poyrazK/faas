@@ -346,6 +346,32 @@ func TestCmdApps_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestCmdAppsShowsNoLiveDeploymentSeparatelyFromLifecycle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]api.AppResponse{{
+			Slug: "stalled-app", Status: "active", URL: "https://stalled.example.com",
+			DeploymentAvailability: api.AppDeploymentAvailabilityMissing,
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	if code := cmdApps(); code != 0 {
+		t.Fatalf("cmdApps = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "NO LIVE DEPLOYMENT") {
+		t.Fatalf("app list omitted no-live state:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "stalled-app") || !strings.Contains(stdout.String(), "active") {
+		t.Fatalf("app list omitted lifecycle details:\n%s", stdout.String())
+	}
+}
+
 func TestCmdApps_Unauthenticated(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "")
 	dir := t.TempDir()
