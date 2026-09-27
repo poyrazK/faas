@@ -480,14 +480,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		return reconcile.Result{}, err
 	}
-	if !isTag && s.BranchHeads != nil {
-		currentSHA, headErr := s.BranchHeads.BranchHead(ctx, install.InstallationID, ev.Repository.FullName, branch)
+	if !isTag {
+		current, headErr := s.pushBranchHeadIsCurrent(ctx, install.InstallationID, ev.Repository.FullName, branch, ev.After)
 		if headErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
 		}
-		if !strings.EqualFold(currentSHA, ev.After) {
-			s.Log.Info("githubd: ignore superseded push", "repo", ev.Repository.FullName,
-				"branch", branch, "event_sha", ev.After, "head_sha", currentSHA)
+		if !current {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}
@@ -514,6 +512,19 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	scan, err := s.Reconcile.Scan(tree.FS())
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+	}
+	// Fetch and scan can take long enough for the branch to advance after
+	// the pre-fetch check. Re-read the remote head immediately before applying
+	// the webhook so an event that became stale during that work is retried or
+	// ignored without changing project state.
+	if !isTag {
+		current, headErr := s.pushBranchHeadIsCurrent(ctx, install.InstallationID, ev.Repository.FullName, branch, ev.After)
+		if headErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: recheck push branch head: %w", headErr)
+		}
+		if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
 	}
 	// githubd is push-driven (no --exclude analog on the webhook
 	// path); pass nil so workloadDiff's exclude filter is a no-op.
@@ -712,6 +723,26 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		"files", len(changedFiles),
 		"pusher", ev.Pusher.Name)
 	return result, nil
+}
+
+// pushBranchHeadIsCurrent reports whether eventSHA still names the remote
+// branch head. A missing checker preserves the test and legacy service
+// behavior; production wires an unavailable checker when GitHub credentials
+// are not configured, so production push handling fails closed.
+func (s *Service) pushBranchHeadIsCurrent(ctx context.Context, installationID int64, repo, branch, eventSHA string) (bool, error) {
+	if s.BranchHeads == nil {
+		return true, nil
+	}
+	currentSHA, err := s.BranchHeads.BranchHead(ctx, installationID, repo, branch)
+	if err != nil {
+		return false, err
+	}
+	if strings.EqualFold(currentSHA, eventSHA) {
+		return true, nil
+	}
+	s.Log.Info("githubd: ignore superseded push", "repo", repo,
+		"branch", branch, "event_sha", eventSHA, "head_sha", currentSHA)
+	return false, nil
 }
 
 // scopeForPush resolves a branch to its deployment scope. The production

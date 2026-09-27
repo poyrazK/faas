@@ -55,8 +55,10 @@ between CI runs still produces an immutable SHA-pinned build
 row.
 
 For App-driven push deployments, Gregale checks that the webhook's commit is
-still the branch head before it fetches source. If the branch has advanced,
-the older delivery is ignored. Once a GitHub deployment is accepted, its
+still the branch head before it fetches source and checks again after scanning,
+immediately before reconciliation. If the branch has advanced, the older
+delivery is ignored without changing project state. See
+[ADR-287](adr/287-github-push-head-recheck.md). Once a GitHub deployment is accepted, its
 per-app revision also prevents an older in-flight GitHub build from becoming
 live after a newer deployment was accepted for the same environment. A manual
 `--repo --ref` request is an explicit deployment choice, including an older
