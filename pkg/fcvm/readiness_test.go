@@ -1,3 +1,4 @@
+// adr: 281 — primary-app readiness is a recurring, reversible traffic gate.
 package fcvm
 
 import (

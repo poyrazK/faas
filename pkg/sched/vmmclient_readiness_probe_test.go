@@ -1,3 +1,4 @@
+// adr: 281 — pass the configured primary-app readiness probe to the VM.
 package sched
 
 import "testing"
