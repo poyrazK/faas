@@ -165,6 +165,13 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	if trafficPayload == "" {
 		t.Fatalf("no kind=traffic deployment_changed payload found; calls=%v", calls)
 	}
+	deployments, err := store.ListDeploymentsForApp(context.Background(), app.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list deployments after policy update: %v", err)
+	}
+	if len(deployments) != 2 {
+		t.Fatalf("deployments after traffic policy update = %d, want the original two (no deploy)", len(deployments))
+	}
 }
 
 // TestPatchDeploymentTraffic_AllowsFreePlan_Notifies is the inverse of the

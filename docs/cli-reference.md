@@ -1231,7 +1231,13 @@ List custom domain bindings
 
 ### domains add
 
-Bind a custom domain to an app
+Bind a custom domain to an app or project environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--domain <DOMAIN>` | domain to attach (required) | required |
+| `--app <SLUG>` | app slug to attach to (required) | required |
+| `--environment <SLUG>` | project environment to route this domain to |  |
 
 ### domains rm
 
@@ -2316,7 +2322,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]
 
 #### projects environments list
 
@@ -2401,11 +2407,28 @@ Plan a promotion
 
 `gregale projects environments preview [flags]`
 
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--to <ENV>` | target environment | required |
+| `--sync-config` | include non-secret source config in the promotion preview |  |
+
 #### projects environments promote
 
 Promote workloads
 
 `gregale projects environments promote [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--to <ENV>` | target environment | required |
+| `--sync-config` | copy source non-secret environment configuration to the target |  |
+| `--yes` | confirm the promotion |  |
+| `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
+| `--wait` | wait for the promotion to reach a terminal status |  |
+| `--progress` | print promotion transitions while waiting (human output only) |  |
+| `--timeout <SECONDS>` | maximum seconds to wait for promotion completion |  |
 
 #### projects environments status
 

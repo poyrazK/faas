@@ -1,5 +1,7 @@
 # Managed realtime callback delivery
 
+## Symptom
+
 `FaasRealtimeCallbackReplayStalled` means the node has pending callbacks older
 than five minutes and replay has delivered none for five minutes. Check
 `realtimed_callback_pending`, `realtimed_callback_oldest_pending_age_seconds`,
@@ -52,6 +54,8 @@ more dead letters that need operator review.
 `FaasRealtimeCallbackDeadLettersEvicted` means at least one dead letter was
 removed in the past hour, including during daemon startup.
 
+## Check
+
 1. Identify the affected `realtimed` target in Prometheus. Check
    `realtimed_callback_dead_letters`, `realtimed_callback_dead_letter_bytes`,
    `realtimed_callback_dead_letter_capacity_bytes`, and
@@ -70,6 +74,16 @@ removed in the past hour, including during daemon startup.
    `/var/lib/faas/realtime-callbacks/dead/` (or the configured
    `FAAS_REALTIME_CALLBACK_OUTBOX` path) with operator-only access. Review
    callback status and application logs to correct the delivery failure.
+
+## Recover
+
+1. Copy records needed for investigation to a restricted location before
+   retention evicts them. Keep the event ID for application deduplication;
+   dead letters do not replay automatically.
+2. If the configured limit is too small for the investigation window, set
+   `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` to a positive byte count in the
+   realtimed environment and restart the daemon. Size the limit against
+   available node disk space. Lowering it evicts oldest files at startup.
 3. After fixing the receiver, replay one event by its ID through the same
    private socket:
 
@@ -83,11 +97,6 @@ removed in the past hour, including during daemon startup.
    HTTP 409 means the pending queue has no capacity or an active delivery
    would violate the connection's callback order; wait for the backlog to
    drain and retry. The outbox does not replay dead letters automatically.
-4. Copy records needed for investigation before retention evicts them. If the
-   configured limit is too small for the investigation window, set
-   `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` to a positive byte count in the
-   realtimed environment and restart the daemon. Size the limit against
-   available node disk space. Lowering it evicts oldest files at startup.
 
 The default dead-letter limit is 64 MiB, separate from the 64 MiB pending
 callback limit. Retention removes the oldest files by modification time,
