@@ -178,6 +178,8 @@ func TestRetentionSQL_HasBoundedDeleteShape(t *testing.T) {
 	}
 }
 
+// adr: 127 pins expiry of the minimal public request-ID journal independently
+// from sampled request telemetry retention.
 func TestRetentionOnceRequestIDJournalUsesBoundedExpiryDelete(t *testing.T) {
 	r := &recordingExecer{rowsFn: func(int) int64 { return 12 }}
 	got, err := RetentionOnceRequestIDJournal(context.Background(), r)
