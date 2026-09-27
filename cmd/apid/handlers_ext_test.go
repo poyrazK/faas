@@ -2639,6 +2639,54 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateDomain_EnvironmentScope(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "domain-project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "domain-workload", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "staging.example.com", AppID: app.Slug, Environment: "staging",
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Domain != "staging.example.com" || response.AppID != app.ID || response.Environment != "staging" {
+		t.Fatalf("environment domain response = %+v", response)
+	}
+	stored, err := e.store.DomainByName(ctx, response.Domain)
+	if err != nil || stored.AppID != app.ID || stored.EnvironmentID == "" {
+		t.Fatalf("stored environment domain = %+v err=%v", stored, err)
+	}
+	if err := e.store.MarkDomainVerified(ctx, response.Domain); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/domains/staging.example.com/default", nil, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+
+	rec = e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "missing.example.com", AppID: app.Slug, Environment: "preview-404",
+	}, nil)
+	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+}
+
 func TestCreateDomain_PerIPChallengeRateLimit(t *testing.T) {
 	e := setup(t, api.PlanScale)
 	appID := mustSeedApp(t, e, "domain-rate-limit")

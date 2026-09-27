@@ -31,7 +31,18 @@ type dynamicEnvironmentRouter struct {
 	host string
 }
 
+type cachedCustomDomainRouter struct {
+	*fakeRouter
+	active bool
+	checks int
+}
+
 func (r *dynamicEnvironmentRouter) IsDynamicRouteHost(host string) bool { return host == r.host }
+
+func (r *cachedCustomDomainRouter) CachedCustomDomainRouteActive(context.Context, string, string) (bool, error) {
+	r.checks++
+	return r.active, nil
+}
 
 func TestPGBackendDynamicEnvironmentHostNeverServesCachedOrStaleRelease(t *testing.T) {
 	const host = "env-example.gregale.dev"
@@ -63,6 +74,51 @@ func TestPGBackendDynamicEnvironmentHostNeverServesCachedOrStaleRelease(t *testi
 	}
 	if calls := r.resolveCalls(); calls != 4 {
 		t.Fatalf("dynamic route lookups = %d, want one per request", calls)
+	}
+}
+
+func TestPGBackendDynamicCustomDomainNeverCachesEnvironmentTarget(t *testing.T) {
+	const host = "staging.example.test"
+	r := &fakeRouter{byID: map[string]gateway.App{host: {
+		ID: "app-1", PinnedDeploymentID: "deployment-1", PinnedDeploymentScope: "staging", DynamicRoute: true,
+	}}}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "deployment-2", PinnedDeploymentScope: "staging", DynamicRoute: true}
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-2" {
+		t.Fatalf("promoted route = %+v ok=%v", app, ok)
+	}
+	if calls := r.resolveCalls(); calls != 2 {
+		t.Fatalf("dynamic custom-domain lookups = %d, want one per request", calls)
+	}
+}
+
+func TestPGBackendCustomDomainCacheCannotSurviveEnvironmentReassignment(t *testing.T) {
+	const host = "staging.example.test"
+	r := &cachedCustomDomainRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {ID: "app-1", CustomDomainRoute: true}}},
+		active:     true,
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.ID != "app-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "staging-release", PinnedDeploymentScope: "staging", DynamicRoute: true, CustomDomainRoute: true}
+	r.mu.Unlock()
+	r.active = false // the row is now environment-scoped or no longer exists
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "staging-release" {
+		t.Fatalf("reassigned route = %+v ok=%v", app, ok)
+	}
+	if calls := r.resolveCalls(); calls != 2 {
+		t.Fatalf("route lookups = %d, want fresh resolution after reassignment", calls)
+	}
+	if r.checks != 1 {
+		t.Fatalf("cached custom-domain validations = %d, want 1", r.checks)
 	}
 }
 

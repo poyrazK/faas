@@ -304,6 +304,13 @@ type App struct {
 	// scoped configuration it was built to serve.
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string
+	// CustomDomainRoute records that the resolved host is a verified custom
+	// domain, so its cache entry can revalidate current domain ownership.
+	CustomDomainRoute bool
+	// DynamicRoute marks a route whose environment release pointer may change
+	// independently of domain ownership. PGBackend bypasses host and stale
+	// caches for these targets.
+	DynamicRoute bool
 	// CORS improvements D1: per-app default CORS
 	// opt-in. Plumbed from apps.cors_default_enabled
 	// through pgRouter.toApp so applyEdgeRuleCORS

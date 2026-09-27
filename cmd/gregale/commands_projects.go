@@ -407,6 +407,10 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 		for _, change := range workload.Bindings {
 			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
 		}
+		if workload.Domains.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  domains  %-20s %s -> %s\n", workload.Domains.Kind,
+				environmentDomainSummary(workload.Domains.Before), environmentDomainSummary(workload.Domains.After))
+		}
 		if workload.Routes.Kind != "unchanged" {
 			_, _ = fmt.Fprintf(osStdout, "  routes   %-20s %s -> %s\n", workload.Routes.Kind,
 				routePolicySummary(workload.Routes.Before), routePolicySummary(workload.Routes.After))
@@ -420,6 +424,21 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 	for _, resource := range diff.SharedResources {
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
 	}
+}
+
+func environmentDomainSummary(domains []api.ProjectEnvironmentDomainResponse) string {
+	if len(domains) == 0 {
+		return "<none>"
+	}
+	values := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		status := "pending"
+		if domain.Verified {
+			status = "verified"
+		}
+		values = append(values, domain.Domain+" ("+status+")")
+	}
+	return strings.Join(values, ", ")
 }
 
 func edgePolicySummary(policy api.ProjectEnvironmentEdgePolicyResponse) string {

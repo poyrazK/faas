@@ -1087,7 +1087,7 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 const createCustomDomain = `-- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at
+returning domain, app_id, challenge_token, verified_at, environment_id
 `
 
 type CreateCustomDomainParams struct {
@@ -1101,6 +1101,7 @@ type CreateCustomDomainRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error) {
@@ -1111,6 +1112,7 @@ func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCus
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -1965,7 +1967,7 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 }
 
 const domainByName = `-- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1
 `
 
@@ -1974,6 +1976,7 @@ type DomainByNameRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error) {
@@ -1984,6 +1987,7 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -5941,7 +5945,7 @@ func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg Li
 }
 
 const listDomainsForAccount = `-- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain
 `
@@ -5951,6 +5955,7 @@ type ListDomainsForAccountRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error) {
@@ -5967,6 +5972,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -5979,7 +5985,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 }
 
 const listDomainsForApp = `-- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain
 `
 
@@ -5988,6 +5994,7 @@ type ListDomainsForAppRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error) {
@@ -6004,6 +6011,7 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}

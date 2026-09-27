@@ -619,6 +619,8 @@ export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigC
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentDiffResponse } from './ProjectEnvironmentDiffResponse.js';
+export type { ProjectEnvironmentDomainDiffResponse } from './ProjectEnvironmentDomainDiffResponse.js';
+export type { ProjectEnvironmentDomainResponse } from './ProjectEnvironmentDomainResponse.js';
 export type { ProjectEnvironmentEdgePolicyDiffResponse } from './ProjectEnvironmentEdgePolicyDiffResponse.js';
 export type { ProjectEnvironmentEdgePolicyResponse } from './ProjectEnvironmentEdgePolicyResponse.js';
 export type { ProjectEnvironmentEdgeRuleResponse } from './ProjectEnvironmentEdgeRuleResponse.js';

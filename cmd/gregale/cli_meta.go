@@ -1011,7 +1011,11 @@ var cliCommands = []cliCommand{
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List custom domain bindings"},
-			{Name: subAdd, Short: "Bind a custom domain to an app"},
+			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Flags: []cliFlag{
+				{Name: "domain", Short: "domain to attach (required)", Req: true, Value: "DOMAIN"},
+				{Name: "app", Short: "app slug to attach to (required)", Req: true, Value: "SLUG"},
+				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
+			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},

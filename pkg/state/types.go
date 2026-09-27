@@ -2787,8 +2787,11 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain           string
-	AppID            string
+	Domain string
+	AppID  string
+	// EnvironmentID is empty for the legacy application-wide route. A
+	// non-empty value binds the hostname to one project environment.
+	EnvironmentID    string
 	ChallengeToken   string
 	VerifiedAt       time.Time // zero = unverified
 	CertStatus       CustomDomainCertStatus

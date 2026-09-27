@@ -2696,6 +2696,25 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such app")
 		return
 	}
+	environmentID := ""
+	if req.Environment != "" {
+		if !api.ValidProjectEnvironmentSlug(req.Environment) || app.ProjectID == "" {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid environment", "environment must name an environment in the app's project"))
+			return
+		}
+		environment, envErr := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, req.Environment)
+		if envErr != nil {
+			if errors.Is(envErr, state.ErrNotFound) {
+				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+					"Environment not found", "the app does not belong to the requested project environment"))
+			} else {
+				api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
+			}
+			return
+		}
+		environmentID = environment.ID
+	}
 	limits, limitsOK := api.LimitsFor(acct.Plan)
 	if !limitsOK {
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
@@ -2722,14 +2741,31 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
 	}
 	creator, ok := s.store.(quotaCreator)
-	if !ok {
+	if !ok && environmentID == "" {
 		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
 		return
 	}
-	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+	var d state.CustomDomain
+	if environmentID != "" {
+		type environmentQuotaCreator interface {
+			CreateCustomDomainInEnvironmentIfUnderQuota(context.Context, string, string, string, string, int, int) (state.CustomDomain, error)
+		}
+		environmentCreator, supported := s.store.(environmentQuotaCreator)
+		if !supported {
+			api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
+			return
+		}
+		d, err = environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount)
+	} else {
+		d, err = creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app or project environment")
 			return
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -2742,21 +2778,22 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	// The notify payload above is JSON-encoded so the pg_notify channel
 	// can't be tricked into parsing an attacker-supplied structure, but
 	// the structured log line is the unencoded sink.
-	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID)
+	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID, "environment", req.Environment)
 	// IAM-4 (issue #291): record the domain attachment. data.domain
 	// is the lowercased canonical form already stored on the row, so
 	// the audit row and the row stay in sync — a dashboard that
 	// joins events.domain with domains.domain gets no surprises.
 	s.audit.Emit(r.Context(), "domain.added", &acct.ID, map[string]any{
-		"app_id": d.AppID,
-		"domain": d.Domain,
+		"app_id":      d.AppID,
+		"domain":      d.Domain,
+		"environment": req.Environment,
 	})
 	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
 		Kind: "domain.added", ResourceType: "domain", ResourceID: d.Domain,
 		ResourceLabel: d.Domain, SourceType: "domain.added", SourceID: activitySourceID(r, d.Domain),
-		Data: activityData(map[string]any{"app_id": d.AppID}),
+		Data: activityData(map[string]any{"app_id": d.AppID, "environment": req.Environment}),
 	})
-	writeJSON(w, http.StatusAccepted, domainResponse(d))
+	writeJSON(w, http.StatusAccepted, s.domainResponseWithDefault(r.Context(), d))
 }
 
 func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -2878,6 +2915,11 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if !d.Verified() {
 		api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
+		return
+	}
+	if d.EnvironmentID != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Environment domain cannot be default", "environment-bound domains route only to their environment and cannot become the app default"))
 		return
 	}
 	if state.IsWildcardCustomDomain(d.Domain) {
@@ -3031,6 +3073,16 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 
 func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDomain) api.CustomDomainResponse {
 	resp := domainResponse(d)
+	if d.EnvironmentID != "" {
+		type environmentLookup interface {
+			ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+		}
+		if lookup, ok := s.store.(environmentLookup); ok {
+			if environment, err := lookup.ProjectEnvironmentByID(ctx, d.EnvironmentID); err == nil && environment.AccountID != "" {
+				resp.Environment = environment.Slug
+			}
+		}
+	}
 	type defaultLookup interface {
 		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
 	}

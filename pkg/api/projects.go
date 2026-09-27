@@ -173,6 +173,14 @@ type ProjectEnvironmentBindingResponse struct {
 	SecretKeys           []string `json:"secret_keys"`
 }
 
+// ProjectEnvironmentDomainResponse is a custom hostname explicitly routed to
+// this workload's environment. It contains no DNS challenge or certificate
+// secrets.
+type ProjectEnvironmentDomainResponse struct {
+	Domain   string `json:"domain"`
+	Verified bool   `json:"verified"`
+}
+
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
@@ -183,6 +191,7 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Domains      []ProjectEnvironmentDomainResponse        `json:"domains"`
 	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
 	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
 }
@@ -296,6 +305,14 @@ type ProjectEnvironmentBindingChangeResponse struct {
 	After     *ProjectEnvironmentBindingResponse `json:"after,omitempty"`
 }
 
+// ProjectEnvironmentDomainDiffResponse compares the verified hostnames
+// assigned to one workload in two environments.
+type ProjectEnvironmentDomainDiffResponse struct {
+	Kind   string                             `json:"kind"`
+	Before []ProjectEnvironmentDomainResponse `json:"before"`
+	After  []ProjectEnvironmentDomainResponse `json:"after"`
+}
+
 // ProjectEnvironmentWorkloadDiffResponse groups all effective-state changes
 // for one project workload.
 type ProjectEnvironmentWorkloadDiffResponse struct {
@@ -305,6 +322,7 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Domains      ProjectEnvironmentDomainDiffResponse       `json:"domains"`
 	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
 	Policies     ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
 }

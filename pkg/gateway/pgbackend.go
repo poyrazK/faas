@@ -62,6 +62,13 @@ type DynamicRouteHostMatcher interface {
 	IsDynamicRouteHost(host string) bool
 }
 
+// CachedCustomDomainRouteValidator rechecks custom-domain ownership on cache
+// hits. A domain may be deleted and claimed by a different scope even if its
+// invalidation notification is missed.
+type CachedCustomDomainRouteValidator interface {
+	CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error)
+}
+
 // PlatformTenantHostResolver rechecks current tenant-surface state on cached
 // custom-domain hits. Implemented by the production router; legacy test
 // routers without tenant surfaces keep the original cache behavior.
@@ -1000,7 +1007,23 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
 	if target, ok := b.routes.PeekTarget(host); ok {
-		if app, ok := b.getApp(target.AppID); ok {
+		if target.CustomDomain {
+			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
+			if err != nil {
+				if b.log != nil {
+					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
+				}
+				return App{}, false
+			}
+			if !active {
+				b.routes.Invalidate(host)
+				b.stale.Delete(host)
+				ok = false
+			}
+		}
+		if !ok {
+			// Continue below with a fresh authoritative route lookup.
+		} else if app, ok := b.getApp(target.AppID); ok {
 			valid, deny := b.cachedPlatformTenantRouteValid(ctx, host, target, &app)
 			if deny {
 				return App{}, false
@@ -1009,6 +1032,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.PinnedDeploymentID = target.PinnedDeploymentID
 				app.PinnedDeploymentScope = target.PinnedDeploymentScope
 				app.RoutedSurfaceID = target.RoutedSurfaceID
+				app.CustomDomainRoute = target.CustomDomain
 				return app, true
 			}
 			// Route ownership changed. A later lookup error must not revive the
@@ -1026,20 +1050,33 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
+	if app.DynamicRoute {
+		return app, true
+	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
 		RoutedSurfaceID:       app.RoutedSurfaceID,
 		PinnedDeploymentID:    app.PinnedDeploymentID,
 		PinnedDeploymentScope: app.PinnedDeploymentScope,
+		CustomDomain:          app.CustomDomainRoute,
 	})
 	baseApp := app
 	baseApp.PinnedDeploymentID = ""
 	baseApp.PinnedDeploymentScope = ""
 	baseApp.RoutedSurfaceID = ""
 	baseApp.PlatformTenantID = ""
+	baseApp.CustomDomainRoute = false
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
+}
+
+func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	validator, ok := b.router.(CachedCustomDomainRouteValidator)
+	if !ok {
+		return true, nil
+	}
+	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
 }
 
 func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {

@@ -1231,7 +1231,13 @@ List custom domain bindings
 
 ### domains add
 
-Bind a custom domain to an app
+Bind a custom domain to an app or project environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--domain <DOMAIN>` | domain to attach (required) | required |
+| `--app <SLUG>` | app slug to attach to (required) | required |
+| `--environment <SLUG>` | project environment to route this domain to |  |
 
 ### domains rm
 

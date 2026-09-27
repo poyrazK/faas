@@ -787,6 +787,7 @@ type CustomDomain struct {
 	CertExpiresAt    pgtype.Timestamptz
 	CertLastError    pgtype.Text
 	DnsLastCheckedAt pgtype.Timestamptz
+	EnvironmentID    pgtype.UUID
 }
 
 type DataUpstream struct {
@@ -1841,6 +1842,16 @@ type Project struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	OrgID            pgtype.UUID
+}
+
+type ProjectEnvironment struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+	Protected bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCleanupJob struct {

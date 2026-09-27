@@ -1186,6 +1186,9 @@ from .project_environment_config_diff_response import ProjectEnvironmentConfigDi
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
 from .project_environment_diff_response import ProjectEnvironmentDiffResponse
+from .project_environment_domain_diff_response import ProjectEnvironmentDomainDiffResponse
+from .project_environment_domain_diff_response_kind import ProjectEnvironmentDomainDiffResponseKind
+from .project_environment_domain_response import ProjectEnvironmentDomainResponse
 from .project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
 from .project_environment_edge_policy_diff_response_kind import ProjectEnvironmentEdgePolicyDiffResponseKind
 from .project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
@@ -2858,6 +2861,9 @@ __all__ = (
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
     "ProjectEnvironmentDiffResponse",
+    "ProjectEnvironmentDomainDiffResponse",
+    "ProjectEnvironmentDomainDiffResponseKind",
+    "ProjectEnvironmentDomainResponse",
     "ProjectEnvironmentEdgePolicyDiffResponse",
     "ProjectEnvironmentEdgePolicyDiffResponseKind",
     "ProjectEnvironmentEdgePolicyResponse",

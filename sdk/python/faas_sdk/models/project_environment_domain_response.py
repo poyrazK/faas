@@ -6,38 +6,30 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="CreateCustomDomainRequest")
+T = TypeVar("T", bound="ProjectEnvironmentDomainResponse")
 
 
 @_attrs_define
-class CreateCustomDomainRequest:
-    """Bind a custom domain to an app, optionally routing it to one project environment."""
+class ProjectEnvironmentDomainResponse:
+    """Custom hostname routed to one workload in this project environment."""
 
     domain: str
-    app_id: str
-    environment: str | Unset = UNSET
-    """Optional project environment slug. When set, traffic follows only that environment's active release graph."""
+    verified: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         domain = self.domain
 
-        app_id = self.app_id
-
-        environment = self.environment
+        verified = self.verified
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "domain": domain,
-                "app_id": app_id,
+                "verified": verified,
             }
         )
-        if environment is not UNSET:
-            field_dict["environment"] = environment
 
         return field_dict
 
@@ -46,18 +38,15 @@ class CreateCustomDomainRequest:
         d = dict(src_dict)
         domain = d.pop("domain")
 
-        app_id = d.pop("app_id")
+        verified = d.pop("verified")
 
-        environment = d.pop("environment", UNSET)
-
-        create_custom_domain_request = cls(
+        project_environment_domain_response = cls(
             domain=domain,
-            app_id=app_id,
-            environment=environment,
+            verified=verified,
         )
 
-        create_custom_domain_request.additional_properties = d
-        return create_custom_domain_request
+        project_environment_domain_response.additional_properties = d
+        return project_environment_domain_response
 
     @property
     def additional_keys(self) -> list[str]:
