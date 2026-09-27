@@ -4,9 +4,10 @@
 than five minutes and replay has delivered none for five minutes. Check
 `realtimed_callback_pending`, `realtimed_callback_oldest_pending_age_seconds`,
 and `realtimed_callback_replay_deliveries_total`, then inspect the `realtimed`
-logs for outbox or receiver errors. Confirm the node-local outbox is writable
-and has free space before restarting the daemon; pending records are replayed
-after restart.
+logs for outbox or receiver errors. The replay supervisor retries unexpected
+outbox failures with a delay capped at 30 seconds. Confirm the node-local
+outbox is writable and has free space; replay resumes after the underlying
+storage problem clears.
 
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.

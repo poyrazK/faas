@@ -127,14 +127,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	go func() {
-		err := outbox.Run(ctx, func(deliveryCtx context.Context, event realtime.Event) error {
-			callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
-			defer cancel()
-			return hooks.Deliver(callbackCtx, event)
+		superviseCallbackReplay(ctx, log, callbackReplayRetryInitial, callbackReplayRetryMax, func(replayCtx context.Context) error {
+			return outbox.Run(replayCtx, func(deliveryCtx context.Context, event realtime.Event) error {
+				callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
+				defer cancel()
+				return hooks.Deliver(callbackCtx, event)
+			})
 		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn("realtimed callback outbox stopped", "err", err)
-		}
 	}()
 	serverErr := make(chan error, 2)
 	go func() {

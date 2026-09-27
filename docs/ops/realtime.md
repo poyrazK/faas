@@ -245,7 +245,9 @@ event ID stops startup for operator inspection rather than discarding either
 copy. Message and disconnect events are fsynced before delivery and replayed
 after a daemon restart or host reboot; delivery is at-least-once, and poison
 events are retained under the outbox's `dead/` directory after the bounded
-retry budget. Keep the callback URL
+retry budget. Unexpected outbox or filesystem errors stop a replay pass, which
+realtime retries in process with an exponential delay capped at 30 seconds.
+Process shutdown cancels the retry wait. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
 application to process an event. Pending callbacks for one connection replay in
 WebSocket sequence order, with disconnect after the final message. Existing
