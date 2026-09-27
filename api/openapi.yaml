@@ -4191,6 +4191,47 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/platform-tenants/{id}/consumer-provisioning-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose downstream customer-provisioning policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantConsumerProvisioningPolicy
+      summary: Read a customer's self-service customer-provisioning policy.
+      responses:
+        '200':
+          description: Current customer-provisioning policy; absent policies are disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantConsumerProvisioningPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantConsumerProvisioningPolicy
+      summary: Replace a customer's self-service customer-provisioning policy.
+      description: Requires deploy:write and recent MFA. Provisioning is disabled with enabled=false and max_consumers=0; enabled policies require a 1-100000 customer cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantConsumerProvisioningPolicyRequest' }
+      responses:
+        '200':
+          description: Updated customer-provisioning policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantConsumerProvisioningPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid enablement and customer-cap combination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/platform-tenants/{id}/request-budget:
     parameters:
       - name: id
@@ -23990,6 +24031,24 @@ components:
         max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
         updated_at: { type: string, format: date-time }
 
+    SetPlatformTenantConsumerProvisioningPolicyRequest:
+      description: Owner-controlled enablement and total active-customer ceiling for a downstream tenant.
+      type: object
+      required: [enabled, max_consumers]
+      properties:
+        enabled: { type: boolean }
+        max_consumers: { type: integer, minimum: 0, maximum: 100000 }
+
+    PlatformTenantConsumerProvisioningPolicyResponse:
+      description: Owner-controlled self-service customer creation policy; an absent policy is disabled.
+      type: object
+      required: [tenant_id, enabled, max_consumers]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        max_consumers: { type: integer, minimum: 0, maximum: 100000 }
+        updated_at: { type: string, format: date-time }
+
     ApplyPlatformTenantCredentialsRequest:
       description: Additive key reconciliation and revocation in one transaction; provide at least one key or revocation.
       type: object
@@ -24181,7 +24240,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -24195,7 +24254,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -24212,7 +24271,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }

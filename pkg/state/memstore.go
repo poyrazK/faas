@@ -200,6 +200,7 @@ type MemStore struct {
 	platformTenantBudgets            map[string]platformTenantBudgetRow
 	platformTenantHostnamePolicies   map[string]PlatformTenantHostnamePolicy
 	platformTenantCredentialPolicies map[string]PlatformTenantCredentialPolicy
+	platformTenantConsumerPolicies   map[string]PlatformTenantConsumerProvisioningPolicy
 	platformTenantByConsumer         map[string]string
 	platformTenantBySurface          map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
@@ -1088,6 +1089,7 @@ func NewMemStore() *MemStore {
 		platformTenantBudgets:            map[string]platformTenantBudgetRow{},
 		platformTenantHostnamePolicies:   map[string]PlatformTenantHostnamePolicy{},
 		platformTenantCredentialPolicies: map[string]PlatformTenantCredentialPolicy{},
+		platformTenantConsumerPolicies:   map[string]PlatformTenantConsumerProvisioningPolicy{},
 		platformTenantByConsumer:         map[string]string{},
 		platformTenantBySurface:          map[string]string{},
 		openAPISnapshots:                 map[string]OpenAPISnapshot{},
@@ -19739,6 +19741,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.platformTenantBudgets, tid)
 			delete(m.platformTenantHostnamePolicies, tid)
 			delete(m.platformTenantCredentialPolicies, tid)
+			delete(m.platformTenantConsumerPolicies, tid)
 		}
 	}
 	for surfaceID, tenantID := range m.platformTenantBySurface {

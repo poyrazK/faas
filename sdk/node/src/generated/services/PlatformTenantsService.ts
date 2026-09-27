@@ -23,6 +23,7 @@ import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTe
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantConsumerProvisioningPolicyResponse } from '../models/PlatformTenantConsumerProvisioningPolicyResponse.js';
 import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
@@ -45,6 +46,7 @@ import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenant
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { SetPlatformTenantConsumerProvisioningPolicyRequest } from '../models/SetPlatformTenantConsumerProvisioningPolicyRequest.js';
 import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlatformTenantCredentialPolicyRequest.js';
 import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
@@ -370,6 +372,60 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         422: `Invalid scope set or per-consumer limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's self-service customer-provisioning policy.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Current customer-provisioning policy; absent policies are disabled.
+   * @throws ApiError
+   */
+  public static getPlatformTenantConsumerProvisioningPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's self-service customer-provisioning policy.
+   * Requires deploy:write and recent MFA. Provisioning is disabled with enabled=false and max_consumers=0; enabled policies require a 1-100000 customer cap.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Updated customer-provisioning policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantConsumerProvisioningPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantConsumerProvisioningPolicyRequest,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid enablement and customer-cap combination.`,
       },
     });
   }

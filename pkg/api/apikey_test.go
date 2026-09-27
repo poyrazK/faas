@@ -59,7 +59,8 @@ func TestGeneratePlatformTenantAccessToken(t *testing.T) {
 	}
 	if IsValidScope(ScopePlatformTenantUsageRead) || IsValidScope(ScopePlatformTenantStatementsRead) ||
 		IsValidScope(ScopePlatformTenantActivationRead) || IsValidScope(ScopePlatformTenantHostnamesManage) ||
-		IsValidScope(ScopePlatformTenantCredentialsRead) || IsValidScope(ScopePlatformTenantCredentialsManage) {
+		IsValidScope(ScopePlatformTenantCredentialsRead) || IsValidScope(ScopePlatformTenantCredentialsManage) ||
+		IsValidScope(ScopePlatformTenantConsumersManage) {
 		t.Fatal("tenant-self scopes must not be mintable as account-wide API-key scopes")
 	}
 }

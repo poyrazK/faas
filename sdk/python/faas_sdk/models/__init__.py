@@ -1082,6 +1082,7 @@ from .platform_tenant_activation_surface_response import PlatformTenantActivatio
 from .platform_tenant_activity_filters import PlatformTenantActivityFilters
 from .platform_tenant_activity_item import PlatformTenantActivityItem
 from .platform_tenant_activity_response import PlatformTenantActivityResponse
+from .platform_tenant_consumer_provisioning_policy_response import PlatformTenantConsumerProvisioningPolicyResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
 from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
@@ -1518,6 +1519,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
 from .set_platform_tenant_credential_policy_request_allowed_scopes_item import (
     SetPlatformTenantCredentialPolicyRequestAllowedScopesItem,
@@ -2810,6 +2812,7 @@ __all__ = (
     "PlatformTenantActivityFilters",
     "PlatformTenantActivityItem",
     "PlatformTenantActivityResponse",
+    "PlatformTenantConsumerProvisioningPolicyResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
     "PlatformTenantCredentialMetadata",
@@ -3204,6 +3207,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequestAllowedScopesItem",
     "SetPlatformTenantHostnamePolicyRequest",

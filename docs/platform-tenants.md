@@ -116,6 +116,10 @@ An owner can separately grant `platform_tenant:credentials:read` for linked-cons
 
 `GET /v1/platform-tenant-self/consumers` returns only consumer IDs, external references, names, and statuses for the bearer tenant. `GET /v1/platform-tenant-self/credentials?limit=100&offset=0` returns key metadata without hashes or plaintext. Use `POST /v1/platform-tenant-self/credentials/apply` with the same hash-only bundle format as the owner API. Generate each key locally, store its plaintext in your own secret manager before sending the prefix and SHA-256 hash, and use the returned metadata to confirm the result. The tenant ID comes from the bearer; IDs linked to another tenant are not accepted. See [ADR-317](adr/317-platform-tenant-self-service-credentials.md).
 
+## Let downstream tenants onboard customer identities
+
+Customer provisioning has its own owner-controlled gate, separate from key-scope delegation. Read or update `/v1/account/platform-tenants/{id}/consumer-provisioning-policy`; updates require recent MFA. The policy is disabled by default. Enabling it requires a per-tenant active-customer cap, and disabling it requires a zero cap. An owner may also mint the tenant-bound `platform_tenant:consumers:manage` capability; it cannot be used as an account-wide API key. The companion self-service endpoint only creates customers on surfaces already linked to that tenant and never accepts an app ID. See [ADR-334](adr/334-platform-tenant-consumer-provisioning-policy.md).
+
 ## Control customer requests across apps
 
 After every gateway is upgraded, set an optional shared admission budget:

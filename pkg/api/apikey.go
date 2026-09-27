@@ -396,6 +396,7 @@ const (
 	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
 	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
 	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
+	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -560,4 +561,5 @@ var (
 	ScopesPlatformTenantHostnamesManageSurface   = []string{ScopePlatformTenantHostnamesManage}
 	ScopesPlatformTenantCredentialsReadSurface   = []string{ScopePlatformTenantCredentialsRead}
 	ScopesPlatformTenantCredentialsManageSurface = []string{ScopePlatformTenantCredentialsManage}
+	ScopesPlatformTenantConsumersManageSurface   = []string{ScopePlatformTenantConsumersManage}
 )

@@ -84,7 +84,8 @@ func validatePlatformTenantAccessTokenInput(in PlatformTenantAccessTokenInput) e
 	for _, scope := range in.Scopes {
 		if (scope != api.ScopePlatformTenantUsageRead && scope != api.ScopePlatformTenantStatementsRead &&
 			scope != api.ScopePlatformTenantActivationRead && scope != api.ScopePlatformTenantHostnamesManage &&
-			scope != api.ScopePlatformTenantCredentialsRead && scope != api.ScopePlatformTenantCredentialsManage) || seen[scope] {
+			scope != api.ScopePlatformTenantCredentialsRead && scope != api.ScopePlatformTenantCredentialsManage &&
+			scope != api.ScopePlatformTenantConsumersManage) || seen[scope] {
 			return ErrInvalidArgument
 		}
 		seen[scope] = true

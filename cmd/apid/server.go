@@ -1417,6 +1417,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credentials/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyPlatformTenantCredentials))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantCredentialPolicy)))
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantCredentialPolicy))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/consumer-provisioning-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantConsumerProvisioningPolicy)))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/consumer-provisioning-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantConsumerProvisioningPolicy))))
 	// Downstream tenant bearers are distinct, tenant-bound capabilities with
 	// explicit narrow self-service scopes. Plaintext is returned
 	// once and never cached.
