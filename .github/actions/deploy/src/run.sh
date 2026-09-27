@@ -71,10 +71,13 @@ check_run_request() {
 		return
 	fi
 
-	local payload response_file http_status
+	local payload response_file http_status check_name="Gregale deployment"
+	if [ "${INPUT_WAIT:-true}" = "false" ]; then
+		check_name="Gregale deployment queued"
+	fi
 	if [ "$status" = "completed" ]; then
 		payload="$(jq -n \
-			--arg name "Gregale deployment" \
+			--arg name "$check_name" \
 			--arg head_sha "$sha" \
 			--arg status "$status" \
 			--arg conclusion "$conclusion" \
@@ -84,7 +87,7 @@ check_run_request() {
 			'{name:$name, head_sha:$head_sha, status:$status, conclusion:$conclusion, details_url:$details_url, output:{title:$title, summary:$summary}}')"
 	else
 		payload="$(jq -n \
-		--arg name "Gregale deployment" \
+		--arg name "$check_name" \
 		--arg head_sha "$sha" \
 		--arg status "$status" \
 		--arg details_url "$url" \
@@ -161,7 +164,7 @@ cmd_validate() {
 	if [ "${INPUT_WAIT:-true}" != "true" ] && [ "${INPUT_WAIT:-true}" != "false" ]; then
 		die "wait must be true or false"
 	fi
-	if [[ ! "${INPUT_WAIT_TIMEOUT:-600}" =~ ^[0-9]+$ ]] || [ "${INPUT_WAIT_TIMEOUT:-600}" -le 0 ]; then
+	if [[ ! "${INPUT_WAIT_TIMEOUT:-1200}" =~ ^[0-9]+$ ]] || [ "${INPUT_WAIT_TIMEOUT:-1200}" -le 0 ]; then
 		die "wait-timeout must be a positive integer"
 	fi
 	if [ "${INPUT_ROLLOUT:-standard}" != "standard" ] && [ "${INPUT_ROLLOUT:-standard}" != "safe" ]; then
@@ -179,6 +182,43 @@ cmd_validate() {
     local cli_version
     cli_version="$(cat "$VERSION_FILE")"
     echo "gregale CLI version: $cli_version"
+}
+
+# Superseded push runs and reruns of an old commit must not roll production
+# back after a newer branch head. The generated workflow pins INPUT_REF to
+# github.sha and serializes per app. Explicit custom refs remain deliberate
+# operator choices and do not use this guard.
+verify_current_push_head() {
+	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/heads/* ]] ||
+		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] || [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		return 0
+	fi
+	local branch="${GITHUB_REF#refs/heads/}"
+	if [[ ! "${INPUT_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+		[ -z "$branch" ] || [ -z "${GITHUB_TOKEN:-}" ]; then
+		die "cannot verify current GitHub branch head"
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		die "jq is required to verify the current GitHub branch head"
+	fi
+	local api_base="${GITHUB_API_URL:-https://api.github.com}" response current encoded_branch
+	encoded_branch="$(jq -rn --arg branch "$branch" '$branch|@uri')"
+	if ! response="$(curl --fail --silent --show-error \
+		-H "Accept: application/vnd.github+json" \
+		-H "Authorization: Bearer ${GITHUB_TOKEN}" \
+		"${api_base%/}/repos/${INPUT_REPO}/branches/${encoded_branch}")"; then
+		die "could not verify the current GitHub branch head"
+	fi
+	current="$(printf '%s' "$response" | jq -r '.commit.sha // empty')"
+	if [[ ! "$current" =~ ^[0-9a-fA-F]{40}$ ]]; then
+		die "GitHub branch head response did not contain a commit SHA"
+	fi
+	if [ "$current" != "$INPUT_REF" ]; then
+		echo "::notice::Skipping superseded push ${INPUT_REF}; current branch head is ${current}" >&2
+		echo "status=skipped" >> "$GITHUB_OUTPUT"
+		return 1
+	fi
+	return 0
 }
 
 exchange_oidc() {
@@ -222,8 +262,6 @@ exchange_oidc() {
 
 cmd_deploy() {
     cmd_validate
-	exchange_oidc
-
     local cli_version
     cli_version="$(cat "$VERSION_FILE")"
 	local rollout="${INPUT_ROLLOUT:-standard}"
@@ -236,6 +274,10 @@ cmd_deploy() {
         echo "app-slug=${INPUT_APP}"
 		echo "rollout=$rollout"
     } >> "$GITHUB_OUTPUT"
+	if ! verify_current_push_head; then
+		return 0
+	fi
+	exchange_oidc
 
     # 2. Invoke the vendored CLI. The wire shape is the same as
     #    `gregale deploy --repo --ref` — POST /v1/apps/{slug}/deployments/source-ref.
@@ -330,7 +372,7 @@ cmd_deploy() {
     #    when --wait is set; we use a separate mode here so the
     #    failure path stays distinct (cancelled / timeout vs failed).
     if [ "${INPUT_WAIT:-true}" = "true" ]; then
-        local timeout="${INPUT_WAIT_TIMEOUT:-600}"
+        local timeout="${INPUT_WAIT_TIMEOUT:-1200}"
 		local rollout_wait_args=()
 		if [ "$rollout" = "safe" ]; then
 			rollout_wait_args+=(--rollout)
@@ -391,6 +433,10 @@ cmd_deploy() {
 		echo "status=queued" >> "$GITHUB_OUTPUT"
     fi
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+	return 0
+fi
 
 case "${1:-}" in
     validate)

@@ -3303,7 +3303,7 @@ func (m *MemStore) ApplyProjectPlan(
 	observedApps := 0
 	for _, a := range m.apps {
 		if a.AccountID == project.AccountID && a.Status != AppDeleted &&
-			(a.Status == AppActive || a.Status == AppEvictedCold) {
+			(a.Status == AppActive || a.Status == AppEvictedCold) && a.PreviewOfSlug == "" {
 			observedApps++
 		}
 	}
@@ -3509,7 +3509,7 @@ func (m *MemStore) ApplyProjectReconcile(
 
 	observedApps := 0
 	for _, app := range m.apps {
-		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) {
+		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) && app.PreviewOfSlug == "" {
 			observedApps++
 		}
 	}
@@ -3857,11 +3857,12 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	//    predicates, including the separate developer-environment cap.
 	observed := 0
 	developer := IsDeveloperApp(app)
+	preview := IsPRPreviewApp(app)
 	for _, a := range m.apps {
 		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
 			continue
 		}
-		if developer != IsDeveloperApp(a) {
+		if developer != IsDeveloperApp(a) || preview != IsPRPreviewApp(a) {
 			continue
 		}
 		observed++
@@ -3874,6 +3875,12 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 			limit = limits.DeployedApps
 		}
 		kind = QuotaErrorKindDeveloperApps
+	} else if preview {
+		limit = limits.PreviewApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindPreviewApps
 	}
 	if observed >= limit {
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
@@ -5272,7 +5279,7 @@ func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) && !IsPRPreviewApp(a) {
 			n++
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,6 +21,8 @@ func TestRenderGithubSetupWorkflow(t *testing.T) {
 		"branches:\n      - \"release/canary\"",
 		"poyrazK/faas/.github/actions/deploy@v0",
 		`wait: "true"`,
+		"concurrency:",
+		"cancel-in-progress: false",
 		"PR previews are managed by the connected GitHub integration.",
 	} {
 		if !strings.Contains(workflow, want) {
@@ -44,6 +47,57 @@ func TestRenderGithubSetupWorkflowSafeRollout(t *testing.T) {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("safe workflow does not contain %q:\n%s", want, workflow)
 		}
+	}
+}
+
+func TestCmdGithubSetupRestoresWorkflowWhenPolicyUpdateFails(t *testing.T) {
+	for _, existed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existed), func(t *testing.T) {
+			repoDir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(repoDir)
+			path := filepath.Join(repoDir, defaultGithubSetupWorkflow)
+			previous := []byte("name: existing\n")
+			if existed {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, previous, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github" {
+					_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+					return
+				}
+				if r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy" {
+					http.Error(w, "policy update failed", http.StatusInternalServerError)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_test")
+			args := []string{"api"}
+			if existed {
+				args = append(args, "--force")
+			}
+			if code := cmdGithubSetup(args); code == 0 {
+				t.Fatal("setup succeeded despite failed policy update")
+			}
+			data, err := os.ReadFile(path)
+			if existed {
+				if err != nil || !bytes.Equal(data, previous) {
+					t.Fatalf("workflow after rollback = %q, %v", data, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("new workflow remained after rollback: %q, %v", data, err)
+			}
+		})
 	}
 }
 
@@ -114,6 +168,12 @@ func TestCmdGithubSetupBindsAndIsIdempotent(t *testing.T) {
 				t.Errorf("decode bind request: %v", err)
 			}
 			_, _ = w.Write([]byte(`{"binding_id":"bind-1","repo_full_name":"acme/api","production_branch":"trunk"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			var patch api.GitHubDeploymentPolicyPatch
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil || patch.ProductionTrigger == nil || *patch.ProductionTrigger != "actions" {
+				t.Errorf("invalid setup policy patch: %+v, %v", patch, err)
+			}
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
 		default:
 			http.NotFound(w, r)
 		}

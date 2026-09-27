@@ -81,6 +81,7 @@ type GitHubDeploymentPolicy struct {
 	PreviewEnabled       bool     `json:"preview_enabled"`
 	PreviewTTLHours      int      `json:"preview_ttl_hours"`
 	PreviewServicePolicy string   `json:"preview_service_policy"`
+	ProductionTrigger    string   `json:"production_trigger"`
 }
 
 // GitHubDeploymentPolicyPatch is the partial update shape for the policy.
@@ -90,6 +91,7 @@ type GitHubDeploymentPolicyPatch struct {
 	PreviewEnabled       *bool     `json:"preview_enabled,omitempty"`
 	PreviewTTLHours      *int      `json:"preview_ttl_hours,omitempty"`
 	PreviewServicePolicy *string   `json:"preview_service_policy,omitempty"`
+	ProductionTrigger    *string   `json:"production_trigger,omitempty"`
 }
 
 // OpenAPIContractDiffResponse is the read-only production contract check.

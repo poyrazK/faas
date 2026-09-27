@@ -207,7 +207,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"id-token: write",
 				"checks: write",
 				"https://api.gregale.dev",
-				"wait: \"false\"",
+				"wait: \"true\"",
 			},
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment

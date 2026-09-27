@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const defaultGithubSetupWorkflow = ".github/workflows/gregale.yml"
@@ -209,21 +210,33 @@ func cmdGithubSetup(args []string) int {
 		}
 		receipt.Binding = &bound
 	}
-	if policyPatch != nil {
-		policy, err := client.PatchGitHubDeploymentPolicy(ctx, positional[0], *policyPatch)
-		if err != nil {
-			return printErr("GitHub deployment policy update failed", err)
-		}
-		receipt.Policy = &policy
-	}
 	if changed {
 		if err := writeGithubSetupWorkflow(workflowFile, []byte(desired)); err != nil {
 			return printErr("Could not write the workflow file", err)
 		}
 		receipt.WorkflowWritten = true
 	}
+	if policyPatch != nil {
+		policy, err := client.PatchGitHubDeploymentPolicy(ctx, positional[0], *policyPatch)
+		if err != nil {
+			if changed {
+				if rollbackErr := restoreGithubSetupWorkflow(workflowFile, existing, exists); rollbackErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore workflow after policy failure: %w", rollbackErr))
+				}
+			}
+			return printErr("GitHub deployment policy update failed", err)
+		}
+		receipt.Policy = &policy
+	}
 
 	return renderGithubSetupReceipt(receipt, existing, exists)
+}
+
+func restoreGithubSetupWorkflow(path string, previous []byte, existed bool) error {
+	if existed {
+		return writeGithubSetupWorkflow(path, previous)
+	}
+	return os.Remove(path)
 }
 
 func parseGithubSetupDeployBranches(raw string) (map[string]string, error) {
@@ -262,10 +275,11 @@ func parseGithubSetupIgnoredPaths(raw string) ([]string, error) {
 }
 
 func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string, previewServicePolicy string) *api.GitHubDeploymentPolicyPatch {
-	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil && previewServicePolicy == "" {
-		return nil
-	}
-	patch := &api.GitHubDeploymentPolicyPatch{}
+	// The generated push workflow owns production deployments. Keep the App
+	// connected for PR previews and repository access, but disable its push
+	// deploy path before the workflow is committed.
+	trigger := string(state.ProductionTriggerActions)
+	patch := &api.GitHubDeploymentPolicyPatch{ProductionTrigger: &trigger}
 	if preview || noPreview {
 		value := preview
 		patch.PreviewEnabled = &value
@@ -279,9 +293,10 @@ func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ig
 	if ignored != nil {
 		patch.IgnoredPaths = &ignored
 	}
-	if previewServicePolicy != "" {
-		patch.PreviewServicePolicy = &previewServicePolicy
+	if previewServicePolicy == "" {
+		previewServicePolicy = githubSetupPreviewServicesDeny
 	}
+	patch.PreviewServicePolicy = &previewServicePolicy
 	return patch
 }
 
@@ -370,6 +385,10 @@ on:
       - %s
   workflow_dispatch:
 
+concurrency:
+  group: gregale-${{ github.repository }}-%s-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-22.04
@@ -387,7 +406,7 @@ jobs:
           ref: ${{ github.sha }}
           wait: "true"
           wait-timeout: "1200"
-%s`, app, repo, branch, quotedBranch, githubActionRepo, githubActionPath, githubActionVersion, defaultAPIBase, app, rolloutInput)
+%s`, app, repo, branch, quotedBranch, app, githubActionRepo, githubActionPath, githubActionVersion, defaultAPIBase, app, rolloutInput)
 }
 
 func readGithubSetupWorkflow(path string) ([]byte, bool, error) {
@@ -464,8 +483,12 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 		_, _ = fmt.Fprintf(osStdout, "  binding:           %s\n", receipt.Binding.RepoFullName)
 	}
 	if receipt.Policy != nil {
+		_, _ = fmt.Fprintf(osStdout, "  production_trigger: %s\n", receipt.Policy.ProductionTrigger)
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
+	}
+	if receipt.WorkflowWritten {
+		_, _ = fmt.Fprintf(osStdout, "  next:              commit and push %s to activate production deploys\n", receipt.WorkflowPath)
 	}
 	if receipt.DryRun {
 		_, _ = fmt.Fprintln(osStdout)

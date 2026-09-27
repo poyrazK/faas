@@ -2382,13 +2382,14 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		return App{}, ErrConflict
 	}
 
-	// 3. Authoritative count under the lock. Developer environments use
-	//    their own cap; production apps and PR previews use DeployedApps.
+	// 3. Authoritative count under the lock. Production, developer, and PR
+	//    preview apps each use their own plan cap.
 	//    Keeping both counts inside the account lock closes the same TOCTOU
 	//    window for either quota family.
 	var observed int
 	developer := IsDeveloperApp(app)
-	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`
+	preview := IsPRPreviewApp(app)
+	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`
 	limit := limits.DeployedApps
 	kind := QuotaErrorKindApps
 	if developer {
@@ -2400,6 +2401,13 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 			limit = limits.DeployedApps
 		}
 		kind = QuotaErrorKindDeveloperApps
+	} else if preview {
+		countQuery = `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and preview_pr_number > 0`
+		limit = limits.PreviewApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindPreviewApps
 	}
 	if err := tx.QueryRow(ctx, countQuery, app.AccountID).Scan(&observed); err != nil {
 		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
@@ -3685,7 +3693,7 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 func (s *PgStore) CountDeployedApps(ctx context.Context, accountID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`,
 		accountID).Scan(&n)
 	return n, err
 }
@@ -5204,7 +5212,7 @@ func (s *PgStore) ApplyProjectPlan(
 	var observedApps int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from apps where account_id = $1
-		 and status in ('active','evicted_cold')`,
+		 and status in ('active','evicted_cold') and preview_of_slug is null`,
 		project.AccountID,
 	).Scan(&observedApps); err != nil {
 		return Project{}, nil, nil, fmt.Errorf("state: count apps for account %s: %w", project.AccountID, err)
@@ -5468,7 +5476,7 @@ func (s *PgStore) ApplyProjectReconcile(
 	}
 
 	var observedApps int
-	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`, project.AccountID).Scan(&observedApps); err != nil {
+	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`, project.AccountID).Scan(&observedApps); err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: count project apps: %w", err)
 	}
 	if observedApps-removes+creates > limits.DeployedApps {

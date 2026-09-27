@@ -10,6 +10,41 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestFreeProductionAppAndPRPreviewUseSeparateCaps(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "free-preview@example.test", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "free-preview"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := api.MustLimitsFor(api.PlanFree)
+	if _, err := m.CreateAppIfUnderQuota(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "api", Status: AppActive}, limits); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour)
+	preview := App{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-api", Status: AppActive,
+		PreviewOfSlug: "api", PreviewPrNumber: 42, PreviewPrState: PreviewPrStateOpen, PreviewExpiresAt: &expires}
+	head := PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
+	if _, err := m.ReservePRPreviewSet(ctx, head, []App{preview}, limits); err != nil {
+		t.Fatalf("Free production plus preview: %v", err)
+	}
+	if n, err := m.CountDeployedApps(ctx, account.ID); err != nil || n != 1 {
+		t.Fatalf("production app count = (%d, %v), want 1", n, err)
+	}
+	if _, err := m.CreateAppIfUnderQuota(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "second-production", Status: AppActive}, limits); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("second production app = %v, want quota", err)
+	}
+	preview.Slug, preview.PreviewPrNumber = "pr-43-api", 43
+	head.PRNumber, head.CommitSHA = 43, strings.Repeat("b", 40)
+	if _, err := m.ReservePRPreviewSet(ctx, head, []App{preview}, limits); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("second Free preview = %v, want quota", err)
+	}
+}
+
 func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()
@@ -33,15 +68,15 @@ func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 			WorkloadName: name, PreviewOfSlug: name, PreviewPrNumber: 42,
 			PreviewPrState: PreviewPrStateOpen, PreviewExpiresAt: &expiry, Status: AppActive}
 	}
-	limits := api.Limits{DeployedApps: 5}
+	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
 	head := PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	first, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("worker")}, limits)
 	if err != nil || len(first) != 2 {
 		t.Fatalf("first reservation = (%+v, %v)", first, err)
 	}
 	count, err := m.CountDeployedApps(ctx, account.ID)
-	if err != nil || count != 5 {
-		t.Fatalf("full quota = (%d, %v), want 5", count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("production quota = (%d, %v), want 3", count, err)
 	}
 	head.CommitSHA = strings.Repeat("b", 40)
 	if _, err := m.ReservePRPreviewSet(ctx, head,
@@ -89,8 +124,8 @@ func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 		t.Fatalf("retired worker = (%+v, %v)", oldWorker, err)
 	}
 	count, err = m.CountDeployedApps(ctx, account.ID)
-	if err != nil || count != 5 {
-		t.Fatalf("post-swap quota = (%d, %v), want 5", count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("post-swap production quota = (%d, %v), want 3", count, err)
 	}
 	set, err = m.GetPRPreviewSet(ctx, 7, "octo/api", 42)
 	if err != nil || set.CommitSHA != head.CommitSHA || len(set.MemberAppIDs) != 2 || set.MemberAppIDs[1] != second[1].ID {

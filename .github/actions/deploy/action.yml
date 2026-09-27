@@ -48,11 +48,11 @@ inputs:
   wait:
     description: "If true, block until the deployment is ready (or fails); false queues it and returns immediately"
     required: false
-    default: "false"
+    default: "true"
   wait-timeout:
     description: "Maximum seconds to wait for the deployment to settle (only used when wait=true)"
     required: false
-    default: "600"
+    default: "1200"
   rollout:
     description: "Production rollout mode: standard or safe (balanced health-gated rollout; Pro/Scale only)"
     required: false
@@ -88,7 +88,7 @@ outputs:
     description: "Echo of the input app slug"
     value: ${{ steps.deploy.outputs.app-slug }}
   status:
-    description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
+    description: "Observed deployment status: live | queued | skipped | failed | cancelled | superseded | timeout"
     value: ${{ steps.deploy.outputs.status }}
   rollout:
     description: "Selected rollout mode: standard or safe"

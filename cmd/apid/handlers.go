@@ -1192,6 +1192,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			PreviewApps:                 l.PreviewApps,
 			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),

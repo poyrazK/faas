@@ -33,21 +33,22 @@ func render() string {
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
 	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in euros. Usage beyond the included GB-RAM-hours is billed at €0.01 per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
-	b.WriteString("| Plan | Monthly | Deployed apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d MB | %d | %d MB | %s |\n",
+		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %d MB | %s |\n",
 			titlePlan(plan), formatPrice(l.PriceMillicents), l.DeployedApps,
-			l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
+			l.PreviewApps, l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
 			l.AppLayerMaxMB,
 			formatDuration(l.IdleTimeoutS))
 	}
 	b.WriteString("\n## What each limit means\n\n")
 	b.WriteString("- **Deployed apps** is the maximum number of production app records on the plan. `gregale dev` environments have a separate developer-app allowance.\n")
+	b.WriteString("- **PR preview apps** is the separate limit for temporary pull-request workloads. Each preview dependency uses a slot; the whole set is reserved together.\n")
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.\n")

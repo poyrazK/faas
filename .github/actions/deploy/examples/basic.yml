@@ -4,6 +4,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: gregale-${{ github.repository }}-my-app-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-22.04
@@ -18,7 +22,7 @@ jobs:
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          # Queue the deployment and continue; set wait: "true" to block until live.
-          wait: "false"
+          # Report the terminal deployment result to this workflow.
+          wait: "true"
           # Optional: balanced health-gated production rollout (Pro/Scale only).
           # rollout: "safe"

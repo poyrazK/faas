@@ -152,6 +152,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: gregale-${{ github.repository }}-%s-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-22.04
@@ -166,13 +170,13 @@ jobs:
           api-base: %s
           app: %s
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          # Queue the deployment and continue; set wait: "true" when this job
-          # must block until the app is live.
-          wait: "false"
+          # Keep the job open until the deployment reaches a terminal state.
+          wait: "true"
 `,
 		app, repoExpr, refExpr,
 		githubActionRepo, githubActionVersion,
 		pinLine,
+		app,
 		usesRef,
 		apiBase,
 		app,

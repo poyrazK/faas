@@ -1513,9 +1513,15 @@ type ProjectEnvironmentEdgeRule struct {
 
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
-// have a positive PR number and remain on the normal deployed-app quota.
+// have a positive PR number and have a separate bounded quota.
 func IsDeveloperApp(app App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
+// IsPRPreviewApp identifies a leased pull-request preview. It is separate
+// from both production and developer environments for quota accounting.
+func IsPRPreviewApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0
 }
 
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero

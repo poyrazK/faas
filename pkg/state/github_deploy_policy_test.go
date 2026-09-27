@@ -23,7 +23,7 @@ func TestGitHubDeployPolicyDefaultsAndIgnorePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours || got.PreviewServicePolicy != PreviewServicePolicyDeny {
+	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours || got.PreviewServicePolicy != PreviewServicePolicyDeny || got.ProductionTrigger != ProductionTriggerWebhook {
 		t.Fatalf("defaults = %+v", got)
 	}
 	got.RootDir = "apps/web"
@@ -80,6 +80,7 @@ func TestGitHubDeployPolicyValidationCoverage(t *testing.T) {
 		{name: "ttl too low", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMinPreviewTTLHours - 1 }},
 		{name: "ttl too high", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMaxPreviewTTLHours + 1 }},
 		{name: "invalid preview service policy", edit: func(p *GitHubDeployPolicy) { p.PreviewServicePolicy = "allow" }},
+		{name: "invalid production trigger", edit: func(p *GitHubDeployPolicy) { p.ProductionTrigger = "both" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

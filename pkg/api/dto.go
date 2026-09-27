@@ -3279,6 +3279,7 @@ type AccountLimits struct {
 	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
+	PreviewApps                 int           `json:"preview_apps"`
 	DeploysPerHour              int           `json:"deploys_per_hour"`
 	DeveloperApps               int           `json:"developer_apps"`
 	IncludedGBHours             int64         `json:"included_gb_hours"`

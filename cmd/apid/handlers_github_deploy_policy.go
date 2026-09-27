@@ -15,6 +15,7 @@ type githubDeployPolicyResponse struct {
 	PreviewEnabled       bool                       `json:"preview_enabled"`
 	PreviewTTLHours      int                        `json:"preview_ttl_hours"`
 	PreviewServicePolicy state.PreviewServicePolicy `json:"preview_service_policy"`
+	ProductionTrigger    state.ProductionTrigger    `json:"production_trigger"`
 }
 
 type githubDeployPolicyPatch struct {
@@ -23,6 +24,7 @@ type githubDeployPolicyPatch struct {
 	PreviewEnabled       *bool                       `json:"preview_enabled,omitempty"`
 	PreviewTTLHours      *int                        `json:"preview_ttl_hours,omitempty"`
 	PreviewServicePolicy *state.PreviewServicePolicy `json:"preview_service_policy,omitempty"`
+	ProductionTrigger    *state.ProductionTrigger    `json:"production_trigger,omitempty"`
 }
 
 func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyResponse {
@@ -33,6 +35,7 @@ func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyRe
 		PreviewEnabled:       policy.PreviewEnabled,
 		PreviewTTLHours:      policy.PreviewTTLHours,
 		PreviewServicePolicy: policy.PreviewServicePolicy,
+		ProductionTrigger:    policy.ProductionTrigger,
 	}
 }
 
@@ -99,6 +102,14 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 	if req.PreviewServicePolicy != nil {
 		current.PreviewServicePolicy = *req.PreviewServicePolicy
 	}
+	if req.ProductionTrigger != nil {
+		if !req.ProductionTrigger.Valid() {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid GitHub deployment policy", "production_trigger must be webhook or actions"))
+			return
+		}
+		current.ProductionTrigger = *req.ProductionTrigger
+	}
 	if err := current.Validate(); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid GitHub deployment policy", err.Error()))
@@ -127,6 +138,7 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 		"preview_enabled":        stored.PreviewEnabled,
 		"preview_ttl_hours":      stored.PreviewTTLHours,
 		"preview_service_policy": stored.PreviewServicePolicy,
+		"production_trigger":     stored.ProductionTrigger,
 	})
 	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(stored))
 }
