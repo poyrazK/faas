@@ -413,6 +413,15 @@ func TestCallbackOutboxReplayRunsIndependentConnectionsInParallelAndKeepsOrder(t
 		t.Fatal("timed out waiting for same-connection successor")
 	}
 	close(release[second.ID])
+	deadline := time.After(time.Second)
+	for queue.Stats().Pending != 0 {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for the final callback acknowledgement")
+		case <-time.After(time.Millisecond):
+		}
+	}
 	cancel()
 	if err := <-errCh; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
