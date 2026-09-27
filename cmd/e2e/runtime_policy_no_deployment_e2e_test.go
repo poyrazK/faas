@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"testing"
 	"time"
@@ -19,9 +20,24 @@ import (
 // the real gateway path before and after deletion, rather than only checking
 // that the API accepted its configuration.
 func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
-	f := newNormalPathFixtureWithPlan(t, "runtime-policy-no-deploy", api.PlanPro)
+	f := newNormalPathFixtureWithPlanAndEnv(t, "runtime-policy-no-deploy", api.PlanPro,
+		"FAAS_E2E_GATEWAY_NODE_NAME=default-local")
 	if f == nil {
 		return
+	}
+	// The synthetic single-box node has no fleet gateway identity. Register
+	// this named harness gateway so the status endpoint includes it in the
+	// serving-gateway set and can report its observed policy watermarks.
+	gatewayURL, err := url.Parse(f.h.GatewayURL)
+	if err != nil || gatewayURL.Host == "" {
+		t.Fatalf("parse harness gateway URL %q: %v", f.h.GatewayURL, err)
+	}
+	if _, err := f.h.Pool.Exec(f.ctx, `
+		UPDATE compute_nodes
+		SET role = 'compute-node', gateway_target_url = $2
+		WHERE id = $1
+	`, f.nodeID, "tcp://"+gatewayURL.Host); err != nil {
+		t.Fatalf("register harness gateway for runtime policy status: %v", err)
 	}
 
 	_, stableInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "stable")

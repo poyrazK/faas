@@ -10,12 +10,13 @@
 // one e2e family could use it. Everything below is a move plus the renames the
 // package boundary forces; behaviour is unchanged.
 //
-// Coverage note: this fake implements 11 of vmmd's 36 RPCs — Ping, Heartbeat,
+// Coverage note: this fake implements 12 of vmmd's 36 RPCs — Ping, Heartbeat,
 // CreateColdBoot, CreateFromSnapshot, PauseAndSnapshot, Destroy, StopInstance,
-// Stats, FrameworkReady, UpdateEgressAllowlist, ForwardHTTPStream. The rest fall through to
-// UnimplementedVmmdServer, so any daemon path that needs one is silently
-// unreachable from CI. Grow this deliberately rather than assuming a green e2e
-// run covered a boundary it never called.
+// Stats, FrameworkReady, UpdateEgressAllowlist, UpdateAppCPULimit, and
+// ForwardHTTPStream. The rest fall through to UnimplementedVmmdServer, so any
+// daemon path that needs one is silently unreachable from CI. Grow this
+// deliberately rather than assuming a green e2e run covered a boundary it
+// never called.
 //
 // Fidelity matters more than completeness here. When Destroy and StopInstance
 // were Unimplemented the reaper could never tear an instance down, so seeded
