@@ -25,11 +25,12 @@ var (
 )
 
 const (
-	ReasonRate           = "rate_limit"
-	ReasonConcurrency    = "concurrency_limit"
-	ReasonDailyLimit     = "daily_request_limit"
-	ReasonAppNotAttached = "app_not_attached"
-	ReasonCircuitOpen    = "circuit_breaker_open"
+	ReasonRate             = "rate_limit"
+	ReasonConcurrency      = "concurrency_limit"
+	ReasonDailyLimit       = "daily_request_limit"
+	ReasonAppNotAttached   = "app_not_attached"
+	ReasonCircuitOpen      = "circuit_breaker_open"
+	ReasonProviderCooldown = "provider_cooldown"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -62,6 +63,7 @@ type Integration struct {
 	BindingDailyRequestLimits      map[string]*int64
 	RequestTimeout                 time.Duration
 	MaxRetries                     int
+	RetryBudgetPerMinute           int
 	ResponseCacheTTLSeconds        int
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
@@ -147,6 +149,9 @@ func (i Integration) Validate() error {
 	if i.MaxRetries < 0 || i.MaxRetries > api.MaxOutboundRetries {
 		return fmt.Errorf("%w: max_retries must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetries)
 	}
+	if i.RetryBudgetPerMinute < 0 || i.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return fmt.Errorf("%w: retry_budget_per_minute must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetryBudgetPerMinute)
+	}
 	if i.ResponseCacheTTLSeconds < 0 || i.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds {
 		return fmt.Errorf("%w: response_cache_ttl_seconds must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundResponseCacheTTLSeconds)
 	}
@@ -205,6 +210,7 @@ type AdmissionSpec struct {
 	BindingDailyRequestLimit       *int64
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
+	RetryBudgetPerMinute           int
 	LeaseTTL                       time.Duration
 }
 
@@ -218,6 +224,7 @@ type Decision struct {
 	RequestTimeout                 time.Duration
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
+	RetryBudgetPerMinute           int
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on
@@ -249,6 +256,27 @@ const (
 type CircuitBreakerBackend interface {
 	AllowCircuit(context.Context, string, string, int, int) (CircuitBreakerDecision, error)
 	RecordCircuitOutcome(context.Context, string, string, int, int, CircuitBreakerOutcome) error
+}
+
+// RetryBudgetBackend atomically consumes one shared token before each
+// additional provider attempt. Backends coordinate all outboundd replicas.
+type RetryBudgetBackend interface {
+	ConsumeRetryToken(context.Context, string, int) (bool, error)
+}
+
+// ProviderCooldownDecision describes the shared provider-directed gate. A
+// denied request never reaches the provider; RetryAfter is the remaining
+// cooldown, measured by the backend's clock.
+type ProviderCooldownDecision struct {
+	Allowed    bool
+	RetryAfter time.Duration
+}
+
+// ProviderCooldownBackend shares provider Retry-After state across gateway
+// replicas. Implementations should extend, never shorten, an active cooldown.
+type ProviderCooldownBackend interface {
+	AllowProviderRequest(context.Context, string, int64) (ProviderCooldownDecision, error)
+	RecordProviderCooldown(context.Context, string, int64, time.Duration) error
 }
 
 // StaticResolver is useful for a dedicated gateway process configured at

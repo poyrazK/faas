@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	initialRetryDelay = 100 * time.Millisecond
-	maxRetryDelay     = time.Second
+	initialRetryDelay   = 100 * time.Millisecond
+	maxRetryDelay       = time.Second
+	maxProviderCooldown = time.Hour
 )
 
 func retryableStatus(status int) bool {
@@ -42,16 +43,32 @@ func retryableUpstreamError(err error) bool {
 }
 
 func retryAfterDelay(value string, now time.Time) (time.Duration, bool) {
+	delay, ok := parseRetryAfter(value, now)
+	if !ok {
+		return 0, false
+	}
+	return min(delay, maxRetryDelay), true
+}
+
+// parseRetryAfter accepts the two RFC 9110 Retry-After forms and bounds
+// provider-controlled state so one response cannot suppress an integration
+// indefinitely. A past date is valid and means no delay.
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false
 	}
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		if seconds <= 0 {
-			return 0, true
+	digitsOnly := true
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			digitsOnly = false
+			break
 		}
-		if seconds > int64(maxRetryDelay/time.Second) {
-			return maxRetryDelay, true
+	}
+	if digitsOnly {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || seconds > uint64(maxProviderCooldown/time.Second) {
+			return maxProviderCooldown, true
 		}
 		return time.Duration(seconds) * time.Second, true
 	}
@@ -62,7 +79,11 @@ func retryAfterDelay(value string, now time.Time) (time.Duration, bool) {
 	if !when.After(now) {
 		return 0, true
 	}
-	return when.Sub(now), true
+	delay := when.Sub(now)
+	if delay > maxProviderCooldown {
+		delay = maxProviderCooldown
+	}
+	return delay, true
 }
 
 func outboundRetryDelay(retryAfter string, retryNumber int, now time.Time) time.Duration {
@@ -133,7 +154,10 @@ func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcom
 	return CircuitOutcomeSuccess
 }
 
-func (h *Handler) doWithRetries(ctx context.Context, req *http.Request, integrationID string, maxRetries int) (*http.Response, int, error) {
+func (h *Handler) doWithRetries(
+	ctx context.Context, req *http.Request, integrationID, metricIntegrationID string, policyRevision int64,
+	maxRetries, retryBudgetPerMinute int,
+) (*http.Response, int, error) {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
@@ -151,33 +175,95 @@ func (h *Handler) doWithRetries(ctx context.Context, req *http.Request, integrat
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			h.Metrics.ObserveUpstreamError(integrationID, time.Since(started))
+			h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(started))
 			if !canRetry || retries >= maxRetries || !retryableUpstreamError(err) {
 				return nil, attempts, err
 			}
-			if err := waitForOutboundRetry(ctx, outboundRetryDelay("", retries, time.Now())); err != nil {
+			if waitErr := waitForOutboundRetry(ctx, outboundRetryDelay("", retries, time.Now())); waitErr != nil {
+				return nil, attempts, waitErr
+			}
+			if !h.consumeRetryBudget(ctx, integrationID, metricIntegrationID, retryBudgetPerMinute) {
 				return nil, attempts, err
 			}
 		} else {
 			if resp == nil {
 				err = errors.New("outbound transport returned an empty response")
-				h.Metrics.ObserveUpstreamError(integrationID, time.Since(started))
+				h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(started))
 				return nil, attempts, err
 			}
-			h.Metrics.ObserveUpstream(integrationID, resp.StatusCode, time.Since(started))
+			h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(started))
+			retryAfterValue := resp.Header.Get("Retry-After")
+			providerDelay, hasRetryAfter := parseRetryAfter(retryAfterValue, time.Now())
+			if resp.StatusCode == http.StatusTooManyRequests && hasRetryAfter && providerDelay > 0 {
+				h.recordProviderCooldown(ctx, integrationID, metricIntegrationID, policyRevision, providerDelay)
+			}
 			if !canRetry || retries >= maxRetries || !retryableStatus(resp.StatusCode) {
 				return resp, attempts, nil
 			}
+			// Do not retry earlier than a provider's requested delay. Short waits
+			// still fit the bounded retry window; longer waits return the original
+			// provider response and let the caller retry later.
+			if hasRetryAfter && providerDelay > maxRetryDelay {
+				return resp, attempts, nil
+			}
 			delay := outboundRetryDelay(resp.Header.Get("Retry-After"), retries, time.Now())
+			if deadline, ok := ctx.Deadline(); hasRetryAfter && ok && !time.Now().Add(delay).Before(deadline) {
+				return resp, attempts, nil
+			}
+			if waitErr := waitForOutboundRetry(ctx, delay); waitErr != nil {
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, attempts, waitErr
+			}
+			if !h.consumeRetryBudget(ctx, integrationID, metricIntegrationID, retryBudgetPerMinute) {
+				return resp, attempts, nil
+			}
 			if resp.Body != nil {
 				_ = resp.Body.Close()
-			}
-			if err := waitForOutboundRetry(ctx, delay); err != nil {
-				return nil, attempts, err
 			}
 		}
 		retries++
 		req = req.Clone(ctx)
 		req.Body = http.NoBody
 	}
+}
+
+func (h *Handler) recordProviderCooldown(ctx context.Context, integrationID, metricIntegrationID string, policyRevision int64, delay time.Duration) {
+	backend, ok := h.Backend.(ProviderCooldownBackend)
+	if !ok {
+		h.Metrics.ObserveProviderCooldown(metricIntegrationID, "unavailable")
+		return
+	}
+	observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	if err := backend.RecordProviderCooldown(observeCtx, integrationID, policyRevision, delay); err != nil {
+		h.Metrics.ObserveProviderCooldown(metricIntegrationID, "state_error")
+		return
+	}
+	h.Metrics.ObserveProviderCooldown(metricIntegrationID, "recorded")
+}
+
+func (h *Handler) consumeRetryBudget(
+	ctx context.Context, integrationID, metricIntegrationID string, retryBudgetPerMinute int,
+) bool {
+	if retryBudgetPerMinute == 0 {
+		return true
+	}
+	backend, ok := h.Backend.(RetryBudgetBackend)
+	if !ok {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "unavailable")
+		return false
+	}
+	allowed, err := backend.ConsumeRetryToken(ctx, integrationID, retryBudgetPerMinute)
+	if err != nil {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "state_error")
+		return false
+	}
+	if !allowed {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "exhausted")
+		return false
+	}
+	h.Metrics.ObserveRetryBudget(metricIntegrationID, "consumed")
+	return true
 }

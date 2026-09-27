@@ -101,6 +101,7 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 ||
 		policy.MaxRetries < 0 || policy.MaxRetries > api.MaxOutboundRetries ||
 		policy.ResponseCacheTTLSeconds < 0 || policy.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds ||
+		policy.RetryBudgetPerMinute < 0 || policy.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute ||
 		!api.ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) {
 		return ErrInvalidArgument
 	}

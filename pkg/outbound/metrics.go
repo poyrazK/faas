@@ -11,13 +11,15 @@ import (
 // are configuration-owned; customer-created integrations share a fixed label
 // so customer growth cannot create unbounded metric cardinality.
 type Metrics struct {
-	admissions       *prometheus.CounterVec
-	rejections       *prometheus.CounterVec
-	inFlight         *prometheus.GaugeVec
-	upstreamRequests *prometheus.CounterVec
-	upstreamLatency  *prometheus.HistogramVec
-	cacheRequests    *prometheus.CounterVec
-	circuitEvents    *prometheus.CounterVec
+	admissions             *prometheus.CounterVec
+	rejections             *prometheus.CounterVec
+	inFlight               *prometheus.GaugeVec
+	upstreamRequests       *prometheus.CounterVec
+	upstreamLatency        *prometheus.HistogramVec
+	cacheRequests          *prometheus.CounterVec
+	circuitEvents          *prometheus.CounterVec
+	retryBudgetEvents      *prometheus.CounterVec
+	providerCooldownEvents *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -57,6 +59,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_circuit_breaker_events_total",
 			Help: "Outbound circuit-breaker checks and outcomes by integration and bounded event.",
 		}, []string{"integration_id", "event"}),
+		retryBudgetEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_retry_budget_events_total",
+			Help: "Shared outbound retry-budget checks by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
+		providerCooldownEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_provider_cooldown_events_total",
+			Help: "Shared provider-directed outbound cooldown checks by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -66,6 +76,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.upstreamLatency,
 		m.cacheRequests,
 		m.circuitEvents,
+		m.retryBudgetEvents,
+		m.providerCooldownEvents,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -146,4 +158,18 @@ func (m *Metrics) ObserveCircuit(integrationID, event string) {
 		return
 	}
 	m.circuitEvents.WithLabelValues(integrationID, event).Inc()
+}
+
+func (m *Metrics) ObserveRetryBudget(integrationID, event string) {
+	if m == nil || m.retryBudgetEvents == nil {
+		return
+	}
+	m.retryBudgetEvents.WithLabelValues(integrationID, event).Inc()
+}
+
+func (m *Metrics) ObserveProviderCooldown(integrationID, event string) {
+	if m == nil || m.providerCooldownEvents == nil {
+		return
+	}
+	m.providerCooldownEvents.WithLabelValues(integrationID, event).Inc()
 }

@@ -43,6 +43,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var dailyRequestLimitValue int64
 	var burst, maxInFlight, timeoutMS, maxRetries, responseCacheTTLSeconds int
 	var circuitBreakerFailureThreshold, circuitBreakerOpenSeconds int
+	var retryBudgetPerMinute int
 	var enabled bool
 	var policyUpdatedAt time.Time
 	err = r.pool.QueryRow(ctx, `
@@ -50,6 +51,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
 		       integration.request_timeout_ms, integration.max_retries, integration.response_cache_ttl_seconds,
 		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
+		       integration.retry_budget_per_minute,
 		       integration.updated_at, integration.enabled, integration.provider_auth_mode,
 		       integration.credential_source, integration.allowed_methods,
 		       integration.allowed_path_prefixes, integration.owner_kind,
@@ -58,7 +60,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
-			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &policyUpdatedAt, &enabled, &providerAuthMode,
+			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -94,6 +96,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 			RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight, RequestTimeoutMS: timeoutMS,
 			MaxRetries: maxRetries, ResponseCacheTTLSeconds: responseCacheTTLSeconds,
 			CircuitBreakerFailureThreshold: circuitBreakerFailureThreshold, CircuitBreakerOpenSeconds: circuitBreakerOpenSeconds,
+			RetryBudgetPerMinute: retryBudgetPerMinute,
 		})
 		if !ok {
 			return Integration{}, fmt.Errorf("%w: customer outbound request policy is invalid", ErrInvalidIntegration)
@@ -102,6 +105,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		responseCacheTTLSeconds = policy.ResponseCacheTTLSeconds
 		circuitBreakerFailureThreshold = policy.CircuitBreakerFailureThreshold
 		circuitBreakerOpenSeconds = policy.CircuitBreakerOpenSeconds
+		retryBudgetPerMinute = policy.RetryBudgetPerMinute
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint
@@ -165,6 +169,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		ResponseCacheTTLSeconds:        responseCacheTTLSeconds,
 		CircuitBreakerFailureThreshold: circuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      circuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           retryBudgetPerMinute,
 		PolicyRevision:                 policyUpdatedAt.UnixNano(),
 		ProviderAuthMode:               providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}

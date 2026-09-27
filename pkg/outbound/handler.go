@@ -224,6 +224,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      integration.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 	})
 	if err != nil {
@@ -319,6 +320,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
 	if !cacheHit {
+		cooldown, ok := h.Backend.(ProviderCooldownBackend)
+		if !ok {
+			h.Metrics.ObserveProviderCooldown(metricIntegrationID, "unavailable")
+		} else {
+			gate, gateErr := cooldown.AllowProviderRequest(r.Context(), integration.ID, integration.PolicyRevision)
+			if gateErr != nil {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "state_error")
+				h.Metrics.ObserveRejection(metricIntegrationID, "provider_cooldown_unavailable")
+				w.Header().Set("X-Gregale-Outbound-Rejection", "provider_cooldown_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_cooldown_unavailable", "Outbound provider cooldown state is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "blocked")
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonProviderCooldown)
+				dependencySpan.SetStatus(codes.Error, "provider requested cooldown")
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonProviderCooldown)
+				writeProblem(w, http.StatusTooManyRequests, "outbound_provider_cooldown", "Outbound provider requested a cooldown", retryAfterSeconds(gate.RetryAfter))
+				return
+			}
+		}
 		var breaker CircuitBreakerBackend
 		breakerProbe := false
 		if decision.CircuitBreakerFailureThreshold > 0 {
@@ -352,7 +374,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
 			}
 		}
-		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, integration.ID, metricIntegrationID,
+			integration.PolicyRevision, integration.MaxRetries, decision.RetryBudgetPerMinute)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {

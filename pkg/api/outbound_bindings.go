@@ -14,6 +14,10 @@ const MaxOutboundRetries = 2
 // change outside Gregale's control.
 const MaxOutboundResponseCacheTTLSeconds = 300
 
+// MaxOutboundRetryBudgetPerMinute bounds extra provider attempts shared by
+// all outbound gateway replicas for one integration.
+const MaxOutboundRetryBudgetPerMinute = 3000
+
 // Outbound circuit-breaker settings are deliberately bounded. A zero pair
 // disables the breaker; enabled policies need a failure threshold and a
 // finite cool-down before one half-open probe is allowed.
@@ -61,6 +65,10 @@ type OutboundRequestPolicy struct {
 	// CircuitBreakerOpenSeconds is the cool-down before one provider probe is
 	// admitted. Zero disables the breaker and requires a zero threshold.
 	CircuitBreakerOpenSeconds int `json:"circuit_breaker_open_seconds"`
+	// RetryBudgetPerMinute caps extra safe-method attempts with a shared token
+	// bucket. Its capacity equals the configured rate; zero leaves the existing
+	// per-request MaxRetries policy as the only retry limit.
+	RetryBudgetPerMinute int `json:"retry_budget_per_minute"`
 }
 
 // DefaultOutboundRequestPolicy preserves the original customer-integration
@@ -76,6 +84,7 @@ func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 		ResponseCacheTTLSeconds:        0,
 		CircuitBreakerFailureThreshold: 0,
 		CircuitBreakerOpenSeconds:      0,
+		RetryBudgetPerMinute:           0,
 	}
 }
 
@@ -86,10 +95,11 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 	limits, ok := LimitsFor(plan)
 	if !ok || limits.OutboundRatePerSecondMax <= 0 || limits.OutboundBurstMax < 1 ||
 		limits.OutboundMaxInFlightMax < 1 || limits.OutboundRequestTimeoutMSMax < 1 || limits.OutboundMaxRetriesMax < 0 ||
-		limits.OutboundResponseCacheTTLSecondsMax < 0 ||
+		limits.OutboundResponseCacheTTLSecondsMax < 0 || limits.OutboundRetryBudgetPerMinuteMax < 0 ||
 		policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
 		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 || policy.MaxRetries < 0 ||
-		policy.ResponseCacheTTLSeconds < 0 || !ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) {
+		policy.ResponseCacheTTLSeconds < 0 || !ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) ||
+		policy.RetryBudgetPerMinute < 0 || policy.RetryBudgetPerMinute > MaxOutboundRetryBudgetPerMinute {
 		return OutboundRequestPolicy{}, false
 	}
 	if policy.RatePerSecond > limits.OutboundRatePerSecondMax {
@@ -109,6 +119,9 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 	}
 	if policy.ResponseCacheTTLSeconds > limits.OutboundResponseCacheTTLSecondsMax {
 		policy.ResponseCacheTTLSeconds = limits.OutboundResponseCacheTTLSecondsMax
+	}
+	if policy.RetryBudgetPerMinute > limits.OutboundRetryBudgetPerMinuteMax {
+		policy.RetryBudgetPerMinute = limits.OutboundRetryBudgetPerMinuteMax
 	}
 	return policy, true
 }
