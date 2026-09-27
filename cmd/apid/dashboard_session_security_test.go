@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
 var dashboardCSRFField = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
@@ -307,5 +310,99 @@ func TestOrgAPIKeys_RequireTheCallersScope(t *testing.T) {
 	}
 	if rec := call(readOnly, "GET", "/v1/orgs/scope-team/keys", ""); rec.Code != http.StatusOK {
 		t.Fatalf("apps:read key listing org keys = %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+func mfaDisableWithPassword(t *testing.T, e mfaTestEnv, session *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	csrfRec := dashboardGet(e.h, "/v1/auth/csrf?action=mfa_disable", session)
+	var tok struct {
+		Token string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(csrfRec.Body.Bytes(), &tok); err != nil || tok.Token == "" {
+		t.Fatalf("csrf = %d %s", csrfRec.Code, csrfRec.Body)
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/account/mfa/disable",
+		strings.NewReader(`{"password":"`+seededPassword+`","csrf_token":"`+tok.Token+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.AddCookie(session)
+	r.AddCookie(responseCookie(csrfRec, middleware.CookieNameAuthenticated))
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
+// TestMFADisable_PasswordNeedsACompletedMFASession — /v1/account/mfa/disable
+// is reachable by an mfa_pending session and accepted the password as
+// proof. The password is the first factor: with only a stolen password an
+// attacker signed in, switched MFA off, and could enroll their own device.
+func TestMFADisable_PasswordNeedsACompletedMFASession(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	_, _, completed := e.generateEnrolledAccount(t)
+	seedPassword(t, e.store, e.acct.ID)
+
+	if rec := mfaDisableWithPassword(t, e, e.mfaIssueWithPending(t, true)); rec.Code != http.StatusForbidden {
+		t.Fatalf("password disable from an mfa_pending session = %d %s, want 403", rec.Code, rec.Body)
+	}
+	if acct, _ := e.store.AccountByID(t.Context(), e.acct.ID); !acct.MFAEnrolled() {
+		t.Fatal("an mfa_pending session disabled MFA with the password alone")
+	}
+	if rec := mfaDisableWithPassword(t, e, completed); rec.Code != http.StatusOK {
+		t.Fatalf("password disable from a session that passed MFA = %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+// TestMFAVerify_GuessesAreLimitedPerAccount — the auth limiter counts
+// failures per IP only, so a password holder with many addresses could
+// keep guessing TOTP codes for one account. After ten wrong codes the
+// account's TOTP checks answer 429, even for a new address, until the
+// window moves on.
+func TestMFAVerify_GuessesAreLimitedPerAccount(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	_, secret, _ := e.generateEnrolledAccount(t)
+	pending := e.mfaIssueWithPending(t, true)
+	verify := func(code, ip string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/account/mfa/verify", strings.NewReader(`{"totp":"`+code+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = ip + ":40000"
+		r.AddCookie(pending)
+		e.h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for i := 0; i < totpMaxFailures; i++ {
+		if code := verify("000000", "198.51.100."+strconv.Itoa(i+1)); code != http.StatusUnauthorized {
+			t.Fatalf("wrong code %d from a fresh IP = %d, want 401", i+1, code)
+		}
+	}
+	good, err := totp.GenerateCodeCustom(secret, time.Now().UTC(), totp.ValidateOpts{Period: 30, Digits: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := verify(good, "203.0.113.77"); code != http.StatusTooManyRequests {
+		t.Fatalf("code after %d account failures from a new IP = %d, want 429", totpMaxFailures, code)
+	}
+}
+
+func TestTOTPGuard_WindowAndReset(t *testing.T) {
+	t.Parallel()
+	g := newTOTPGuard()
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < totpMaxFailures; i++ {
+		g.fail("a", now.Add(time.Duration(i)*time.Second))
+	}
+	if wait := g.retryAfter("a", now.Add(10*time.Second)); wait <= 0 || wait > totpFailureWindow {
+		t.Fatalf("retryAfter at the limit = %s", wait)
+	}
+	if wait := g.retryAfter("b", now); wait != 0 {
+		t.Fatalf("another account is limited: %s", wait)
+	}
+	if wait := g.retryAfter("a", now.Add(totpFailureWindow+time.Second)); wait != 0 {
+		t.Fatalf("retryAfter after the window = %s, want 0", wait)
+	}
+	g.fail("c", now)
+	g.reset("c")
+	if len(g.fails) != 0 && g.fails["c"] != nil {
+		t.Fatal("reset left failures behind")
 	}
 }

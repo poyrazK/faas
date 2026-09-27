@@ -52,16 +52,21 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if !s.totpAttemptAllowed(w, acct) {
+		return
+	}
 	secret := readSealedSecret(s, w, r, acct.ID)
 	if secret == "" {
 		return // readSealedSecret wrote the problem
 	}
 	if !auth.VerifyCode(secret, strings.TrimSpace(r.PostFormValue("code"))) {
+		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch", "via": "dashboard"})
 		// 401 so the dashboard auth limiter counts the guess.
 		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, true, dashboardMFANext(r.PostFormValue("next")))
 		return
 	}
+	s.totp.reset(acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("dashboard.mfa.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))

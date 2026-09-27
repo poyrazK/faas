@@ -48,6 +48,8 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	// totp limits TOTP guesses per account (totp_guard.go).
+	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
 	managedPostgres                  *managedpostgres.Service
 	managedPostgresReconciler        *managedpostgres.Reconciler
@@ -1066,6 +1068,7 @@ func newServerWithDeps(
 		// is the shared apiAuthLimiter that backs s.authLimited (the
 		// API surface-level per-IP bucket per spec §11 10/min/IP).
 		// ADR-044.
+		totp: newTOTPGuard(),
 		authMw: authmw.New(
 			storeAsAuthenticator(store),
 			sessions,
