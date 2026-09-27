@@ -32,7 +32,19 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 	}
 	makeCustomer := func(slug, tenantID, externalRef string) customer {
 		t.Helper()
-		appID := mustSeedApp(t, e, slug)
+		plan := e.acct.Plan
+		app, err := e.store.CreateApp(ctx, state.App{
+			AccountID:      e.acct.ID,
+			Slug:           slug,
+			Type:           state.AppTypeApp,
+			Status:         state.AppActive,
+			RequireAuthn:   plan.RequireAuthnDefault(),
+			PublicAuthMode: plan.PublicAuthModeDefault(),
+		})
+		if err != nil {
+			t.Fatalf("seed app %s: %v", slug, err)
+		}
+		appID := app.ID
 		consumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, externalRef, "Customer "+externalRef)
 		if err != nil {
 			t.Fatal(err)
