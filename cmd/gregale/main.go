@@ -648,7 +648,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// public help paths aligned with their actual dispatchers.
 	switch command.Name {
 	case "rollback":
-		PrintUsage(w, rollbackUsage, command.DocSlug)
+		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		if len(command.Examples) > 0 {
+			_, _ = fmt.Fprintln(w, "\nExamples:")
+			printCLIExamples(w, command.Examples)
+		}
+		_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 		return
 	case "rollouts":
 		PrintUsage(w, rolloutsUsage, command.DocSlug)

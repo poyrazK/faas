@@ -556,9 +556,23 @@ Connect a third-party service (github | repo OWNER/NAME)
 
 Connect a GitHub account for repo deploys
 
+Examples:
+
+```sh
+gregale connect github
+```
+
 ### connect repo
 
 Open the dashboard wizard to bind &lt;owner&gt;/&lt;name&gt; to a Gregale app
+
+`gregale connect repo <owner>/<name>`
+
+Examples:
+
+```sh
+gregale connect repo acme/my-api
+```
 
 
 ## github
@@ -571,17 +585,43 @@ Manage an app&#39;s GitHub installation and repository binding
 
 Show the GitHub connection health for &lt;slug&gt;
 
+`gregale github status <slug>`
+
+Examples:
+
+```sh
+gregale github status my-api
+```
+
 ### github sync
 
 Reconcile repository access with GitHub
+
+`gregale github sync <slug>`
+
+Examples:
+
+```sh
+gregale github sync my-api
+```
 
 ### github repos
 
 List repositories visible to the connected GitHub installation for &lt;slug&gt;
 
+`gregale github repos <slug>`
+
+Examples:
+
+```sh
+gregale github repos my-api
+```
+
 ### github bind
 
 Bind &lt;slug&gt; to a visible GitHub repository
+
+`gregale github bind <slug> [--installation-id <ID>] --repo <OWNER/NAME> [--branch <BRANCH>] [--deploy-branches <MAPPINGS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -590,9 +630,17 @@ Bind &lt;slug&gt; to a visible GitHub repository
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
+Examples:
+
+```sh
+gregale github bind my-api --repo acme/my-api --branch main
+```
+
 ### github setup
 
 Bind GitHub, configure previews, and write an Actions workflow
+
+`gregale github setup <slug> [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -610,9 +658,18 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--dry-run` | show the workflow without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
+Examples:
+
+```sh
+gregale github setup my-api --repo acme/my-api --dry-run
+gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72
+```
+
 ### github disconnect
 
 Remove the app&#39;s GitHub repository binding
+
+`gregale github disconnect <slug> [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1056,6 +1113,13 @@ List deployments or manage stable named URLs for immutable revisions
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
 
+Examples:
+
+```sh
+gregale deployments --app my-api --limit 10
+gregale deployments --app my-api --wide
+```
+
 ### deployments alias
 
 Manage stable named URLs for immutable deployments
@@ -1106,13 +1170,29 @@ Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wa
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
 
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment wait v42 --app my-api
+```
+
 ### deployment summary
 
 Show the release diff and rollback target
 
+`gregale deployment summary <id|vN> --app <SLUG>`
+
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment summary v42 --app my-api --json
+```
 
 ### deployment wait
 
@@ -1149,13 +1229,48 @@ Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys show
 
 Print the closed 6-stage post-stream summary
 
+`gregale deploys show <id|vN> [--app <SLUG>] [--status] [--url]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--status` | include terminal status and timing |  |
+| `--url` | print only the deployment preview URL |  |
+
+Examples:
+
+```sh
+gregale deploys show 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys status
 
 Print stages, terminal status, and failure guidance
+
+`gregale deploys status <id|vN> [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys status v42 --app my-api --json
+```
 
 ### deploys cancel
 
@@ -1387,6 +1502,13 @@ Create and deploy a pull-request preview from a GitHub ref
 | `--idempotency-key <KEY>` | stable retry key |  |
 | `--open` | open the preview URL after a successful create |  |
 
+Examples:
+
+```sh
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait
+```
+
 ### preview list
 
 List pull-request and developer previews (defaults to the linked app)
@@ -1395,13 +1517,30 @@ List pull-request and developer previews (defaults to the linked app)
 |---|---|---|
 | `--app <slug>` | parent app slug |  |
 
+Examples:
+
+```sh
+gregale preview list --app my-api
+gregale preview list
+```
+
 ### preview show
 
 Inspect a preview and its latest deployment
 
+`gregale preview show <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview show pr-42-my-api
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
+
+`gregale preview wait <preview-slug> [--progress] [--open] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1409,9 +1548,23 @@ Wait for a preview deployment to become ready
 | `--open` | open the preview URL after it becomes ready |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
 
+Examples:
+
+```sh
+gregale preview wait pr-42-my-api --progress --open
+```
+
 ### preview destroy
 
-Tear down a preview app (POST /v1/preview/{slug}/destroy)
+Tear down a preview app
+
+`gregale preview destroy <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview destroy pr-42-my-api
+```
 
 
 ## platform-tenants
@@ -2403,6 +2556,13 @@ Re-promote the previous deployment
 |---|---|---|
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--json` | machine-readable output |  |
+
+Examples:
+
+```sh
+gregale rollback my-api
+gregale rollback my-api --to v41
+```
 
 
 ## projects
