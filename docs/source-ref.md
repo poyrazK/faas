@@ -132,8 +132,11 @@ local/tarball deploy whose source can be inspected before mutation.
   write the workflow and set `production_trigger=actions`; the connected
   GitHub App continues to manage PR previews. The generated workflow also
   deploys newly created SemVer `v*` tags from their immutable event commit;
-  moved, deleted, and invalid tag pushes are skipped. Existing projects with
-  `production_trigger=webhook` keep the App push deploy path.
+  moved, deleted, and invalid tag pushes are skipped. Branches passed through
+  `--deploy-branches branch=environment,...` or previously saved through
+  `github bind` also deploy through Actions into their registered project
+  environments, and manual dispatch is limited to those branches. Existing
+  projects with `production_trigger=webhook` keep the App push deploy path.
 - **Not a git deploy-key fetch.** The server uses the GitHub App
   install token (ADR-012, ADR-020); the control plane never
   sees the customer's PAT. The install token is scoped to a
