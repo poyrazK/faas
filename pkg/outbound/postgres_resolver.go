@@ -109,6 +109,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	defer rows.Close()
 	apps := make(map[string]struct{})
 	operatorApps := make(map[string]struct{})
+	bindingApps := make(map[string]struct{})
 	customerRoutes := make(map[string]RoutePolicy)
 	bindingDailyRequestLimits := make(map[string]*int64)
 	for rows.Next() {
@@ -123,6 +124,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		if operator {
 			operatorApps[appID] = struct{}{}
 		} else {
+			bindingApps[appID] = struct{}{}
 			if methods != nil || paths != nil {
 				customerRoutes[appID] = RoutePolicy{AllowedMethods: methods, AllowedPathPrefixes: paths}
 			}
@@ -142,7 +144,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		return Integration{}, err
 	}
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
-		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
+		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		DailyRequestLimit:         dailyRequestLimit,
 		BindingDailyRequestLimits: bindingDailyRequestLimits,

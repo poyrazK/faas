@@ -47,6 +47,7 @@ type Integration struct {
 	TokenHash                 [32]byte
 	AppIDs                    map[string]struct{}
 	OperatorAppIDs            map[string]struct{}
+	BindingAppIDs             map[string]struct{}
 	CustomerAppRoutes         map[string]RoutePolicy
 	RatePerSecond             float64
 	Burst                     int
@@ -119,6 +120,11 @@ func (i Integration) Validate() error {
 			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
 		}
 	}
+	for appID := range i.BindingAppIDs {
+		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) {
+			return fmt.Errorf("%w: binding app ID is invalid", ErrInvalidIntegration)
+		}
+	}
 	// An operator may provision an integration with no initial app. Customer
 	// attachments live in apid-owned outbound_app_bindings and are loaded by
 	// the resolver at request time.
@@ -171,8 +177,8 @@ type AdmissionSpec struct {
 	Burst             int
 	MaxInFlight       int
 	DailyRequestLimit *int64
-	// BindingAppID scopes the optional customer binding budget. It is set
-	// from verified workload identity, never from a guest-controlled header.
+	// BindingAppID scopes an explicit app binding budget. It is set from
+	// verified workload identity, never from a guest-controlled header.
 	BindingAppID             string
 	BindingDailyRequestLimit *int64
 	LeaseTTL                 time.Duration
@@ -215,6 +221,7 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 			copyItem.AppIDs[appID] = struct{}{}
 		}
 		copyItem.OperatorAppIDs = copyStringSet(item.OperatorAppIDs)
+		copyItem.BindingAppIDs = copyStringSet(item.BindingAppIDs)
 		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
 		copyItem.DailyRequestLimit = copyInt64Pointer(item.DailyRequestLimit)
 		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
@@ -239,6 +246,7 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.Origin = cloneURL(i.Origin)
 	i.AppIDs = copyStringSet(i.AppIDs)
 	i.OperatorAppIDs = copyStringSet(i.OperatorAppIDs)
+	i.BindingAppIDs = copyStringSet(i.BindingAppIDs)
 	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
 	i.DailyRequestLimit = copyInt64Pointer(i.DailyRequestLimit)
 	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)

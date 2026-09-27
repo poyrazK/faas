@@ -205,7 +205,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	bindingAppID := ""
 	var bindingDailyRequestLimit *int64
-	if integration.OwnerKind == IntegrationOwnerCustomer {
+	_, explicitlyBound := integration.BindingAppIDs[appID]
+	if integration.OwnerKind == IntegrationOwnerCustomer || explicitlyBound {
 		bindingAppID = appID
 		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
 	}

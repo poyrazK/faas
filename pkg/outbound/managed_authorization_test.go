@@ -172,6 +172,61 @@ func TestHandlerAppliesDailyLimitToAuthenticatedCustomerBinding(t *testing.T) {
 	}
 }
 
+func TestHandlerAppliesDailyLimitToExplicitOperatorBinding(t *testing.T) {
+	var providerCalls int
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer provider.Close()
+	integration, err := NewIntegration("integration-operator-bound", provider.URL, "unused-token", []string{"app-1"}, 100, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = ProviderAuthManaged
+	integration.CredentialSource = CredentialSourceOperatorEnv
+	integration.OwnerKind = IntegrationOwnerOperator
+	integration.OperatorAppIDs = map[string]struct{}{"app-1": {}}
+	integration.BindingAppIDs = map[string]struct{}{"app-1": {}}
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1"}
+	limit := int64(1)
+	integration.BindingDailyRequestLimits = map[string]*int64{"app-1": &limit}
+	resolver, err := NewStaticResolver([]Integration{integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(resolver, NewMemoryBackend(), provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, jwks := testWorkloadSigner(t, "https://identity.gregale.dev")
+	handler.IdentityVerifier, err = NewWorkloadIdentityVerifier(jwks, "https://identity.gregale.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.SetManagedAuthorizations(map[string]string{integration.ID: "Bearer provider-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	call := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, Prefix+integration.ID+"/v1/items", nil)
+		req.Header.Set(WorkloadIdentityHeader, testWorkloadToken(t, signer, time.Now(), "app-1", integration.ID))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	if response := call(); response.Code != http.StatusNoContent {
+		t.Fatalf("first explicitly-bound request status = %d body=%s", response.Code, response.Body.String())
+	}
+	blocked := call()
+	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("X-Gregale-Outbound-Rejection") != ReasonDailyLimit {
+		t.Fatalf("over-budget explicitly-bound request = status %d reason %q", blocked.Code, blocked.Header().Get("X-Gregale-Outbound-Rejection"))
+	}
+	if providerCalls != 1 {
+		t.Fatalf("provider calls = %d, want one admitted call", providerCalls)
+	}
+}
+
 func TestManagedAuthorizationRejectsUnsafeValuesWithoutReplacingConfiguration(t *testing.T) {
 	handler, err := NewHandler(&StaticResolver{}, NewMemoryBackend(), nil)
 	if err != nil {

@@ -61,9 +61,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return Decision{}, err
 	}
-	// Lock the account first. Customer admissions then lock their binding before
-	// the integration row, matching binding-policy writes and preventing a stale
-	// resolver snapshot from bypassing a completed policy update.
+	// Lock the account first. Explicitly bound admissions then lock their
+	// binding before the integration row, matching binding-policy writes and
+	// preventing a stale resolver snapshot from bypassing a completed update.
 	var plan, ownerKind string
 	var storedDailyRequestLimit int64
 	var requestPolicy api.OutboundRequestPolicy
@@ -82,10 +82,10 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	var bindingAppID uuid.UUID
 	var bindingDailyRequestLimit *int64
-	if observedOwnerKind == "customer" {
-		if spec.BindingAppID == "" {
-			return Decision{}, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
-		}
+	if observedOwnerKind == "customer" && spec.BindingAppID == "" {
+		return Decision{}, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
+	}
+	if spec.BindingAppID != "" {
 		bindingAppID, err = uuid.Parse(spec.BindingAppID)
 		if err != nil {
 			return Decision{}, fmt.Errorf("%w: binding app id must be a UUID", ErrInvalidIntegration)
@@ -173,7 +173,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		dailyRequestCount = 0
 	}
 	var bindingDailyRequestCount int64
-	if ownerKind == "customer" {
+	if bindingAppID != uuid.Nil {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO outbound_app_binding_usage (integration_id, app_id, daily_usage_date, daily_request_count)
 			VALUES ($1, $2, $3, 0)
@@ -265,7 +265,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount); err != nil {
 		return Decision{}, err
 	}
-	if ownerKind == "customer" {
+	if bindingAppID != uuid.Nil {
 		result, err := tx.Exec(ctx, `UPDATE outbound_app_binding_usage
 			SET daily_request_count = daily_request_count + 1
 			WHERE integration_id = $1 AND app_id = $2 AND daily_usage_date = $3`, integrationID, bindingAppID, today)

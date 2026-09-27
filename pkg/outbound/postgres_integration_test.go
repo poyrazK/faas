@@ -275,6 +275,7 @@ func TestPostgresBackendEnforcesDailyLimitPerBinding(t *testing.T) {
 	}
 	resolved, err := resolver.Integration(ctx, offer.ID)
 	if err != nil || !resolved.AllowsApp(appOne.ID) || !resolved.AllowsApp(appTwo.ID) ||
+		len(resolved.BindingAppIDs) != 2 ||
 		resolved.BindingDailyRequestLimits[appOne.ID] == nil || *resolved.BindingDailyRequestLimits[appOne.ID] != appOneLimit ||
 		resolved.BindingDailyRequestLimits[appTwo.ID] == nil || *resolved.BindingDailyRequestLimits[appTwo.ID] != appTwoLimit {
 		t.Fatalf("resolved binding daily limits = %+v, %v", resolved.BindingDailyRequestLimits, err)
