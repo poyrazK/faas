@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // deletionPendingPayload is the JSON shape the account_deletion_pending
@@ -336,6 +337,14 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 		return acct, api.NewProblem(http.StatusConflict, api.CodeAccountNotRestorable,
 			"Not restorable",
 			"account is not in the deletion grace window")
+	}
+	if acct.PastDueAt != nil {
+		// Dunning scheduled this deletion. The store refuses a
+		// self-service restore of it, and "grace expired" was the wrong
+		// reason to give: paying is what cancels it.
+		return acct, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+			"Payment required",
+			"this deletion was scheduled for non-payment; paying the outstanding balance cancels it: "+wire.DashboardBillingURL)
 	}
 	if err := s.store.RestoreAccount(ctx, acct.ID); err != nil {
 		return acct, api.NewProblem(http.StatusConflict, api.CodeAccountNotRestorable,

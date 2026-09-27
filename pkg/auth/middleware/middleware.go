@@ -501,7 +501,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// bearer" through the legacy 401 path.
 			} else {
 				if !acct.Active() {
-					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -604,7 +604,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
 				if !acct.Active() {
-					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -648,7 +648,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 					if !acct.Active() {
-						if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+						if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 							return
@@ -715,7 +715,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
-							if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+							if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
@@ -933,6 +933,36 @@ func (d *sessionTouchDebounce) shouldTouch(sid string, now time.Time, window tim
 func isAccountScopedPath(p string) bool {
 	switch p {
 	case "/v1/account", "/v1/account/export", "/v1/account/restore":
+		return true
+	}
+	return false
+}
+
+// InactiveAccountMayReach reports whether an account that is not Active()
+// may still use the route. Everything else answers 402.
+//
+// A suspended or deleted_pending account keeps the routes that end its
+// state: the billing portal, retry and status, a plan change (an upgrade is
+// what lifts a Free quota stop), and reading its account, usage and export.
+// Without them the suspension email's `gregale billing portal`, the 402's
+// "resolve billing" link and the dunning deletion notice all led to a 402,
+// and a customer who wanted to pay had no way to. A deleted_pending account
+// also keeps its account routes so it can restore or re-read the deletion.
+func InactiveAccountMayReach(acct state.Account, method, path string) bool {
+	switch acct.Status {
+	case state.AccountDeletedPending:
+		return isAccountScopedPath(path) || isBillingRecoveryRoute(method, path)
+	case state.AccountSuspended:
+		return isBillingRecoveryRoute(method, path)
+	}
+	return false
+}
+
+func isBillingRecoveryRoute(method, path string) bool {
+	switch method + " " + path {
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+		"GET /v1/billing/portal", "GET /v1/billing/status", "POST /v1/billing/retry",
+		"PATCH /v1/account/plan":
 		return true
 	}
 	return false

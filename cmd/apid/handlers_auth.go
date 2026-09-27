@@ -218,8 +218,13 @@ func (a *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 //   - no cookie / malformed cookie → 302 to /login?next=…
 //     (keeps the URL as the redirect target post-login)
 //   - cookie present but expired/tampered → 302 to /login + clear cookie
-//   - account not found / suspended → 302 to /login (rare; means the
-//     account was deleted while a session was live — don't leak which)
+//   - account not found → 302 to /login (rare; means the account was
+//     deleted while a session was live)
+//   - account suspended / deleted_pending → only the pages that end that
+//     state (dashboardRecoveryRoute); anything else 302s to the page that
+//     does. These used to 302 to /login, which signed the customer back
+//     in and bounced them to /login again: the 402's "resolve billing"
+//     link and the account page's Restore button were unreachable.
 func (s *server) sessionAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
@@ -243,8 +248,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			return
 		}
 		acct, err := s.store.AccountByID(r.Context(), env.AccountID)
-		if err != nil || !acct.Active() {
+		if err != nil {
 			http.Redirect(w, r, loginPath, http.StatusFound)
+			return
+		}
+		if !acct.Active() && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
+			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
 		r = r.WithContext(WithAccount(r.Context(), acct))
@@ -406,4 +415,30 @@ func decodeErr(err error) string {
 		return err.Error()[:120] + "..."
 	}
 	return err.Error()
+}
+
+// dashboardRecoveryRoute is the dashboard twin of
+// middleware.InactiveAccountMayReach: the pages a suspended or
+// deleted_pending account can still use to pay, upgrade, export, or
+// restore.
+func dashboardRecoveryRoute(acct state.Account, method, path string) bool {
+	switch method + " " + path {
+	case "GET /dashboard/billing", "GET /dashboard/usage", "GET /dashboard/upgrade",
+		"POST /dashboard/upgrade", "POST /dashboard/account/plan",
+		"GET /dashboard/account", "GET /dashboard/account/export":
+		return acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending
+	case "POST /dashboard/account/restore":
+		return acct.Status == state.AccountDeletedPending
+	}
+	return false
+}
+
+// dashboardRecoveryPage is where an inactive account lands: the account
+// page (with its Restore button) for a deletion the customer asked for,
+// the billing page for anything payment ends.
+func dashboardRecoveryPage(acct state.Account) string {
+	if acct.Status == state.AccountDeletedPending && acct.PastDueAt == nil {
+		return "/dashboard/account"
+	}
+	return "/dashboard/billing"
 }

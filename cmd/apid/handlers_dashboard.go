@@ -1698,15 +1698,15 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	data := dashboard.AccountData{
 		Keys:        keyItems,
 		ShowDelete:  view.Status != state.AccountDeletedPending,
-		ShowRestore: view.Status == state.AccountDeletedPending,
+		// A deletion dunning scheduled is cancelled by paying, not by
+		// the Restore button (the store refuses it).
+		ShowRestore: view.Status == state.AccountDeletedPending && view.PastDueAt == nil,
 	}
 	// CSRF (review finding A3): mint sealed envelopes bound to
 	// (action, account_id) and set the matching faas_csrf sidecar
-	// cookie. The renderer always issues both the delete and the
-	// restore tokens because the page conditionally shows one of the
-	// forms — the unused cookie is harmless (10 min TTL) and avoids
-	// the "user scrolled down, the form unrendered, the token went
-	// stale" footgun.
+	// cookie. The renderer issues both the delete and the restore
+	// tokens; the page shows exactly one of the two forms, and the
+	// cookie carries that form's token.
 	deleteTok, err := middleware.IssueForAuthenticated(s.sessions, "delete", view.ID)
 	if err != nil {
 		log.Error("dashboard renderAccount: csrf issue delete", "err", err, "account_id", view.ID)
@@ -1729,9 +1729,17 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		renderProblem(w, log, err)
 		return
 	}
+	// The faas_csrf sidecar holds one token, and it must be the one the
+	// rendered form posts. It was always the delete token, so the Restore
+	// form (the only one a deleted_pending account sees) failed CSRF on
+	// every submit.
+	csrfTok := deleteTok
+	if data.ShowRestore {
+		csrfTok = restoreTok
+	}
 	csrfCookie := &http.Cookie{
 		Name:     middleware.CookieNameAuthenticated,
-		Value:    deleteTok,
+		Value:    csrfTok,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.domain != "",

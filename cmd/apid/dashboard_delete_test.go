@@ -212,15 +212,44 @@ func TestDashboardRestore_BadToken(t *testing.T) {
 	}
 }
 
-// TestDashboardRestore_HappyPath is intentionally not exercised
-// here. sessionAuth (server.go:269) redirects deletion-pending
-// accounts to /login before the dashboard renders (see
-// handlers_auth.go:230), so a GET /dashboard/account after scheduling
-// deletion cannot reach renderAccount. The cancel flow is exercised
-// via the REST endpoint POST /v1/account/restore in
-// handlers_account_test.go. The CSRF defense on /dashboard/account/restore
-// is covered by TestDashboardRestore_BadToken and
-// TestDashboardRestore_RejectsForeignCSRF above.
+// TestDashboardRestore_HappyPath — sessionAuth used to 302 every
+// deleted_pending session to /login, so the Restore button the account
+// page shows during the grace window could never be reached. The account
+// page and the restore POST are now open to that account.
+func TestDashboardRestore_HappyPath(t *testing.T) {
+	srv, _, store, mgr := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(t.Context(), acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mgr.Issue(acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := &http.Cookie{Name: sessionCookie, Value: raw}
+
+	csrfCookie, _, restoreToken := renderDashboardAccount(t, srv, sid)
+	if restoreToken == "" {
+		t.Fatal("account page did not render the restore form for a deleted_pending account")
+	}
+	rec := dashboardPOST(t, srv, sid, "/dashboard/account/restore",
+		map[string]string{middleware.FormFieldName: restoreToken},
+		&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: csrfCookie})
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/dashboard/account?restored=1") {
+		t.Fatalf("restore = %d Location=%q, want 302 /dashboard/account?restored=1\nbody = %s",
+			rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	got, err := store.AccountByID(t.Context(), acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.AccountActive || got.DeletionRequestedAt != nil {
+		t.Fatalf("after restore: status=%s deletion_requested_at=%v, want active/nil", got.Status, got.DeletionRequestedAt)
+	}
+}
 
 // TestDashboardExport_HappyPath confirms the session-authed export returns
 // the JSON bundle (same shape as the REST /v1/account/export).
