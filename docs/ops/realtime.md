@@ -263,7 +263,9 @@ capacity, eviction count, and last eviction time. The
 loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
 restarts. The pending outbox capacity gauge and
 `FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
-the enqueue limit. The `FaasRealtimeCallbackDeadLettersPresent`,
+the enqueue limit. `realtimed_callback_outbox_full_total` counts events that
+could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
+The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).

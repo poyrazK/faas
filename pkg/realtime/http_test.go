@@ -154,6 +154,80 @@ func TestHTTPHooksDurableMessageReplaysAfterInitialFailure(t *testing.T) {
 	}
 }
 
+func TestHTTPHooksWaitsForOutboxCapacityAndStoresTheBlockedEvent(t *testing.T) {
+	delivered := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		delivered <- string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{RetryInterval: time.Millisecond})
+	blocker := testCallbackEvent()
+	blocker.ID = "evt_blocker"
+	blocker.ConnectionID = "conn-blocker"
+	blocker.CallbackURL = server.URL
+	if claimed, err := queue.EnqueueAndClaim(blocker); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim blocker = (%v, %v)", claimed, err)
+	}
+	queue.mu.Lock()
+	queue.maxBytes = queue.items[blocker.ID].size
+	queue.mu.Unlock()
+
+	event := testCallbackEvent()
+	event.ID = "evt_pending"
+	event.ConnectionID = "conn-pending"
+	event.CallbackURL = server.URL
+	hooks := HTTPHooks{Client: server.Client(), DurableQueue: queue, MaxAttempts: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	messageErr := make(chan error, 1)
+	go func() { messageErr <- hooks.Message(ctx, event) }()
+
+	select {
+	case body := <-delivered:
+		t.Fatalf("callback delivered before capacity was freed: %s", body)
+	case <-time.After(10 * time.Millisecond):
+	}
+	if err := queue.Ack(blocker.ID); err != nil {
+		t.Fatalf("Ack blocker: %v", err)
+	}
+	select {
+	case err := <-messageErr:
+		if err != nil {
+			t.Fatalf("Message after capacity was freed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Message did not finish after outbox capacity was freed")
+	}
+	select {
+	case <-delivered:
+	case <-time.After(time.Second):
+		t.Fatal("blocked event was not delivered after it was persisted")
+	}
+	if stats := queue.Stats(); stats.Pending != 0 {
+		t.Fatalf("queue Stats after delivery = %+v, want empty", stats)
+	}
+}
+
+func TestHTTPHooksReturnsOutboxFullWhenCapacityDoesNotRecoverBeforeDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 1, RetryInterval: time.Millisecond})
+	event := testCallbackEvent()
+	event.CallbackURL = server.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := (HTTPHooks{Client: server.Client(), DurableQueue: queue}).Message(ctx, event)
+	if !errors.Is(err, ErrCallbackOutboxFull) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Message error = %v, want outbox full and deadline exceeded", err)
+	}
+}
+
 func TestHTTPHooksRetryBackoffHonorsContext(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

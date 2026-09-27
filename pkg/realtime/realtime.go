@@ -250,6 +250,7 @@ type Stats struct {
 	SentBytes                          uint64  `json:"sent_bytes"`
 	DroppedMessages                    uint64  `json:"dropped_messages"`
 	CallbackErrors                     uint64  `json:"callback_errors"`
+	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
 	CallbackPending                    uint64  `json:"callback_pending"`
 	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
 	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
@@ -321,6 +322,7 @@ type Manager struct {
 	sentBytes           atomic.Uint64
 	droppedMessages     atomic.Uint64
 	callbackErrors      atomic.Uint64
+	callbackOutboxFull  atomic.Uint64
 	authOutcomes        authOutcomeCounters
 }
 
@@ -786,10 +788,16 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
-		if err := m.hooks.Message(callbackCtx, event); err != nil {
-			m.callbackErrors.Add(1)
-		}
+		callbackErr := m.hooks.Message(callbackCtx, event)
 		cancel()
+		if callbackErr != nil {
+			m.callbackErrors.Add(1)
+			if errors.Is(callbackErr, ErrCallbackOutboxFull) {
+				m.callbackOutboxFull.Add(1)
+				_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
+				return
+			}
+		}
 	}
 }
 
@@ -875,6 +883,9 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
+		if errors.Is(err, ErrCallbackOutboxFull) {
+			m.callbackOutboxFull.Add(1)
+		}
 	}
 }
 
@@ -1096,6 +1107,7 @@ func (m *Manager) Stats() Stats {
 		SentBytes:           m.sentBytes.Load(),
 		DroppedMessages:     m.droppedMessages.Load(),
 		CallbackErrors:      m.callbackErrors.Load(),
+		CallbackOutboxFull:  m.callbackOutboxFull.Load(),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()

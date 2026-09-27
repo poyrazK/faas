@@ -45,6 +45,7 @@ type StatsCollector struct {
 	sentBytes                       *prometheus.Desc
 	droppedMessages                 *prometheus.Desc
 	callbackErrors                  *prometheus.Desc
+	callbackOutboxFull              *prometheus.Desc
 	callbackPending                 *prometheus.Desc
 	callbackPendingBytes            *prometheus.Desc
 	callbackPendingCapacityBytes    *prometheus.Desc
@@ -103,6 +104,7 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		sentBytes:                       prometheus.NewDesc(subsystem+"_sent_bytes_total", "Bytes sent to realtime clients since process start.", nil, nil),
 		droppedMessages:                 prometheus.NewDesc(subsystem+"_dropped_messages_total", "Realtime messages dropped because an outbound queue was full.", nil, nil),
 		callbackErrors:                  prometheus.NewDesc(subsystem+"_callback_errors_total", "Realtime lifecycle callback failures since process start.", nil, nil),
+		callbackOutboxFull:              prometheus.NewDesc(subsystem+"_callback_outbox_full_total", "Callback events rejected because the durable outbox remained full until their admission deadline.", nil, nil),
 		callbackPending:                 prometheus.NewDesc(subsystem+"_callback_pending", "Pending durable realtime callbacks.", nil, nil),
 		callbackPendingBytes:            prometheus.NewDesc(subsystem+"_callback_pending_bytes", "Bytes in the pending callback outbox.", nil, nil),
 		callbackPendingCapacityBytes:    prometheus.NewDesc(subsystem+"_callback_pending_capacity_bytes", "Configured maximum bytes for the pending callback outbox.", nil, nil),
@@ -142,6 +144,7 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.sentBytes, prometheus.CounterValue, float64(stats.SentBytes))
 	ch <- prometheus.MustNewConstMetric(c.droppedMessages, prometheus.CounterValue, float64(stats.DroppedMessages))
 	ch <- prometheus.MustNewConstMetric(c.callbackErrors, prometheus.CounterValue, float64(stats.CallbackErrors))
+	ch <- prometheus.MustNewConstMetric(c.callbackOutboxFull, prometheus.CounterValue, float64(stats.CallbackOutboxFull))
 	ch <- prometheus.MustNewConstMetric(c.callbackPending, prometheus.GaugeValue, float64(stats.CallbackPending))
 	ch <- prometheus.MustNewConstMetric(c.callbackPendingBytes, prometheus.GaugeValue, float64(stats.CallbackPendingBytes))
 	ch <- prometheus.MustNewConstMetric(c.callbackPendingCapacityBytes, prometheus.GaugeValue, float64(stats.CallbackPendingCapacityBytes))
@@ -171,6 +174,7 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.sentBytes,
 		c.droppedMessages,
 		c.callbackErrors,
+		c.callbackOutboxFull,
 		c.callbackPending,
 		c.callbackPendingBytes,
 		c.callbackPendingCapacityBytes,

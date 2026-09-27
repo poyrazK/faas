@@ -48,6 +48,28 @@ func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
 	return h.DurableQueue.Stats()
 }
 
+func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, error) {
+	for {
+		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		if !errors.Is(err, ErrCallbackOutboxFull) || ctx.Done() == nil {
+			return claimed, err
+		}
+
+		timer := time.NewTimer(h.DurableQueue.retryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return false, errors.Join(ErrCallbackOutboxFull, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
 func (h HTTPHooks) updateCallbackAuthToken(endpointID, token string) error {
 	if h.DurableQueue == nil {
 		return nil
@@ -77,7 +99,7 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 		return nil
 	}
 	if h.DurableQueue != nil {
-		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		claimed, err := h.enqueueAndClaim(ctx, event)
 		if err != nil {
 			return err
 		}
@@ -123,7 +145,7 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		return nil
 	}
 	if h.DurableQueue != nil {
-		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		claimed, err := h.enqueueAndClaim(ctx, event)
 		if err != nil {
 			return err
 		}

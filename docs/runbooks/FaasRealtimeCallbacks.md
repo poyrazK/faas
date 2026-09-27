@@ -15,6 +15,13 @@ minutes. Check `realtimed_callback_replay_supervisor_restarts_total` and review
 nearby `realtimed` log entries for the underlying filesystem or outbox error.
 The counter resets when `realtimed` restarts.
 
+`FaasRealtimeCallbackOutboxFull` means at least one message or disconnect
+callback could not be persisted before its admission deadline. Check
+`realtimed_callback_outbox_full_total`, pending bytes and capacity, and replay
+progress. Restore callback receiver or node storage health. A live connection
+whose message could not be persisted is closed with WebSocket code 1013 so the
+client can reconnect and retry according to its application protocol.
+
 `FaasRealtimeCallbackOutboxNearCapacity` means pending callback data has stayed
 above 80% of the outbox byte limit for five minutes. Check
 `realtimed_callback_pending_bytes` and

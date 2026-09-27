@@ -59,6 +59,18 @@ groups:
           description: "Pending callbacks use more than 80% of this node's outbox capacity. Restore callback delivery so the durable queue can drain before it stops accepting new records."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
+      - alert: FaasRealtimeCallbackOutboxFull
+        expr: increase(realtimed_callback_outbox_full_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback event could not be persisted"
+          description: "The node rejected a callback event because its durable outbox remained full until the admission deadline. A live WebSocket was closed with code 1013 when a message event was rejected."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
       - alert: FaasRealtimeCallbackDeadLettersPresent
         expr: realtimed_callback_dead_letters > 0
         for: 5m

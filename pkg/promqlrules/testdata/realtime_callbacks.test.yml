@@ -1,4 +1,4 @@
-# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, and ADR-289).
+# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, and ADR-290).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -6,6 +6,35 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - interval: 30s
+    name: "callback outbox rejection pages"
+    input_series:
+      - series: 'realtimed_callback_outbox_full_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0+1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackOutboxFull
+        exp_alerts:
+          - exp_labels:
+              job: realtimed
+              instance: compute-a:9107
+              severity: page
+              component: realtimed
+              family: realtime_callbacks
+            exp_annotations:
+              summary: "Realtime callback event could not be persisted"
+              description: "The node rejected a callback event because its durable outbox remained full until the admission deadline. A live WebSocket was closed with code 1013 when a message event was rejected."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+  - interval: 30s
+    name: "no callback outbox rejection stays quiet"
+    input_series:
+      - series: 'realtimed_callback_outbox_full_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0x11'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackOutboxFull
+
   - interval: 30s
     name: "pending callback outbox near capacity fires"
     input_series:
