@@ -1023,6 +1023,7 @@ from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
+from .outbound_binding_usage_response import OutboundBindingUsageResponse
 from .outbound_integration_offer import OutboundIntegrationOffer
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
 from .outbound_integration_offer_list import OutboundIntegrationOfferList
@@ -1294,6 +1295,7 @@ from .put_app_secret_request import PutAppSecretRequest
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
@@ -2670,6 +2672,7 @@ __all__ = (
     "OrgWithRoleRole",
     "OutboundAppBinding",
     "OutboundAppBindingList",
+    "OutboundBindingUsageResponse",
     "OutboundIntegrationOffer",
     "OutboundIntegrationOfferCredentialSource",
     "OutboundIntegrationOfferList",
@@ -2917,6 +2920,7 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",

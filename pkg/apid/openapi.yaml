@@ -550,6 +550,53 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings/{integration}/budget:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the app's attached integration whose limit is being configured.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundBindingDailyBudget
+      summary: Set or clear an app binding's daily outbound request limit.
+      description: Requires MFA and deploy-write scope. The configured limit cannot exceed the account plan ceiling. Send null to clear the app-specific limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundBindingDailyRequestBudgetRequest' }
+      responses:
+        '204': { description: Binding budget updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings/{integration}/usage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the app's attached integration whose usage is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundBindingUsage
+      summary: Read an app binding's current UTC-day outbound request usage.
+      description: Requires MFA and read-surface scope. Reports UTC-day admissions for this app-to-integration binding, including provider calls that later fail; the returned timestamp marks its reset.
+      responses:
+        '200':
+          description: Current UTC-day request count and effective binding limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundBindingUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/service-caller-keys:
     get:
       tags: [networking]
@@ -20441,6 +20488,27 @@ components:
           maximum: 100000000
         usage_date: { type: string, format: date }
         resets_at: { type: string, format: date-time }
+    PutOutboundBindingDailyRequestBudgetRequest:
+      type: object
+      description: Set a lower per-binding daily request limit or clear it with null.
+      required: [daily_request_limit]
+      properties:
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+    OutboundBindingUsageResponse:
+      type: object
+      description: Current UTC-day admitted-request count and the effective optional binding request limit.
+      required: [daily_request_count, daily_request_limit, usage_date, resets_at]
+      properties:
+        daily_request_count: { type: integer, format: int64, minimum: 0 }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+        usage_date: { type: string, format: date }
+        resets_at: { type: string, format: date-time }
     PutOutboundCredentialRequest:
       type: object
       description: Provider Authorization header value, accepted once and never returned.
@@ -20457,8 +20525,8 @@ components:
           items: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
     OutboundAppBinding:
       type: object
-      description: An app's customer-owned attachment to a managed integration.
-      required: [integration, app_id, allowed_methods, allowed_path_prefixes, created_at]
+      description: An app's attachment to a managed integration.
+      required: [integration, app_id, allowed_methods, allowed_path_prefixes, daily_request_limit, created_at]
       properties:
         integration: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
         app_id: { type: string, format: uuid }
@@ -20470,6 +20538,11 @@ components:
           type: array
           description: App-specific path prefixes, bounded by the integration ceiling.
           items: { type: string }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-binding daily admitted-request limit.
         created_at: { type: string, format: date-time }
     UpdateOutboundBindingPolicyRequest:
       type: object

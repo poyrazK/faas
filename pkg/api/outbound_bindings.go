@@ -116,6 +116,20 @@ type OutboundIntegrationUsageResponse struct {
 	ResetsAt          time.Time `json:"resets_at"`
 }
 
+// PutOutboundBindingDailyRequestBudgetRequest sets a binding's daily request
+// limit; null removes the app-specific limit.
+type PutOutboundBindingDailyRequestBudgetRequest struct {
+	DailyRequestLimit *int64 `json:"daily_request_limit"`
+}
+
+// OutboundBindingUsageResponse reports UTC-day admissions for one app binding.
+type OutboundBindingUsageResponse struct {
+	DailyRequestCount int64     `json:"daily_request_count"`
+	DailyRequestLimit *int64    `json:"daily_request_limit"`
+	UsageDate         string    `json:"usage_date"`
+	ResetsAt          time.Time `json:"resets_at"`
+}
+
 type OutboundIntegrationOfferList struct {
 	Items []OutboundIntegrationOffer `json:"items"`
 }
@@ -125,6 +139,7 @@ type OutboundAppBinding struct {
 	AppID               string                   `json:"app_id"`
 	AllowedMethods      []string                 `json:"allowed_methods"`
 	AllowedPathPrefixes []string                 `json:"allowed_path_prefixes"`
+	DailyRequestLimit   *int64                   `json:"daily_request_limit"`
 	CreatedAt           time.Time                `json:"created_at"`
 }
 

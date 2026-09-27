@@ -530,6 +530,7 @@ export type { OrgSlug } from './models/OrgSlug.js';
 export type { OrgWithRole } from './models/OrgWithRole.js';
 export type { OutboundAppBinding } from './models/OutboundAppBinding.js';
 export type { OutboundAppBindingList } from './models/OutboundAppBindingList.js';
+export type { OutboundBindingUsageResponse } from './models/OutboundBindingUsageResponse.js';
 export type { OutboundIntegrationOffer } from './models/OutboundIntegrationOffer.js';
 export type { OutboundIntegrationOfferList } from './models/OutboundIntegrationOfferList.js';
 export type { OutboundIntegrationUsageResponse } from './models/OutboundIntegrationUsageResponse.js';
@@ -670,6 +671,7 @@ export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCre
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
+export type { PutOutboundBindingDailyRequestBudgetRequest } from './models/PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentialRequest.js';
 export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './models/PutOutboundRequestPolicyRequest.js';

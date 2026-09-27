@@ -524,6 +524,7 @@ export type { OrgSlug } from './OrgSlug.js';
 export type { OrgWithRole } from './OrgWithRole.js';
 export type { OutboundAppBinding } from './OutboundAppBinding.js';
 export type { OutboundAppBindingList } from './OutboundAppBindingList.js';
+export type { OutboundBindingUsageResponse } from './OutboundBindingUsageResponse.js';
 export type { OutboundIntegrationOffer } from './OutboundIntegrationOffer.js';
 export type { OutboundIntegrationOfferList } from './OutboundIntegrationOfferList.js';
 export type { OutboundIntegrationUsageResponse } from './OutboundIntegrationUsageResponse.js';
@@ -664,6 +665,7 @@ export type { PutAppRegistryCredentialRequest } from './PutAppRegistryCredential
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutOutboundBindingDailyRequestBudgetRequest } from './PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './PutOutboundCredentialRequest.js';
 export type { PutOutboundDailyRequestBudgetRequest } from './PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './PutOutboundRequestPolicyRequest.js';
