@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const defaultSocket = "/run/faas/realtimed.sock"
@@ -89,7 +90,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
 	}, hooks)
 	defer func() { _ = manager.Close() }()
-	ops.Registry().MustRegister(realtime.NewStatsCollector(manager))
+	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "realtimed_callback_replay_supervisor_restarts_total",
+		Help: "Callback replay loop restarts after unexpected exits since process start.",
+	})
+	ops.Registry().MustRegister(realtime.NewStatsCollector(manager), callbackReplayRestarts)
 	readyProbe := &wire.ReadyzProbe{}
 	readySignal := readyProbe.Register()
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
@@ -133,7 +138,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				defer cancel()
 				return hooks.Deliver(callbackCtx, event)
 			})
-		})
+		}, callbackReplayRestarts.Inc)
 	}()
 	serverErr := make(chan error, 2)
 	go func() {

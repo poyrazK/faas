@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 288 | [Realtime callback replay recovery observability](288-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
 | 287 | [Managed realtime callback replay supervision](287-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
 | 286 | [Managed realtime callback backlog observability](286-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
 | 285 | [Bounded parallel managed realtime callback replay](285-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |

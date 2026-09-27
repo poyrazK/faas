@@ -259,7 +259,9 @@ delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
 and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
 the pending count and bytes, retained dead-letter count and bytes, retention
 capacity, eviction count, and last eviction time. The
-`FaasRealtimeCallbackDeadLettersPresent`,
+`realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
+loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
+restarts. The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).

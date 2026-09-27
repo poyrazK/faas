@@ -1,4 +1,4 @@
-# Synthetic coverage for FaasRealtimeCallbackReplayStalled (ADR-286).
+# Synthetic coverage for managed realtime callback alerts (ADR-286 and ADR-288).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -6,6 +6,35 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - interval: 30s
+    name: "repeated replay supervisor restarts fire"
+    input_series:
+      - series: 'realtimed_callback_replay_supervisor_restarts_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasRealtimeCallbackReplayRestarting
+        exp_alerts:
+          - exp_labels:
+              job: realtimed
+              instance: compute-a:9107
+              severity: warn
+              component: realtimed
+              family: realtime_callbacks
+            exp_annotations:
+              summary: "Realtime callback replay keeps restarting"
+              description: "The node restarted its callback replay loop at least three times in the last 15 minutes. Inspect realtimed logs and local outbox storage health."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+  - interval: 30s
+    name: "isolated replay recovery stays quiet"
+    input_series:
+      - series: 'realtimed_callback_replay_supervisor_restarts_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0+1x2 2x29'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasRealtimeCallbackReplayRestarting
+
   - interval: 30s
     name: "old pending callbacks with no replay progress fire"
     input_series:

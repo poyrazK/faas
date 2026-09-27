@@ -9,6 +9,12 @@ outbox failures with a delay capped at 30 seconds. Confirm the node-local
 outbox is writable and has free space; replay resumes after the underlying
 storage problem clears.
 
+`FaasRealtimeCallbackReplayRestarting` means the replay supervisor restarted
+at least three times in 15 minutes and the condition persisted for five
+minutes. Check `realtimed_callback_replay_supervisor_restarts_total` and review
+nearby `realtimed` log entries for the underlying filesystem or outbox error.
+The counter resets when `realtimed` restarts.
+
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.
 `FaasRealtimeCallbackDeadLettersPresent` means the node has retained one or
