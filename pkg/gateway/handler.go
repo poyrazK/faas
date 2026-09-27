@@ -147,6 +147,10 @@ type App struct {
 	// Zero uses the type-aware plan default; positive values are validated by
 	// apid and still capped by the plan request-budget ceiling at the edge.
 	RequestTimeoutS int
+	// RequestRateLimitRPS and RequestRateLimitBurst optionally tighten the
+	// app-wide edge bucket. Zero uses the current plan default.
+	RequestRateLimitRPS   int
+	RequestRateLimitBurst int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -300,6 +304,13 @@ type App struct {
 	// scoped configuration it was built to serve.
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string
+	// CustomDomainRoute records that the resolved host is a verified custom
+	// domain, so its cache entry can revalidate current domain ownership.
+	CustomDomainRoute bool
+	// DynamicRoute marks a route whose environment release pointer may change
+	// independently of domain ownership. PGBackend bypasses host and stale
+	// caches for these targets.
+	DynamicRoute bool
 	// CORS improvements D1: per-app default CORS
 	// opt-in. Plumbed from apps.cors_default_enabled
 	// through pgRouter.toApp so applyEdgeRuleCORS
@@ -626,16 +637,47 @@ type Target struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
-	// RequiresReadiness marks a primary-ingress companion whose readiness
-	// probe controls whether this instance may receive traffic. Unready targets
-	// remain in the cache so they still consume capacity.
+	// RequiresReadiness marks a target with one or more traffic-readiness gates.
+	// Required sources are ANDed, so a primary-app probe cannot mask an
+	// unhealthy ingress sidecar. Unready targets remain cached and consume
+	// capacity.
 	RequiresReadiness  bool
+	ReadinessGates     *ReadinessGates
 	Ready              bool
 	ReadinessUpdatedAt time.Time
 	ReadinessEventID   int64
 }
 
-func (t Target) routeReady() bool { return !t.RequiresReadiness || t.Ready }
+// ReadinessState is the latest reversible signal for one independently
+// configured traffic-readiness source on a target.
+type ReadinessState struct {
+	Ready     bool
+	UpdatedAt time.Time
+	EventID   int64
+}
+
+// ReadinessGates carries source-specific readiness state while keeping Target
+// comparable for existing internal request/test seams.
+type ReadinessGates struct {
+	RequiredSources []string
+	States          map[string]ReadinessState
+}
+
+func (t Target) routeReady() bool {
+	if !t.RequiresReadiness {
+		return true
+	}
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.Ready
+	}
+	for _, source := range t.ReadinessGates.RequiredSources {
+		state, ok := t.ReadinessGates.States[source]
+		if !ok || !state.Ready {
+			return false
+		}
+	}
+	return true
+}
 
 // PlatformIdentity returns the canonical request identity for this target.
 // Keeping construction here means normal, synthetic, streaming, and upgrade
@@ -1031,6 +1073,7 @@ type Handler struct {
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
 	requestTelemetry    *requestTelemetryRecorder
+	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
 	apiDiscoveryEnabled bool
@@ -5327,6 +5370,13 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// WithRequestIDJournalWriter installs the synchronous durable index writer.
+// For debugger-enabled plans, ServeHTTP calls it after app resolution and
+// fails closed before guest work if the write cannot be confirmed.
+func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
+	h.requestIDJournal = writer
+}
+
 // WithUsageOutbox enables the durable financial fact independently of debug
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
@@ -5582,6 +5632,15 @@ haveApp:
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
+	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Request correlation is temporarily unavailable",
+				"the platform could not durably record this request ID; retry shortly"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+	}
 	if app.SecurityQuarantined {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			api.CodeSecurityPostureBlocked, "App is security quarantined",
@@ -5674,14 +5733,16 @@ haveApp:
 	// on the request context so Handler.observe can read it on
 	// the single exit funnel. Declared templates take precedence; common
 	// identifier shapes are inferred from the original public path before
-	// edge rewriting. The routeLabelSet bounds the per-app
-	// distinct-route count to 50 + the __route_other__ overflow
+	// edge rewriting. The routeLabelSet bounds each app to 50 distinct
+	// Prometheus route labels plus the __route_other__ overflow
 	// bucket. The label is empty when the app is not opted in
-	// (routeSetFor returns nil) — Handler.observe short-circuits
-	// the per-route emission on "".
+	// (route metrics are disabled) — Handler.observe short-circuits
+	// the per-route emission on "". Request telemetry uses the same bounded
+	// route set for entitled apps even when the operator disables those series.
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	if set != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5691,6 +5752,13 @@ haveApp:
 		preLabel := observedRouteLabel(r.Method, path)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
+		}
+		if h.requestTelemetry != nil {
+			telemetryRoute := otherRouteLabel
+			if telemetryRouteSet != nil {
+				telemetryRoute = telemetryRouteSet.admit(preLabel)
+			}
+			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
 		if set != nil {
 			routeLabel = set.admit(preLabel)
@@ -6221,7 +6289,7 @@ haveApp:
 	}
 
 	// Per-app rate limit (spec §4.1). Over-limit → 429.
-	if !deploymentSmoke && !h.limiter.Allow(r.Context(), app.ID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
+	if !deploymentSmoke && !h.limiter.AllowAppWithLimits(r.Context(), app.ID, app.Plan, app.RequestRateLimitRPS, app.RequestRateLimitBurst) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "app")
 		// 429 path: write the post-decrement bucket snapshot so
@@ -7298,7 +7366,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
-			telemetryRoute := routeLabel
+			telemetryRoute := requestTelemetryRouteFrom(r)
+			if telemetryRoute == "" {
+				telemetryRoute = routeLabel
+			}
 			if telemetryRoute == "" {
 				// Route metrics are optional; the telemetry schema requires a label.
 				telemetryRoute = otherRouteLabel
@@ -8016,7 +8087,15 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 	if s == nil || len(ops) == 0 {
 		return
 	}
-	s.headerOps = ops
+	// Accumulate: kind=headers, kind=cors (or the app's default CORS) and
+	// validate-warn each install ops on the same request. Assigning here
+	// let the last rule to fire silently discard the others — a matched
+	// CORS rule dropped every kind=headers response op, and validate-warn
+	// dropped Access-Control-Allow-Origin so browsers blocked the
+	// response. Ops apply in install order, so a later rule still wins a
+	// same-name "set". append on a nil slice copies, so the rule's own
+	// slice is never aliased.
+	s.headerOps = append(s.headerOps, ops...)
 }
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.

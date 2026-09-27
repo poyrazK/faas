@@ -517,6 +517,11 @@ type UpdateAppRequest struct {
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
+	// request token bucket without changing the deployment. Zero restores the
+	// plan default; positive values may lower, but never exceed, the plan cap.
+	RequestRateLimitRPS   *int `json:"request_rate_limit_rps,omitempty"`
+	RequestRateLimitBurst *int `json:"request_rate_limit_burst,omitempty"`
 	// RetryPolicy replaces the app-level invocation retry default. An
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -1753,7 +1758,8 @@ type CreateDeploymentRequest struct {
 	// digest-pinned image with a different entrypoint/cmd/env/port
 	// without rebuilding the image. The field list is frozen by
 	// ADR-053 §Decision 1 — any new override field requires a new
-	// ADR. Nil/omitted means "no overrides; deploy the image as-is".
+	// ADR; ADR-282 adds primary-workload startup dependencies.
+	// Nil/omitted means "no overrides; deploy the image as-is".
 	Overrides *CreateDeploymentOverrides `json:"overrides,omitempty"`
 	// RequireSigned (issue #472 / ADR-054) is the per-deploy opt-in
 	// to cosign signature verification. apid flips the row flag from
@@ -1893,8 +1899,8 @@ type CanaryPresetSpec struct {
 }
 
 // CreateDeploymentOverrides is the optional override object on
-// CreateDeploymentRequest (issue #460 / ADR-053). Six fields, frozen
-// by ADR-053 §Decision 1. The handler calls Validate(limits) before
+// CreateDeploymentRequest (issue #460 / ADR-053). The override contract
+// is extended only through an ADR. The handler calls Validate(limits) before
 // persisting — a failed validation 400s the whole request (the
 // override is never silently dropped; the customer who set it
 // expects it to apply).
@@ -1934,7 +1940,11 @@ type CreateDeploymentOverrides struct {
 	// vmmd waitReady + runners ships in PR-C; PR-A persists the
 	// column and surfaces it on the response.
 	Port int `json:"port,omitempty"`
-	// Healthcheck is the optional readiness probe. PR-A persists
+	// MainDependsOn gates the primary workload's startup on named
+	// long-running companions reaching the requested lifecycle state.
+	// Init companions already gate the primary workload implicitly.
+	MainDependsOn []WorkloadDependency `json:"main_depends_on,omitempty"`
+	// Healthcheck is the optional startup readiness probe. PR-A persists
 	// the shape; PR-B stamps AppManifest.Healthz at deploy time;
 	// PR-D activates the runtime half — pkg/fcvm/vmm.go::waitReady
 	// issues an HTTP GET against <HostIP>:8080<Healthcheck.Path>
@@ -1943,6 +1953,10 @@ type CreateDeploymentOverrides struct {
 	// TimeoutS / Retries are stored + validated here but remain
 	// dormant until a v2 contract lands them on the wire.
 	Healthcheck *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// ReadinessProbe is the optional steady-state probe. Unlike Healthcheck,
+	// which gates startup, this probe can withdraw a live instance from routing
+	// and restore it after recovery without restarting the VM.
+	ReadinessProbe *DeploymentReadinessProbe `json:"readiness_probe,omitempty"`
 	// LivenessProbe is the optional liveness probe override
 	// (issue #554 / ADR-078). Per-deployment override wins over
 	// the parent app's per-plan defaults (Hobby/Pro/Scale → 5s /
@@ -1968,7 +1982,7 @@ type CreateDeploymentOverrides struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// DeploymentHealthcheck is the readiness-probe shape on the
+// DeploymentHealthcheck is the startup readiness-probe shape on the
 // override object. Exactly one of Path or GRPC must be configured.
 // Defaults: interval 5s, timeout 2s, retries 3.
 //
@@ -1989,6 +2003,17 @@ type DeploymentHealthcheck struct {
 // primary-app readiness. An empty service checks the overall server health.
 type DeploymentGRPCHealthcheck struct {
 	Service string `json:"service,omitempty"`
+}
+
+// DeploymentReadinessProbe is a reversible, steady-state traffic gate for
+// the primary app. It is distinct from Healthcheck (startup admission) and
+// LivenessProbe (which restarts a wedged VM).
+type DeploymentReadinessProbe struct {
+	Path             string                     `json:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -2085,6 +2110,9 @@ var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 	if o == nil {
 		return nil
+	}
+	if p := validateMainWorkloadDependencies(o.MainDependsOn); p != nil {
+		return p
 	}
 
 	// entrypoint: non-empty if present; every element non-empty.
@@ -2198,6 +2226,45 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.retries must be >= 0; got %d.", o.Healthcheck.Retries))
+		}
+	}
+
+	// readiness_probe: exactly one HTTP or standard gRPC health action. Zero
+	// timing/threshold values inherit safe host defaults; explicit values are
+	// bounded to keep one slow endpoint from pinning a vmmd probe goroutine.
+	if o.ReadinessProbe != nil {
+		probe := o.ReadinessProbe
+		pathSet := probe.Path != ""
+		grpcSet := probe.GRPC != nil
+		if pathSet == grpcSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"readiness_probe must set exactly one of path or grpc.")
+		}
+		if pathSet && (!strings.HasPrefix(probe.Path, "/") || strings.ContainsAny(probe.Path, "\r\n")) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.path must start with %q and contain no line breaks; got %q.", "/", probe.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(probe.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if probe.PeriodS < 0 || probe.PeriodS > MaxReadinessPeriodSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.period_s must be 0 (default) or in [1, %d]; got %d.", MaxReadinessPeriodSeconds, probe.PeriodS))
+		}
+		if probe.TimeoutS < 0 || probe.TimeoutS > 5 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.timeout_s must be 0 (default) or in [1, 5]; got %d.", probe.TimeoutS))
+		}
+		if probe.FailureThreshold < 0 || probe.FailureThreshold > 10 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.failure_threshold must be 0 (default) or in [1, 10]; got %d.", probe.FailureThreshold))
 		}
 	}
 
@@ -2532,9 +2599,9 @@ type DeploymentResponse struct {
 	// source spool has been cleaned up.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	// HasOverrides is true when the deployment carries an
-	// override_* column set (issue #460 / ADR-053). Lets dashboards
-	// render "this deploy pinned overrides" without re-parsing the
-	// six sibling fields.
+	// override_* column set (issue #460 / ADR-053, extended by ADR-282).
+	// Lets dashboards render "this deploy pinned overrides" without
+	// re-parsing the sibling fields.
 	HasOverrides bool `json:"has_overrides,omitempty"`
 	// OverrideEntrypoint is the argv override echoed verbatim; nil
 	// when the deployment carried no override. ADR-053 §Decision 4:
@@ -2561,9 +2628,15 @@ type DeploymentResponse struct {
 	// OverridePort is the listen-port override (0 = absent /
 	// fall back to image default). ADR-053 §Decision 1.
 	OverridePort int `json:"override_port,omitempty"`
-	// OverrideHealthcheck is the readiness-probe override
+	// OverrideHealthcheck is the startup readiness-probe override
 	// verbatim. Persisted; the actual HTTP probe is a follow-up.
 	OverrideHealthcheck *DeploymentHealthcheck `json:"override_healthcheck,omitempty"`
+	// OverrideReadinessProbe is the optional continuous primary-app traffic
+	// readiness probe echoed for audit/debugging.
+	OverrideReadinessProbe *DeploymentReadinessProbe `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn echoes the primary workload's declared startup
+	// dependencies for audit/debugging.
+	OverrideMainDependsOn []WorkloadDependency `json:"override_main_depends_on,omitempty"`
 	// OverrideLivenessProbe is the liveness-probe override
 	// verbatim (issue #554 / ADR-078). nil when the deployment
 	// used the per-plan default (Hobby/Pro/Scale → 5s / 3
@@ -3428,6 +3501,7 @@ type RotateOrgAPIKeyResponse struct {
 type CustomDomainResponse struct {
 	Domain         string   `json:"domain"`
 	AppID          string   `json:"app_id"`
+	Environment    string   `json:"environment,omitempty"`
 	ChallengeToken string   `json:"challenge_token,omitempty"`
 	Verified       bool     `json:"verified"`
 	VerifiedAt     string   `json:"verified_at,omitempty"`
@@ -3449,8 +3523,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for
@@ -6602,6 +6677,36 @@ type WorkloadDependency struct {
 	Condition WorkloadDependencyCondition `json:"condition,omitempty"`
 }
 
+func validateMainWorkloadDependencies(dependencies []WorkloadDependency) *Problem {
+	if len(dependencies) > WorkloadDependencyCapMax {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid primary workload dependency",
+			fmt.Sprintf("overrides.main_depends_on has %d dependencies; max is %d.", len(dependencies), WorkloadDependencyCapMax))
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for i, dependency := range dependencies {
+		if dependency.Name == "main" || !sidecarNameRe.MatchString(dependency.Name) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].name %q is not a companion name.", i, dependency.Name))
+		}
+		if _, ok := seen[dependency.Name]; ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on depends on companion %q more than once.", dependency.Name))
+		}
+		seen[dependency.Name] = struct{}{}
+		switch dependency.Condition {
+		case "", WorkloadDependencyStarted, WorkloadDependencyHealthy, WorkloadDependencyCompletedSuccessfully:
+		default:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", i, dependency.Condition))
+		}
+	}
+	return nil
+}
+
 // EvictionPriority is the per-app tier classification (issue #475).
 // 'best_effort' keeps the historical LRU-by-last_request_at reaper
 // behaviour: under cross-account RAM pressure, schedd may park the
@@ -7086,7 +7191,17 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 // plan; the gate is currently unused). Passing the limits keeps
 // the signature forward-compatible without an ADR delta.
 func (ss Sidecars) Validate(limits Limits) *Problem {
-	if len(ss) == 0 {
+	return ss.ValidateWithMainDependencies(nil, limits)
+}
+
+// ValidateWithMainDependencies checks both companion declarations and the
+// complete primary/companion startup graph. It preserves Validate's existing
+// behavior for callers that do not configure primary workload dependencies.
+func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDependency, limits Limits) *Problem {
+	if p := validateMainWorkloadDependencies(mainDependencies); p != nil {
+		return p
+	}
+	if len(ss) == 0 && len(mainDependencies) == 0 {
 		return nil
 	}
 	if len(ss) > SidecarCapMax {
@@ -7094,6 +7209,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	seen := map[SidecarType]int{}
 	names := map[string]bool{}
+	types := make(map[string]SidecarType, len(ss))
 	primaryIngress := ""
 	for i := range ss {
 		if p := ss[i].Validate(limits); p != nil {
@@ -7105,6 +7221,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar name %q appears more than once.", ss[i].Name))
 		}
 		names[ss[i].Name] = true
+		types[ss[i].Name] = ss[i].Type
 		if ss[i].PrimaryIngress {
 			if primaryIngress != "" {
 				return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -7127,6 +7244,19 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	// unknown names and cycles before the request is persisted or reaches
 	// guest-init.
 	deps := map[string][]string{"main": nil}
+	for _, dependency := range mainDependencies {
+		if !names[dependency.Name] {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload depends on unknown companion %q.", dependency.Name))
+		}
+		if types[dependency.Name] != SidecarTypeSidecar {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload dependency %q must target a long-running companion; init companions already gate primary startup.", dependency.Name))
+		}
+		deps["main"] = append(deps["main"], dependency.Name)
+	}
 	for _, sc := range ss {
 		for _, dep := range sc.DependsOn {
 			if dep.Name != "main" && !names[dep.Name] {
@@ -9530,15 +9660,17 @@ type AppOpenAPIPolicyPreviewRule struct {
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
-	// older debugger clients. TraceID is the public x-faas-request-id customers
-	// should use for support and lookup when it is available.
-	ID                  string                       `json:"id"`
-	DeploymentID        string                       `json:"deployment_id"`
-	Route               string                       `json:"route"`
-	Method              string                       `json:"method"`
-	Status              int                          `json:"status"`
-	LatencyMS           int                          `json:"latency_ms"`
-	Count               int                          `json:"count"`
+	// older debugger clients. RequestID is the public x-faas-request-id;
+	// TraceID remains the separate W3C distributed-tracing identifier.
+	ID                  string                       `json:"id,omitempty"`
+	RequestID           string                       `json:"request_id,omitempty"`
+	EvidenceStatus      string                       `json:"evidence_status,omitempty"`
+	DeploymentID        string                       `json:"deployment_id,omitempty"`
+	Route               string                       `json:"route,omitempty"`
+	Method              string                       `json:"method,omitempty"`
+	Status              int                          `json:"status,omitempty"`
+	LatencyMS           int                          `json:"latency_ms,omitempty"`
+	Count               int                          `json:"count,omitempty"`
 	ColdBoot            bool                         `json:"cold_boot"`
 	TraceID             *string                      `json:"trace_id"`
 	ReceivedAt          string                       `json:"received_at"`
@@ -10123,16 +10255,44 @@ type RequestAnalyticsRoute struct {
 
 // RequestAnalyticsDependency is a route-scoped aggregate of classified,
 // retained dependency span evidence. Percentiles are weighted by the
-// collapsed request row count and should be read as sampled estimates.
+// collapsed request row count and should be read as sampled estimates;
+// deployment observations expose comparable per-revision samples.
 type RequestAnalyticsDependency struct {
-	Type           string `json:"type"`
-	Kind           string `json:"kind,omitempty"`
-	Name           string `json:"name"`
-	Samples        int64  `json:"samples"`
-	Calls          int64  `json:"calls"`
-	ErrorCalls     int64  `json:"error_calls"`
-	P95MS          int64  `json:"p95_ms"`
-	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
+	Type                   string                                            `json:"type"`
+	Kind                   string                                            `json:"kind,omitempty"`
+	Name                   string                                            `json:"name"`
+	Samples                int64                                             `json:"samples"`
+	Calls                  int64                                             `json:"calls"`
+	ErrorCalls             int64                                             `json:"error_calls"`
+	ErrorRatePct           float64                                           `json:"error_rate_pct"`
+	P50MS                  int64                                             `json:"p50_ms"`
+	P95MS                  int64                                             `json:"p95_ms"`
+	P99MS                  int64                                             `json:"p99_ms"`
+	ExclusiveP95MS         int64                                             `json:"exclusive_p95_ms"`
+	DeploymentObservations []RequestAnalyticsDependencyDeploymentObservation `json:"deployment_observations,omitempty"`
+}
+
+// RequestAnalyticsDependencyDeploymentObservation is one dependency's
+// sampled evidence for a route under a single immutable deployment. Regression
+// comparisons are advisory and are omitted when deployment ordering is
+// ambiguous or either side has fewer than the minimum retained span observations.
+type RequestAnalyticsDependencyDeploymentObservation struct {
+	DeploymentID        string   `json:"deployment_id"`
+	CommitSHA           string   `json:"commit_sha,omitempty"`
+	DeploymentTag       string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	Samples             int64    `json:"samples"`
+	Calls               int64    `json:"calls"`
+	ErrorCalls          int64    `json:"error_calls"`
+	ErrorRatePct        float64  `json:"error_rate_pct"`
+	P50MS               int64    `json:"p50_ms"`
+	P95MS               int64    `json:"p95_ms"`
+	P99MS               int64    `json:"p99_ms"`
+	ExclusiveP95MS      int64    `json:"exclusive_p95_ms"`
+	P95ChangePct        *float64 `json:"p95_change_pct,omitempty"`
+	ErrorRateChangePct  *float64 `json:"error_rate_change_pct,omitempty"`
+	ComparedTo          string   `json:"compared_to,omitempty"`
+	Regression          bool     `json:"regression"`
 }
 
 // RequestAnalyticsComputeCost describes the estimated compute value used by

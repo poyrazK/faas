@@ -201,23 +201,26 @@ type ApiKey struct {
 }
 
 type App struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	Slug                   string
-	Type                   string
-	Runtime                pgtype.Text
-	RamMb                  int32
-	CpuMillicores          int32
-	IdleTimeoutS           pgtype.Int4
-	MaxConcurrency         int32
-	Status                 string
-	CreatedAt              pgtype.Timestamptz
-	Manifest               []byte
-	GithubInstallID        pgtype.Int8
-	GithubRepoFullName     pgtype.Text
-	GithubProductionBranch pgtype.Text
-	MinInstances           int32
-	EgressAllowlist        []netip.Prefix
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	Slug                    string
+	Type                    string
+	Runtime                 pgtype.Text
+	RamMb                   int32
+	CpuMillicores           int32
+	AppCpuPolicyRevision    int64
+	IdleTimeoutS            pgtype.Int4
+	MaxConcurrency          int32
+	Status                  string
+	CreatedAt               pgtype.Timestamptz
+	Manifest                []byte
+	GithubInstallID         pgtype.Int8
+	GithubRepoFullName      pgtype.Text
+	GithubProductionBranch  pgtype.Text
+	MinInstances            int32
+	EgressAllowlist         []netip.Prefix
+	EgressAllowlistRevision int64
+	ScalingPolicyRevision   int64
 	// Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).
 	AutoscaleTargetRps pgtype.Int4
 	// Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.
@@ -268,9 +271,20 @@ type App struct {
 	Visibility                string
 	OnlyDeclaredRoutes        bool
 	DeclaredRoutes            []byte
+	RequestRateLimitRps       pgtype.Int4
+	RequestRateLimitBurst     pgtype.Int4
 	DeletedAt                 pgtype.Timestamptz
 	DeleteGraceUntil          pgtype.Timestamptz
 	PurgeClaimedAt            pgtype.Timestamptz
+}
+
+type AppCpuPolicyNodeStatus struct {
+	AppID             pgtype.UUID
+	NodeID            pgtype.UUID
+	AppliedRevision   int64
+	AttemptedRevision int64
+	ObservedAt        pgtype.Timestamptz
+	LastError         string
 }
 
 type AppCustomMetric struct {
@@ -278,6 +292,15 @@ type AppCustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt pgtype.Timestamptz
+}
+
+type AppEgressPolicyNodeStatus struct {
+	AppID             pgtype.UUID
+	NodeID            pgtype.UUID
+	AppliedRevision   int64
+	AttemptedRevision int64
+	ObservedAt        pgtype.Timestamptz
+	LastError         string
 }
 
 type AppEnv struct {
@@ -418,6 +441,13 @@ type AppRegistryCredential struct {
 type AppRuntimeConfigChange struct {
 	AppID     pgtype.UUID
 	ChangedAt pgtype.Timestamptz
+}
+
+type AppScalingPolicySchedulerStatus struct {
+	AppID            pgtype.UUID
+	SchedulerNodeID  pgtype.UUID
+	ObservedRevision int64
+	ObservedAt       pgtype.Timestamptz
 }
 
 type AppSecret struct {
@@ -757,6 +787,7 @@ type CustomDomain struct {
 	CertExpiresAt    pgtype.Timestamptz
 	CertLastError    pgtype.Text
 	DnsLastCheckedAt pgtype.Timestamptz
+	EnvironmentID    pgtype.UUID
 }
 
 type DataUpstream struct {
@@ -855,6 +886,8 @@ type Deployment struct {
 	ScannedAt                pgtype.Timestamptz
 	OverrideLivenessProbe    []byte
 	SecretReloadSignal       pgtype.Text
+	OverrideReadinessProbe   []byte
+	OverrideMainDependsOn    []byte
 	ParkedReason             pgtype.Text
 	ParkedAt                 pgtype.Timestamptz
 	TrafficPercent           int32
@@ -1111,6 +1144,12 @@ type ExecutionUsageLedger struct {
 	FinishedAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	RecordedAt   pgtype.Timestamptz
+}
+
+type GatewayResponseCachePurgeWatermark struct {
+	NodeName     string
+	LastChangeID int64
+	ObservedAt   pgtype.Timestamptz
 }
 
 type GdprRequest struct {
@@ -1805,6 +1844,16 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectEnvironment struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+	Protected bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCleanupJob struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -1855,6 +1904,16 @@ type ReleaseBundle struct {
 	DaemonHashes []byte
 	CreatedAt    pgtype.Timestamptz
 	AppliedAt    pgtype.Timestamptz
+}
+
+type RequestIDJournal struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type RequestTelemetry struct {
@@ -1983,6 +2042,14 @@ type RequestTelemetryDefault struct {
 	GuestRuntime    string
 	GuestOutcome    string
 	GuestErrorClass string
+}
+
+type ResponseCachePurgeChangeLog struct {
+	ID        int64
+	AppID     pgtype.UUID
+	PathGlob  string
+	Tag       string
+	CreatedAt pgtype.Timestamptz
 }
 
 type RuntimeConfigEntry struct {

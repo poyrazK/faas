@@ -142,8 +142,10 @@ var packEpoch = time.Unix(0, 0)
 //     unanchored equivalent in a non-rooted context)
 //   - trailing '/' restricts the pattern to directories
 //   - per-segment shell glob: '*' matches any run of non-'/' chars;
-//     '?' matches a single non-'/' char. No '**' / no character
-//     classes / no bracket expressions in v1.
+//     '?' matches a single non-'/' char
+//   - a '**' segment matches zero or more directories, as in gitignore:
+//     '**/x' matches x at any depth including the root, 'a/**/b' matches
+//     a/b, and a trailing '/**' matches everything inside
 //
 // If the file is absent or unreadable the packer falls through to the
 // defaults alone (no regression for customers without a file). Malformed
@@ -258,20 +260,36 @@ func matchGregaleignoreOne(relSlash string, p gregaleignorePattern) bool {
 }
 
 // globMatchSegments matches a (suffix of) the rel path against the
-// pattern's per-segment globs. Uses path/filepath.Match per segment
-// so '*' / '?' work but no '**' / bracket classes. Lengths must match
-// exactly — `*.log` matches `a.log` but not `a.log.bak`.
+// pattern's per-segment globs. Uses path/filepath.Match per segment, so
+// `*.log` matches `a.log` but not `a.log.bak`. A '**' segment spans zero
+// or more path segments (one or more when it ends the pattern). The
+// parser accepted '**' before it was implemented, and per-segment Match
+// read it as '*' — so '**/*.pem' skipped a root-level key.pem and
+// 'a/**/b' skipped a/b, uploading files the customer had excluded.
 func globMatchSegments(parts, pattern []string) bool {
-	if len(parts) != len(pattern) {
+	if len(pattern) == 0 {
+		return len(parts) == 0
+	}
+	if pattern[0] == "**" {
+		rest := pattern[1:]
+		if len(rest) == 0 {
+			return len(parts) > 0
+		}
+		for skip := 0; skip <= len(parts); skip++ {
+			if globMatchSegments(parts[skip:], rest) {
+				return true
+			}
+		}
 		return false
 	}
-	for i, pat := range pattern {
-		ok, err := filepath.Match(pat, parts[i])
-		if err != nil || !ok {
-			return false
-		}
+	if len(parts) == 0 {
+		return false
 	}
-	return true
+	ok, err := filepath.Match(pattern[0], parts[0])
+	if err != nil || !ok {
+		return false
+	}
+	return globMatchSegments(parts[1:], pattern[1:])
 }
 
 // shouldExclude reports whether a slash-separated path relative to the

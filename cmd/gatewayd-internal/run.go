@@ -1388,22 +1388,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			live := make(map[string]int, len(liveDeployments))
-			readinessRequired := make(map[string]bool, len(liveDeployments))
+			readinessSources := make(map[string][]string, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
 					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
-					var companions []deploymentCompanionRoute
-					if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
-						if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
-							return nil, fmt.Errorf("decode live deployment %s companions: %w", deployment.ID, err)
-						}
+					sources, err := readinessSourcesForDeployment(deployment)
+					if err != nil {
+						return nil, fmt.Errorf("resolve live deployment %s readiness sources: %w", deployment.ID, err)
 					}
-					for _, companion := range companions {
-						if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil {
-							readinessRequired[deployment.ID] = true
-							break
-						}
-					}
+					readinessSources[deployment.ID] = sources
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1420,7 +1413,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if !ok {
 					continue
 				}
-				requiresReadiness := readinessRequired[instance.DeploymentID]
+				requiredReadinessSources := readinessSources[instance.DeploymentID]
+				requiresReadiness := len(requiredReadinessSources) > 0
 				targets = append(targets, gateway.Target{
 					AppID:             appID,
 					InstanceID:        instance.ID,
@@ -1429,21 +1423,46 @@ func run(ctx context.Context, log *slog.Logger) error {
 					DeploymentID:      instance.DeploymentID,
 					Port:              port,
 					RequiresReadiness: requiresReadiness,
+					ReadinessGates: &gateway.ReadinessGates{
+						RequiredSources: append([]string(nil), requiredReadinessSources...),
+						States:          make(map[string]gateway.ReadinessState),
+					},
 				})
 				if requiresReadiness {
 					readinessInstanceIDs = append(readinessInstanceIDs, instance.ID)
 				}
 			}
 			if len(readinessInstanceIDs) > 0 {
-				readiness, err := pgStore.LatestInstanceReadiness(ctx, readinessInstanceIDs)
+				readiness, err := pgStore.LatestInstanceReadinessBySource(ctx, readinessInstanceIDs)
 				if err != nil {
 					return nil, fmt.Errorf("load readiness for live targets: %w", err)
 				}
 				for i := range targets {
-					if current, ok := readiness[targets[i].InstanceID]; ok {
-						targets[i].Ready = current.Ready
-						targets[i].ReadinessUpdatedAt = current.At
-						targets[i].ReadinessEventID = current.EventID
+					if !targets[i].RequiresReadiness {
+						continue
+					}
+					states := readiness[targets[i].InstanceID]
+					if targets[i].ReadinessGates == nil {
+						targets[i].ReadinessGates = &gateway.ReadinessGates{States: make(map[string]gateway.ReadinessState)}
+					}
+					targets[i].ReadinessGates.States = make(map[string]gateway.ReadinessState, len(states))
+					targets[i].Ready = len(targets[i].ReadinessGates.RequiredSources) > 0
+					for _, source := range targets[i].ReadinessGates.RequiredSources {
+						current, ok := states[source]
+						if !ok {
+							targets[i].Ready = false
+							continue
+						}
+						targets[i].ReadinessGates.States[source] = gateway.ReadinessState{
+							Ready: current.Ready, UpdatedAt: current.At, EventID: current.EventID,
+						}
+						if targets[i].ReadinessUpdatedAt.IsZero() || current.At.After(targets[i].ReadinessUpdatedAt) || (current.At.Equal(targets[i].ReadinessUpdatedAt) && current.EventID > targets[i].ReadinessEventID) {
+							targets[i].ReadinessUpdatedAt = current.At
+							targets[i].ReadinessEventID = current.EventID
+						}
+						if !current.Ready {
+							targets[i].Ready = false
+						}
 					}
 				}
 			}
@@ -2028,12 +2047,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),
 	// then start the durable repair loop alongside LISTEN/NOTIFY.
 	backend.WithEdgeRules(deps.edgeRulesMatcher)
-	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log)
-	// App mutations still use app_changed as their low-latency signal. The
-	// durable broadcast ledger closes the reconnect gap for every gateway
-	// replica without turning the shared notification outbox into a
+	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	go watchDurableCorsPresetChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	go watchDurableResponseCachePurges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	// App and traffic mutations still use notifications as their low-latency
+	// signal. The durable broadcast ledger closes the reconnect gap for every
+	// gateway replica without turning the shared notification outbox into a
 	// single-consumer queue.
-	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log)
+	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
@@ -2737,6 +2758,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// publisher goroutine. Single-box deployments use the dedicated
 	// Unix socket; split-box deployments reuse the private mTLS AppErrors
 	// endpoint, which is served by the same apid gRPC server.
+	// The exact request-ID journal is independent of this optional,
+	// sampled telemetry stream. It is written synchronously before guest
+	// work so a debugger-enabled request can always be looked up by its
+	// public x-faas-request-id.
+	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
+	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
+	if journalTLSErr != nil {
+		return fmt.Errorf("gatewayd: load request ID journal TLS: %w", journalTLSErr)
+	}
+	journalClient, journalDialErr := apidgrpc.DialRequestTelemetry(ctx, journalTarget, journalTLS)
+	if journalDialErr != nil {
+		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
+	}
+	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+		if journalClient == nil {
+			return errors.New("request ID journal apid client unavailable")
+		}
+		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		response, err := journalClient.RecordRequestIDJournal(rpcCtx, &apidpb.RecordRequestIDJournalRequest{
+			RecordId: record.ID, AccountId: record.AccountID, AppId: record.AppID,
+			RequestId: record.RequestID, TraceId: record.TraceID,
+			ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(),
+		})
+		if err != nil {
+			return fmt.Errorf("persist request ID journal: %w", err)
+		}
+		if response == nil || !response.GetRecorded() {
+			return errors.New("apid did not record the request ID journal entry")
+		}
+		return nil
+	})
+	if journalClient != nil {
+		defer func() {
+			if err := journalClient.Close(); err != nil {
+				log.Warn("request ID journal: close apid client", "err", err)
+			}
+		}()
+	}
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
 	if requestTelemetryEnabled {
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{

@@ -45,6 +45,7 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
@@ -201,6 +202,62 @@ export class AppsService {
         'slug': slug,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Check whether runtime policy changes have reached their serving consumers.
+   * Reports desired/applied positions for the gateway request envelope,
+   * gateway app-cache and traffic policy, edge rules, account CORS presets,
+   * explicit response-cache purges, app egress allowlists on nodes hosting
+   * live instances, and scheduler scaling-policy observation. The
+   * `request_policy` component covers app-row request settings such as
+   * request timeout and concurrency, and excludes deployment-traffic
+   * revisions. A response-cache purge is active only after every serving
+   * gateway has invalidated its local cache and optional shared tier. The
+   * top-level state and gateway counts remain the app-cache/traffic
+   * projection; use each named component for its own convergence state.
+   * `active` requires fresh observations from every relevant serving
+   * consumer. The egress allowlist is replayed from current app state by
+   * schedd if a notification is missed. Scheduler scaling `active` means
+   * the owning schedd loaded the policy, not that the replica target was
+   * reached. This does not attest host-level firewall policy or guest
+   * configuration.
+   * `unverified` means no revision or no relevant serving fleet can be observed.
+   *
+   * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
+   * @throws ApiError
+   */
+  public static getRuntimePolicyStatus({
+    slug,
+    wait,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional bounded wait for active state, up to 10s.
+     */
+    wait?: string,
+  }): CancelablePromise<RuntimePolicyStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/policy/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'wait': wait,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -1833,12 +1890,15 @@ export class AppsService {
   }
   /**
    * Get one request telemetry record (ADR-127).
-   * Returns one request telemetry row by public request id or internal row
-   * id for the app. The
-   * lookup is scoped to the app resolved from `slug`, so a request
-   * id belonging to another app is returned as not found. This
-   * direct lookup is not limited to the first page of recent
-   * requests. Plan-gated by `DebugTelemetryEnabled`.
+   * Resolves an exact public x-faas-request-id through the durable,
+   * app-scoped request-ID journal, then enriches it from detailed request
+   * telemetry when that sampled row exists. If only the identity mapping
+   * remains, the response sets `evidence_status` to `request_id_only` and
+   * includes the W3C `trace_id` separately when available. Internal
+   * telemetry row UUIDs remain accepted for compatibility. The lookup is
+   * scoped to the app resolved from `slug`, so an ID belonging to another
+   * app is returned as not found. This direct lookup is not limited to the
+   * first page of recent requests. Plan-gated by `DebugTelemetryEnabled`.
    *
    * @returns DebugTelemetryRequestItem Request telemetry record.
    * @throws ApiError
@@ -2340,8 +2400,10 @@ export class AppsService {
   }
   /**
    * Purge cached responses for an app.
-   * Requests a response-cache purge on every gateway and on the optional
-   * distributed cache tier. The optional path glob limits the purge to
+   * Records a durable response-cache purge request for every gateway and
+   * the optional distributed cache tier. Gateways replay missed requests;
+   * `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+   * The optional path glob limits the purge to
    * matching normalized request paths. The optional tag limits it to
    * responses carrying that Cache-Tag. Path and tag are mutually exclusive;
    * omit both to purge the complete app cache.

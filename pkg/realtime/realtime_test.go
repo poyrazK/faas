@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -254,4 +255,71 @@ func TestManagerOperationsReturnStableErrors(t *testing.T) {
 	if _, err := m.Publish(context.Background(), "missing", "alerts", Message{}); !errors.Is(err, ErrEndpointNotFound) {
 		t.Fatalf("publish unknown endpoint = %v", err)
 	}
+}
+
+// TestManagerReRegisterKeepsEndpointConnectionLimit — apid's reconciler
+// replays identical endpoint intent. RegisterEndpoint used to store a fresh
+// endpointState whose connection counter started at zero while the open
+// sockets kept releasing against the old one, so every re-registration
+// admitted another MaxConnections.
+func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
+	manager := NewManager(Config{}, nil)
+	defer func() { _ = manager.Close() }()
+	endpoint := Endpoint{ID: "ep", AppID: "app", AccountID: "acct", MaxConnections: 1}
+	if err := manager.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(manager)
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + "ep"
+
+	first, _, err := dialClosingResponse(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+
+	for round := 0; round < 3; round++ {
+		if err := manager.RegisterEndpoint(endpoint); err != nil {
+			t.Fatal(err)
+		}
+		extra, status, err := dialClosingResponse(url)
+		if err == nil {
+			_ = extra.Close()
+			t.Fatalf("round %d: max_connections=1 admitted a second socket after re-registration", round)
+		}
+		if status != http.StatusTooManyRequests {
+			t.Fatalf("round %d: second dial err=%v status=%d, want 429", round, err, status)
+		}
+	}
+
+	// Closing the original socket releases the shared counter, so a new
+	// connection is admitted again under the re-registered definition.
+	_ = first.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		next, _, err := dialClosingResponse(url)
+		if err == nil {
+			_ = next.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot never released after the first socket closed: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// dialClosingResponse dials url and closes the handshake response body,
+// returning the handshake status (0 when there was no response).
+func dialClosingResponse(url string) (*websocket.Conn, int, error) {
+	conn, response, err := websocket.DefaultDialer.Dial(url, nil)
+	status := 0
+	if response != nil {
+		status = response.StatusCode
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
+	}
+	return conn, status, err
 }

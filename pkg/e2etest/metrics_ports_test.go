@@ -16,7 +16,10 @@ func TestHarness_EveryMetricsAddrIsAFreePort(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(string(src), "\n")
-	starts := regexp.MustCompile(`startProc\(t, bin, "(apid|imaged)", env\)`)
+	// The apid restart harness retains its launch environment on Harness so it
+	// can start a fresh process later; match the daemon launch independently of
+	// the local variable used for that environment.
+	starts := regexp.MustCompile(`startProc\(t, bin, "(apid|imaged)",`)
 	found := 0
 	for i, line := range lines {
 		m := starts.FindStringSubmatch(line)

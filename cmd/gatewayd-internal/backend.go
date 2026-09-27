@@ -134,6 +134,22 @@ func (r pgRouter) IsDynamicRouteHost(host string) bool {
 	return matched
 }
 
+func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	domain, err := r.store.DomainByName(ctx, host)
+	if errors.Is(err, state.ErrNotFound) {
+		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
+			domain, err = wildcardStore.WildcardDomainForHost(ctx, host)
+		}
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+}
+
 func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
 	lookup, ok := r.store.(interface {
 		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
@@ -169,12 +185,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if _, err := r.store.GetProjectEnvironmentEdgePolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, err
 	}
-	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
-	if errors.Is(err, state.ErrNotFound) {
-		return gateway.App{}, false, nil
-	}
-	if err != nil {
-		return gateway.App{}, false, err
+	deployment, found, err := r.environmentDeployment(ctx, app, environment)
+	if err != nil || !found {
+		return gateway.App{}, found, err
 	}
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
@@ -183,6 +196,42 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
 	return resolved, true, nil
+}
+
+func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
+		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
+		if err == nil {
+			for _, member := range release.Members {
+				if member.AppID != app.ID {
+					continue
+				}
+				deployment, loadErr := r.store.DeploymentByID(ctx, member.DeploymentID)
+				if errors.Is(loadErr, state.ErrNotFound) {
+					return state.Deployment{}, false, nil
+				}
+				if loadErr != nil {
+					return state.Deployment{}, false, loadErr
+				}
+				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive {
+					return state.Deployment{}, false, nil
+				}
+				return deployment, true, nil
+			}
+			return state.Deployment{}, false, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, false, err
+		}
+	}
+	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.Deployment{}, false, nil
+	}
+	if err != nil {
+		return state.Deployment{}, false, err
+	}
+	return deployment, true, nil
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
@@ -310,6 +359,15 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if !dom.Verified() {
 		return gateway.App{}, false, nil
 	}
+	if dom.EnvironmentID != "" {
+		app, found, err := r.environmentHost(ctx, dom.EnvironmentID, dom.AppID)
+		if err != nil || !found {
+			return app, found, err
+		}
+		app.CustomDomainRoute = true
+		app.DynamicRoute = true
+		return app, true, nil
+	}
 	app, err := r.store.AppByID(ctx, dom.AppID)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -320,7 +378,12 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
-	return r.toApp(ctx, app)
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.CustomDomainRoute = true
+	return resolved, true, nil
 }
 
 // resolveTenantSurface — pgRouter.ResolveHost's tenant-surface branch.
@@ -504,6 +567,13 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
+	requestRateLimitRPS, requestRateLimitBurst := 0, 0
+	if app.RequestRateLimitRPS != nil {
+		requestRateLimitRPS = *app.RequestRateLimitRPS
+	}
+	if app.RequestRateLimitBurst != nil {
+		requestRateLimitBurst = *app.RequestRateLimitBurst
+	}
 	return gateway.App{
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
@@ -522,6 +592,8 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		AutoscaleTargetRPS:           app.AutoscaleTargetRPS,
 		IdleTimeoutS:                 app.IdleTimeoutS,
 		RequestTimeoutS:              app.Manifest.RequestTimeoutS,
+		RequestRateLimitRPS:          requestRateLimitRPS,
+		RequestRateLimitBurst:        requestRateLimitBurst,
 		Slug:                         app.Slug,
 		IsPreview:                    app.PreviewOfSlug != "",
 		StreamingEnabled:             app.StreamingEnabled,
@@ -615,6 +687,31 @@ type deploymentCompanionRoute struct {
 	Port           int               `json:"port"`
 	PrimaryIngress bool              `json:"primary_ingress,omitempty"`
 	ReadinessProbe *api.SidecarProbe `json:"readiness_probe,omitempty"`
+}
+
+func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
+	sources := make([]string, 0, 2)
+	if len(deployment.OverrideReadinessProbe) > 0 {
+		var probe api.DeploymentReadinessProbe
+		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
+			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
+		}
+		if probe.Path != "" || probe.GRPC != nil {
+			sources = append(sources, "primary_app")
+		}
+	}
+	var companions []deploymentCompanionRoute
+	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
+			return nil, fmt.Errorf("decode deployment companions: %w", err)
+		}
+	}
+	for _, companion := range companions {
+		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
+			sources = append(sources, "sidecar:"+companion.Name)
+		}
+	}
+	return sources, nil
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -802,9 +899,10 @@ type invalidator interface {
 	// transient CA failure.
 	RequestCertForSurface(ctx context.Context, surfaceID string) error
 	// ResetCorsPresets (issue #975 #4 PR-B / ADR-129 D4) drops
-	// the per-host edge-rule LRU for the affected account so
-	// the next request recompiles and re-fetches the up-to-date
-	// preset via state.GetCorsPresetByID. Wholesale reset is
+	// the per-host edge-rule LRU and response cache so the next
+	// request recompiles and re-fetches the up-to-date preset via
+	// state.GetCorsPresetByID, and cannot serve cached old CORS
+	// headers. Wholesale reset is
 	// correct: the per-rule compile path re-reads the preset
 	// on every cache miss, so the post-reset compile produces
 	// resolved actions against the latest row. The account_id
@@ -978,6 +1076,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		var p struct {
 			AppID      string    `json:"app_id"`
 			InstanceID string    `json:"instance_id"`
+			Source     string    `json:"source"`
 			Status     string    `json:"status"`
 			At         time.Time `json:"at"`
 			EventID    int64     `json:"event_id"`
@@ -987,6 +1086,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			return
 		}
 		if setter, ok := inv.(interface {
+			SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadinessSource(p.AppID, p.InstanceID, p.Source, p.Status, p.At, p.EventID)
+		} else if setter, ok := inv.(interface {
 			SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64)
 		}); ok {
 			setter.SetInstanceReadiness(p.AppID, p.InstanceID, p.Status, p.At, p.EventID)
@@ -1286,9 +1389,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// allow_origins / allow_methods / etc. into the
 		// resolved EdgeRuleCORSResolved slice at compile
 		// time, so a preset edit leaves stale resolved
-		// shapes in the per-host LRU. Wholesale
-		// ResetEdgeRules drops the LRU so the next request
-		// recompiles and re-fetches the preset from PG.
+		// shapes in the per-host LRU. ResetCorsPresets also
+		// purges the response cache so old CORS headers cannot
+		// survive in cached responses.
 		// The account_id payload is informational; the
 		// LRU is per-host keyed, not per-account, so a
 		// surgical per-account eviction would require a

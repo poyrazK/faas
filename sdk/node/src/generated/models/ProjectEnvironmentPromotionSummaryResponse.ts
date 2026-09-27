@@ -10,6 +10,10 @@ export type ProjectEnvironmentPromotionSummaryResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Whether the operation copied non-secret source config to its target.
+   */
+  sync_config?: boolean;
   promotion_hash: string;
   status: 'running' | 'succeeded' | 'failed';
   error?: string;

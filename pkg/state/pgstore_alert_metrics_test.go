@@ -22,9 +22,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // seedTestAccount creates one account and one app on the test
@@ -173,26 +176,37 @@ func TestPg_UpsertAccountSpendSnapshot_InsertAndUpsert(t *testing.T) {
 	}
 }
 
-func TestPg_MTDSpendEurCents_SumsAcrossSources(t *testing.T) {
+// TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage — the metric used to sum
+// account_spend_snapshot, which no production code writes, so the enabled
+// "Spend exceeds €20" preset could never fire. It now reads the month's
+// usage beyond the plan allowance; snapshot rows alone move nothing.
+func TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)
-	acctID, _ := seedTestAccount(t, s, ctx, "mtd")
+	acctID, appID := seedTestAccount(t, s, ctx, "mtd")
 
 	now := time.Now().UTC()
-	// Two closed-set sources, two periods, both inside the MTD
-	// window. The MTD aggregator walks SUM(eur_cents) across
-	// every source, so 'running_seconds' + 'overage' both count.
 	if err := s.UpsertAccountSpendSnapshot(ctx, acctID, now, now.Add(time.Minute), 1.0, 100, "running_seconds"); err != nil {
-		t.Fatalf("UpsertAccountSpendSnapshot (a): %v", err)
-	}
-	if err := s.UpsertAccountSpendSnapshot(ctx, acctID, now, now.Add(2*time.Minute), 2.0, 250, "overage"); err != nil {
-		t.Fatalf("UpsertAccountSpendSnapshot (b): %v", err)
+		t.Fatalf("UpsertAccountSpendSnapshot: %v", err)
 	}
 	got, err := s.MTDSpendEurCents(ctx, acctID)
 	if err != nil {
 		t.Fatalf("MTDSpendEurCents: %v", err)
 	}
-	if got != 350 {
-		t.Errorf("total = %d; want 350 (100 + 250)", got)
+	if got != 0 {
+		t.Fatalf("spend with no usage = %d cents; want 0", got)
+	}
+
+	// Pro includes 250 GB-h; 12 GB-h beyond it is 12 cents of overage.
+	included := int64(api.PlanPro.PlanIncludedGBHours()) * api.SecondsPerGBHour
+	if err := s.AppendUsage(ctx, acctID, appID, uuid.NewString(), now.Truncate(time.Minute), included+12*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	got, err = s.MTDSpendEurCents(ctx, acctID)
+	if err != nil {
+		t.Fatalf("MTDSpendEurCents: %v", err)
+	}
+	if got != 12 {
+		t.Fatalf("spend = %d cents; want 12 (12 GB-h beyond the Pro allowance)", got)
 	}
 }
 
@@ -366,5 +380,59 @@ func TestPg_ListCertExpiryStateForWalker_StaleCutoffFilters(t *testing.T) {
 	}
 	if got[0].Hostname != "fresh.example" {
 		t.Errorf("hostname = %q; want \"fresh.example\"", got[0].Hostname)
+	}
+}
+
+// TestPg_WasInvokedSuccessfullySince_CountsServedHTTPRequests — api_up used
+// to look only at the invocations table, which ordinary HTTP traffic never
+// touches, so an app busily serving requests read as down and the "API is
+// down" preset fired. A 5xx is not a served request, and a pending
+// invocation is not evidence the app answered.
+func TestPg_WasInvokedSuccessfullySince_CountsServedHTTPRequests(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acctID, appID := seedTestAccount(t, s, ctx, "wiss-http")
+	since := time.Now().Add(-5 * time.Minute)
+	dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Status: state.DeployLive, Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	telemetry := func(status int32) {
+		t.Helper()
+		acct, _ := uuid.Parse(acctID)
+		app, _ := uuid.Parse(appID)
+		depID, _ := uuid.Parse(dep.ID)
+		if err := s.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID: pgtype.UUID{Bytes: acct, Valid: true}, AppID: pgtype.UUID{Bytes: app, Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: depID, Valid: true},
+			Route:        "/", Method: "GET", Status: status, LatencyMs: 12, Count: 1,
+			ReceivedAt:   pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+			GuestRuntime: "__unknown__", GuestOutcome: "missing",
+			Country: "__unknown__", UaFamily: "__unknown__", ReferrerHost: "__unknown__",
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry: %v", err)
+		}
+	}
+	up := func() bool {
+		t.Helper()
+		ok, err := s.WasInvokedSuccessfullySince(ctx, acctID, appID, since)
+		if err != nil {
+			t.Fatalf("WasInvokedSuccessfullySince: %v", err)
+		}
+		return ok
+	}
+
+	if _, err := pool.Exec(ctx, `
+		insert into invocations (id, account_id, app_id, source, state, created_at)
+		values (gen_random_uuid(), $1, $2, 'async_invoke', 'pending', now())`,
+		acctID, appID); err != nil {
+		t.Fatalf("insert invocation: %v", err)
+	}
+	telemetry(503)
+	if up() {
+		t.Fatal("a pending invocation and a 503 counted as the app serving traffic")
+	}
+	telemetry(200)
+	if !up() {
+		t.Fatal("an app that answered HTTP 200 in the window reads as down")
 	}
 }

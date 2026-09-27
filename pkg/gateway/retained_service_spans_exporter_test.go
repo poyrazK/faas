@@ -83,3 +83,56 @@ func TestRetainedServiceSpansExporterDropsUnattributedSpan(t *testing.T) {
 		t.Fatalf("unattributed span was retained; buckets = %d", acc.Len())
 	}
 }
+
+func TestRetainedServiceSpansExporterKeepsAuthorizedOutboundDependency(t *testing.T) {
+	accountID := uuid.MustParse("d6e281f3-f5b2-436c-b4ad-8529a956609c")
+	acc := NewSpansAccumulator()
+	exporter := NewRetainedServiceSpansExporter(acc, nil)
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	tracer := provider.Tracer("outboundd")
+	rootCtx, root := tracer.Start(context.Background(), "outboundd /i/...", oteltrace.WithSpanKind(oteltrace.SpanKindServer))
+	_, dependency := tracer.Start(rootCtx, "outbound.stripe",
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+		oteltrace.WithAttributes(
+			attribute.String("gregale.dependency.type", "outbound_integration"),
+			attribute.String("gregale.dependency.kind", "https"),
+			attribute.String("gregale.internal.account_id", accountID.String()),
+			attribute.String("gregale.outbound.integration_id", "stripe-integration"),
+			attribute.String("gregale.outbound.origin_host", "api.stripe.example"),
+		),
+	)
+	dependency.End()
+	root.End()
+
+	spans, gotAccountID := acc.DrainAndRemove(dependency.SpanContext().TraceID().String())
+	if gotAccountID != accountID || len(spans) != 1 {
+		t.Fatalf("retained outbound spans = %d account=%s, want one for %s", len(spans), gotAccountID, accountID)
+	}
+	got := spans[0]
+	if got.Name != "outbound.stripe" || got.Attributes["gregale.dependency.type"] != "outbound_integration" ||
+		got.Attributes["gregale.dependency.kind"] != "https" || got.Attributes["gregale.outbound.origin_host"] != "api.stripe.example" {
+		t.Fatalf("retained outbound dependency = %+v", got)
+	}
+	if _, exposed := got.Attributes[retainedSpanAccountIDAttribute]; exposed {
+		t.Fatal("internal account-routing attribute leaked into outbound summary")
+	}
+
+	// The exporter admits only the closed outbound/HTTPS classification; a
+	// customer or daemon span with a loose outbound type cannot reach apid.
+	_, unclassified := tracer.Start(context.Background(), "outbound.unclassified",
+		oteltrace.WithAttributes(
+			attribute.String("gregale.dependency.type", "outbound_integration"),
+			attribute.String("gregale.dependency.kind", "tcp"),
+			attribute.String("gregale.internal.account_id", accountID.String()),
+		),
+	)
+	unclassified.End()
+	if acc.Len() != 0 {
+		t.Fatalf("unclassified outbound span was retained; buckets=%d", acc.Len())
+	}
+}

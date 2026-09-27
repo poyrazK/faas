@@ -13,6 +13,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -84,6 +86,36 @@ func TestHandlerAttributesAnonymousVerifiedSurfaceOnce(t *testing.T) {
 	item, ok, err := q.Next()
 	if err != nil || !ok || item.Event.PlatformTenantID != tenantID || item.Event.PlatformTenantSurfaceID != surfaceID || item.Event.ConsumerID != "" {
 		t.Fatalf("surface usage item=%+v ok=%t err=%v", item, ok, err)
+	}
+}
+
+func TestRequestTelemetryRouteSurvivesDisabledPrometheusRouteMetrics(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{
+		app:  App{ID: appID, AccountID: accountID, Plan: api.PlanPro, RouteMetricsEnabled: true},
+		host: "customer.example", upstream: upstream.Listener.Addr().String(),
+	}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.requestTelemetry = makeTestRecorder()
+	h.WithRouteMetricsEnabled(false)
+
+	r := httptest.NewRequest(http.MethodGet, "http://customer.example/profiles/238", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("request status = %d, want 200", w.Code)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("request telemetry rows = %d, want one", len(rows))
+	}
+	if rows[0].Route != "GET /profiles/{id}" {
+		t.Fatalf("request telemetry route = %q, want normalized route despite disabled metric series", rows[0].Route)
 	}
 }
 
@@ -398,5 +430,60 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	}
 	if rows[0].GuestRuntime != "node24" || rows[0].GuestDurationMS != 125 || rows[0].GuestOutcome != "ok" {
 		t.Fatalf("guest evidence = (%q, %d, %q)", rows[0].GuestRuntime, rows[0].GuestDurationMS, rows[0].GuestOutcome)
+	}
+}
+
+func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	spanID := "00f067aa0ba902b7"
+	requestID := "customer-request-42"
+
+	for _, failJournal := range []bool{false, true} {
+		t.Run(map[bool]string{false: "persisted", true: "write_failure"}[failJournal], func(t *testing.T) {
+			proxied := false
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				proxied = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer upstream.Close()
+			backend := &fakeBackend{app: App{ID: appID, AccountID: accountID, Plan: api.PlanPro,
+				ConsumerAuthMode: api.ConsumerAuthModeOptional}, host: "customer.example", upstream: upstream.Listener.Addr().String()}
+			backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+			h := NewHandlerWith(backend, NewMetrics(), nil)
+			journaled := false
+			h.WithRequestIDJournalWriter(func(_ context.Context, record RequestIDJournalRecord) error {
+				journaled = true
+				if record.RequestID != requestID || record.AccountID != accountID || record.AppID != appID || record.TraceID != traceID {
+					t.Errorf("journal record = %+v", record)
+				}
+				if record.ID == "" || record.ReceivedAt.IsZero() {
+					t.Errorf("journal record lacks durable identity/timestamp: %+v", record)
+				}
+				if failJournal {
+					return errors.New("database unavailable")
+				}
+				return nil
+			})
+
+			r := httptest.NewRequest(http.MethodGet, "http://customer.example/", nil)
+			r.Header.Set(api.RequestIDHeader, requestID)
+			r.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-00") // unsampled traces still need exact correlation.
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if !journaled {
+				t.Fatal("debugger-enabled request did not attempt journal write")
+			}
+			if failJournal {
+				if w.Code != http.StatusServiceUnavailable || proxied || backend.pickCalls.Load() != 0 {
+					t.Fatalf("write failure status=%d proxied=%t picks=%d; must stop before guest work", w.Code, proxied, backend.pickCalls.Load())
+				}
+				return
+			}
+			if w.Code != http.StatusNoContent || !proxied {
+				t.Fatalf("status=%d proxied=%t, want successful proxy", w.Code, proxied)
+			}
+		})
 	}
 }

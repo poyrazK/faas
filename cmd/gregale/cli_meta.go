@@ -1046,7 +1046,11 @@ var cliCommands = []cliCommand{
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List custom domain bindings"},
-			{Name: subAdd, Short: "Bind a custom domain to an app"},
+			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Flags: []cliFlag{
+				{Name: "domain", Short: "domain to attach (required)", Req: true, Value: "DOMAIN"},
+				{Name: "app", Short: "app slug to attach to (required)", Req: true, Value: "SLUG"},
+				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
+			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
@@ -1770,7 +1774,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
 				{Name: "list", Short: "List environments"},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
@@ -1783,8 +1787,21 @@ var cliCommands = []cliCommand{
 				{Name: "routes", Short: "Manage environment routes"},
 				{Name: "policies", Short: "Manage environment policies"},
 				{Name: "diff", Short: "Compare environments"},
-				{Name: "preview", Short: "Plan a promotion"},
-				{Name: "promote", Short: "Promote workloads"},
+				{Name: "preview", Short: "Plan a promotion", Flags: []cliFlag{
+					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
+					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
+				}},
+				{Name: "promote", Short: "Promote workloads", Flags: []cliFlag{
+					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
+					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
+					{Name: "yes", Short: "confirm the promotion"},
+					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
+					{Name: "wait", Short: "wait for the promotion to reach a terminal status"},
+					{Name: "progress", Short: "print promotion transitions while waiting (human output only)"},
+					{Name: "timeout", Short: "maximum seconds to wait for promotion completion", Value: "SECONDS"},
+				}},
 				{Name: "status", Short: "Inspect a promotion"},
 				{Name: "rollback", Short: "Roll back a promotion"},
 			}},

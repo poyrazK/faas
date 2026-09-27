@@ -307,6 +307,10 @@ type Querier interface {
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
+	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+	// expires_at is checked as well as received_at so plan downgrades do not
+	// extend the original request-time retention window.
+	GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error)
 	// Direct request drill-down for the customer debugger. Customers normally
 	// have the public x-faas-request-id stored as trace_id, while older clients
 	// may retain the internal telemetry-row UUID. Accept both without weakening
@@ -502,6 +506,9 @@ type Querier interface {
 	// Gateway restart hydration: readiness is independent of the instance's
 	// RUNNING state, so replay only the latest reversible ready/unready event.
 	LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error)
+	// Gateway hydration keeps each required readiness source independent so one
+	// recovered probe cannot override another probe that is still unready.
+	LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
@@ -557,6 +564,13 @@ type Querier interface {
 	// types — without them sqlc infers the timestamps as timestamptz
 	// from the leading (count, last_seen_at) references and breaks
 	// pagination.
+	//
+	// cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+	// (count is always >= 1). The predicate used to test IS NULL, which
+	// never held: the first page matched no rows and the summary was
+	// always empty. fingerprint sorts DESC to agree with the row-value
+	// comparison; ASC made pages repeat or skip groups that tie on
+	// (count, last_seen_at).
 	ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppErrorGroupsParams) ([]ListAppErrorGroupsRow, error)
 	// Drill-down rows for one fingerprint. Cursor paginated via
 	// (received_at, request_id). Index path:
@@ -744,11 +758,12 @@ type Querier interface {
 	// owning account and the immutable request-time tenant snapshot; do not infer
 	// attribution by joining today's consumer/surface links.
 	ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error)
-	// Bounded read path for the historical debugger dependency view. The
+	// Bounded read path for route-scoped dependency analytics. The
 	// account_id predicate is defense in depth for callers that accidentally
 	// pass an app id from another tenant; the app lookup remains the primary
-	// IDOR boundary. The newest rows are preferred because spans_summary is
-	// sampled evidence, not a complete request trace archive.
+	// IDOR boundary. Evidence is newest-first within each route/deployment
+	// partition, then interleaved so one high-volume revision cannot crowd all
+	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
@@ -1013,6 +1028,11 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	// The request-ID journal is independent from sampled request telemetry. Only
+	// insert when the app is still owned by the authenticated account. The
+	// caller-generated record UUID makes an RPC retry idempotent without
+	// collapsing two customer requests that happen to reuse a public ID.
+	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
 	// apidsource.Enqueue and BEFORE writing the 201 response. On
@@ -1236,10 +1256,11 @@ type Querier interface {
 	// in-process (pkg/gateway/spans_accumulator.go) and flushes the
 	// accumulated summary every FAAS_OTEL_FLUSH_INTERVAL (default 30s).
 	// UPDATE (not INSERT) because the row already exists — the recorder
-	// wrote it from the gateway edge
-	// (pkg/gateway/request_telemetry_publisher.go). Last-writer-wins on
-	// concurrent UPDATEs is acceptable; the 24h window bounds the index
-	// seek to the partial index request_telemetry_trace_idx selectivity.
+	// wrote it from the gateway edge (pkg/gateway/request_telemetry_publisher.go).
+	// Multiple trusted producers can contribute to one trace (for example,
+	// gatewayd-internal service bindings and outboundd provider calls), so merge
+	// by span identity instead of allowing a later writer to erase earlier spans.
+	// Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
 	// $N::jsonb cast is load-bearing — without it sqlc binds as text and
 	// Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 	//

@@ -27,6 +27,8 @@ package redact
 import (
 	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // Pattern is a closed-vocabulary redaction rule. The Name is what
@@ -83,18 +85,30 @@ func Default() []Pattern { return defaultPatterns() }
 // names slice is nil (not an empty slice). This matches the
 // "nothing happened" contract callers depend on.
 func (r *Redactor) Apply(s string) (string, []string) {
+	return r.apply(s, "")
+}
+
+// apply is Apply with an optional line prefix ("Name: ") that is matched
+// together with s but is not counted against the cap and is stripped from
+// the result. ApplyHeaders uses it so the header-style rules see the
+// header name.
+func (r *Redactor) apply(s, prefix string) (string, []string) {
 	if s == "" {
 		return "", nil
 	}
+	orig := s
 	// Truncate first. Doing this BEFORE regex matching is
 	// load-bearing: long inputs (64 KiB stack traces) would
 	// otherwise blow memory and let the regex engine see
-	// arbitrary-length input.
+	// arbitrary-length input. The cut never splits a rune: the
+	// result is persisted to a Postgres text column, which rejects
+	// invalid UTF-8.
 	truncated := false
 	if r.cap > 0 && len(s) > r.cap {
-		s = s[:r.cap] + "..."
+		s = safetext.Truncate(s, r.cap) + "..."
 		truncated = true
 	}
+	s = prefix + s
 
 	applied := map[string]struct{}{}
 	for _, p := range r.patterns {
@@ -108,6 +122,14 @@ func (r *Redactor) Apply(s string) (string, []string) {
 			// is fine; we only need the string values.
 			return p.Replacer(p.Regex.FindStringSubmatch(m))
 		})
+	}
+	if prefix != "" {
+		if !strings.HasPrefix(s, prefix) {
+			// A rule rewrote the header name itself; match the
+			// value alone rather than guess where it starts.
+			return r.apply(orig, "")
+		}
+		s = s[len(prefix):]
 	}
 
 	names := make([]string, 0, len(applied))
@@ -133,10 +155,12 @@ func (r *Redactor) Apply(s string) (string, []string) {
 	return s, names
 }
 
-// ApplyHeaders redacts every VALUE in a flat header map. Key names
-// (Authorization, Cookie, X-API-Key, ...) are already in the
-// pattern set's "header-style" rules, but re-running Apply on the
-// value catches bearer tokens that landed in custom headers.
+// ApplyHeaders redacts every VALUE in a flat header map. The
+// header-style rules (authorization, cookie, x-api-key) match
+// "Name: value" lines, so each value is matched with its name in
+// front: a credential header is redacted by name whatever its value
+// looks like, and the other rules still catch bearer tokens that
+// landed in custom headers. Only the value is returned.
 //
 // Returns a NEW map; the input is not mutated.
 func (r *Redactor) ApplyHeaders(h map[string]string) (map[string]string, []string) {
@@ -146,7 +170,7 @@ func (r *Redactor) ApplyHeaders(h map[string]string) (map[string]string, []strin
 	out := make(map[string]string, len(h))
 	seen := map[string]struct{}{}
 	for k, v := range h {
-		redacted, names := r.Apply(v)
+		redacted, names := r.apply(v, k+": ")
 		out[k] = redacted
 		for _, n := range names {
 			seen[n] = struct{}{}

@@ -78,6 +78,32 @@ func TestPrepareWorkloadCgroupUsesRequestedMemory(t *testing.T) {
 	}
 }
 
+func TestUpdateMainWorkloadCPULimitWritesLiveLeaf(t *testing.T) {
+	oldRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	t.Cleanup(func() { cgroupRoot = oldRoot })
+	leaf := leafDir("main", "app")
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		t.Fatalf("create main workload cgroup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(leaf, "cpu.max"), []byte("25000 100000\n"), 0o644); err != nil {
+		t.Fatalf("seed main cpu.max: %v", err)
+	}
+	if err := updateMainWorkloadCPULimit(500); err != nil {
+		t.Fatalf("updateMainWorkloadCPULimit: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(leaf, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read updated main cpu.max: %v", err)
+	}
+	if got, want := string(body), "50000 100000\n"; got != want {
+		t.Fatalf("main cpu.max = %q, want %q", got, want)
+	}
+	if err := updateMainWorkloadCPULimit(333); err == nil {
+		t.Fatal("invalid live CPU policy should fail closed")
+	}
+}
+
 // TestCgroupSafeName_ValidCombinations pins the happy path:
 // type + name joined with a single dash, used to derive the
 // per-workload cgroup leaf path. The cgroup v2 kernel

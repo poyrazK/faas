@@ -155,6 +155,11 @@ type Harness struct {
 	// private process list.
 	scheddEnv        []string
 	scheddConfigPath string
+	// apidEnv/listen/socket retain the launch recipe for restart durability
+	// tests that exercise persistent control-plane state across apid lifetimes.
+	apidEnv              []string
+	apidListen           string
+	requestTelemetrySock string
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -752,16 +757,21 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 				t.Fatalf("e2etest: mkdir spool: %v", err)
 			}
 		}
+		requestTelemetrySock := filepath.Join(h.SockDir, "request_telemetry.sock")
 		env := append(testEnvCommon(dbURL),
 			"FAAS_APID_LISTEN="+addr,
 			"FAAS_APPS_DOMAIN="+testDomain,
 			"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
-			"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+			"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+requestTelemetrySock,
+			"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
 		env = append(env, extraEnv...)
-		h.procs = append(h.procs, startProc(t, bin, "apid", env))
+		h.apidEnv = append([]string(nil), env...)
+		h.apidListen = addr
+		h.requestTelemetrySock = requestTelemetrySock
+		h.procs = append(h.procs, startProc(t, bin, "apid", h.apidEnv))
 		h.APIDURL = "http://" + addr
 		// APID can take longer than the other daemons to initialize on a
 		// cold, concurrently loaded CI runner. Keep waiting for the
@@ -852,6 +862,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 			t.Fatalf("e2etest: mkdir spool: %v", err)
 		}
 	}
+	requestTelemetrySock := filepath.Join(h.SockDir, "request_telemetry.sock")
 	env := append(testEnvCommon(dbURL),
 		"FAAS_APID_LISTEN="+addr,
 		"FAAS_APPS_DOMAIN="+testDomain,
@@ -860,16 +871,20 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		// the other one, and smoke run 35220096082 still lost three
 		// tests to `bind: address already in use` on 9101.
 		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
-		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+requestTelemetrySock,
+		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
 	env = append(env, extraEnv...)
-	h.procs = append(h.procs, startProc(t, bin, "apid", env))
-	h.APIDURL = "http://" + addr
+	h.apidEnv = append([]string(nil), env...)
+	h.apidListen = addr
+	h.requestTelemetrySock = requestTelemetrySock
+	h.procs = append(h.procs, startProc(t, bin, "apid", h.apidEnv))
+	h.APIDURL = "http://" + h.apidListen
 	// Match the StartWithEnv path above: APID startup can exceed 10s on
 	// a cold CI runner while migrations and dependency wiring settle.
-	waitTCP(t, addr, 30*time.Second)
+	waitTCP(t, h.apidListen, 30*time.Second)
 }
 
 // writeScheddConfig renders the per-test schedd.toml and writes it under
@@ -1201,6 +1216,10 @@ func testEnvCommon(dbURL string) []string {
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",
 		"FAAS_APP_ERRORS_ENABLED=false",
+		// The retained spans writer is production-default-on, but ordinary
+		// E2E daemons run unprivileged and do not need its /run/faas socket.
+		// Tests for the writer opt in with a per-test socket path.
+		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		// ADR-115 D5 / PR #1191 C2: pkg/mail/factory refuses to boot
 		// when FAAS_MAIL_TRANSPORT is unset on a non-dev box. Every
@@ -1572,6 +1591,69 @@ func (h *Harness) RestartSchedd() error {
 	h.procs = append(h.procs, proc)
 	waitUnix(h.T, h.ScheddSock, 30*time.Second)
 	setDefaultLocalScheddTarget(h.T, h.Pool, h.ScheddSock, h.VMMDSock)
+	h.requireDaemonsAlive(h.T)
+	return nil
+}
+
+// KillAPID terminates and reaps the apid child while leaving the rest of the
+// harness alive. Reaping here is important because Harness.stop owns the
+// single Wait call for every process it starts.
+func (h *Harness) KillAPID() error {
+	if h == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	for _, proc := range h.procs {
+		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != "apid" {
+			continue
+		}
+		if proc.ProcessState == nil {
+			if err := proc.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return fmt.Errorf("e2etest: kill apid: %w", err)
+			}
+			if err := proc.Wait(); err != nil {
+				// A signal exit is the expected result of this fault injection.
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					return fmt.Errorf("e2etest: reap apid: %w", err)
+				}
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("e2etest: apid process not found")
+}
+
+// RestartAPID launches a fresh apid with the retained config and environment.
+// The database and all other harness daemons remain live, allowing acceptance
+// tests to prove durable state survives an apid process restart.
+func (h *Harness) RestartAPID() error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if h.apidListen == "" || len(h.apidEnv) == 0 {
+		return fmt.Errorf("e2etest: apid launch recipe unavailable")
+	}
+	if err := h.KillAPID(); err != nil {
+		return err
+	}
+	// KillAPID has reaped the prior process. It is no longer owned by Stop
+	// and must not be treated as a failed daemon when checking the replacement.
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != nil && filepath.Base(candidate.Path) == "apid" && candidate.ProcessState != nil {
+			continue
+		}
+		procs = append(procs, candidate)
+	}
+	h.procs = procs
+	if h.requestTelemetrySock != "" {
+		if err := os.Remove(h.requestTelemetrySock); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("e2etest: remove stale apid request telemetry socket: %w", err)
+		}
+	}
+	proc := startProc(h.T, h.BinDir, "apid", append([]string(nil), h.apidEnv...))
+	h.procs = append(h.procs, proc)
+	waitTCP(h.T, h.apidListen, 30*time.Second)
 	h.requireDaemonsAlive(h.T)
 	return nil
 }
