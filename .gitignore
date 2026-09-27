@@ -7,7 +7,7 @@ coverage.*
 # Local config & secrets — never commit
 /etc/faas/
 *.local.toml
-secrets/
+/secrets/
 
 # Firecracker / VM working state
 /srv/fc/

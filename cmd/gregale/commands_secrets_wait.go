@@ -10,6 +10,38 @@ import (
 
 const secretAckPollInterval = 2 * time.Second
 
+func waitForSecretRevocationAck(ctx context.Context, client *api.Client, app, revocationID string) (api.AppSecretRevocationResponse, error) {
+	ticker := time.NewTicker(secretAckPollInterval)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return api.AppSecretRevocationResponse{}, fmt.Errorf("%s while waiting for secret removal acknowledgements: %w", secretAckWaitStopped(ctx), err)
+		}
+		progress, err := client.GetSecretRevocation(ctx, app, revocationID)
+		if err != nil {
+			return api.AppSecretRevocationResponse{}, fmt.Errorf("read secret revocation status: %w", err)
+		}
+		switch progress.Status {
+		case "complete":
+			return progress, nil
+		case "blocked", "failed":
+			return progress, fmt.Errorf("secret removal acknowledgement %s (%d of %d runtime(s) acknowledged; %d pending)", progress.Status, progress.AcknowledgedCount, progress.TargetCount, progress.PendingCount)
+		}
+		select {
+		case <-ctx.Done():
+			return progress, fmt.Errorf("%s waiting for secret removal acknowledgements (%d of %d runtime(s) acknowledged; %d pending)", secretAckWaitStopped(ctx), progress.AcknowledgedCount, progress.TargetCount, progress.PendingCount)
+		case <-ticker.C:
+		}
+	}
+}
+
+func secretAckWaitStopped(ctx context.Context) string {
+	if ctx.Err() == context.DeadlineExceeded {
+		return "timed out"
+	}
+	return "stopped"
+}
+
 func waitForSecretApplicationAck(ctx context.Context, client *api.Client, app, key, scope string) (int, error) {
 	return waitForSecretApplicationAckWithRestart(ctx, client, app, key, scope, "")
 }

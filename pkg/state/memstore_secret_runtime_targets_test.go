@@ -173,3 +173,80 @@ func TestMemStoreSecretReloadObservationsArePerWorkload(t *testing.T) {
 		}
 	}
 }
+
+func TestMemStoreSecretRevocationAckTracksRemovalAndReintroduction(t *testing.T) {
+	store, ctx, account, app := memValueHashFixture(t)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:revocation-ack",
+		Status: state.DeployLive, Scope: "prod",
+		OverrideEnvSecrets: json.RawMessage(`{"DATABASE_URL":"secret:DATABASE_URL"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentSecretReloadSignal(ctx, deployment.ID, "SIGHUP"); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upsert := func() {
+		t.Helper()
+		if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, "prod", "DATABASE_URL", "kid-1", "1111111111111111", []byte("cipher")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	upsert()
+	first, err := store.DeleteAppSecretInScopeWithRevocation(ctx, account.ID, app.ID, "prod", "DATABASE_URL")
+	if err != nil || len(first.Targets) != 1 || first.Targets[0].ReloadSupport != "enabled" {
+		t.Fatalf("first revocation = %+v, err=%v; want one enabled target", first, err)
+	}
+
+	// A later acknowledgement for a reintroduced key proves the current
+	// projection, not that the earlier deletion was observed.
+	upsert()
+	secrets, err := store.ListAppSecretsInScope(ctx, account.ID, app.ID, "prod")
+	if err != nil || len(secrets) != 1 {
+		t.Fatalf("reintroduced secret = %+v, err=%v", secrets, err)
+	}
+	candidate := state.AppSecretDeliveryCandidate{Scope: "prod", Key: "DATABASE_URL", Version: secrets[0].DeliveryVersion}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, Revision: strings.Repeat("a", 64),
+		Status: state.SecretApplicationReloadAckApplied, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{candidate},
+	}
+	if _, err := store.RecordAppSecretRuntimeReload(ctx, state.AppSecretRuntimeReloadResult{
+		AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, Revision: ack.Revision,
+		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
+		AttemptedAt: ack.AttemptedAt, Candidates: ack.Candidates,
+	}); err != nil {
+		t.Fatalf("record current projection: %v", err)
+	}
+	if _, err := store.RecordAppSecretRuntimeReloadAck(ctx, ack); err != nil {
+		t.Fatalf("acknowledge reintroduced key: %v", err)
+	}
+	gotFirst, err := store.GetAppSecretRevocation(ctx, account.ID, app.ID, first.ID)
+	if err != nil || gotFirst.Targets[0].Status != "pending" {
+		t.Fatalf("reintroduced-key acknowledgement changed old revocation: %+v, err=%v", gotFirst, err)
+	}
+
+	second, err := store.DeleteAppSecretInScopeWithRevocation(ctx, account.ID, app.ID, "prod", "DATABASE_URL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack.Candidates = nil // The current, version-fenced projection has no secrets.
+	ack.AttemptedAt = time.Now().UTC()
+	if _, err := store.RecordAppSecretRuntimeReloadAck(ctx, ack); err != nil {
+		t.Fatalf("acknowledge empty projection: %v", err)
+	}
+	for _, revocation := range []state.AppSecretRevocation{first, second} {
+		got, err := store.GetAppSecretRevocation(ctx, account.ID, app.ID, revocation.ID)
+		status, acknowledged, pending := got.Progress()
+		if err != nil || status != "complete" || acknowledged != 1 || pending != 0 {
+			// Keep this assertion at the public state boundary: deleted keys
+			// cannot be represented as ordinary secret-row candidates.
+			t.Fatalf("revocation after empty-projection acknowledgement = %+v, err=%v", got, err)
+		}
+	}
+}
