@@ -29,18 +29,23 @@ func (h *Handler) recordRequestIDJournal(ctx context.Context, app App, requestID
 	if h.requestIDJournal == nil {
 		return nil
 	}
+	started := time.Now()
+	finish := func(err error) error {
+		h.metrics.ObserveRequestIDJournalWrite(time.Since(started), err)
+		return err
+	}
 	if len(requestID) == 0 || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return fmt.Errorf("gateway: invalid public request id")
+		return finish(fmt.Errorf("gateway: invalid public request id"))
 	}
 	accountID, err := uuid.Parse(app.AccountID)
 	if err != nil {
-		return fmt.Errorf("gateway: invalid request journal account id: %w", err)
+		return finish(fmt.Errorf("gateway: invalid request journal account id: %w", err))
 	}
 	appID, err := uuid.Parse(app.ID)
 	if err != nil {
-		return fmt.Errorf("gateway: invalid request journal app id: %w", err)
+		return finish(fmt.Errorf("gateway: invalid request journal app id: %w", err))
 	}
-	return h.requestIDJournal(ctx, RequestIDJournalRecord{
+	err = h.requestIDJournal(ctx, RequestIDJournalRecord{
 		ID:         uuid.NewString(),
 		AccountID:  accountID.String(),
 		AppID:      appID.String(),
@@ -48,4 +53,5 @@ func (h *Handler) recordRequestIDJournal(ctx context.Context, app App, requestID
 		TraceID:    traceIDForTelemetry(ctx),
 		ReceivedAt: receivedAt.UTC(),
 	})
+	return finish(err)
 }
