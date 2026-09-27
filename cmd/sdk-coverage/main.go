@@ -641,6 +641,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/platform-tenant-self/usage-statements":                                       "ListPlatformTenantSelfStatements",
 	"GET /v1/platform-tenant-self/usage-statements/{statement_id}":                        "GetPlatformTenantSelfStatement",
 	"GET /v1/platform-tenant-self/consumers":                                              "ListPlatformTenantSelfConsumers",
+	"POST /v1/platform-tenant-self/consumers":                                             "CreatePlatformTenantSelfConsumer",
 	"GET /v1/platform-tenant-self/credentials":                                            "ListPlatformTenantSelfCredentials",
 	"POST /v1/platform-tenant-self/credentials/apply":                                     "ApplyPlatformTenantSelfCredentials",
 	"GET /v1/account/platform-tenants/{id}/usage-statements":                              "ListPlatformTenantStatements",

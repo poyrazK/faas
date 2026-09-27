@@ -401,6 +401,7 @@ from .create_platform_tenant_access_token_response import CreatePlatformTenantAc
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_request import CreatePlatformTenantRequest
+from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
@@ -2139,6 +2140,7 @@ __all__ = (
     "CreatePlatformTenantAccessTokenResponseScopesItem",
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRequest",
+    "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",

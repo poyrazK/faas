@@ -39,6 +39,15 @@ type PlatformTenantSelfConsumersResponse struct {
 	Consumers []PlatformTenantSelfConsumerResponse `json:"consumers"`
 }
 
+// CreatePlatformTenantSelfConsumerRequest creates an identity on a surface
+// already linked to the authenticated tenant. App and tenant IDs are derived
+// server-side and cannot be selected by the caller.
+type CreatePlatformTenantSelfConsumerRequest struct {
+	SurfaceID   string `json:"surface_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+}
+
 // PlatformTenantCredentialIntent contains only public key metadata and the
 // SHA-256 digest of a client-generated key. Never send the plaintext key.
 type PlatformTenantCredentialIntent struct {
@@ -133,6 +142,11 @@ func (c *Client) SetPlatformTenantCredentialPolicy(ctx context.Context, tenantID
 func (c *Client) ListPlatformTenantSelfConsumers(ctx context.Context) (PlatformTenantSelfConsumersResponse, error) {
 	var out PlatformTenantSelfConsumersResponse
 	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/consumers", nil, &out)
+}
+
+func (c *Client) CreatePlatformTenantSelfConsumer(ctx context.Context, req CreatePlatformTenantSelfConsumerRequest) (PlatformTenantSelfConsumerResponse, error) {
+	var out PlatformTenantSelfConsumerResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers", req, &out)
 }
 
 func (c *Client) ListPlatformTenantSelfCredentials(ctx context.Context, limit, offset int) (PlatformTenantCredentialsResponse, error) {

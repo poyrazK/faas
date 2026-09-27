@@ -196,6 +196,7 @@ export type { CreatePlatformTenantAccessTokenRequest } from './CreatePlatformTen
 export type { CreatePlatformTenantAccessTokenResponse } from './CreatePlatformTenantAccessTokenResponse.js';
 export type { CreatePlatformTenantRateCardRequest } from './CreatePlatformTenantRateCardRequest.js';
 export type { CreatePlatformTenantRequest } from './CreatePlatformTenantRequest.js';
+export type { CreatePlatformTenantSelfConsumerRequest } from './CreatePlatformTenantSelfConsumerRequest.js';
 export type { CreatePlatformTenantSelfHostnameRequest } from './CreatePlatformTenantSelfHostnameRequest.js';
 export type { CreatePlatformTenantWebhookRequest } from './CreatePlatformTenantWebhookRequest.js';
 export type { CreatePreviewRequest } from './CreatePreviewRequest.js';

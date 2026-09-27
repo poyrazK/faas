@@ -4863,6 +4863,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantSelfConsumer
+      summary: Create or replay a customer identity on a linked surface.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage and an owner-enabled provisioning policy. The tenant comes from the bearer; surface_id must already be linked and active. App and tenant IDs are never accepted from the request. An identical retry returns the original identity without consuming another slot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantSelfConsumerRequest' }
+      responses:
+        '201':
+          description: Customer identity created and linked atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        '200':
+          description: Identical request replayed; the existing identity is unchanged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: Tenant is inactive or the same app already has a conflicting identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/platform-tenant-self/credentials:
     get:
@@ -23962,6 +23993,15 @@ components:
         external_ref: { type: string }
         name: { type: string }
         status: { type: string, enum: [active, revoked] }
+
+    CreatePlatformTenantSelfConsumerRequest:
+      description: Create a customer identity on an active surface already linked to the token's tenant.
+      type: object
+      required: [surface_id, external_ref, name]
+      properties:
+        surface_id: { type: string, format: uuid }
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
 
     PlatformTenantSelfConsumersResponse:
       description: The linked consumer identities for the caller's tenant only.

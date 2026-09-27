@@ -118,7 +118,9 @@ An owner can separately grant `platform_tenant:credentials:read` for linked-cons
 
 ## Let downstream tenants onboard customer identities
 
-Customer provisioning has its own owner-controlled gate, separate from key-scope delegation. Read or update `/v1/account/platform-tenants/{id}/consumer-provisioning-policy`; updates require recent MFA. The policy is disabled by default. Enabling it requires a per-tenant active-customer cap, and disabling it requires a zero cap. An owner may also mint the tenant-bound `platform_tenant:consumers:manage` capability; it cannot be used as an account-wide API key. The companion self-service endpoint only creates customers on surfaces already linked to that tenant and never accepts an app ID. See [ADR-334](adr/334-platform-tenant-consumer-provisioning-policy.md).
+Customer provisioning has its own owner-controlled gate, separate from key-scope delegation. Read or update `/v1/account/platform-tenants/{id}/consumer-provisioning-policy`; updates require recent MFA. The policy is disabled by default. Enabling it requires a per-tenant active-customer cap, and disabling it requires a zero cap. An owner may also mint the tenant-bound `platform_tenant:consumers:manage` capability; it cannot be used as an account-wide API key.
+
+With that capability, call `POST /v1/platform-tenant-self/consumers` with `surface_id`, `external_ref`, and `name`. The selected surface must already be active and linked to the bearer tenant; app and tenant IDs are never accepted. Creation and cap enforcement are atomic. An identical retry returns the existing identity, while an existing unlinked or conflicting identity is not adopted. The response omits app and account metadata. See [ADR-334](adr/334-platform-tenant-consumer-provisioning-policy.md) and [ADR-293](adr/293-platform-tenant-self-service-customers.md).
 
 ## Control customer requests across apps
 

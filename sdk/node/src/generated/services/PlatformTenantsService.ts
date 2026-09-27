@@ -15,6 +15,7 @@ import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePla
 import type { CreatePlatformTenantAccessTokenResponse } from '../models/CreatePlatformTenantAccessTokenResponse.js';
 import type { CreatePlatformTenantRateCardRequest } from '../models/CreatePlatformTenantRateCardRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
+import type { CreatePlatformTenantSelfConsumerRequest } from '../models/CreatePlatformTenantSelfConsumerRequest.js';
 import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
@@ -34,6 +35,7 @@ import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRat
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
+import type { PlatformTenantSelfConsumerResponse } from '../models/PlatformTenantSelfConsumerResponse.js';
 import type { PlatformTenantSelfConsumersResponse } from '../models/PlatformTenantSelfConsumersResponse.js';
 import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
@@ -1326,6 +1328,32 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create or replay a customer identity on a linked surface.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage and an owner-enabled provisioning policy. The tenant comes from the bearer; surface_id must already be linked and active. App and tenant IDs are never accepted from the request. An identical retry returns the original identity without consuming another slot.
+   * @returns PlatformTenantSelfConsumerResponse Identical request replayed; the existing identity is unchanged.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfConsumer({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfConsumerRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or the same app already has a conflicting identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
   }
