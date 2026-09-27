@@ -9,6 +9,8 @@ outbox failures with a delay capped at 30 seconds. Confirm the node-local
 outbox is writable and has free space; replay resumes after the underlying
 storage problem clears.
 
+## Symptom
+
 `FaasRealtimeCallbackReplayRestarting` means the replay supervisor restarted
 at least three times in 15 minutes and the condition persisted for five
 minutes. Check `realtimed_callback_replay_supervisor_restarts_total` and review
@@ -52,6 +54,8 @@ more dead letters that need operator review.
 `FaasRealtimeCallbackDeadLettersEvicted` means at least one dead letter was
 removed in the past hour, including during daemon startup.
 
+## Check
+
 1. Identify the affected `realtimed` target in Prometheus. Check
    `realtimed_callback_dead_letters`, `realtimed_callback_dead_letter_bytes`,
    `realtimed_callback_dead_letter_capacity_bytes`, and
@@ -61,11 +65,14 @@ removed in the past hour, including during daemon startup.
    configured `FAAS_REALTIME_CALLBACK_OUTBOX` path). Files contain callback
    payloads and bearer tokens; keep access restricted to operators. Review
    callback status and application logs to correct the delivery failure.
-3. Copy records needed for investigation or manual replay to a restricted
+
+## Recover
+
+1. Copy records needed for investigation or manual replay to a restricted
    location before retention evicts them. The outbox does not replay dead
    letters automatically. If replaying an event, use its event ID to
    deduplicate application effects.
-4. If the configured limit is too small for the investigation window, set
+2. If the configured limit is too small for the investigation window, set
    `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` to a positive byte count in the
    realtimed environment and restart the daemon. Size the limit against
    available node disk space. Lowering it evicts oldest files at startup.

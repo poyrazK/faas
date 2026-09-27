@@ -13,6 +13,9 @@
 package fcvm
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,12 +31,13 @@ import (
 // for older apid or hand-crafted WakeRequests in metal tests.
 func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 	req := WakeRequest{
-		LayerKey:   "apps/main.ext4",
-		VcpuCount:  2,
-		MemSizeMiB: 256,
-		Port:       8080,
+		LayerKey:      "apps/main.ext4",
+		VcpuCount:     2,
+		MemSizeMiB:    256,
+		CPUMillicores: 500,
+		Port:          8080,
 		Sidecars: []WorkloadSpec{
-			{Name: "metrics", Type: "sidecar", StorageKey: "apps/metrics.ext4", DriveID: "layer-sidecar-0", RamMB: 64, Port: 9090, Essential: true},
+			{Name: "metrics", Type: "sidecar", StorageKey: "apps/metrics.ext4", DriveID: "layer-sidecar-0", RamMB: 64, CPUMillicores: 250, Port: 9090, Essential: true},
 			{Name: "main", Type: "sidecar", StorageKey: "apps/evil.ext4", DriveID: "layer-sidecar-1", RamMB: 32, Port: 9091, Essential: false},
 			{Name: "logger", Type: "sidecar", StorageKey: "apps/logger.ext4", DriveID: "layer-sidecar-2", RamMB: 32, Port: 9092, Essential: true},
 		},
@@ -48,8 +52,14 @@ func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 	if got[0].Type != "main" {
 		t.Errorf("got[0].Type = %q, want %q", got[0].Type, "main")
 	}
+	if got[0].CPUMillicores != 0 {
+		t.Errorf("main workload CPU = %d, want inherit app's live-updatable VM ceiling", got[0].CPUMillicores)
+	}
 	if got[1].Name != "metrics" {
 		t.Errorf("got[1].Name = %q, want %q", got[1].Name, "metrics")
+	}
+	if got[1].CPUMillicores != 250 {
+		t.Errorf("sidecar CPU = %d, want independent 250m workload policy", got[1].CPUMillicores)
 	}
 	if got[2].Name != "logger" {
 		t.Errorf("got[2].Name = %q, want %q", got[2].Name, "logger")
@@ -87,6 +97,56 @@ func TestBuildWorkloadsForColdBoot_ClonesGRPCProbe(t *testing.T) {
 	}
 	if got[1].StartupProbe.GRPC.Port != probe.GRPC.Port || got[1].StartupProbe.GRPC.Service != probe.GRPC.Service {
 		t.Fatalf("cloned gRPC probe = %+v, want %+v", got[1].StartupProbe.GRPC, probe.GRPC)
+	}
+}
+
+func TestBuildWorkloadsForColdBoot_CarriesMainDependenciesIntoRoster(t *testing.T) {
+	want := []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}
+	req := WakeRequest{
+		LayerKey:      "apps/main.ext4",
+		MainDependsOn: want,
+		Sidecars:      []WorkloadSpec{{Name: "proxy", Type: "sidecar"}},
+	}
+	workloads := buildWorkloadsForColdBoot(req)
+	if len(workloads) != 2 || !reflect.DeepEqual(workloads[0].DependsOn, want) {
+		t.Fatalf("main workload = %+v, want dependency list %+v", workloads, want)
+	}
+	blob, err := marshalWorkloadRoster(workloads[0], workloads[1:])
+	if err != nil {
+		t.Fatalf("marshalWorkloadRoster: %v", err)
+	}
+	var roster workloadRoster
+	if err := json.Unmarshal(blob, &roster); err != nil {
+		t.Fatalf("unmarshal workload roster: %v", err)
+	}
+	if !reflect.DeepEqual(roster.Main.DependsOn, want) {
+		t.Fatalf("roster main dependencies = %+v, want %+v", roster.Main.DependsOn, want)
+	}
+}
+
+func TestValidateMainWorkloadDependencyTargets(t *testing.T) {
+	sidecars := []WorkloadSpec{
+		{Name: "proxy", Type: "sidecar"},
+		{Name: "migrate", Type: "init"},
+	}
+	if err := validateMainWorkloadDependencyTargets([]api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}, sidecars); err != nil {
+		t.Fatalf("valid dependency: %v", err)
+	}
+	for _, tc := range []struct {
+		name         string
+		dependencies []api.WorkloadDependency
+		want         string
+	}{
+		{name: "unknown", dependencies: []api.WorkloadDependency{{Name: "missing"}}, want: "unknown workload"},
+		{name: "init", dependencies: []api.WorkloadDependency{{Name: "migrate"}}, want: "long-running sidecar"},
+		{name: "duplicate", dependencies: []api.WorkloadDependency{{Name: "proxy"}, {Name: "proxy"}}, want: "more than once"},
+		{name: "condition", dependencies: []api.WorkloadDependency{{Name: "proxy", Condition: "ready"}}, want: "invalid condition"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateMainWorkloadDependencyTargets(tc.dependencies, sidecars); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validation error = %v, want text %q", err, tc.want)
+			}
+		})
 	}
 }
 

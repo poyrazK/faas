@@ -55,6 +55,72 @@ func TestLoopReaperParksIdleInstance(t *testing.T) {
 	}
 }
 
+type scalingPolicyObservationTestStore struct {
+	state.Store
+	status state.AppScalingPolicyStatus
+}
+
+func (s *scalingPolicyObservationTestStore) LatestAppScalingPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	app, err := s.Store.AppByID(ctx, appID)
+	if err != nil {
+		return 0, err
+	}
+	return app.ScalingPolicyRevision, nil
+}
+
+func (s *scalingPolicyObservationTestStore) RecordAppScalingPolicyObserved(ctx context.Context, appID, schedulerNodeID string, revision int64) error {
+	app, err := s.Store.AppByID(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if app.ScalingPolicyRevision != revision || (schedulerNodeID != "" && app.NodeID != schedulerNodeID) {
+		return state.ErrConflict
+	}
+	s.status = state.AppScalingPolicyStatus{
+		DesiredRevision:  app.ScalingPolicyRevision,
+		ObservedRevision: revision,
+		SchedulerNodeID:  app.NodeID,
+		ObservedAt:       time.Now().UTC(),
+	}
+	return nil
+}
+
+func (s *scalingPolicyObservationTestStore) GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error) {
+	app, err := s.Store.AppByID(ctx, appID)
+	if err != nil {
+		return state.AppScalingPolicyStatus{}, err
+	}
+	status := s.status
+	status.DesiredRevision = app.ScalingPolicyRevision
+	return status, nil
+}
+
+func TestLoopScalingPolicyObservationTracksCurrentAppRevision(t *testing.T) {
+	base := state.NewMemStore()
+	_, app, _ := seedApp(t, base, api.PlanPro, 256, 5)
+	store := &scalingPolicyObservationTestStore{Store: base}
+	engine := &Engine{store: store}
+	loop := NewLoop(nil, engine, testLog())
+
+	loop.runScalingPolicyObservation(context.Background())
+	if store.status.DesiredRevision != 1 || store.status.ObservedRevision != 1 {
+		t.Fatalf("initial scheduler observation = %+v; want revision 1", store.status)
+	}
+
+	policy := &state.ScalingPolicy{MinInstances: 1, MaxInstances: 3}
+	if _, err := base.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{ScalingPolicy: policy, SetScalingPolicy: true}); err != nil {
+		t.Fatalf("update scaling policy: %v", err)
+	}
+	loop.observeAppScalingPolicy(context.Background(), app.ID)
+	if store.status.DesiredRevision != 2 || store.status.ObservedRevision != 2 {
+		t.Fatalf("scheduler observation after runtime update = %+v; want revision 2", store.status)
+	}
+	deployments, err := base.ListDeploymentsForApp(context.Background(), app.ID, 10, 0)
+	if err != nil || len(deployments) != 1 {
+		t.Fatalf("deployment count = %d, %v; observation must leave the existing deployment untouched", len(deployments), err)
+	}
+}
+
 // TestHandleSnapshotPrime routes a snapshot_prime notification into engine.Prime,
 // producing a parked instance (the deploy-pipeline handoff, ADR-018).
 func TestHandleSnapshotPrime(t *testing.T) {

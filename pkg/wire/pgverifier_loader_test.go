@@ -5,12 +5,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPGNodeLoaderKeepsDrainingSourcesAuthenticated(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
+	// OpenMigrated only clones a migrated template when
+	// FAAS_PGTEST_TEMPLATE_DATABASE is set; otherwise it is a bare schema.
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
 	store := state.NewPgStore(pool)
 
 	create := func(lifecycle state.NodeLifecycle) state.ComputeNode {

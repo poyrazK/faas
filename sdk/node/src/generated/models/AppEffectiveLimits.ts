@@ -51,11 +51,11 @@ export type AppEffectiveLimits = {
    */
   concurrency_queue_wait_ms: number;
   /**
-   * Per-app edge token-bucket refill rate, in requests per second.
+   * Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override.
    */
   app_request_rate_rps: number;
   /**
-   * Per-app edge token-bucket burst capacity.
+   * Effective per-app edge token-bucket burst capacity after any app-level runtime override.
    */
   app_request_burst: number;
   /**

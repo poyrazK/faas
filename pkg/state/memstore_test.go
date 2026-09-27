@@ -4460,6 +4460,31 @@ func TestMemStore_SetAppWorkloadClass_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestMemStore_SetAppWorkloadClass_AdvancesScalingPolicyRevision(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	a := memSeedClassApp(t, ctx, m, "revision@x.test")
+	if a.ScalingPolicyRevision != 1 {
+		t.Fatalf("initial scaling policy revision = %d, want 1", a.ScalingPolicyRevision)
+	}
+
+	updated, err := m.SetAppWorkloadClass(ctx, a.ID, WorkloadClassWorker, "manual")
+	if err != nil {
+		t.Fatalf("SetAppWorkloadClass: %v", err)
+	}
+	if updated.ScalingPolicyRevision != 2 {
+		t.Fatalf("revision after workload class change = %d, want 2", updated.ScalingPolicyRevision)
+	}
+
+	unchanged, err := m.SetAppWorkloadClass(ctx, a.ID, WorkloadClassWorker, "manual")
+	if err != nil {
+		t.Fatalf("repeat SetAppWorkloadClass: %v", err)
+	}
+	if unchanged.ScalingPolicyRevision != 2 {
+		t.Fatalf("revision after no-op workload class update = %d, want 2", unchanged.ScalingPolicyRevision)
+	}
+}
+
 func TestMemStore_SetAppWorkloadClass_EmptyClass_FastFail(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

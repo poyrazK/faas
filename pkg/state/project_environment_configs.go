@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func projectEnvironmentConfigKey(projectID, environmentSlug string) string {
@@ -62,6 +64,69 @@ func (m *MemStore) projectEnvironmentBySlugLocked(projectID, slug string) (Proje
 		}
 	}
 	return ProjectEnvironment{}, ErrNotFound
+}
+
+func (m *MemStore) projectEnvironmentConfigLatestLocked(projectID, environment string) ProjectEnvironmentConfig {
+	versions := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(projectID, environment)]
+	if len(versions) == 0 {
+		project := m.projects[projectID]
+		return ProjectEnvironmentConfig{
+			AccountID: project.AccountID, ProjectID: projectID, EnvironmentSlug: environment,
+			ConfigHash: api.EmptyProjectEnvironmentConfigHash(), Values: json.RawMessage(`{}`),
+		}
+	}
+	return cloneProjectEnvironmentConfig(versions[len(versions)-1])
+}
+
+func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion ProjectEnvironmentPromotion, rollback bool) error {
+	if !promotion.SyncConfig {
+		return nil
+	}
+	_, sourceHash, sourceErr := api.NormalizeProjectEnvironmentConfig(promotion.SourceConfigSnapshot)
+	_, previousHash, previousErr := api.NormalizeProjectEnvironmentConfig(promotion.PreviousTargetConfigSnapshot)
+	if sourceErr != nil || previousErr != nil || sourceHash != promotion.SourceConfigHash || previousHash != promotion.PreviousTargetConfigHash {
+		return ErrConflict
+	}
+	target := m.projectEnvironmentConfigLatestLocked(promotion.ProjectID, promotion.ToEnvironment)
+	if rollback {
+		if promotion.RollbackConfigVersion != 0 {
+			if target.Version != promotion.RollbackConfigVersion || target.ConfigHash != promotion.PreviousTargetConfigHash {
+				return ErrConflict
+			}
+			return nil
+		}
+		if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+			return ErrConflict
+		}
+		return nil
+	}
+	if promotion.TargetConfigVersion != 0 {
+		if target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+			return ErrConflict
+		}
+		return nil
+	}
+	source := m.projectEnvironmentConfigLatestLocked(promotion.ProjectID, promotion.FromEnvironment)
+	if source.ConfigHash != promotion.SourceConfigHash || target.ConfigHash != promotion.PreviousTargetConfigHash {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *MemStore) appendProjectEnvironmentPromotionConfigLocked(promotion ProjectEnvironmentPromotion, rollback bool) int64 {
+	values, hash := promotion.SourceConfigSnapshot, promotion.SourceConfigHash
+	if rollback {
+		values, hash = promotion.PreviousTargetConfigSnapshot, promotion.PreviousTargetConfigHash
+	}
+	key := projectEnvironmentConfigKey(promotion.ProjectID, promotion.ToEnvironment)
+	versions := m.projectEnvironmentConfigs[key]
+	config := ProjectEnvironmentConfig{
+		ID: newID(), AccountID: promotion.AccountID, ProjectID: promotion.ProjectID,
+		EnvironmentSlug: promotion.ToEnvironment, Version: int64(len(versions) + 1),
+		ConfigHash: hash, Values: append(json.RawMessage(nil), values...), CreatedAt: time.Now().UTC(),
+	}
+	m.projectEnvironmentConfigs[key] = append(versions, config)
+	return config.Version
 }
 
 func cloneProjectEnvironmentConfig(config ProjectEnvironmentConfig) ProjectEnvironmentConfig {

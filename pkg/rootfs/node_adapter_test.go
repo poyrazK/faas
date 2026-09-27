@@ -111,3 +111,57 @@ func TestNodeFunctionAdapterContainsHandlerFailureAndKeepsWorkerAlive(t *testing
 		t.Fatalf("node adapter exit: %v; stderr=%s", err, stderr.String())
 	}
 }
+
+// TestNodeFunctionAdapterExposesRawBodyB64 — spec §4.9: handlers receive
+// body_b64. The adapter only passed `body`, JSON-parsed when possible, so a
+// handler verifying a signature over the exact request bytes had no way to
+// get them (the cron-worker starter hashed "" as a result).
+func TestNodeFunctionAdapterExposesRawBodyB64(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := `export async function handler(event) {
+  return {statusCode: 200, body: {body_b64: event.body_b64, parsed: typeof event.body}};
+}`
+	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte(handler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "adapter.mjs")
+	if err := os.WriteFile(adapter, []byte(nodeFunctionAdapter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"b": 2,  "a": 1}`) // re-serializing the parsed object would not reproduce these bytes
+	envelope, _ := json.Marshal(map[string]any{"method": "POST", "path": "/", "headers": map[string]string{},
+		"body_b64": base64.StdEncoding.EncodeToString(raw)})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, adapter)
+	cmd.Stdin = bytes.NewReader(append(envelope, '\n'))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	var resp struct {
+		Status  int    `json:"status"`
+		BodyB64 string `json:"body_b64"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &resp); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	body, _ := base64.StdEncoding.DecodeString(resp.BodyB64)
+	var got struct {
+		BodyB64 string `json:"body_b64"`
+		Parsed  string `json:"parsed"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("handler body %q: %v", body, err)
+	}
+	if got.BodyB64 != base64.StdEncoding.EncodeToString(raw) || got.Parsed != "object" {
+		t.Fatalf("event.body_b64 = %q (parsed %q), want the exact request bytes alongside the parsed body", got.BodyB64, got.Parsed)
+	}
+}

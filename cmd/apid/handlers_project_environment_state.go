@@ -95,6 +95,10 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment secrets")
 	}
+	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
+	if err != nil {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment domains")
+	}
 	release, problem := s.projectEnvironmentReleaseState(ctx, environment, app)
 	if problem != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, problem
@@ -122,7 +126,7 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		AppID: app.ID, WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
-		Bindings: projectEnvironmentBindings(secrets),
+		Bindings: projectEnvironmentBindings(secrets), Domains: projectEnvironmentDomains(domains, environment.ID),
 		Routes:   routes,
 		Policies: policies,
 	}, nil
@@ -233,7 +237,7 @@ func projectEnvironmentBindings(rows []state.AppSecret) []api.ProjectEnvironment
 }
 
 func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWorkloadResponse) []api.ProjectEnvironmentSharedResourceResponse {
-	const note = "shared by all environments until this resource gains environment ownership"
+	const note = "application-wide custom domains remain shared; environment-bound domains are reported per workload"
 	out := []api.ProjectEnvironmentSharedResourceResponse{
 		{Kind: "domains", Ownership: "application", Note: note},
 		{Kind: "policies", Ownership: "application", Note: "edge-rule kinds other than headers and CORS remain application-owned"},
@@ -246,6 +250,17 @@ func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWo
 			})
 		}
 	}
+	return out
+}
+
+func projectEnvironmentDomains(rows []state.CustomDomain, environmentID string) []api.ProjectEnvironmentDomainResponse {
+	out := make([]api.ProjectEnvironmentDomainResponse, 0)
+	for _, row := range rows {
+		if row.EnvironmentID == environmentID {
+			out = append(out, api.ProjectEnvironmentDomainResponse{Domain: row.Domain, Verified: row.Verified()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out
 }
 
@@ -285,11 +300,20 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 			Variables: projectEnvironmentVariableDiffs(prior.Variables, next.Variables),
 			Secrets:   projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
 			Bindings:  projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
+			Domains:   projectEnvironmentDomainDiff(prior.Domains, next.Domains),
 			Routes:    projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
 			Policies:  projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
 		})
 	}
 	return out
+}
+
+func projectEnvironmentDomainDiff(before, after []api.ProjectEnvironmentDomainResponse) api.ProjectEnvironmentDomainDiffResponse {
+	kind := "unchanged"
+	if !reflect.DeepEqual(before, after) {
+		kind = "changed"
+	}
+	return api.ProjectEnvironmentDomainDiffResponse{Kind: kind, Before: before, After: after}
 }
 
 func projectEnvironmentEdgePolicyDiff(before, after api.ProjectEnvironmentEdgePolicyResponse) api.ProjectEnvironmentEdgePolicyDiffResponse {
