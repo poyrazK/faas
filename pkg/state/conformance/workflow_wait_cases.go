@@ -1,7 +1,10 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"reflect"
 	"testing"
 	"time"
 
@@ -14,7 +17,7 @@ func testWorkflowWaitsAndAttempts(t *testing.T, fx *Fixture) {
 		run := newWorkflowWaitConformanceRun(t, fx, "attempt-history", "success", "retry-http", "retry")
 		input := json.RawMessage(`{"order_id":"ord-1"}`)
 		storedInput, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "success", 1, input)
-		if err != nil || string(storedInput) != string(input) {
+		if err != nil || !workflowJSONEqual(storedInput, input) {
 			t.Fatalf("StartWorkflowStep = %s, %v; want stored input %s", storedInput, err, input)
 		}
 		okStatus := 200
@@ -80,7 +83,7 @@ func testWorkflowWaitsAndAttempts(t *testing.T, fx *Fixture) {
 			t.Fatalf("CompleteWorkflowCallback(first) = (%v, %v), want (false, nil)", duplicate, err)
 		}
 		event, _, err := fx.Store.ParkWorkflowEvent(fx.Ctx, callbackRun.ID, "await", "delivery.confirmed", time.Hour)
-		if err != nil || event == nil || event.ID != callbackID || string(event.Payload) != string(payload) {
+		if err != nil || event == nil || event.ID != callbackID || !workflowJSONEqual(event.Payload, payload) {
 			t.Fatalf("ParkWorkflowEvent(pre-delivered callback) = %+v, %v", event, err)
 		}
 		duplicate, err = fx.Store.CompleteWorkflowCallback(fx.Ctx, callbackRun.ID, "await", "delivery.confirmed", callbackID, time.Hour, payload)
@@ -120,6 +123,28 @@ func testWorkflowWaitsAndAttempts(t *testing.T, fx *Fixture) {
 			t.Fatalf("ResolveWorkflowCondition(done) = %+v, %v", result, err)
 		}
 	})
+}
+
+// JSON-backed stores may normalize whitespace and object key ordering. Compare
+// decoded values so shared conformance checks assert JSON semantics, not the
+// backend's serialization format.
+func workflowJSONEqual(left, right json.RawMessage) bool {
+	decode := func(raw json.RawMessage) (any, bool) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return nil, false
+		}
+		return value, true
+	}
+	leftValue, leftOK := decode(left)
+	rightValue, rightOK := decode(right)
+	return leftOK && rightOK && reflect.DeepEqual(leftValue, rightValue)
 }
 
 func newWorkflowWaitConformanceRun(t *testing.T, fx *Fixture, name string, stepNames ...string) *state.WorkflowRun {
