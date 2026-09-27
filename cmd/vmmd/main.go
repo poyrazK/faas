@@ -314,6 +314,8 @@ type runDeps struct {
 	// the legacy default-local path skips the DB entirely (no upsert).
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
+	// Nil in runDeps{} tests; production streams host conntrack NEW events.
+	startFlowCapture func(context.Context, flowOwnerLookup, flowEventSink, string, *slog.Logger)
 	// detectOverlayIP — best-effort, default shelles out to
 	// `tailscale ip -4`. nil means "skip overlay detection"
 	// (WireGuard-mode operators set [compute_node].overlay_ip
@@ -409,7 +411,10 @@ func defaultDeps() runDeps {
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
-		openStore:           state.NewPgStore,
+		openStore: state.NewPgStore,
+		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowEventSink, nodeID string, log *slog.Logger) {
+			go runOutboundFlowCapture(ctx, owners, sink, nodeID, log)
+		},
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
 		loadHostKeys:        secretbox.LoadFleetAndHostKeys,
@@ -1483,6 +1488,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	serveErr := make(chan error, 1)
+	if nodeID != "" && deps.startFlowCapture != nil {
+		if flowStore, ok := store.(*state.PgStore); ok {
+			deps.startFlowCapture(ctx, mgr, flowStore, nodeID, log)
+		}
+	}
 	go func() {
 		log.Info("grpc listening", "addr", listenTarget, "service", vmmdpb.Vmmd_ServiceDesc.ServiceName)
 		// Flip the gRPC bound signal immediately before

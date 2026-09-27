@@ -2821,6 +2821,38 @@ CREATE TABLE public.instances (
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );
 
+-- Network connection metadata is retained independently of instance,
+-- deployment, and app rows. Account erasure cascades through account_id.
+CREATE TABLE public.outbound_flow_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    node_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    app_id uuid,
+    deployment_id uuid,
+    image_digest text,
+    source_ip inet NOT NULL,
+    source_port integer NOT NULL,
+    destination_ip inet NOT NULL,
+    destination_port integer NOT NULL,
+    protocol text NOT NULL,
+    egress_ip inet,
+    egress_ip_source text NOT NULL,
+    CONSTRAINT outbound_flow_events_pkey PRIMARY KEY (id),
+    CONSTRAINT outbound_flow_events_source_port_check CHECK ((source_port >= 0) AND (source_port <= 65535)),
+    CONSTRAINT outbound_flow_events_destination_port_check CHECK ((destination_port >= 0) AND (destination_port <= 65535)),
+    CONSTRAINT outbound_flow_events_protocol_check CHECK ((protocol = ANY (ARRAY['tcp'::text, 'udp'::text]))),
+    CONSTRAINT outbound_flow_events_egress_ip_source_check CHECK ((egress_ip_source = ANY (ARRAY['app_static'::text, 'node_public'::text, 'unknown'::text]))),
+    CONSTRAINT outbound_flow_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE
+);
+CREATE INDEX outbound_flow_events_egress_time_idx ON public.outbound_flow_events USING btree (egress_ip, observed_at DESC);
+CREATE INDEX outbound_flow_events_account_time_idx ON public.outbound_flow_events USING btree (account_id, observed_at DESC);
+CREATE INDEX outbound_flow_events_instance_time_idx ON public.outbound_flow_events USING btree (instance_id, observed_at DESC);
+CREATE INDEX outbound_flow_events_retention_idx ON public.outbound_flow_events USING btree (observed_at, id);
+
 
 --
 -- Name: app_secret_runtime_reload_observations; Type: TABLE; Schema: public; Owner: -

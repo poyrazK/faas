@@ -1772,6 +1772,26 @@ type OrgMembership struct {
 	RemovedAt          pgtype.Timestamptz
 }
 
+type OutboundFlowEvent struct {
+	ID              pgtype.UUID
+	ObservedAt      pgtype.Timestamptz
+	ReceivedAt      pgtype.Timestamptz
+	NodeID          pgtype.UUID
+	InstanceID      pgtype.UUID
+	AccountID       pgtype.UUID
+	OrgID           pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	ImageDigest     pgtype.Text
+	SourceIp        netip.Addr
+	SourcePort      int32
+	DestinationIp   netip.Addr
+	DestinationPort int32
+	Protocol        string
+	EgressIp        *netip.Addr
+	EgressIpSource  string
+}
+
 type PaddleOverageDedupe struct {
 	AccountID       pgtype.UUID
 	Month           pgtype.Timestamptz

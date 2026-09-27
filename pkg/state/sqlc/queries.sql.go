@@ -1786,6 +1786,29 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 	return err
 }
 
+const deleteOutboundFlowEventsBefore = `-- name: DeleteOutboundFlowEventsBefore :execrows
+WITH old AS (
+    SELECT id FROM outbound_flow_events
+    WHERE observed_at < $1::timestamptz
+    ORDER BY observed_at, id
+    LIMIT $2::integer
+)
+DELETE FROM outbound_flow_events e USING old WHERE e.id = old.id
+`
+
+type DeleteOutboundFlowEventsBeforeParams struct {
+	Cutoff    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) DeleteOutboundFlowEventsBefore(ctx context.Context, db DBTX, arg DeleteOutboundFlowEventsBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteOutboundFlowEventsBefore, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTrigger = `-- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2
 `
@@ -4311,6 +4334,52 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertOutboundFlowEvents = `-- name: InsertOutboundFlowEvents :execrows
+WITH flow AS (
+    SELECT (e.value->>'id')::uuid AS id,
+           (e.value->>'observed_at')::timestamptz AS observed_at,
+           (e.value->>'node_id')::uuid AS node_id,
+           (e.value->>'instance_id')::uuid AS instance_id,
+           (e.value->>'account_id')::uuid AS account_id,
+           (e.value->>'app_id')::uuid AS app_id,
+           (e.value->>'deployment_id')::uuid AS deployment_id,
+           (e.value->>'source_ip')::inet AS source_ip,
+           (e.value->>'source_port')::integer AS source_port,
+           (e.value->>'destination_ip')::inet AS destination_ip,
+           (e.value->>'destination_port')::integer AS destination_port,
+           e.value->>'protocol' AS protocol
+    FROM jsonb_array_elements($1::jsonb) AS e(value)
+)
+INSERT INTO outbound_flow_events (
+    id, observed_at, node_id, instance_id, account_id, org_id, app_id,
+    deployment_id, image_digest, source_ip, source_port,
+    destination_ip, destination_port, protocol, egress_ip, egress_ip_source
+)
+SELECT f.id, f.observed_at, f.node_id, f.instance_id, f.account_id, a.org_id,
+       f.app_id, f.deployment_id, d.image_digest, f.source_ip,
+       f.source_port, f.destination_ip, f.destination_port, f.protocol,
+       coalesce(a.static_egress_ip, n.public_ip),
+       CASE WHEN a.static_egress_ip IS NOT NULL THEN 'app_static'
+            WHEN n.public_ip IS NOT NULL THEN 'node_public'
+            ELSE 'unknown' END
+FROM flow f
+LEFT JOIN compute_nodes n ON n.id = f.node_id
+LEFT JOIN apps a ON a.id = f.app_id AND a.account_id = f.account_id
+LEFT JOIN deployments d ON d.id = f.deployment_id AND d.app_id = f.app_id
+ON CONFLICT (id) DO NOTHING
+`
+
+// The host has already resolved the live lease. Enrich while the deployment
+// and public-IP assignments are still available, then keep their values even
+// after those rows are deleted or the private address is reused.
+func (q *Queries) InsertOutboundFlowEvents(ctx context.Context, db DBTX, events []byte) (int64, error) {
+	result, err := db.Exec(ctx, insertOutboundFlowEvents, events)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec

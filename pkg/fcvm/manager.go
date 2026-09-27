@@ -395,9 +395,12 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	Lease  Lease
-	Net    netns.Config
-	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	Lease Lease
+	// flowActivatedAt fences delayed conntrack events when a private IP is
+	// reused. A NEW event older than this live lease has another owner.
+	flowActivatedAt time.Time
+	Net             netns.Config
+	Method          WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -3554,6 +3557,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
+	inst.flowActivatedAt = time.Now().UTC()
 	m.live[req.Instance] = inst
 	m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
 	m.mu.Unlock()
@@ -4271,6 +4275,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, err
 	}
 	delete(m.waking, req.Instance)
+	inst.flowActivatedAt = time.Now().UTC()
 	m.live[req.Instance] = inst
 	// Issue #470 / PR #470-FU-B: maintain the CID→instance
 	// reverse index so the framework_ready DGRAM receipt path
@@ -5242,6 +5247,39 @@ func (m *Manager) SnapshotLiveHostIPs() map[string]string {
 		out[id] = inst.Lease.HostIP.String()
 	}
 	return out
+}
+
+// FlowOwner is copied while holding the live-map lock. It is deliberately
+// independent of the instance row, which can be removed after teardown.
+type FlowOwner struct {
+	InstanceID   string
+	AccountID    string
+	AppID        string
+	DeploymentID string
+}
+
+// LookupFlowOwner resolves a conntrack original-source address against the
+// current host lease. Ambiguous addresses fail closed instead of attributing a
+// connection to the wrong customer during an allocator or lifecycle fault.
+func (m *Manager) LookupFlowOwner(hostIP string, eventAt time.Time) (FlowOwner, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var owner FlowOwner
+	found := false
+	for id, inst := range m.live {
+		if inst == nil || !inst.Lease.HostIP.IsValid() || inst.Lease.HostIP.String() != hostIP {
+			continue
+		}
+		if inst.flowActivatedAt.IsZero() || eventAt.Before(inst.flowActivatedAt) {
+			return FlowOwner{}, false
+		}
+		if found {
+			return FlowOwner{}, false
+		}
+		owner = FlowOwner{InstanceID: id, AccountID: inst.AccountID, AppID: inst.AppID, DeploymentID: inst.DeploymentID}
+		found = true
+	}
+	return owner, found && owner.AccountID != ""
 }
 
 // LeasedCount reports how many allocator slots are held. After a clean teardown
