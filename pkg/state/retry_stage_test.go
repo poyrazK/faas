@@ -20,6 +20,7 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		RolloutStartedAt:       &oldStarted,
 		RolloutCompletedAt:     &oldStarted,
 		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
+		OverrideMainDependsOn:  json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -37,5 +38,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if string(got.OverrideReadinessProbe) != `{"path":"/readyz"}` {
 		t.Fatalf("OverrideReadinessProbe = %s, want the source readiness policy", got.OverrideReadinessProbe)
+	}
+	if string(got.OverrideMainDependsOn) != `[{"name":"proxy","condition":"healthy"}]` {
+		t.Fatalf("OverrideMainDependsOn = %s, want the source startup dependencies", got.OverrideMainDependsOn)
 	}
 }

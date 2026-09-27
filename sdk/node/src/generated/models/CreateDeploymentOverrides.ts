@@ -5,6 +5,7 @@
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
  * Deploy-time override object on `POST /v1/apps/{slug}/deployments`
  * (issue #460 / ADR-053). Unknown fields 400 the request; each supported
@@ -23,6 +24,8 @@ import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
  * - `healthcheck` configures startup readiness admission.
  * - `readiness_probe` is an optional recurring traffic gate, independent of
  * the one-shot startup check and VM liveness policy.
+ * - `main_depends_on` gates the primary workload on named long-running
+ * companions; init companions already run before the primary workload.
  *
  */
 export type CreateDeploymentOverrides = {
@@ -54,6 +57,10 @@ export type CreateDeploymentOverrides = {
    * Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing; successful probes restore it without restarting the VM.
    */
   readiness_probe?: (DeploymentReadinessProbe | null);
+  /**
+   * Companions that must reach the specified lifecycle condition before the primary workload starts. Targets must be declared long-running companions; init companions already gate startup.
+   */
+  main_depends_on?: Array<WorkloadDependency>;
   /**
    * Liveness-probe override (issue #554 / ADR-078). The host (cmd/vmmd)
    * polls the guest's vsock 1028 STREAM on every `interval_s`; after

@@ -11,6 +11,7 @@ import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
+import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
@@ -112,6 +113,10 @@ export type DeploymentResponse = {
    * Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted.
    */
   override_readiness_probe?: (DeploymentReadinessProbe | null);
+  /**
+   * Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites.
+   */
+  override_main_depends_on?: Array<WorkloadDependency>;
   /**
    * Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so the customer can audit which probe the host (cmd/vmmd) is running against the VM.
    */
