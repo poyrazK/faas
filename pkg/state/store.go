@@ -274,7 +274,10 @@ var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit re
 type CanaryAdvanceParams struct {
 	ExpectedStep   int
 	TrafficPercent int
-	Audit          DeploymentAudit
+	// RequireSafeReleaseLease gates an automated worker advance on the
+	// durable meterd lease and rechecks it inside the transaction.
+	RequireSafeReleaseLease bool
+	Audit                   DeploymentAudit
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -57,14 +58,27 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	advance := func(expected, percent int) Deployment {
 		t.Helper()
 		got, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
-			ExpectedStep:   expected,
-			TrafficPercent: percent,
-			Audit:          DeploymentAudit{Kind: DeployTrafficChanged, Actor: "test"},
+			ExpectedStep:            expected,
+			TrafficPercent:          percent,
+			RequireSafeReleaseLease: true,
+			Audit:                   DeploymentAudit{Kind: DeployTrafficChanged, Actor: "test"},
 		})
 		if err != nil {
 			t.Fatalf("AdvanceCanary(%d, %d): %v", expected, percent, err)
 		}
 		return got
+	}
+	if _, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+		ExpectedStep: 0, TrafficPercent: 10, RequireSafeReleaseLease: true,
+	}); !errors.Is(err, ErrSafeReleaseLeaseUnavailable) || !errors.Is(err, ErrSafeReleaseLeaseMissing) {
+		t.Fatalf("advance without worker lease = %v, want unavailable/missing", err)
+	}
+	unchanged, err := store.DeploymentByID(ctx, canary.ID)
+	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
+		t.Fatalf("missing-lease advance mutated canary = %+v, err=%v", unchanged, err)
+	}
+	if err := store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
 	}
 
 	got := advance(0, 10)
@@ -86,12 +100,27 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	}); !errors.Is(err, ErrCanaryStepConflict) {
 		t.Fatalf("stale advance error = %v, want ErrCanaryStepConflict", err)
 	}
-	unchanged, err := store.DeploymentByID(ctx, canary.ID)
+	unchanged, err = store.DeploymentByID(ctx, canary.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if unchanged.CanaryStep != 1 || unchanged.TrafficPercent != 10 {
 		t.Fatalf("stale advance mutated deployment = %+v", unchanged)
+	}
+	store.mu.Lock()
+	store.safeReleaseWorkerLeaseUntil = time.Now().Add(-time.Second)
+	store.mu.Unlock()
+	if _, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+		ExpectedStep: 1, TrafficPercent: 50, RequireSafeReleaseLease: true,
+	}); !errors.Is(err, ErrSafeReleaseLeaseUnavailable) {
+		t.Fatalf("advance with expired worker lease = %v, want unavailable", err)
+	}
+	unchanged, err = store.DeploymentByID(ctx, canary.ID)
+	if err != nil || unchanged.CanaryStep != 1 || unchanged.TrafficPercent != 10 {
+		t.Fatalf("expired-lease advance mutated canary = %+v, err=%v", unchanged, err)
+	}
+	if err := store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
 	}
 
 	got = advance(1, 50)

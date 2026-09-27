@@ -4462,6 +4462,14 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if params.RequireSafeReleaseLease {
+		if m.safeReleaseWorkerLeaseUntil.IsZero() {
+			return Deployment{}, 0, fmt.Errorf("%w: %w", ErrSafeReleaseLeaseUnavailable, ErrSafeReleaseLeaseMissing)
+		}
+		if !time.Now().Before(m.safeReleaseWorkerLeaseUntil) {
+			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+		}
+	}
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, 0, ErrNotFound

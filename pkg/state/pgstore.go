@@ -7456,6 +7456,19 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		return Deployment{}, 0, fmt.Errorf("state: advance canary begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var safeReleaseLeaseExpiresAt time.Time
+	if params.RequireSafeReleaseLease {
+		// Keep the lease-first lock order used by emergency recovery. The row
+		// lock makes a concurrent expiry/renewal serialize with this traffic
+		// change. Its expiry is checked after the deployment and sibling locks
+		// below so lock waits cannot carry a stale health decision into a write.
+		if err := tx.QueryRow(ctx, `select expires_at from safe_release_worker_lease where singleton = true for update`).Scan(&safeReleaseLeaseExpiresAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Deployment{}, 0, fmt.Errorf("%w: %w", ErrSafeReleaseLeaseUnavailable, ErrSafeReleaseLeaseMissing)
+			}
+			return Deployment{}, 0, fmt.Errorf("%w: lock safe release worker lease: %w", ErrSafeReleaseLeaseUnavailable, err)
+		}
+	}
 
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -7504,6 +7517,15 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
+	}
+	if params.RequireSafeReleaseLease {
+		var checkedAt time.Time
+		if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&checkedAt); err != nil {
+			return Deployment{}, 0, fmt.Errorf("%w: read safe release worker lease clock: %w", ErrSafeReleaseLeaseUnavailable, err)
+		}
+		if !safeReleaseLeaseExpiresAt.After(checkedAt) {
+			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+		}
 	}
 
 	now := time.Now().UTC()

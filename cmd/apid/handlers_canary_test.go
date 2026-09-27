@@ -150,6 +150,24 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 	checkDenied(e.key, "127.0.0.1:1234", http.StatusUnauthorized)
 	checkDenied(actionToken, "127.0.0.1:1234", http.StatusUnauthorized)
 	checkDenied(canaryToken, "192.0.2.10:1234", http.StatusForbidden)
+	body, _ := json.Marshal(api.AdvanceCanaryRequest{ExpectedStep: 0})
+	req := httptest.NewRequest(http.MethodPost, internalPath, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("Authorization", "Bearer "+canaryToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeSafeReleaseUnavailable)
+	unchanged, err := e.store.DeploymentByID(ctx, canary.ID)
+	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
+		t.Fatalf("worker advance without lease mutated canary = %+v, err=%v", unchanged, err)
+	}
+	audit, err := e.store.ListDeploymentAudit(ctx, canary.ID, 10)
+	if err != nil || len(audit) != 0 {
+		t.Fatalf("worker advance without lease audit = %d rows, err=%v", len(audit), err)
+	}
+	if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	client := api.NewInternalSafeDeployClient(server.URL, canaryToken, actionToken)
 	advanced, err := client.AdvanceCanary(ctx, canary.ID, 0)
 	if err != nil {

@@ -21,10 +21,21 @@ import (
 
 const canaryProgressionActor = "meterd:canary_progression"
 
-// advanceCanary is the APID write seam used by meterd. The request carries
-// only the step observed by the worker; APID derives the next percentage from
-// persisted state before handing the atomic transition to the store.
+// advanceCanary handles a customer-requested step. meterd uses the same
+// transition handler through advanceCanaryByWorker, which adds a durable
+// worker-lease requirement.
 func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.advanceCanaryWithLeasePolicy(w, r, acct, false)
+}
+
+// advanceCanaryByWorker is used only by meterd's loopback operator route. Its
+// state transaction rechecks the lease so worker health cannot change between
+// a preflight probe and the persisted traffic advance.
+func (s *server) advanceCanaryByWorker(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.advanceCanaryWithLeasePolicy(w, r, acct, true)
+}
+
+func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account, requireWorkerLease bool) {
 	if !acct.Plan.TrafficSplitAllowed() {
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
@@ -63,7 +74,8 @@ func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
-		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent, Audit: audit,
+		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
+		RequireSafeReleaseLease: requireWorkerLease, Audit: audit,
 	})
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
@@ -151,6 +163,8 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 		return true
 	}
 	switch {
+	case errors.Is(err, state.ErrSafeReleaseLeaseUnavailable):
+		api.WriteProblem(w, api.ErrSafeReleaseUnavailable())
 	case errors.Is(err, state.ErrCanaryStepConflict):
 		// The losing request may have loaded the same step as the
 		// winner before the store CAS ran. Re-read for an accurate

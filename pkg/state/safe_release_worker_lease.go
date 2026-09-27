@@ -36,8 +36,9 @@ type SafeReleaseWorkerLeaseHealthStore interface {
 var (
 	// ErrSafeReleaseLeaseNotExpired means the worker has renewed recently
 	// enough that emergency recovery must leave traffic alone.
-	ErrSafeReleaseLeaseNotExpired = errors.New("state: safe release worker lease has not expired past the recovery grace")
-	ErrSafeReleaseLeaseMissing    = errors.New("state: safe release worker lease is missing")
+	ErrSafeReleaseLeaseNotExpired  = errors.New("state: safe release worker lease has not expired past the recovery grace")
+	ErrSafeReleaseLeaseMissing     = errors.New("state: safe release worker lease is missing")
+	ErrSafeReleaseLeaseUnavailable = errors.New("state: safe release worker lease is unavailable")
 )
 
 // SafeReleaseEmergencyRecoveryStore is the narrow APID fallback surface. It
