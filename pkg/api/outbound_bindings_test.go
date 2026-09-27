@@ -60,6 +60,22 @@ func TestOutboundRequestPolicyPlanCeilings(t *testing.T) {
 	if OutboundRequestPolicyAllowedForPlan(PlanPro, OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1, ResponseCacheTTLSeconds: -1}) {
 		t.Fatal("negative response-cache TTL accepted")
 	}
+	for _, policy := range []OutboundRequestPolicy{
+		{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1, CircuitBreakerFailureThreshold: 1},
+		{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1, CircuitBreakerOpenSeconds: 30},
+		{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1, CircuitBreakerFailureThreshold: MaxOutboundCircuitBreakerFailureThreshold + 1, CircuitBreakerOpenSeconds: 30},
+		{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1, CircuitBreakerFailureThreshold: 3, CircuitBreakerOpenSeconds: MaxOutboundCircuitBreakerOpenSeconds + 1},
+	} {
+		if OutboundRequestPolicyAllowedForPlan(PlanPro, policy) {
+			t.Fatalf("invalid circuit-breaker policy accepted: %+v", policy)
+		}
+	}
+	if !OutboundRequestPolicyAllowedForPlan(PlanPro, OutboundRequestPolicy{
+		RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1,
+		CircuitBreakerFailureThreshold: 3, CircuitBreakerOpenSeconds: 30,
+	}) {
+		t.Fatal("valid circuit-breaker policy rejected")
+	}
 	if _, ok := EffectiveOutboundRequestPolicyForPlan(Plan("unknown"), defaults); ok {
 		t.Fatal("unknown plan unexpectedly produced an effective policy")
 	}

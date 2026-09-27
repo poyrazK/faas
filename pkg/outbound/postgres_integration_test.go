@@ -192,12 +192,16 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 	if err != nil || before.RatePerSecond != defaultPolicy.RatePerSecond || before.Burst != defaultPolicy.Burst {
 		t.Fatalf("initial resolved policy = %+v, %v", before, err)
 	}
-	updatedPolicy := api.OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500, MaxRetries: 2, ResponseCacheTTLSeconds: 60}
+	updatedPolicy := api.OutboundRequestPolicy{
+		RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500,
+		MaxRetries: 2, ResponseCacheTTLSeconds: 60,
+		CircuitBreakerFailureThreshold: 3, CircuitBreakerOpenSeconds: 30,
+	}
 	if err := store.SetOutboundRequestPolicy(ctx, account.ID, offer.ID, updatedPolicy); err != nil {
 		t.Fatalf("update customer policy: %v", err)
 	}
 	after, err := resolver.Integration(ctx, offer.ID)
-	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond || after.MaxRetries != 2 || after.ResponseCacheTTLSeconds != 60 {
+	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond || after.MaxRetries != 2 || after.ResponseCacheTTLSeconds != 60 || after.CircuitBreakerFailureThreshold != 3 || after.CircuitBreakerOpenSeconds != 30 {
 		t.Fatalf("resolved updated policy = %+v, %v", after, err)
 	}
 
@@ -225,6 +229,129 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 	third, err := backend.Admit(ctx, staleResolverSnapshot)
 	if err != nil || third.Granted || third.Reason != outbound.ReasonRate {
 		t.Fatalf("stale snapshot bypassed rate update: %+v, %v", third, err)
+	}
+}
+
+func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-circuit-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-circuit-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	policy := api.DefaultOutboundRequestPolicy()
+	policy.CircuitBreakerFailureThreshold = 1
+	policy.CircuitBreakerOpenSeconds = 1
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "circuit-breaker",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("create customer integration: %v", err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+		t.Fatalf("bind customer integration: %v", err)
+	}
+	backendA, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendB, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: 100, Burst: 20, MaxInFlight: 20,
+		BindingAppID: app.ID, CircuitBreakerFailureThreshold: 1, CircuitBreakerOpenSeconds: 1,
+		LeaseTTL: time.Second,
+	}
+
+	first, err := backendA.Admit(ctx, spec)
+	if err != nil || !first.Granted || first.CircuitBreakerFailureThreshold != 1 || first.CircuitBreakerOpenSeconds != 1 {
+		t.Fatalf("initial circuit admission = %+v, %v", first, err)
+	}
+	gate, err := backendA.AllowCircuit(ctx, offer.ID, first.LeaseID, 1, 1)
+	if err != nil || !gate.Allowed || gate.Probe {
+		t.Fatalf("initial circuit gate = %+v, %v", gate, err)
+	}
+	if err := backendA.RecordCircuitOutcome(ctx, offer.ID, first.LeaseID, 1, 1, outbound.CircuitOutcomeFailure); err != nil {
+		t.Fatalf("trip circuit: %v", err)
+	}
+	if err := backendA.Release(ctx, offer.ID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	openLease, err := backendB.Admit(ctx, spec)
+	if err != nil || !openLease.Granted {
+		t.Fatalf("open-state admission = %+v, %v", openLease, err)
+	}
+	openGate, err := backendB.AllowCircuit(ctx, offer.ID, openLease.LeaseID, 1, 1)
+	if err != nil || openGate.Allowed || openGate.RetryAfter <= 0 {
+		t.Fatalf("open-state gate = %+v, %v", openGate, err)
+	}
+	if err := backendB.Release(ctx, offer.ID, openLease.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	probeLease, err := backendA.Admit(ctx, spec)
+	if err != nil || !probeLease.Granted {
+		t.Fatalf("half-open admission = %+v, %v", probeLease, err)
+	}
+	probeGate, err := backendA.AllowCircuit(ctx, offer.ID, probeLease.LeaseID, 1, 1)
+	if err != nil || !probeGate.Allowed || !probeGate.Probe {
+		t.Fatalf("half-open gate = %+v, %v", probeGate, err)
+	}
+
+	competitor, err := backendB.Admit(ctx, spec)
+	if err != nil || !competitor.Granted {
+		t.Fatalf("competing admission = %+v, %v", competitor, err)
+	}
+	competitorGate, err := backendB.AllowCircuit(ctx, offer.ID, competitor.LeaseID, 1, 1)
+	if err != nil || competitorGate.Allowed || competitorGate.Probe || competitorGate.RetryAfter <= 0 {
+		t.Fatalf("competing half-open gate = %+v, %v", competitorGate, err)
+	}
+	if err := backendB.Release(ctx, offer.ID, competitor.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first probe's admission lease expires without a recorded outcome,
+	// simulating a crashed gateway replica. A later admission must reclaim the
+	// probe without writing the stale lease foreign key back to the state row.
+	time.Sleep(1100 * time.Millisecond)
+	replacementProbe, err := backendB.Admit(ctx, spec)
+	if err != nil || !replacementProbe.Granted {
+		t.Fatalf("replacement probe admission after expiry = %+v, %v", replacementProbe, err)
+	}
+	replacementGate, err := backendB.AllowCircuit(ctx, offer.ID, replacementProbe.LeaseID, 1, 1)
+	if err != nil || !replacementGate.Allowed || !replacementGate.Probe {
+		t.Fatalf("replacement half-open gate = %+v, %v", replacementGate, err)
+	}
+	if err := backendB.RecordCircuitOutcome(ctx, offer.ID, replacementProbe.LeaseID, 1, 1, outbound.CircuitOutcomeSuccess); err != nil {
+		t.Fatalf("close circuit after successful probe: %v", err)
+	}
+	if err := backendB.Release(ctx, offer.ID, replacementProbe.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	closedLease, err := backendB.Admit(ctx, spec)
+	if err != nil || !closedLease.Granted {
+		t.Fatalf("post-probe admission = %+v, %v", closedLease, err)
+	}
+	closedGate, err := backendB.AllowCircuit(ctx, offer.ID, closedLease.LeaseID, 1, 1)
+	if err != nil || !closedGate.Allowed || closedGate.Probe {
+		t.Fatalf("successful probe did not close shared circuit: %+v, %v", closedGate, err)
 	}
 }
 

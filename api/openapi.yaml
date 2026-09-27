@@ -20473,6 +20473,18 @@ components:
           maximum: 300
           default: 0
           description: Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
+        circuit_breaker_failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and requires circuit_breaker_open_seconds to be zero too.
+        circuit_breaker_open_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is allowed. Must be set with a nonzero failure threshold.
     PutOutboundRequestPolicyRequest:
       type: object
       description: Replace admission policy values for a customer-owned integration.

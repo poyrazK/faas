@@ -17,8 +17,9 @@ The daemon also exposes an operator-only Prometheus endpoint on
 `127.0.0.1:9108` by default (override with `metrics_addr`). It publishes
 `outbound_admissions_total`, `outbound_rejections_total`,
 `outbound_in_flight`, `outbound_upstream_requests_total`, and
-`outbound_upstream_latency_seconds`, and
-`outbound_response_cache_requests_total`. Operator integrations use their
+`outbound_upstream_latency_seconds`,
+`outbound_response_cache_requests_total`, and
+`outbound_circuit_breaker_events_total`. Operator integrations use their
 configuration-owned IDs; all customer-created integrations share the bounded
 `customer_managed` label. Outcomes and rejection reasons also use bounded
 vocabularies. The in-flight gauge is per gateway process; the Postgres-backed
@@ -129,7 +130,9 @@ any attached app may use. This request-policy example fits the Pro plan:
     "max_in_flight": 100,
     "request_timeout_ms": 2000,
     "max_retries": 1,
-    "response_cache_ttl_seconds": 60
+    "response_cache_ttl_seconds": 60,
+    "circuit_breaker_failure_threshold": 5,
+    "circuit_breaker_open_seconds": 30
   }
 }
 ```
@@ -142,9 +145,9 @@ checked before it is stored and checked again on every new gateway connection;
 private, loopback, and special-use destinations are rejected. The customer's
 method/path policy is the integration-wide ceiling; each app binding can narrow
 it further. The optional `request_policy` configures rate, burst, concurrency,
-upstream timeout, retries, and response-cache freshness for this integration.
+upstream timeout, retries, response-cache freshness, and the circuit breaker.
 If omitted, it defaults to 10 requests/second, burst 20, 10 concurrent
-requests, 30 seconds, no retries, and no response caching. Customer
+requests, 30 seconds, no retries, no response caching, and no circuit breaker. Customer
 integrations can be changed later with
 `PUT /v1/outbound/integrations/{id}/request-policy`; send the full
 `request_policy` object shown above. Updates affect subsequent admissions
@@ -304,6 +307,23 @@ If a provider response is interrupted or exceeds the gateway's body cap after
 headers have been sent, the gateway aborts the response stream. Callers must
 treat the resulting read error as an incomplete response, not a successful
 download of the received prefix.
+
+An optional circuit breaker opens after a configured number of consecutive
+transient provider failures, then permits one provider probe after its cool-down.
+Set both `circuit_breaker_failure_threshold` (1–20) and
+`circuit_breaker_open_seconds` (1–300); both default to zero, which disables
+the breaker. Network errors, timeouts, and final 408/425/429/5xx responses are
+failures; ordinary 4xx responses indicate a reachable provider and reset the
+streak. A successful retry also counts as success. Caller cancellation and
+local failures before a provider outcome is available do not add a failure; an
+inconclusive half-open probe starts another cool-down. The open decision and
+exclusive half-open probe are coordinated through Postgres across outboundd
+replicas; state resets if the configured breaker policy changes. An open
+breaker returns 503 with `X-Gregale-Outbound-Rejection: circuit_breaker_open`
+and `Retry-After`. It is checked after normal admission, so an open-circuit
+response counts toward configured admission budgets. Eligible response-cache
+hits still return while the breaker is open because they do not call the provider. See
+[ADR-281](../adr/281-outbound-circuit-breaker.md).
 
 The listener also serves `/metrics` and `/readyz` on port `8095` by default.
 Daemon HTTP request metrics record bounded status classes (`1xx` through `5xx`),

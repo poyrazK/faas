@@ -219,10 +219,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
-		DailyRequestLimit:        integration.DailyRequestLimit,
-		BindingAppID:             bindingAppID,
-		BindingDailyRequestLimit: copyInt64Pointer(bindingDailyRequestLimit),
-		LeaseTTL:                 integration.RequestTimeout,
+		DailyRequestLimit:              integration.DailyRequestLimit,
+		BindingAppID:                   bindingAppID,
+		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
+		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      integration.CircuitBreakerOpenSeconds,
+		LeaseTTL:                       integration.RequestTimeout,
 	})
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
@@ -317,7 +319,52 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
 	if !cacheHit {
+		var breaker CircuitBreakerBackend
+		breakerProbe := false
+		if decision.CircuitBreakerFailureThreshold > 0 {
+			var ok bool
+			breaker, ok = h.Backend.(CircuitBreakerBackend)
+			if !ok {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			gate, gateErr := breaker.AllowCircuit(r.Context(), integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds)
+			if gateErr != nil {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonCircuitOpen)
+				h.Metrics.ObserveCircuit(metricIntegrationID, "open_rejected")
+				retry := retryAfterSeconds(gate.RetryAfter)
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonCircuitOpen)
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_open", "Outbound provider is temporarily unavailable", retry)
+				return
+			}
+			breakerProbe = gate.Probe
+			if breakerProbe {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "probe")
+			} else {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
+			}
+		}
 		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+		if breaker != nil {
+			outcome := outboundCircuitOutcome(resp, err)
+			if outcome != CircuitOutcomeNeutral {
+				h.Metrics.ObserveCircuit(metricIntegrationID, string(outcome))
+			}
+			observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			if recordErr := breaker.RecordCircuitOutcome(observeCtx, integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds, outcome); recordErr != nil {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+			}
+			cancel()
+		}
 		if err == nil && cacheEligible {
 			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
 		}

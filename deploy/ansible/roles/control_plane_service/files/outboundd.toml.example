@@ -4,8 +4,9 @@
 # and send X-Gregale-Workload-Identity for managed credentials, or the
 # legacy X-Gregale-Outbound-Token plus X-Gregale-App-ID otherwise.
 #
-# This gateway never transparently intercepts encrypted egress and never
-# retries a provider request. Admission is shared through Postgres.
+# This gateway never transparently intercepts encrypted egress. Retry and
+# circuit-breaker policies are explicit per integration; admission and breaker
+# state are shared through Postgres.
 
 # Bind to the host-side address reachable from the guest network. Keep the
 # listener on a private interface/firewall zone; the integration token is the
@@ -62,6 +63,8 @@ metrics_addr = "127.0.0.1:9108"
 # request_timeout = "30s"
 # max_retries = 0 # optional; only bodyless GET/HEAD requests, capped at 2
 # response_cache_ttl_seconds = 0 # optional; process-local GET cache, capped at 300s
+# circuit_breaker_failure_threshold = 0 # optional; 0 disables, otherwise 1..20
+# circuit_breaker_open_seconds = 0 # required with threshold; cool-down 1..300s
 # enabled = true
 # request_timeout defaults to 30s when omitted; enabled defaults to true.
 # To let the account provide and rotate the provider Authorization value,

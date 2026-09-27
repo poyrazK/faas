@@ -105,6 +105,34 @@ func canRetryRequest(req *http.Request) bool {
 	return req.Body == nil || req.Body == http.NoBody
 }
 
+// outboundCircuitOutcome counts one logical request after its bounded retry
+// sequence. Provider 4xx responses other than transient retry statuses prove
+// that the upstream is reachable and therefore reset the consecutive-failure
+// streak; caller cancellation and local request-size errors are neutral.
+func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcome {
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return CircuitOutcomeNeutral
+		}
+		var maxBodyError *http.MaxBytesError
+		if errors.As(err, &maxBodyError) {
+			return CircuitOutcomeNeutral
+		}
+		if errors.Is(err, context.DeadlineExceeded) || retryableUpstreamError(err) {
+			return CircuitOutcomeFailure
+		}
+		return CircuitOutcomeNeutral
+	}
+	if resp == nil {
+		return CircuitOutcomeNeutral
+	}
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout ||
+		resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
+		return CircuitOutcomeFailure
+	}
+	return CircuitOutcomeSuccess
+}
+
 func (h *Handler) doWithRetries(ctx context.Context, req *http.Request, integrationID string, maxRetries int) (*http.Response, int, error) {
 	if maxRetries < 0 {
 		maxRetries = 0

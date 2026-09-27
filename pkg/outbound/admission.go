@@ -29,6 +29,7 @@ const (
 	ReasonConcurrency    = "concurrency_limit"
 	ReasonDailyLimit     = "daily_request_limit"
 	ReasonAppNotAttached = "app_not_attached"
+	ReasonCircuitOpen    = "circuit_breaker_open"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -42,21 +43,23 @@ const (
 // SHA-256 digest for application-auth integrations; managed integrations use
 // workload identity and may leave it zero. Raw bearer tokens are never logged.
 type Integration struct {
-	ID                        string
-	Origin                    *url.URL
-	TokenHash                 [32]byte
-	AppIDs                    map[string]struct{}
-	OperatorAppIDs            map[string]struct{}
-	BindingAppIDs             map[string]struct{}
-	CustomerAppRoutes         map[string]RoutePolicy
-	RatePerSecond             float64
-	Burst                     int
-	MaxInFlight               int
-	DailyRequestLimit         *int64
-	BindingDailyRequestLimits map[string]*int64
-	RequestTimeout            time.Duration
-	MaxRetries                int
-	ResponseCacheTTLSeconds   int
+	ID                             string
+	Origin                         *url.URL
+	TokenHash                      [32]byte
+	AppIDs                         map[string]struct{}
+	OperatorAppIDs                 map[string]struct{}
+	BindingAppIDs                  map[string]struct{}
+	CustomerAppRoutes              map[string]RoutePolicy
+	RatePerSecond                  float64
+	Burst                          int
+	MaxInFlight                    int
+	DailyRequestLimit              *int64
+	BindingDailyRequestLimits      map[string]*int64
+	RequestTimeout                 time.Duration
+	MaxRetries                     int
+	ResponseCacheTTLSeconds        int
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
 	// PolicyRevision invalidates process-local response entries after a
 	// database-backed integration policy changes.
 	PolicyRevision      int64
@@ -142,6 +145,9 @@ func (i Integration) Validate() error {
 	if i.ResponseCacheTTLSeconds < 0 || i.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds {
 		return fmt.Errorf("%w: response_cache_ttl_seconds must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundResponseCacheTTLSeconds)
 	}
+	if !api.ValidOutboundCircuitBreakerPolicy(i.CircuitBreakerFailureThreshold, i.CircuitBreakerOpenSeconds) {
+		return fmt.Errorf("%w: circuit breaker threshold and open seconds must both be zero or within their supported ranges", ErrInvalidIntegration)
+	}
 	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)
 	}
@@ -190,19 +196,23 @@ type AdmissionSpec struct {
 	DailyRequestLimit *int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
-	BindingAppID             string
-	BindingDailyRequestLimit *int64
-	LeaseTTL                 time.Duration
+	BindingAppID                   string
+	BindingDailyRequestLimit       *int64
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
+	LeaseTTL                       time.Duration
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
 // decision always has a lease ID which must be released exactly once.
 type Decision struct {
-	Granted        bool
-	LeaseID        string
-	RetryAfter     time.Duration
-	Reason         string
-	RequestTimeout time.Duration
+	Granted                        bool
+	LeaseID                        string
+	RetryAfter                     time.Duration
+	Reason                         string
+	RequestTimeout                 time.Duration
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on
@@ -210,6 +220,30 @@ type Decision struct {
 type Backend interface {
 	Admit(context.Context, AdmissionSpec) (Decision, error)
 	Release(context.Context, string, string) error
+}
+
+// CircuitBreakerDecision is the shared per-integration upstream gate result.
+// Probe is true only for the single half-open request admitted after cool-down.
+type CircuitBreakerDecision struct {
+	Allowed    bool
+	Probe      bool
+	RetryAfter time.Duration
+}
+
+type CircuitBreakerOutcome string
+
+const (
+	CircuitOutcomeSuccess CircuitBreakerOutcome = "success"
+	CircuitOutcomeFailure CircuitBreakerOutcome = "failure"
+	CircuitOutcomeNeutral CircuitBreakerOutcome = "neutral"
+)
+
+// CircuitBreakerBackend coordinates breaker state across gateway replicas.
+// A configured breaker fails closed if the selected backend does not support
+// this contract.
+type CircuitBreakerBackend interface {
+	AllowCircuit(context.Context, string, string, int, int) (CircuitBreakerDecision, error)
+	RecordCircuitOutcome(context.Context, string, string, int, int, CircuitBreakerOutcome) error
 }
 
 // StaticResolver is useful for a dedicated gateway process configured at
