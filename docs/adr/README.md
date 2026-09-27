@@ -54,6 +54,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 288 | [Service dependency reliability controls and fleet signals](288-service-dependency-reliability.md) | accepted | Caller-bounded timeouts and retries, shared retry budgets, breakers, and trusted per-edge telemetry |
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
+| 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
+| 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |
@@ -299,6 +303,13 @@ Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
 concurrently). The log above already contains several such pairs (157, 158, 167,
 168). A renumber plus a CI uniqueness gate is worth its own PR.
+
+## Object-storage binding decisions
+
+- [ADR-284: safe object-storage binding rotation](284-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+- [ADR-285: atomic object-storage binding creation](285-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
+- [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
+- [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
 ## Snapshot restore optimization decisions
 

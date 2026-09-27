@@ -119,15 +119,29 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
+	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
+	if hasLive {
+		return api.AppDeploymentAvailabilityLive
+	}
+	return api.AppDeploymentAvailabilityMissing
 }
 
 func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -1036,6 +1050,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		maxInstances = a.ScalingPolicy.MaxInstances
 	}
 	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
 	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
@@ -1043,13 +1058,24 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
-		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
+		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
 	}
+}
+
+func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
+	rpsOverride, burstOverride := 0, 0
+	if a.RequestRateLimitRPS != nil {
+		rpsOverride = *a.RequestRateLimitRPS
+	}
+	if a.RequestRateLimitBurst != nil {
+		burstOverride = *a.RequestRateLimitBurst
+	}
+	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
 }
 
 func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {

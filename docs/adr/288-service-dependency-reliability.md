@@ -1,4 +1,4 @@
-# ADR-284: Service dependency reliability controls and fleet signals
+# ADR-288: Service dependency reliability controls and fleet signals
 
 - **Status:** accepted
 - **Date:** 2026-09-27

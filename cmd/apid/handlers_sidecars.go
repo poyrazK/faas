@@ -172,8 +172,12 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if p := req.NormalizeCompanions(); p != nil {
 		return p
 	}
+	var mainDependencies []api.WorkloadDependency
+	if req.Overrides != nil {
+		mainDependencies = req.Overrides.MainDependsOn
+	}
 	if len(req.Sidecars) == 0 {
-		return nil
+		return req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits)
 	}
 	for i := range req.Sidecars {
 		companion := &req.Sidecars[i]
@@ -195,7 +199,7 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if !acct.Plan.SidecarAllowed() {
 		return api.ErrSidecarNotAllowedOnPlan(acct.Plan)
 	}
-	if p := req.Sidecars.Validate(limits); p != nil {
+	if p := req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits); p != nil {
 		return p
 	}
 	mainPort := 0
@@ -346,6 +350,16 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 	if o.Healthcheck != nil {
 		if b, err := json.Marshal(o.Healthcheck); err == nil {
 			dep.OverrideHealthcheck = b
+		}
+	}
+	if o.ReadinessProbe != nil {
+		if b, err := json.Marshal(o.ReadinessProbe); err == nil {
+			dep.OverrideReadinessProbe = b
+		}
+	}
+	if len(o.MainDependsOn) > 0 {
+		if b, err := json.Marshal(o.MainDependsOn); err == nil {
+			dep.OverrideMainDependsOn = b
 		}
 	}
 	// Liveness probe override (issue #554 / ADR-078). Persist

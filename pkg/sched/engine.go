@@ -1910,6 +1910,13 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
+		if err == nil && out.Instance != nil && wakeID != "" {
+			if rotations, ok := e.store.(state.ObjectS3CredentialRotationStore); ok {
+				if finishErr := rotations.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID); finishErr != nil {
+					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)
+				}
+			}
+		}
 		if err == nil && out.Instance != nil && e.audit != nil {
 			e.audit.Emit(ctx, "app.runtime_config_restarted", &app.AccountID, map[string]any{
 				"app_id": appID, "slug": app.Slug, "wake_id": out.Instance.WakeID, "fresh": true,
@@ -3216,6 +3223,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: sidecar secret versions changed during preparation: %w", err)
 	}
+	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_main_dependencies_invalid")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: load primary workload dependencies: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
@@ -3229,8 +3242,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ExecutionMode:          executionModeForApp(app),
 		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv.Entries,
-		Sidecars:  sidecars,
+		SealedEnv:     sealedEnv.Entries,
+		Sidecars:      sidecars,
+		MainDependsOn: mainDependencies,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
@@ -3277,6 +3291,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -4990,6 +5005,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if _, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates); err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
 	}
+	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
+	if err != nil {
+		return AppSpec{}, fmt.Errorf("sched: build app spec: primary workload dependencies: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
@@ -5010,6 +5029,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		DeploymentID:           dep.ID,
 		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
+		MainDependsOn:          mainDependencies,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
 		// Warn (engine.go:2382-2396). A hiccup here ships an
@@ -5046,6 +5066,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -5722,6 +5743,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_secret_version_changed")
 		return fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
 	}
+	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_main_dependencies_invalid")
+		return fmt.Errorf("sched: prime: load primary workload dependencies: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
@@ -5735,8 +5761,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		ExecutionMode:          executionModeForApp(app),
 		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv.Entries,
-		Sidecars:  sidecars,
+		SealedEnv:     sealedEnv.Entries,
+		Sidecars:      sidecars,
+		MainDependsOn: mainDependencies,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
@@ -5769,6 +5796,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

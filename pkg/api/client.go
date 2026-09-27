@@ -1366,6 +1366,23 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
 }
 
+// GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
+// traffic weights, and edge-rule changes. Edge rules have their own revision
+// sequence in the response. wait may be zero for a snapshot or up to 10
+// seconds for a bounded server-side wait; a pending result remains possible
+// on timeout.
+func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	if wait < 0 || wait > 10*time.Second {
+		return out, fmt.Errorf("runtime policy wait must be between 0 and 10 seconds")
+	}
+	path := "/v1/apps/" + slug + "/policy/status"
+	if wait > 0 {
+		path += "?wait=" + url.QueryEscape(wait.String())
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // UpdateApp applies a partial update to an app.
 func (c *Client) UpdateApp(ctx context.Context, slug string, req UpdateAppRequest) (AppResponse, error) {
 	var out AppResponse
@@ -1725,8 +1742,18 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfigDiff(ctx context.Co
 // from one registered environment to another. The promotion token is an
 // identity for a future execute step; this call never mutates deployments.
 func (c *Client) GetProjectEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreviewWithConfig(ctx, projectSlug, targetEnvironment, sourceEnvironment, false)
+}
+
+// GetProjectEnvironmentPromotionPreviewWithConfig opts into copying the
+// source's non-secret environment configuration with the promoted release.
+func (c *Client) GetProjectEnvironmentPromotionPreviewWithConfig(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string, syncConfig bool) (ProjectEnvironmentPromotionPreviewResponse, error) {
 	var out ProjectEnvironmentPromotionPreviewResponse
-	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?from=" + url.QueryEscape(sourceEnvironment)
+	query := url.Values{"from": []string{sourceEnvironment}}
+	if syncConfig {
+		query.Set("sync_config", "true")
+	}
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?" + query.Encode()
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
@@ -6129,7 +6156,7 @@ func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since st
 // id from another app is indistinguishable from a missing request.
 func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
 	var out DebugTelemetryRequestItem
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID)
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6137,7 +6164,7 @@ func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (De
 // deterministic explanation for one request telemetry row.
 func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID string) (DebugRequestEvidenceResponse, error) {
 	var out DebugRequestEvidenceResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/evidence"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/evidence"
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6223,7 +6250,7 @@ func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) 
 // deployment.
 func (c *Client) ReplayAppDebugRequestWithTarget(ctx context.Context, slug, reqID, mirrorDeploymentID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/replay"
 	var body any
 	if strings.TrimSpace(mirrorDeploymentID) != "" {
 		body = DebugReplayRequest{MirrorDeploymentID: strings.TrimSpace(mirrorDeploymentID)}

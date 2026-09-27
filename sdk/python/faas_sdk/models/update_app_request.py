@@ -221,6 +221,12 @@ class UpdateAppRequest:
     """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
     request_timeout_s: int | None | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    request_rate_limit_rps: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
+    may only tighten the plan ceiling. Does not create a deployment."""
+    request_rate_limit_burst: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive
+    values may only tighten the plan ceiling. Does not create a deployment."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -522,6 +528,18 @@ class UpdateAppRequest:
         else:
             request_timeout_s = self.request_timeout_s
 
+        request_rate_limit_rps: int | None | Unset
+        if isinstance(self.request_rate_limit_rps, Unset):
+            request_rate_limit_rps = UNSET
+        else:
+            request_rate_limit_rps = self.request_rate_limit_rps
+
+        request_rate_limit_burst: int | None | Unset
+        if isinstance(self.request_rate_limit_burst, Unset):
+            request_rate_limit_burst = UNSET
+        else:
+            request_rate_limit_burst = self.request_rate_limit_burst
+
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
@@ -806,6 +824,10 @@ class UpdateAppRequest:
             field_dict["retry_policy"] = retry_policy
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if request_rate_limit_rps is not UNSET:
+            field_dict["request_rate_limit_rps"] = request_rate_limit_rps
+        if request_rate_limit_burst is not UNSET:
+            field_dict["request_rate_limit_burst"] = request_rate_limit_burst
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if worker_replicas is not UNSET:
@@ -1367,6 +1389,24 @@ class UpdateAppRequest:
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
 
+        def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_rps = _parse_request_rate_limit_rps(d.pop("request_rate_limit_rps", UNSET))
+
+        def _parse_request_rate_limit_burst(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_burst = _parse_request_rate_limit_burst(d.pop("request_rate_limit_burst", UNSET))
+
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
         if isinstance(_service_replicas, Unset):
@@ -1849,6 +1889,8 @@ class UpdateAppRequest:
             max_retries=max_retries,
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
+            request_rate_limit_rps=request_rate_limit_rps,
+            request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,
             worker_replicas=worker_replicas,
             ports=ports,

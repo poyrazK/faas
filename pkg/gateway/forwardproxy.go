@@ -51,6 +51,8 @@ import (
 
 type syntheticInvocationContextKey struct{}
 
+type trustedServiceCallerAssertionContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
@@ -61,6 +63,19 @@ func WithSyntheticInvocation(ctx context.Context) context.Context {
 func isSyntheticInvocation(ctx context.Context) bool {
 	v, _ := ctx.Value(syntheticInvocationContextKey{}).(bool)
 	return v
+}
+
+// withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
+// minted after resolving and authorizing a service caller. Customer-supplied
+// x-faas-* headers remain stripped at the guest boundary; only this
+// platform-authored assertion may cross it.
+func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerAssertionContextKey{}).(bool)
+	return trusted && strings.EqualFold(header, ServiceCallerAssertionHeader)
 }
 
 // NodeClientLookup resolves a compute_node.id to a cached
@@ -236,6 +251,12 @@ func writeForwarderProblem(w http.ResponseWriter, status int) {
 func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log *slog.Logger, t Target, events *evts.Platform) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				// A deliberate abort of an already-committed response:
+				// writing a problem document now would append it to the
+				// customer's body. Let net/http tear the stream down.
+				panic(rec)
+			}
 			log.Error("gateway: forwarder panic",
 				"node", t.NodeID, "err", fmt.Sprintf("%v", rec))
 			writeForwarderProblem(w, http.StatusInternalServerError)
@@ -383,6 +404,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) {
@@ -484,6 +506,21 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
+			}
+			if wroteHeader {
+				// The status line, headers and part of the body are
+				// already on the wire. A problem document written now
+				// would be appended to the customer's body under the
+				// committed status — a corrupt payload that ends cleanly
+				// and looks complete. Abort instead so the client sees a
+				// transport error, matching the public edge's
+				// mid-body failure handling (internal_proxy.go).
+				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
+					markStaleTarget(r.Context())
+				}
+				log.Warn("gateway: forwarder stream failed after response commit; aborting",
+					"node", t.NodeID, "err", err.Error())
+				panic(http.ErrAbortHandler)
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTarget(r.Context())
@@ -1014,6 +1051,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	headers := r.Header.Clone()
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) &&

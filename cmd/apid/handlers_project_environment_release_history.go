@@ -189,6 +189,7 @@ func projectEnvironmentPromotionSummaryResponse(promotion state.ProjectEnvironme
 		ProjectSlug:             promotion.ProjectSlug,
 		FromEnvironment:         promotion.FromEnvironment,
 		ToEnvironment:           promotion.ToEnvironment,
+		SyncConfig:              promotion.SyncConfig,
 		PromotionHash:           promotion.PromotionHash,
 		Status:                  promotion.Status,
 		Error:                   promotion.Error,

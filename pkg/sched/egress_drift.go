@@ -32,10 +32,17 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+)
+
+const (
+	egressDriftReconcileInterval = 30 * time.Second
+	egressDriftBatchLimit        = 500
 )
 
 // EgressDriftSubscriber consumes NotifyAppChanged with
@@ -63,17 +70,179 @@ func NewEgressDriftSubscriber(engine *Engine, router RoutedVMM, log *slog.Logger
 // in-flight handle() call is given time to finish by the
 // channel's natural delivery pacing.
 func (e *EgressDriftSubscriber) Run(ctx context.Context, ch <-chan db.Notification) error {
+	ticker := time.NewTicker(egressDriftReconcileInterval)
+	defer ticker.Stop()
+	e.reconcilePending(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-ticker.C:
+			e.reconcilePending(ctx)
 		case n, ok := <-ch:
 			if !ok {
 				return nil
 			}
+			if n.Channel == db.NotifyAppEgressPolicyChanged {
+				payload, err := db.ParseAppEgressPolicyChangedPayload(n.Payload)
+				if err != nil {
+					e.engine.ops.ObserveNotificationPayloadRejected(db.NotifyAppEgressPolicyChanged, "egress_drift")
+					e.log.Warn("schedd: egress drift bad durable payload", "err", err)
+					continue
+				}
+				e.reconcileApp(ctx, payload.AppID)
+				continue
+			}
+			if n.Channel == db.NotifyAppCPULimitPolicyChanged {
+				payload, err := db.ParseAppCPULimitPolicyChangedPayload(n.Payload)
+				if err != nil {
+					e.engine.ops.ObserveNotificationPayloadRejected(db.NotifyAppCPULimitPolicyChanged, "app_cpu_policy")
+					e.log.Warn("schedd: app CPU policy bad durable payload", "err", err)
+					continue
+				}
+				e.reconcileAppCPULimit(ctx, payload.AppID)
+				continue
+			}
 			e.handle(ctx, n)
 		}
 	}
+}
+
+func (e *EgressDriftSubscriber) convergenceStore() (state.AppEgressPolicyConvergenceStore, bool) {
+	store, ok := e.engine.store.(state.AppEgressPolicyConvergenceStore)
+	return store, ok
+}
+
+// reconcilePending is the durable repair path. It runs once when a LISTEN
+// session starts and periodically thereafter, so a missed notification or a
+// transient vmmd failure cannot strand a live instance on an old allowlist.
+func (e *EgressDriftSubscriber) reconcilePending(ctx context.Context) {
+	store, ok := e.convergenceStore()
+	if ok {
+		targets, err := store.ListPendingAppEgressPolicyTargets(ctx, "", state.AppEgressPolicyObservationFreshness/2, egressDriftBatchLimit)
+		if err != nil {
+			e.log.Warn("schedd: list pending app egress policies failed", "err", err)
+		} else {
+			for _, target := range targets {
+				if err := ctx.Err(); err != nil {
+					return
+				}
+				e.applyTarget(ctx, store, target)
+			}
+		}
+	}
+	// Reconcile CPU independently so a transient failure in the egress query
+	// cannot suppress repair for another runtime-policy component.
+	e.reconcilePendingCPULimits(ctx)
+}
+
+func (e *EgressDriftSubscriber) cpuPolicyStore() (state.AppCPUPolicyConvergenceStore, bool) {
+	store, ok := e.engine.store.(state.AppCPUPolicyConvergenceStore)
+	return store, ok
+}
+
+type appCPULimitPolicyRouter interface {
+	UpdateAppCPULimit(context.Context, string, string, int64, int) error
+}
+
+func (e *EgressDriftSubscriber) reconcilePendingCPULimits(ctx context.Context) {
+	store, ok := e.cpuPolicyStore()
+	if !ok {
+		return
+	}
+	targets, err := store.ListPendingAppCPUPolicyTargets(ctx, "", state.AppCPUPolicyObservationFreshness/2, egressDriftBatchLimit)
+	if err != nil {
+		e.log.Warn("schedd: list pending app CPU policies failed", "err", err)
+		return
+	}
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		e.applyCPULimitTarget(ctx, store, target)
+	}
+}
+
+func (e *EgressDriftSubscriber) reconcileAppCPULimit(ctx context.Context, appID string) {
+	store, ok := e.cpuPolicyStore()
+	if !ok {
+		return
+	}
+	targets, err := store.ListPendingAppCPUPolicyTargets(ctx, appID, state.AppCPUPolicyObservationFreshness/2, egressDriftBatchLimit)
+	if err != nil {
+		e.log.Warn("schedd: list app CPU policy targets failed", "app", appID, "err", err)
+		return
+	}
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		e.applyCPULimitTarget(ctx, store, target)
+	}
+}
+
+func (e *EgressDriftSubscriber) applyCPULimitTarget(ctx context.Context, store state.AppCPUPolicyConvergenceStore, target state.AppCPUPolicyApplyTarget) {
+	var applyErr error
+	if router, ok := e.router.(appCPULimitPolicyRouter); ok {
+		applyErr = router.UpdateAppCPULimit(ctx, target.NodeID, target.AppID, target.Revision, target.CPUMillicores)
+	} else {
+		applyErr = errors.New("app CPU policy update is unsupported by routed VMM")
+	}
+	if err := store.RecordAppCPUPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
+		e.log.Warn("schedd: record app CPU policy apply failed", "app", target.AppID, "node", target.NodeID,
+			"revision", target.Revision, "apply_err", applyErr, "err", err)
+		return
+	}
+	if applyErr != nil {
+		e.log.Warn("schedd: app CPU policy vmmd update failed", "app", target.AppID, "slug", target.Slug,
+			"node", target.NodeID, "revision", target.Revision, "err", applyErr)
+		return
+	}
+	e.log.Debug("schedd: app CPU policy applied", "app", target.AppID, "slug", target.Slug,
+		"node", target.NodeID, "revision", target.Revision, "cpu_millicores", target.CPUMillicores)
+}
+
+func (e *EgressDriftSubscriber) reconcileApp(ctx context.Context, appID string) {
+	store, ok := e.convergenceStore()
+	if !ok {
+		app, err := e.engine.store.AppByID(ctx, appID)
+		if err != nil {
+			e.log.Warn("schedd: egress drift app read failed", "app", appID, "err", err)
+			return
+		}
+		e.fanOut(ctx, app.ID, app.Slug)
+		return
+	}
+	targets, err := store.ListPendingAppEgressPolicyTargets(ctx, appID, state.AppEgressPolicyObservationFreshness/2, egressDriftBatchLimit)
+	if err != nil {
+		e.log.Warn("schedd: list app egress policy targets failed", "app", appID, "err", err)
+		return
+	}
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		e.applyTarget(ctx, store, target)
+	}
+}
+
+func (e *EgressDriftSubscriber) applyTarget(ctx context.Context, store state.AppEgressPolicyConvergenceStore, target state.AppEgressPolicyApplyTarget) {
+	applyErr := e.router.UpdateEgressAllowlist(ctx, target.NodeID, target.AppID, target.Allowlist)
+	if err := store.RecordAppEgressPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
+		e.log.Warn("schedd: record app egress policy apply failed",
+			"app", target.AppID, "slug", target.Slug, "node", target.NodeID,
+			"revision", target.Revision, "apply_err", applyErr, "err", err)
+		return
+	}
+	if applyErr != nil {
+		e.log.Warn("schedd: egress drift vmmd update failed",
+			"app", target.AppID, "slug", target.Slug, "node", target.NodeID,
+			"revision", target.Revision, "err", applyErr)
+		return
+	}
+	e.log.Debug("schedd: app egress policy applied",
+		"app", target.AppID, "slug", target.Slug, "node", target.NodeID,
+		"revision", target.Revision, "allowlist_len", len(target.Allowlist))
 }
 
 // handle is the per-message work unit. Parse, filter, walk,
@@ -114,7 +283,11 @@ func (e *EgressDriftSubscriber) handle(ctx context.Context, n db.Notification) {
 	}
 	switch payload.Kind {
 	case "updated":
-		e.fanOut(ctx, payload.AppID, payload.Slug)
+		if _, ok := e.convergenceStore(); ok {
+			e.reconcileApp(ctx, payload.AppID)
+		} else {
+			e.fanOut(ctx, payload.AppID, payload.Slug)
+		}
 	case "static_egress_ip":
 		e.fanOutStaticEgressIP(ctx, payload.AppID, payload.Slug)
 	default:

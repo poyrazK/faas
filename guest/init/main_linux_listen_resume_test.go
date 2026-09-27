@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -153,6 +154,40 @@ func TestHandleResumeConnExtension(t *testing.T) {
 		}
 	default:
 		t.Fatal("extension callback was not invoked")
+	}
+}
+
+func TestHandleResumeConnWithAppCPULimit(t *testing.T) {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatalf("socketpair: %v", err)
+	}
+	guestEnd := os.NewFile(uintptr(fds[0]), "guest-cpu-policy")
+	hostEnd := os.NewFile(uintptr(fds[1]), "host-cpu-policy")
+	defer func() { _ = guestEnd.Close() }()
+	defer func() { _ = hostEnd.Close() }()
+
+	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: 500})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	msg := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint32(msg[:4], VsockAppCPULimitMsgType)
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
+	go func() { _, _ = hostEnd.Write(msg) }()
+
+	var applied int
+	handleResumeConnWithExtension(guestEnd, slog.Default(), nil, nil, func(cpu int) error {
+		applied = cpu
+		return nil
+	})
+	ack := []byte{0}
+	if _, err := hostEnd.Read(ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack[0] != VsockResumeAckOK || applied != 500 {
+		t.Fatalf("ack=%d applied=%d, want ACK and 500m", ack[0], applied)
 	}
 }
 

@@ -20,6 +20,21 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: request_id_journal
+    interval: 30s
+    rules:
+      - alert: FaasRequestIDJournalWriteFailures
+        expr: sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: request_id_journal
+        annotations:
+          summary: "Exact request-ID journal writes are failing"
+          description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
+
   - name: faas_consumer_usage_delivery
     interval: 30s
     rules:

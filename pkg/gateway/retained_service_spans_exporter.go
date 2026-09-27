@@ -1,10 +1,9 @@
 package gateway
 
-// Retained service-span ingestion bridges Gregale-owned service-proxy spans
-// into the same bounded accumulator used by customer OTLP ingestion. It does
-// not retain arbitrary daemon or customer spans: only an authorized
-// managed_binding/service_proxy span carrying the account identity stamped by
-// ServiceProxy is eligible.
+// Retained platform-dependency span ingestion bridges Gregale-owned service
+// proxy and outbound-integration spans into the bounded trace accumulator. It
+// does not retain arbitrary daemon or customer spans: only closed platform
+// dependency classifications carrying a trusted account identity are eligible.
 
 import (
 	"context"
@@ -19,15 +18,15 @@ import (
 
 const retainedSpanAccountIDAttribute = "gregale.internal.account_id"
 
-// RetainedServiceSpansExporter copies authorized platform-owned service spans
-// into a SpansAccumulator. ExportSpans only performs bounded in-memory work and
-// is therefore safe to mount through sdktrace.WithSyncer.
+// RetainedServiceSpansExporter copies authorized platform-owned dependency
+// spans into a SpansAccumulator. ExportSpans only performs bounded in-memory
+// work and is therefore safe to mount through sdktrace.WithSyncer.
 type RetainedServiceSpansExporter struct {
 	acc *SpansAccumulator
 	log *slog.Logger
 }
 
-// NewRetainedServiceSpansExporter returns a platform span exporter backed by
+// NewRetainedServiceSpansExporter returns a platform dependency exporter backed by
 // acc. A nil accumulator is a programming error because silently accepting it
 // would make the debugger appear enabled while dropping every span.
 func NewRetainedServiceSpansExporter(acc *SpansAccumulator, log *slog.Logger) *RetainedServiceSpansExporter {
@@ -40,15 +39,14 @@ func NewRetainedServiceSpansExporter(acc *SpansAccumulator, log *slog.Logger) *R
 	return &RetainedServiceSpansExporter{acc: acc, log: log}
 }
 
-// ExportSpans filters and converts completed service-proxy spans. The
-// account-routing attribute is removed from the customer-visible summary; it
-// exists only to bind the trusted in-process span to apid's tenant-scoped
-// writer RPC.
+// ExportSpans filters and converts completed, classified platform dependency
+// spans. The account-routing attribute is removed from the retained summary;
+// it exists only to bind the trusted span to apid's tenant-scoped writer RPC.
 func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
 	var exportErrors []error
 	for _, span := range spans {
 		attrs := attrsToMap(span.Attributes())
-		if attrs["gregale.dependency.type"] != "managed_binding" || attrs["gregale.dependency.kind"] != "service_proxy" {
+		if !retainedPlatformDependency(attrs) {
 			continue
 		}
 
@@ -96,6 +94,17 @@ func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sd
 		}
 	}
 	return errors.Join(exportErrors...)
+}
+
+func retainedPlatformDependency(attrs map[string]string) bool {
+	switch attrs["gregale.dependency.type"] {
+	case "managed_binding":
+		return attrs["gregale.dependency.kind"] == "service_proxy"
+	case "outbound_integration":
+		return attrs["gregale.dependency.kind"] == "https"
+	default:
+		return false
+	}
 }
 
 // Shutdown is a no-op. The accumulator is drained separately after the tracer

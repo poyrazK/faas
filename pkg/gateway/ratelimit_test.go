@@ -50,6 +50,42 @@ func TestLimiterPeek_FreshBucket(t *testing.T) {
 	}
 }
 
+func TestLimiterAppRequestRateOverrideChangesPolicyWithoutResettingBucket(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	l := NewLimiterWithClock(func() time.Time { return now })
+	if !l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 1, 2) {
+		t.Fatal("first overridden Allow returned false")
+	}
+	// One token remains from the configured burst. Raising the burst at the
+	// same instant must not mint the newly available capacity.
+	if !l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 2, 4) {
+		t.Fatal("policy change discarded the existing token")
+	}
+	if l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 2, 4) {
+		t.Fatal("policy change reset the depleted bucket")
+	}
+	limit, remaining, _, ok := l.Peek("app-policy", api.PlanPro)
+	if !ok || limit != 4 || remaining != 0 {
+		t.Fatalf("updated bucket snapshot = (%d, %d, %v), want (4, 0, true)", limit, remaining, ok)
+	}
+
+	now = now.Add(500 * time.Millisecond)
+	if !l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 2, 4) {
+		t.Fatal("new RPS was not applied to refill after the policy change")
+	}
+	if l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 0, 0) {
+		t.Fatal("restoring plan defaults reset the depleted bucket")
+	}
+	limit, _, _, ok = l.Peek("app-policy", api.PlanPro)
+	if !ok || limit != api.MustLimitsFor(api.PlanPro).RateLimitBurst {
+		t.Fatalf("default-restored bucket limit = %d (ok=%v), want %d", limit, ok, api.MustLimitsFor(api.PlanPro).RateLimitBurst)
+	}
+	now = now.Add(10 * time.Millisecond)
+	if !l.AllowAppWithLimits(context.Background(), "app-policy", api.PlanPro, 0, 0) {
+		t.Fatal("plan-default refill did not apply after restore")
+	}
+}
+
 func TestLimiterPeek_ExhaustedBucketSetsReset(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	l := NewLimiterWithClock(frozenClock(now))

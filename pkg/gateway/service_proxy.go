@@ -1196,7 +1196,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 			p.metrics.IncServicePreviewToProduction()
 		}
 	}
-	p.attachCallerAssertion(request, target, caller, callerEnv)
+	if p.attachCallerAssertion(request, target, caller, callerEnv) {
+		request = withTrustedServiceCallerAssertion(request)
+	}
 	return request
 }
 
@@ -1204,9 +1206,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 // failure is logged and dropped rather than failing the call: nothing verifies
 // the assertion yet, so refusing traffic over a signing problem would trade a
 // working mesh for a feature with no consumer.
-func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) {
+func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) bool {
 	if p.mintAssertion == nil || caller.AppID == "" {
-		return
+		return false
 	}
 	token, err := p.mintAssertion(ServiceCallerMintInput{
 		CallerAppID:      caller.AppID,
@@ -1218,9 +1220,15 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 	if err != nil {
 		p.log.Warn("gateway: service caller assertion mint failed; forwarding unsigned",
 			"caller", caller.AppID, "target", target.AppID, "err", err)
-		return
+		return false
+	}
+	if token == "" {
+		p.log.Warn("gateway: service caller assertion mint returned an empty token; forwarding unsigned",
+			"caller", caller.AppID, "target", target.AppID)
+		return false
 	}
 	request.Header.Set(ServiceCallerAssertionHeader, token)
+	return true
 }
 
 // forwardUpgrade carries an Upgrade request to the guest over the raw-bytes

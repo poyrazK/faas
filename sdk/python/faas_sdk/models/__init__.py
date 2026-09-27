@@ -159,6 +159,7 @@ from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
+from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_runtime import AppResponseRuntime
@@ -564,6 +565,7 @@ from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
+from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -1184,6 +1186,9 @@ from .project_environment_config_diff_response import ProjectEnvironmentConfigDi
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
 from .project_environment_diff_response import ProjectEnvironmentDiffResponse
+from .project_environment_domain_diff_response import ProjectEnvironmentDomainDiffResponse
+from .project_environment_domain_diff_response_kind import ProjectEnvironmentDomainDiffResponseKind
+from .project_environment_domain_response import ProjectEnvironmentDomainResponse
 from .project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
 from .project_environment_edge_policy_diff_response_kind import ProjectEnvironmentEdgePolicyDiffResponseKind
 from .project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
@@ -1202,6 +1207,7 @@ from .project_environment_promotion_change_target_revision_kind import (
 )
 from .project_environment_promotion_list_response import ProjectEnvironmentPromotionListResponse
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
+from .project_environment_promotion_release_graph_response import ProjectEnvironmentPromotionReleaseGraphResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
 from .project_environment_promotion_status_response_rollback_status import (
@@ -1347,6 +1353,7 @@ from .request_analytics_compute_cost_allocation_method import RequestAnalyticsCo
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
 from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
 from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_dependency_deployment_observation import RequestAnalyticsDependencyDeploymentObservation
 from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
 from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
@@ -1397,6 +1404,17 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_policy_component_status import RuntimePolicyComponentStatus
+from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
+from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
+from .runtime_policy_node_status import RuntimePolicyNodeStatus
+from .runtime_policy_node_status_scope import RuntimePolicyNodeStatusScope
+from .runtime_policy_node_status_state import RuntimePolicyNodeStatusState
+from .runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
+from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusScope
+from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
+from .runtime_policy_status_response import RuntimePolicyStatusResponse
+from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
@@ -1859,6 +1877,7 @@ __all__ = (
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
+    "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
     "AppResponseRuntime",
@@ -2231,6 +2250,7 @@ __all__ = (
     "DeploymentLiveWebhookPayload",
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
+    "DeploymentReadinessProbe",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -2844,6 +2864,9 @@ __all__ = (
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
     "ProjectEnvironmentDiffResponse",
+    "ProjectEnvironmentDomainDiffResponse",
+    "ProjectEnvironmentDomainDiffResponseKind",
+    "ProjectEnvironmentDomainResponse",
     "ProjectEnvironmentEdgePolicyDiffResponse",
     "ProjectEnvironmentEdgePolicyDiffResponseKind",
     "ProjectEnvironmentEdgePolicyResponse",
@@ -2858,6 +2881,7 @@ __all__ = (
     "ProjectEnvironmentPromotionChangeTargetRevisionKind",
     "ProjectEnvironmentPromotionListResponse",
     "ProjectEnvironmentPromotionPreviewResponse",
+    "ProjectEnvironmentPromotionReleaseGraphResponse",
     "ProjectEnvironmentPromotionResponse",
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
@@ -2989,6 +3013,7 @@ __all__ = (
     "RequestAnalyticsComputeCostBasis",
     "RequestAnalyticsComputeCostCurrency",
     "RequestAnalyticsDependency",
+    "RequestAnalyticsDependencyDeploymentObservation",
     "RequestAnalyticsDeploymentCost",
     "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",
@@ -3037,6 +3062,17 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimePolicyComponentStatus",
+    "RuntimePolicyComponentStatusScope",
+    "RuntimePolicyComponentStatusState",
+    "RuntimePolicyNodeStatus",
+    "RuntimePolicyNodeStatusScope",
+    "RuntimePolicyNodeStatusState",
+    "RuntimePolicySchedulerStatus",
+    "RuntimePolicySchedulerStatusScope",
+    "RuntimePolicySchedulerStatusState",
+    "RuntimePolicyStatusResponse",
+    "RuntimePolicyStatusResponseState",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",

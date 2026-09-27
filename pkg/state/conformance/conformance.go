@@ -87,8 +87,10 @@ func Run(t *testing.T, open Open) {
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
 		{"project_environment_edge_policy_is_scoped_and_replaceable", testProjectEnvironmentEdgePolicy},
+		{"project_environment_promotion_release_graph_checkpoints_are_durable", testProjectEnvironmentPromotionReleaseGraphCheckpoints},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"apps_with_live_deployments_are_scoped_and_filter_non_live", testAppsWithLiveDeployment},
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
@@ -2144,6 +2146,62 @@ func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
 	}
 	if _, ok := got[foreignApp.ID]; ok {
 		t.Error("foreign account deployment leaked into latest map")
+	}
+}
+
+func testAppsWithLiveDeployment(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	createApp := func(accountID, prefix string) state.App {
+		t.Helper()
+		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+			AccountID:      accountID,
+			Slug:           prefix + uuid.NewString(),
+			Type:           state.AppTypeApp,
+			RAMMB:          limits.RAMMB,
+			MaxConcurrency: limits.MaxConcurrency,
+			IdleTimeoutS:   limits.IdleTimeoutS,
+		}, limits)
+		if err != nil {
+			t.Fatalf("CreateAppIfUnderQuota(%s): %v", prefix, err)
+		}
+		return app
+	}
+
+	// This app has a deployment, but it is only pending; it must not be
+	// reported as runnable merely because deployment history exists.
+	pendingApp := createApp(fx.Account.ID, "live-list-pending-")
+	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: pendingApp.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}); err != nil {
+		t.Fatalf("CreateDeployment(pending): %v", err)
+	}
+
+	foreignAccount, err := fx.Store.CreateAccount(
+		fx.Ctx, "live-list-foreign-"+uuid.NewString()+"@example.com", api.PlanPro,
+	)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignApp := createApp(foreignAccount.ID, "live-list-foreign-app-")
+	foreignDeployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: foreignApp.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(foreign): %v", err)
+	}
+	if err := fx.Store.MarkDeploymentLive(fx.Ctx, foreignDeployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(foreign): %v", err)
+	}
+
+	got, err := fx.Store.ListAppsWithLiveDeployment(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListAppsWithLiveDeployment: %v", err)
+	}
+	if len(got) != 1 || !got[fx.App.ID] {
+		t.Fatalf("ListAppsWithLiveDeployment = %+v, want only live app %s", got, fx.App.ID)
+	}
+	if got[pendingApp.ID] || got[foreignApp.ID] {
+		t.Fatalf("ListAppsWithLiveDeployment leaked non-live or foreign app: %+v", got)
 	}
 }
 

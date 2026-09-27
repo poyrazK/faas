@@ -192,3 +192,140 @@ func TestProjectReleaseSetActivatesDarkDeploymentWithoutTrafficShift(t *testing.
 		t.Fatalf("new graph target = %q/%q, %v", id, dep, err)
 	}
 }
+
+func TestProjectReleaseSetPromotionCASAndRollback(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "promotion-graph-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "promotion-graph"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createApp := func(slug string) App {
+		t.Helper()
+		app, err := m.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, Status: AppActive,
+			Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	createLive := func(app App, digest string) Deployment {
+		t.Helper()
+		dep, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: digest})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		return dep
+	}
+	apiApp, billingApp := createApp("promotion-api"), createApp("promotion-billing")
+	apiOld, billingOld := createLive(apiApp, "sha256:api-old"), createLive(billingApp, "sha256:billing-old")
+	oldGraph, err := m.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800, []ProjectReleaseMember{
+		{AppID: apiApp.ID, DeploymentID: apiOld.ID}, {AppID: billingApp.ID, DeploymentID: billingOld.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiNew, err := m.CreateDeployment(ctx, Deployment{AppID: apiApp.ID, Scope: "production", ImageDigest: "sha256:api-new",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	billingNew, err := m.CreateDeployment(ctx, Deployment{AppID: billingApp.ID, Scope: "production", ImageDigest: "sha256:billing-new",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dep := range []Deployment{apiNew, billingNew} {
+		if err := m.MarkDeploymentLiveDark(ctx, dep.ID); err != nil {
+			t.Fatalf("stage %s dark: %v", dep.ID, err)
+		}
+	}
+	if live, err := m.LiveDeploymentForScope(ctx, billingApp.ID, "production"); err != nil || live.ID != billingOld.ID {
+		t.Fatalf("staging changed weighted route: %+v, %v", live, err)
+	}
+	newMembers := []ProjectReleaseMember{{AppID: apiApp.ID, DeploymentID: apiNew.ID}, {AppID: billingApp.ID, DeploymentID: billingNew.ID}}
+	newGraph, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", oldGraph.ID, nil, 1800, newMembers)
+	if err != nil {
+		t.Fatalf("atomically activate new graph: %v", err)
+	}
+	if active, err := m.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production"); err != nil || active.ID != newGraph.ID {
+		t.Fatalf("active graph after publish = %+v, %v", active, err)
+	}
+	if id, deployment, err := m.ResolveProjectRelease(ctx, billingApp.ID, "production", oldGraph.ID); err != nil || id != oldGraph.ID || deployment != billingOld.ID {
+		t.Fatalf("old client graph = %q/%q, %v", id, deployment, err)
+	}
+	if _, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", oldGraph.ID, nil, 1800, newMembers); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale graph activation = %v, want conflict", err)
+	}
+	restored, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", newGraph.ID, nil, 1800, []ProjectReleaseMember{
+		{AppID: apiApp.ID, DeploymentID: apiOld.ID}, {AppID: billingApp.ID, DeploymentID: billingOld.ID},
+	})
+	if err != nil {
+		t.Fatalf("restore previous graph: %v", err)
+	}
+	if id, deployment, err := m.ResolveProjectRelease(ctx, billingApp.ID, "production", ""); err != nil || id != restored.ID || deployment != billingOld.ID {
+		t.Fatalf("rolled back active graph = %q/%q, %v", id, deployment, err)
+	}
+	if id, deployment, err := m.ResolveProjectRelease(ctx, billingApp.ID, "production", newGraph.ID); err != nil || id != newGraph.ID || deployment != billingNew.ID {
+		t.Fatalf("promoted graph retained for existing clients = %q/%q, %v", id, deployment, err)
+	}
+}
+
+func TestProjectReleaseSetPromotionCanRemoveFirstGraphWithoutTrafficCutover(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "promotion-first-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "promotion-first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "promotion-first-api", Status: AppActive,
+		Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:first-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:first-new",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLiveDark(ctx, next.ID); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "",
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: old.ID}}, 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: next.ID}})
+	if err != nil {
+		t.Fatalf("publish first graph: %v", err)
+	}
+	if err := m.DeactivateProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", graph.ID,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: old.ID}}); err != nil {
+		t.Fatalf("remove first graph on rollback: %v", err)
+	}
+	if _, err := m.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("active graph after rollback = %v, want not found", err)
+	}
+	if live, err := m.LiveDeploymentForScope(ctx, app.ID, "production"); err != nil || live.ID != old.ID {
+		t.Fatalf("rollback changed ordinary route: %+v, %v", live, err)
+	}
+	if id, deployment, err := m.ResolveProjectRelease(ctx, app.ID, "production", graph.ID); err != nil || id != graph.ID || deployment != next.ID {
+		t.Fatalf("existing client after graph rollback = %q/%q, %v", id, deployment, err)
+	}
+}

@@ -12,6 +12,10 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Whether this exact promotion will copy the source's non-secret configuration to the target.
+   */
+  sync_config?: boolean;
   to_environment_protected: boolean;
   approval_required: boolean;
   can_promote: boolean;
@@ -26,6 +30,14 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
    * Immutable active release graph snapshot for the target environment, when present.
    */
   to_release_set?: ProjectReleaseSetResponse;
+  /**
+   * True when promotion stages deployments dark and atomically activates a project release graph.
+   */
+  release_graph_mode: boolean;
+  /**
+   * Compatibility window used by the promoted release graph.
+   */
+  release_ttl_seconds?: number;
   promotion_hash: string;
   promotion_token: string;
 };

@@ -127,3 +127,68 @@ func TestPg_ListLatestDeploymentPerApp_IsScopedAndStable(t *testing.T) {
 		t.Error("foreign app leaked into result")
 	}
 }
+
+func TestPg_ListAppsWithLiveDeployment_IsScopedAndFiltersHistory(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	account, err := s.CreateAccount(ctx, "live-app-pg-owned@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := s.CreateAccount(ctx, "live-app-pg-foreign@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createApp := func(accountID, slug string) state.App {
+		t.Helper()
+		app, createErr := s.CreateApp(ctx, state.App{
+			AccountID: accountID, Slug: slug, Type: state.AppTypeApp,
+			RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return app
+	}
+	createDeployment := func(appID, digest string, status state.DeploymentStatus) state.Deployment {
+		t.Helper()
+		deployment, createErr := s.CreateDeployment(ctx, state.Deployment{
+			AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: digest, Status: status,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return deployment
+	}
+
+	liveApp := createApp(account.ID, "live-app-pg")
+	createDeployment(liveApp.ID, "sha256:live", state.DeployLive)
+	historicalApp := createApp(account.ID, "historical-app-pg")
+	createDeployment(historicalApp.ID, "sha256:historical", state.DeploySuperseded)
+	deletedApp := createApp(account.ID, "deleted-live-app-pg")
+	createDeployment(deletedApp.ID, "sha256:deleted", state.DeployLive)
+	if err := s.DeleteApp(ctx, deletedApp.ID); err != nil {
+		t.Fatal(err)
+	}
+	foreignApp := createApp(foreign.ID, "foreign-live-app-pg")
+	createDeployment(foreignApp.ID, "sha256:foreign", state.DeployLive)
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live' where app_id = $1`, liveApp.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live' where app_id = $1`, deletedApp.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live' where app_id = $1`, foreignApp.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListAppsWithLiveDeployment(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[liveApp.ID] {
+		t.Fatalf("live app IDs = %#v, want only %q", got, liveApp.ID)
+	}
+	if got[historicalApp.ID] || got[deletedApp.ID] || got[foreignApp.ID] {
+		t.Fatalf("terminal, deleted, or foreign app was reported live: %#v", got)
+	}
+}

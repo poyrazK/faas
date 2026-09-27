@@ -3,11 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A custom domain binding: domain string, target app, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
+ * A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
  */
 export type CustomDomainResponse = {
   domain: string;
   app_id: string;
+  /**
+   * Project environment that owns the route; omitted for legacy application-wide domains.
+   */
+  environment?: string;
   challenge_token?: string | null;
   verified: boolean;
   verified_at?: string | null;

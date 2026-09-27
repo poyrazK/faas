@@ -1087,7 +1087,7 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 const createCustomDomain = `-- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at
+returning domain, app_id, challenge_token, verified_at, environment_id
 `
 
 type CreateCustomDomainParams struct {
@@ -1101,6 +1101,7 @@ type CreateCustomDomainRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error) {
@@ -1111,6 +1112,7 @@ func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCus
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -1965,7 +1967,7 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 }
 
 const domainByName = `-- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1
 `
 
@@ -1974,6 +1976,7 @@ type DomainByNameRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error) {
@@ -1984,6 +1987,7 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -3733,6 +3737,59 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 	return i, err
 }
 
+const getRequestIDJournalByAppAndIdentifier = `-- name: GetRequestIDJournalByAppAndIdentifier :one
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = $1::uuid
+   AND app_id = $2::uuid
+   AND request_id = $3::text
+   AND received_at >= $4::timestamptz
+   AND received_at < $5::timestamptz
+   AND expires_at > $6::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1
+`
+
+type GetRequestIDJournalByAppAndIdentifierParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	RequestID     string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+	NowAt         pgtype.Timestamptz
+}
+
+type GetRequestIDJournalByAppAndIdentifierRow struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+// expires_at is checked as well as received_at so plan downgrades do not
+// extend the original request-time retention window.
+func (q *Queries) GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error) {
+	row := db.QueryRow(ctx, getRequestIDJournalByAppAndIdentifier,
+		arg.AccountID,
+		arg.AppID,
+		arg.RequestID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.NowAt,
+	)
+	var i GetRequestIDJournalByAppAndIdentifierRow
+	err := row.Scan(
+		&i.ID,
+		&i.RequestID,
+		&i.TraceID,
+		&i.ReceivedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getRequestTelemetryByAppAndIdentifier = `-- name: GetRequestTelemetryByAppAndIdentifier :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
@@ -4691,7 +4748,7 @@ SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
        at,
        id
 FROM events
-WHERE kind = 'wake.sidecar_health'
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY($1::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC
@@ -4717,6 +4774,62 @@ func (q *Queries) LatestInstanceReadiness(ctx context.Context, db DBTX, instance
 		var i LatestInstanceReadinessRow
 		if err := rows.Scan(
 			&i.InstanceID,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const latestInstanceReadinessBySource = `-- name: LatestInstanceReadinessBySource :many
+SELECT DISTINCT ON (
+           CAST(data->>'instance_id' AS text),
+           CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+                ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text)
+       )
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text) AS source,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY($1::text[])
+  AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
+ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC
+`
+
+type LatestInstanceReadinessBySourceRow struct {
+	InstanceID string
+	Source     string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Gateway hydration keeps each required readiness source independent so one
+// recovered probe cannot override another probe that is still unready.
+func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadinessBySource, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessBySourceRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessBySourceRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Source,
 			&i.Status,
 			&i.At,
 			&i.ID,
@@ -5033,11 +5146,11 @@ WHERE account_id = $1
   AND app_id     = $2
   AND last_seen_at >= $3
   AND last_seen_at <= $4
-  AND ($5::bigint IS NULL
+  AND ($5::bigint = 0
        OR count < $5
        OR (count = $5
            AND (last_seen_at, fingerprint) < ($6, $7::text)))
-ORDER BY count DESC, last_seen_at DESC, fingerprint ASC
+ORDER BY count DESC, last_seen_at DESC, fingerprint DESC
 LIMIT $8
 `
 
@@ -5090,6 +5203,13 @@ type ListAppErrorGroupsRow struct {
 // types — without them sqlc infers the timestamps as timestamptz
 // from the leading (count, last_seen_at) references and breaks
 // pagination.
+//
+// cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+// (count is always >= 1). The predicate used to test IS NULL, which
+// never held: the first page matched no rows and the summary was
+// always empty. fingerprint sorts DESC to agree with the row-value
+// comparison; ASC made pages repeat or skip groups that tie on
+// (count, last_seen_at).
 func (q *Queries) ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppErrorGroupsParams) ([]ListAppErrorGroupsRow, error) {
 	rows, err := db.Query(ctx, listAppErrorGroups,
 		arg.AccountID,
@@ -5878,7 +5998,7 @@ func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg Li
 }
 
 const listDomainsForAccount = `-- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain
 `
@@ -5888,6 +6008,7 @@ type ListDomainsForAccountRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error) {
@@ -5904,6 +6025,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -5916,7 +6038,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 }
 
 const listDomainsForApp = `-- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain
 `
 
@@ -5925,6 +6047,7 @@ type ListDomainsForAppRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error) {
@@ -5941,6 +6064,7 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -6455,7 +6579,7 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.override_readiness_probe, d.override_main_depends_on, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -6505,6 +6629,8 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.ScannedAt,
 			&i.OverrideLivenessProbe,
 			&i.SecretReloadSignal,
+			&i.OverrideReadinessProbe,
+			&i.OverrideMainDependsOn,
 			&i.ParkedReason,
 			&i.ParkedAt,
 			&i.TrafficPercent,
@@ -7265,14 +7391,24 @@ func (q *Queries) ListRequestTelemetryByPlatformTenant(ctx context.Context, db D
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5
 `
 
@@ -7285,21 +7421,26 @@ type ListRequestTelemetryDependencySpansParams struct {
 }
 
 type ListRequestTelemetryDependencySpansRow struct {
-	ID           pgtype.UUID
-	Route        string
-	Method       string
-	Count        int32
-	Status       int32
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	SpansSummary []byte
+	ID                  pgtype.UUID
+	Route               string
+	Method              string
+	Count               int32
+	Status              int32
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	DeploymentID        string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
 }
 
-// Bounded read path for the historical debugger dependency view. The
+// Bounded read path for route-scoped dependency analytics. The
 // account_id predicate is defense in depth for callers that accidentally
 // pass an app id from another tenant; the app lookup remains the primary
-// IDOR boundary. The newest rows are preferred because spans_summary is
-// sampled evidence, not a complete request trace archive.
+// IDOR boundary. Evidence is newest-first within each route/deployment
+// partition, then interleaved so one high-volume revision cannot crowd all
+// prior deployments out of the bounded comparison window.
 func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryDependencySpans,
 		arg.AppID,
@@ -7324,6 +7465,10 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 			&i.TraceID,
 			&i.ReceivedAt,
 			&i.SpansSummary,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -9523,9 +9668,149 @@ func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg Objec
 	return result.RowsAffected(), nil
 }
 
+const objectS3BindingDeleteSecrets = `-- name: ObjectS3BindingDeleteSecrets :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1
+`
+
+func (q *Queries) ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, objectS3BindingDeleteSecrets, managedObjectStorageCredentialID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectS3BindingLockApp = `-- name: ObjectS3BindingLockApp :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND b.id=$3::uuid AND b.account_id=$2::uuid
+FOR UPDATE OF a
+`
+
+type ObjectS3BindingLockAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg ObjectS3BindingLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3BindingLockApp, arg.AppID, arg.AccountID, arg.BucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE
+`
+
+type ObjectS3BindingRevokeLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg ObjectS3BindingRevokeLockParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3BindingRevokeLock, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+	)
+	return i, err
+}
+
+const objectS3BindingSecretCount = `-- name: ObjectS3BindingSecretCount :one
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2
+`
+
+type ObjectS3BindingSecretCountParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingSecretCount(ctx context.Context, db DBTX, arg ObjectS3BindingSecretCountParams) (int64, error) {
+	row := db.QueryRow(ctx, objectS3BindingSecretCount, arg.AccountID, arg.AppID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectS3BindingSecretInsert = `-- name: ObjectS3BindingSecretInsert :one
+INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key
+`
+
+type ObjectS3BindingSecretInsertParams struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Scope                            string
+	Key                              string
+	Ciphertext                       []byte
+	Kid                              pgtype.Text
+	ValueHash                        pgtype.Text
+	ManagedObjectStorageCredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingSecretInsert(ctx context.Context, db DBTX, arg ObjectS3BindingSecretInsertParams) (string, error) {
+	row := db.QueryRow(ctx, objectS3BindingSecretInsert,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.ManagedObjectStorageCredentialID,
+	)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
+const objectS3BindingStaleSnapshots = `-- name: ObjectS3BindingStaleSnapshots :exec
+UPDATE snapshots SET stale=true
+WHERE deployment_id IN (SELECT id FROM deployments WHERE app_id=$1) AND stale=false
+`
+
+func (q *Queries) ObjectS3BindingStaleSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3BindingStaleSnapshots, appID)
+	return err
+}
+
+const objectS3BindingStampRuntime = `-- name: ObjectS3BindingStampRuntime :exec
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
+`
+
+func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3BindingStampRuntime, appID)
+	return err
+}
+
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active'
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL
 `
 
 func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
@@ -9536,8 +9821,8 @@ func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID
 }
 
 const objectS3CredentialGet = `-- name: ObjectS3CredentialGet :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL
 `
 
 type ObjectS3CredentialGetParams struct {
@@ -9565,6 +9850,9 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 		&i.ManagedAppID,
 		&i.ManagedScope,
 		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
 	)
 	return i, err
 }
@@ -9572,7 +9860,7 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
 `
 
 type ObjectS3CredentialInsertParams struct {
@@ -9620,13 +9908,16 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		&i.ManagedAppID,
 		&i.ManagedScope,
 		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
 	)
 	return i, err
 }
 
 const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active'
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
 ORDER BY created_at,id
 `
 
@@ -9660,6 +9951,9 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 			&i.ManagedAppID,
 			&i.ManagedScope,
 			&i.ManagedPrefix,
+			&i.RotationParentID,
+			&i.RotationWakeID,
+			&i.RotationStampedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -9672,7 +9966,7 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
 WHERE status='active' AND id > $1
 ORDER BY id LIMIT $2::int
 `
@@ -9707,6 +10001,9 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 			&i.ManagedAppID,
 			&i.ManagedScope,
 			&i.ManagedPrefix,
+			&i.RotationParentID,
+			&i.RotationWakeID,
+			&i.RotationStampedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -9761,7 +10058,7 @@ func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
-SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
@@ -9786,6 +10083,9 @@ type ObjectS3CredentialResolveRow struct {
 	ManagedAppID       pgtype.UUID
 	ManagedScope       pgtype.Text
 	ManagedPrefix      pgtype.Text
+	RotationParentID   pgtype.UUID
+	RotationWakeID     pgtype.UUID
+	RotationStampedAt  pgtype.Timestamptz
 	AppID              pgtype.UUID
 	BucketName         string
 	BucketScope        string
@@ -9817,6 +10117,9 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 		&i.ManagedAppID,
 		&i.ManagedScope,
 		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
 		&i.AppID,
 		&i.BucketName,
 		&i.BucketScope,
@@ -9833,7 +10136,7 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 
 const objectS3CredentialRevoke = `-- name: ObjectS3CredentialRevoke :execrows
 UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+WHERE (id=$1 OR rotation_parent_id=$1) AND account_id=$2 AND bucket_id=$3 AND status='active'
 `
 
 type ObjectS3CredentialRevokeParams struct {
@@ -9850,14 +10153,94 @@ func (q *Queries) ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg Obj
 	return result.RowsAffected(), nil
 }
 
-const objectS3CredentialRotate = `-- name: ObjectS3CredentialRotate :one
+const objectS3CredentialRotationFinalizeForApp = `-- name: ObjectS3CredentialRotationFinalizeForApp :execrows
+UPDATE object_storage_s3_credentials AS previous
+SET status='revoked', revoked_at=now()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active'
+`
+
+type ObjectS3CredentialRotationFinalizeForAppParams struct {
+	ManagedAppID   pgtype.UUID
+	RotationWakeID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRotationFinalizeForApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationFinalizeForAppParams) (int64, error) {
+	result, err := db.Exec(ctx, objectS3CredentialRotationFinalizeForApp, arg.ManagedAppID, arg.RotationWakeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectS3CredentialRotationParentForUpdate = `-- name: ObjectS3CredentialRotationParentForUpdate :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE
+`
+
+type ObjectS3CredentialRotationParentForUpdateParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRotationParentForUpdate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationParentForUpdateParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotationParentForUpdate, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+	)
+	return i, err
+}
+
+const objectS3CredentialRotationPending = `-- name: ObjectS3CredentialRotationPending :one
+SELECT rotation_wake_id::text FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id=$3 AND status='active'
+`
+
+type ObjectS3CredentialRotationPendingParams struct {
+	AccountID        pgtype.UUID
+	BucketID         pgtype.UUID
+	RotationParentID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRotationPending(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationPendingParams) (string, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotationPending, arg.AccountID, arg.BucketID, arg.RotationParentID)
+	var rotation_wake_id string
+	err := row.Scan(&rotation_wake_id)
+	return rotation_wake_id, err
+}
+
+const objectS3CredentialRotationReplace = `-- name: ObjectS3CredentialRotationReplace :one
 UPDATE object_storage_s3_credentials
 SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
-RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
 `
 
-type ObjectS3CredentialRotateParams struct {
+type ObjectS3CredentialRotationReplaceParams struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
 	BucketID     pgtype.UUID
@@ -9866,8 +10249,8 @@ type ObjectS3CredentialRotateParams struct {
 	Kid          string
 }
 
-func (q *Queries) ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error) {
-	row := db.QueryRow(ctx, objectS3CredentialRotate,
+func (q *Queries) ObjectS3CredentialRotationReplace(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationReplaceParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotationReplace,
 		arg.ID,
 		arg.AccountID,
 		arg.BucketID,
@@ -9892,8 +10275,107 @@ func (q *Queries) ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg Obj
 		&i.ManagedAppID,
 		&i.ManagedScope,
 		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
 	)
 	return i, err
+}
+
+const objectS3CredentialRotationStage = `-- name: ObjectS3CredentialRotationStage :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+`
+
+type ObjectS3CredentialRotationStageParams struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	BucketID         pgtype.UUID
+	AccessKeyID      string
+	SecretSealed     []byte
+	Kid              string
+	Label            string
+	Permission       string
+	RotationParentID pgtype.UUID
+	RotationWakeID   pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStageParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotationStage,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Label,
+		arg.Permission,
+		arg.RotationParentID,
+		arg.RotationWakeID,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+	)
+	return i, err
+}
+
+const objectS3CredentialRotationStampApp = `-- name: ObjectS3CredentialRotationStampApp :exec
+INSERT INTO app_runtime_config_changes (app_id, changed_at) VALUES ($1, $2)
+ON CONFLICT (app_id) DO UPDATE
+SET changed_at=GREATEST(app_runtime_config_changes.changed_at, excluded.changed_at)
+`
+
+type ObjectS3CredentialRotationStampAppParams struct {
+	AppID     pgtype.UUID
+	ChangedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectS3CredentialRotationStampApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampAppParams) error {
+	_, err := db.Exec(ctx, objectS3CredentialRotationStampApp, arg.AppID, arg.ChangedAt)
+	return err
+}
+
+const objectS3CredentialRotationStampStage = `-- name: ObjectS3CredentialRotationStampStage :one
+UPDATE object_storage_s3_credentials AS previous
+SET rotation_stamped_at=clock_timestamp()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active'
+  AND previous.rotation_stamped_at IS NULL
+RETURNING previous.rotation_stamped_at
+`
+
+type ObjectS3CredentialRotationStampStageParams struct {
+	ManagedAppID   pgtype.UUID
+	RotationWakeID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotationStampStage, arg.ManagedAppID, arg.RotationWakeID)
+	var rotation_stamped_at pgtype.Timestamptz
+	err := row.Scan(&rotation_stamped_at)
+	return rotation_stamped_at, err
 }
 
 const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows
@@ -9910,6 +10392,42 @@ type ObjectS3CredentialTouchParams struct {
 
 func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error) {
 	result, err := db.Exec(ctx, objectS3CredentialTouch, arg.UsedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectStorageManagedSecretRotate = `-- name: ObjectStorageManagedSecretRotate :execrows
+UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
+  delivery_version=delivery_version+1, delivery_status='pending',
+  last_delivery_attempt_at=NULL, last_delivery_error_code=NULL, updated_at=now()
+WHERE account_id=$1 AND app_id=$2 AND scope=$3
+  AND managed_object_storage_credential_id=$4 AND key=$5
+`
+
+type ObjectStorageManagedSecretRotateParams struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Scope                            string
+	ManagedObjectStorageCredentialID pgtype.UUID
+	Key                              string
+	Ciphertext                       []byte
+	Kid                              pgtype.Text
+	ValueHash                        pgtype.Text
+}
+
+func (q *Queries) ObjectStorageManagedSecretRotate(ctx context.Context, db DBTX, arg ObjectStorageManagedSecretRotateParams) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageManagedSecretRotate,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.ManagedObjectStorageCredentialID,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -10918,6 +11436,59 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT $1::uuid,
+       a.account_id,
+       a.id,
+       $2::text,
+       NULLIF($3::text, ''),
+       $4::timestamptz,
+       $5::timestamptz
+  FROM apps a
+ WHERE a.id = $6::uuid
+   AND a.account_id = $7::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id
+`
+
+type RecordRequestIDJournalParams struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    string
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+// The request-ID journal is independent from sampled request telemetry. Only
+// insert when the app is still owned by the authenticated account. The
+// caller-generated record UUID makes an RPC retry idempotent without
+// collapsing two customer requests that happen to reuse a public ID.
+func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, recordRequestIDJournal,
+		arg.ID,
+		arg.RequestID,
+		arg.TraceID,
+		arg.ReceivedAt,
+		arg.ExpiresAt,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one
@@ -13531,11 +14102,38 @@ func (q *Queries) UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgSta
 }
 
 const updateSpansSummary = `-- name: UpdateSpansSummary :exec
-update request_telemetry
-   set spans_summary = $2::jsonb
- where trace_id = $1
-   and account_id = $3::uuid
-   and received_at >= now() - interval '24 hours'
+update request_telemetry as target
+   set spans_summary = (
+       select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
+         from (
+           select span, duration_nanos, span_id
+             from (
+               select distinct on (span_id, end_time_unix_nano)
+                      span, duration_nanos, span_id
+                 from (
+                   select item as span,
+                          coalesce(item->>'span_id', '') as span_id,
+                          coalesce(item->>'end_time_unix_nano', '') as end_time_unix_nano,
+                          case when coalesce(item->>'duration_nanos', '') ~ '^[0-9]{1,20}$'
+                               then (item->>'duration_nanos')::numeric
+                               else 0::numeric end as duration_nanos
+                     from jsonb_array_elements(
+                       (case when jsonb_typeof(target.spans_summary) = 'array'
+                             then target.spans_summary else '[]'::jsonb end)
+                       ||
+                       (case when jsonb_typeof($2::jsonb) = 'array'
+                             then $2::jsonb else '[]'::jsonb end)
+                     ) as source(item)
+                 ) normalized
+                order by span_id, end_time_unix_nano, duration_nanos desc
+             ) deduplicated
+            order by duration_nanos desc, span_id
+            limit 1000
+         ) bounded
+   )
+ where target.trace_id = $1
+   and target.account_id = $3::uuid
+   and target.received_at >= now() - interval '24 hours'
 `
 
 type UpdateSpansSummaryParams struct {
@@ -13549,10 +14147,11 @@ type UpdateSpansSummaryParams struct {
 // in-process (pkg/gateway/spans_accumulator.go) and flushes the
 // accumulated summary every FAAS_OTEL_FLUSH_INTERVAL (default 30s).
 // UPDATE (not INSERT) because the row already exists — the recorder
-// wrote it from the gateway edge
-// (pkg/gateway/request_telemetry_publisher.go). Last-writer-wins on
-// concurrent UPDATEs is acceptable; the 24h window bounds the index
-// seek to the partial index request_telemetry_trace_idx selectivity.
+// wrote it from the gateway edge (pkg/gateway/request_telemetry_publisher.go).
+// Multiple trusted producers can contribute to one trace (for example,
+// gatewayd-internal service bindings and outboundd provider calls), so merge
+// by span identity instead of allowing a later writer to erase earlier spans.
+// Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
 // $N::jsonb cast is load-bearing — without it sqlc binds as text and
 // Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 //

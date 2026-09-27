@@ -87,6 +87,14 @@ export type UpdateAppRequest = {
    */
   request_timeout_s?: number | null;
   /**
+   * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
+   */
+  request_rate_limit_rps?: number | null;
+  /**
+   * Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
+   */
+  request_rate_limit_burst?: number | null;
+  /**
    * Full replacement of the service replica policy. Omit for no change.
    */
   service_replicas?: ServiceReplicas;
