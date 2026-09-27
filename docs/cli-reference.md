@@ -556,9 +556,23 @@ Connect a third-party service (github | repo OWNER/NAME)
 
 Connect a GitHub account for repo deploys
 
+Examples:
+
+```sh
+gregale connect github
+```
+
 ### connect repo
 
 Open the dashboard wizard to bind &lt;owner&gt;/&lt;name&gt; to a Gregale app
+
+`gregale connect repo <owner>/<name>`
+
+Examples:
+
+```sh
+gregale connect repo acme/my-api
+```
 
 
 ## github
@@ -571,17 +585,43 @@ Manage an app&#39;s GitHub installation and repository binding
 
 Show the GitHub connection health for &lt;slug&gt;
 
+`gregale github status <slug>`
+
+Examples:
+
+```sh
+gregale github status my-api
+```
+
 ### github sync
 
 Reconcile repository access with GitHub
+
+`gregale github sync <slug>`
+
+Examples:
+
+```sh
+gregale github sync my-api
+```
 
 ### github repos
 
 List repositories visible to the connected GitHub installation for &lt;slug&gt;
 
+`gregale github repos <slug>`
+
+Examples:
+
+```sh
+gregale github repos my-api
+```
+
 ### github bind
 
 Bind &lt;slug&gt; to a visible GitHub repository
+
+`gregale github bind <slug> [--installation-id <ID>] --repo <OWNER/NAME> [--branch <BRANCH>] [--deploy-branches <MAPPINGS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -590,9 +630,17 @@ Bind &lt;slug&gt; to a visible GitHub repository
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
+Examples:
+
+```sh
+gregale github bind my-api --repo acme/my-api --branch main
+```
+
 ### github setup
 
 Bind GitHub, configure previews, and write an Actions workflow
+
+`gregale github setup <slug> [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -610,9 +658,18 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--dry-run` | show the workflow without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
+Examples:
+
+```sh
+gregale github setup my-api --repo acme/my-api --dry-run
+gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72
+```
+
 ### github disconnect
 
 Remove the app&#39;s GitHub repository binding
+
+`gregale github disconnect <slug> [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1445,6 +1502,13 @@ Create and deploy a pull-request preview from a GitHub ref
 | `--idempotency-key <KEY>` | stable retry key |  |
 | `--open` | open the preview URL after a successful create |  |
 
+Examples:
+
+```sh
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait
+```
+
 ### preview list
 
 List pull-request and developer previews (defaults to the linked app)
@@ -1453,13 +1517,30 @@ List pull-request and developer previews (defaults to the linked app)
 |---|---|---|
 | `--app <slug>` | parent app slug |  |
 
+Examples:
+
+```sh
+gregale preview list --app my-api
+gregale preview list
+```
+
 ### preview show
 
 Inspect a preview and its latest deployment
 
+`gregale preview show <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview show pr-42-my-api
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
+
+`gregale preview wait <preview-slug> [--progress] [--open] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1467,9 +1548,23 @@ Wait for a preview deployment to become ready
 | `--open` | open the preview URL after it becomes ready |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
 
+Examples:
+
+```sh
+gregale preview wait pr-42-my-api --progress --open
+```
+
 ### preview destroy
 
-Tear down a preview app (POST /v1/preview/{slug}/destroy)
+Tear down a preview app
+
+`gregale preview destroy <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview destroy pr-42-my-api
+```
 
 
 ## platform-tenants

@@ -561,13 +561,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "connect",
 		Short:   "Connect a third-party service (github | repo OWNER/NAME)",
 		Subcommands: []cliSub{
-			{Name: "github", Short: "Connect a GitHub account for repo deploys"},
+			{Name: "github", Short: "Connect a GitHub account for repo deploys", Examples: []string{"gregale connect github"}},
 			// Issue #961 / Mega-B PR-1: `connect repo <owner>/<name>`
 			// opens the dashboard's /dashboard/apps/new?repo=... wizard
 			// (PR-3 wires the server side). The CLI stays out of the
 			// OAuth dance — the cookie-session dashboard is the
 			// install-token trust root.
-			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app"},
+			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app", Examples: []string{"gregale connect repo acme/my-api"}, Positionals: []string{"<owner>/<name>"}},
 		},
 	},
 	{
@@ -575,16 +575,16 @@ var cliCommands = []cliCommand{
 		DocSlug: "github",
 		Short:   "Manage an app's GitHub installation and repository binding",
 		Subcommands: []cliSub{
-			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
-			{Name: "sync", Short: "Reconcile repository access with GitHub"},
-			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>"},
-			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
+			{Name: "status", Short: "Show the GitHub connection health for <slug>", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Examples: []string{"gregale github bind my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "comma-separated branch=scope mappings", Value: "MAPPINGS"},
@@ -599,7 +599,7 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
-			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Flags: []cliFlag{
+			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "confirm removing the repository binding"},
 			}},
 		},
@@ -1105,7 +1105,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "preview",
 		Short:   "Manage preview environments for pull requests",
 		Subcommands: []cliSub{
-			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
+			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Examples: []string{"gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open", "gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Req: true, Value: "OWNER/NAME"},
 				{Name: "ref", Short: "branch, tag, or commit SHA", Req: true, Value: "REF"},
@@ -1117,16 +1117,16 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable retry key", Value: "KEY"},
 				{Name: "open", Short: "open the preview URL after a successful create"},
 			}},
-			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
+			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Examples: []string{"gregale preview list --app my-api", "gregale preview list"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
-			{Name: "show", Short: "Inspect a preview and its latest deployment"},
-			{Name: "wait", Short: "Wait for a preview deployment to become ready", Flags: []cliFlag{
+			{Name: "show", Short: "Inspect a preview and its latest deployment", Examples: []string{"gregale preview show pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
+			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
-			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
+			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
 		},
 	},
 	{
