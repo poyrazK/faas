@@ -159,6 +159,7 @@ from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
+from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_runtime import AppResponseRuntime
@@ -1398,6 +1399,17 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_policy_component_status import RuntimePolicyComponentStatus
+from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
+from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
+from .runtime_policy_node_status import RuntimePolicyNodeStatus
+from .runtime_policy_node_status_scope import RuntimePolicyNodeStatusScope
+from .runtime_policy_node_status_state import RuntimePolicyNodeStatusState
+from .runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
+from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusScope
+from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
+from .runtime_policy_status_response import RuntimePolicyStatusResponse
+from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
@@ -1858,6 +1870,7 @@ __all__ = (
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
+    "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
     "AppResponseRuntime",
@@ -3037,6 +3050,17 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimePolicyComponentStatus",
+    "RuntimePolicyComponentStatusScope",
+    "RuntimePolicyComponentStatusState",
+    "RuntimePolicyNodeStatus",
+    "RuntimePolicyNodeStatusScope",
+    "RuntimePolicyNodeStatusState",
+    "RuntimePolicySchedulerStatus",
+    "RuntimePolicySchedulerStatusScope",
+    "RuntimePolicySchedulerStatusState",
+    "RuntimePolicyStatusResponse",
+    "RuntimePolicyStatusResponseState",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",

@@ -60,6 +60,10 @@ export type AppResponse = {
    */
   status: 'active' | 'evicted_cold' | 'deleted' | 'undeployed';
   /**
+   * Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from the app lifecycle status and does not assert that a historical artifact is safe to restore.
+   */
+  deployment_availability?: 'live' | 'no_live_deployment';
+  /**
    * Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window.
    */
   build_cache_hit_rate_pct: number;

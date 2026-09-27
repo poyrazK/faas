@@ -108,3 +108,55 @@ func TestMemStoreListLatestDeploymentPerAppEmpty(t *testing.T) {
 		t.Fatalf("latest map = %#v, want non-nil empty map", got)
 	}
 }
+
+func TestMemStoreListAppsWithLiveDeploymentIsScopedAndFiltersHistory(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "live-app-owned@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := store.CreateAccount(ctx, "live-app-foreign@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createApp := func(accountID, slug string) App {
+		t.Helper()
+		app, createErr := store.CreateApp(ctx, App{AccountID: accountID, Slug: slug, Type: AppTypeApp, Status: AppActive})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return app
+	}
+	createDeployment := func(appID, id string, status DeploymentStatus) {
+		t.Helper()
+		if _, createErr := store.CreateDeployment(ctx, Deployment{
+			ID: id, AppID: appID, ImageDigest: "sha256:" + id, Kind: DeploymentKindImage, Status: status,
+		}); createErr != nil {
+			t.Fatal(createErr)
+		}
+	}
+
+	liveApp := createApp(account.ID, "live-list-app")
+	createDeployment(liveApp.ID, "00000000-0000-0000-0000-000000000011", DeployLive)
+	historicalApp := createApp(account.ID, "historical-list-app")
+	createDeployment(historicalApp.ID, "00000000-0000-0000-0000-000000000012", DeploySuperseded)
+	deletedApp := createApp(account.ID, "deleted-live-list-app")
+	createDeployment(deletedApp.ID, "00000000-0000-0000-0000-000000000013", DeployLive)
+	if err := store.DeleteApp(ctx, deletedApp.ID); err != nil {
+		t.Fatal(err)
+	}
+	foreignApp := createApp(foreign.ID, "foreign-live-list-app")
+	createDeployment(foreignApp.ID, "00000000-0000-0000-0000-000000000014", DeployLive)
+
+	got, err := store.ListAppsWithLiveDeployment(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[liveApp.ID] {
+		t.Fatalf("live app IDs = %#v, want only %q", got, liveApp.ID)
+	}
+	if got[historicalApp.ID] || got[deletedApp.ID] || got[foreignApp.ID] {
+		t.Fatalf("terminal, deleted, or foreign app was reported live: %#v", got)
+	}
+}

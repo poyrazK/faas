@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
+import type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';
 /**
  * Read-only promotion preview between two registered project environments.
  */
@@ -17,6 +18,14 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
   blocking_reasons?: Array<string>;
   config_diff: ProjectEnvironmentConfigDiffResponse;
   changes: Array<ProjectEnvironmentPromotionChange>;
+  /**
+   * Immutable active release graph snapshot for the source environment, when present.
+   */
+  from_release_set?: ProjectReleaseSetResponse;
+  /**
+   * Immutable active release graph snapshot for the target environment, when present.
+   */
+  to_release_set?: ProjectReleaseSetResponse;
   promotion_hash: string;
   promotion_token: string;
 };

@@ -732,6 +732,10 @@ export type { RotateManagedRealtimeAuthResponse } from './RotateManagedRealtimeA
 export type { RotateOrgAPIKeyRequest } from './RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './RouteRow.js';
+export type { RuntimePolicyComponentStatus } from './RuntimePolicyComponentStatus.js';
+export type { RuntimePolicyNodeStatus } from './RuntimePolicyNodeStatus.js';
+export type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatus.js';
+export type { RuntimePolicyStatusResponse } from './RuntimePolicyStatusResponse.js';
 export type { SLODuration } from './SLODuration.js';
 export type { ScalingPolicy } from './ScalingPolicy.js';
 export type { ScalingSchedule } from './ScalingSchedule.js';

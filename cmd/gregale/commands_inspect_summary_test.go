@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +195,32 @@ func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {
 	}
 	if strings.Contains(body, "No deployment was found") {
 		t.Errorf("deployment lookup failure was mistaken for an absent deployment; got:\n%s", body)
+	}
+}
+
+func TestInspectSummaryNoLiveDeploymentIsActionableDespiteHistory(t *testing.T) {
+	app, _ := inspectSummaryFixtures(t)
+	app.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+	historical := api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "failed"}
+	summary := buildInspectSummary(app, inspectSummaryInputs{Deployment: &historical})
+
+	var noLive, latestFailed bool
+	for _, recommendation := range summary.Recommendations {
+		noLive = noLive || recommendation.Code == "no_live_deployment"
+		latestFailed = latestFailed || recommendation.Code == "deployment_failed"
+	}
+	if !noLive {
+		t.Fatalf("recommendations omitted no-live diagnosis: %+v", summary.Recommendations)
+	}
+	if latestFailed {
+		t.Fatalf("historical failed row masked missing live deployment: %+v", summary.Recommendations)
+	}
+	var rendered bytes.Buffer
+	renderInspectSummaryHuman(&rendered, summary)
+	for _, want := range []string{"NO LIVE DEPLOYMENT", "gregale deploy", "verified"} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Errorf("inspect output missing %q:\n%s", want, rendered.String())
+		}
 	}
 }
 

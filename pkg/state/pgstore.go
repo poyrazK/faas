@@ -3746,6 +3746,10 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
+	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
+		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
+		return App{}, ErrInvalidArgument
+	}
 	manifestBytes := []byte(nil)
 	if p.Manifest != nil {
 		manifestBytes, _ = json.Marshal(*p.Manifest)
@@ -3916,7 +3920,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 			   visibility = case when $72 then $73::text else visibility end,
 			   warm_pool_size = case when $74 then $75 else warm_pool_size end,
 			   retry_policy = case when $76 then $77::jsonb else retry_policy end,
-			   security_policy = case when $78 then $79::text else security_policy end
+			   security_policy = case when $78 then $79::text else security_policy end,
+			   request_rate_limit_rps = case when $80 then nullif($81, 0) else request_rate_limit_rps end,
+			   request_rate_limit_burst = case when $82 then nullif($83, 0) else request_rate_limit_burst end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -4045,7 +4051,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.SetVisibility, string(api.NormalizeAppVisibility(derefAppVisibility(p.Visibility))),
 		p.SetWarmPoolSize, intOrZero(p.WarmPoolSize),
 		p.SetRetryPolicy, retryPolicyBytes,
-		p.SetSecurityPolicy, appSecurityPolicyValue(p.SecurityPolicy))
+		p.SetSecurityPolicy, appSecurityPolicyValue(p.SecurityPolicy),
+		p.SetRequestRateLimitRPS, intOrZero(p.RequestRateLimitRPS),
+		p.SetRequestRateLimitBurst, intOrZero(p.RequestRateLimitBurst))
 	return scanApp(row)
 }
 
@@ -7977,6 +7985,34 @@ func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID stri
 		latest[deployment.AppID] = deployment
 	}
 	return latest, nil
+}
+
+// ListAppsWithLiveDeployment returns the account's non-deleted app IDs that
+// have at least one current live deployment. The app list uses this bulk
+// projection to avoid N+1 LiveDeployment lookups.
+func (s *PgStore) ListAppsWithLiveDeployment(ctx context.Context, accountID string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct d.app_id::text
+		 from deployments d join apps a on a.id = d.app_id
+		 where a.account_id = $1 and a.status <> 'deleted' and d.status = 'live'`,
+		accountID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list apps with live deployments: %w", err)
+	}
+	defer rows.Close()
+
+	appIDs := make(map[string]bool)
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			return nil, fmt.Errorf("state: scan app with live deployment: %w", err)
+		}
+		appIDs[appID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list apps with live deployments: %w", err)
+	}
+	return appIDs, nil
 }
 
 func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
@@ -13433,9 +13469,10 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 // apps row before reading the count, so a burst of N parallel
 // inserts cannot race past the cap by N-1. Account-wide presets
 // skip the apps-row lock and rely on the per-account count alone.
-// The pg_notify trigger cors_presets_changed_notify (migration
-// 00428) fires AFTER the INSERT commits, so the gatewayd-internal
-// listener reloads the affected account's preset overlay.
+// The cors_presets_changed_notify trigger transactionally records the
+// account-scoped durable replay event and emits pg_notify as the low-latency
+// signal. The notification is delivered after commit; gatewayd also polls the
+// ledger so a missed notification cannot leave compiled CORS policy stale.
 func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -13536,9 +13573,9 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 // (account_id, COALESCE(app_id, ...), name) UNIQUE constraint is
 // the write-side defence against cross-tenant IDOR — a malicious
 // caller cannot UPDATE a preset owned by another account because
-// the WHERE clause pins account_id. The pg_notify trigger fires
-// AFTER the UPDATE commits so the gatewayd-internal listener
-// reloads the affected account's preset overlay.
+// the WHERE clause pins account_id. The trigger records the durable change
+// and emits pg_notify; gateways replay the ledger if notification delivery
+// is missed.
 func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
 	var appIDArg any
 	if p.AppID != "" {
@@ -13574,10 +13611,10 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 }
 
 // DeleteCorsPreset removes a preset by id (scoped to the caller's
-// account; cross-account deletes return ErrNotFound). The
-// pg_notify trigger fires AFTER the DELETE commits so any
-// gatewayd-internal compile cache that references this preset
-// via edge_rules.cors_preset_id is invalidated; the FK ON DELETE
+// account; cross-account deletes return ErrNotFound). The trigger records a
+// durable account-scoped change and emits pg_notify so gatewayd invalidates
+// any compile cache that references this preset via edge_rules.cors_preset_id;
+// the FK ON DELETE
 // SET NULL clears the rule's FK column atomically with the
 // preset's removal, so the next compile reads the preset as
 // missing and MergeCorsPresetIntoRule fails closed (ADR-129 D3).
@@ -23326,7 +23363,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&publicAuthIPAllowlistText,
 		&a.AutoscaleTargetRPS, &a.AutoscaleTargetCPUPct,
 		&a.ProjectID, &a.RootDir, &a.WorkloadName, &workloadClassStr, &a.StartCommand,
-		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
+		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.ScalingPolicyRevision, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
 		&a.WarmSnapshotEnabled, &a.WarmSnapshotMinRequests, &a.WarmSnapshotMinMs, &a.WarmPoolSize,
 		// Issue #475: per-app eviction tier. eviction_priority is
 		// NOT NULL DEFAULT 'best_effort' (migration 00135) so the
@@ -23430,7 +23467,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
-		&a.RetryPolicyJSON, &securityPolicy, &orgID); err != nil {
+		&a.RetryPolicyJSON, &securityPolicy, &orgID,
+		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -23526,7 +23564,7 @@ const appsSelectColumns = `
 	coalesce(autoscale_target_rps, 0), coalesce(autoscale_target_cpu_pct, 0),
 	coalesce(project_id::text, ''), coalesce(root_dir, ''), workload_name,
 	workload_class, coalesce(start_command, ''), streaming_enabled, require_signed,
-	scaling_policy, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
+	scaling_policy, scaling_policy_revision, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
 	reassigned_at, migrated_at,
 	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size,
 	eviction_priority,
@@ -23623,7 +23661,8 @@ const appsSelectColumns = `
 	-- Security posture enforcement is appended so existing positional
 	-- app columns remain stable for every caller of this projection.
 	coalesce(security_policy, 'off'),
-	coalesce(org_id::text, '')`
+	coalesce(org_id::text, ''),
+	request_rate_limit_rps, request_rate_limit_burst`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

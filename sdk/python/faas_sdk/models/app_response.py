@@ -11,6 +11,10 @@ from attrs import field as _attrs_field
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
 from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
+from ..models.app_response_deployment_availability import (
+    AppResponseDeploymentAvailability,
+    check_app_response_deployment_availability,
+)
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_preview_pr_state import AppResponsePreviewPrState, check_app_response_preview_pr_state
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
@@ -102,6 +106,9 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
     """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
+    """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
+    the app lifecycle status and does not assert that a historical artifact is safe to restore."""
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
     canonical_url: str | Unset = UNSET
@@ -295,6 +302,10 @@ class AppResponse:
             idle_timeout_s = self.idle_timeout_s
 
         request_timeout_s = self.request_timeout_s
+
+        deployment_availability: str | Unset = UNSET
+        if not isinstance(self.deployment_availability, Unset):
+            deployment_availability = self.deployment_availability
 
         deleted_at: None | str | Unset
         if isinstance(self.deleted_at, Unset):
@@ -517,6 +528,8 @@ class AppResponse:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if deployment_availability is not UNSET:
+            field_dict["deployment_availability"] = deployment_availability
         if deleted_at is not UNSET:
             field_dict["deleted_at"] = deleted_at
         if delete_grace_until is not UNSET:
@@ -694,6 +707,13 @@ class AppResponse:
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
+
+        _deployment_availability = d.pop("deployment_availability", UNSET)
+        deployment_availability: AppResponseDeploymentAvailability | Unset
+        if isinstance(_deployment_availability, Unset):
+            deployment_availability = UNSET
+        else:
+            deployment_availability = check_app_response_deployment_availability(_deployment_availability)
 
         def _parse_deleted_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -1023,6 +1043,7 @@ class AppResponse:
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            deployment_availability=deployment_availability,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,
             canonical_url=canonical_url,

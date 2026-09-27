@@ -2752,6 +2752,11 @@ type Store interface {
 	// non-deleted app the account owns. Newness is ordered by created_at and
 	// then deployment ID so equal timestamps have a stable winner.
 	ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error)
+	// ListAppsWithLiveDeployment returns the IDs of non-deleted apps owned by
+	// the account that currently have at least one live deployment. This is a
+	// bulk read for app-list projections; it must reflect LiveDeployment's
+	// status='live' contract without issuing one query per app.
+	ListAppsWithLiveDeployment(ctx context.Context, accountID string) (map[string]bool, error)
 	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
 	// by account export. The ID tie-breaker prevents rows with identical
 	// created_at values from being skipped at a page boundary.

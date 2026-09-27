@@ -48,6 +48,24 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 	}
 }
 
+func TestProjectsEnvironmentPromotionPreviewShowsReleaseGraphSnapshot(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","to_environment_protected":false,"approval_required":false,"can_promote":false,"blocking_reasons":["source environment has an active release set"],"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[]},"changes":[],"from_release_set":{"id":"release-123","active":true,"ttl_seconds":1800,"created_at":"2026-09-27T00:00:00Z","members":[{"app_id":"app-123","deployment_id":"dep-456"}]},"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentPromotionPreview([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{"source release set: release-123 (1 workloads)", "app-123 -> dep-456"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preview output missing %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestProjectsEnvironmentReleasesUsesEnvironmentRoute(t *testing.T) {
 	resetJSONOut(t)
 	const environmentURL = "https://env-stable.gregale.dev"

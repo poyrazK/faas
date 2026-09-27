@@ -461,6 +461,8 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	BlockingReasons        []string                             `json:"blocking_reasons,omitempty"`
 	ConfigDiff             ProjectEnvironmentConfigDiffResponse `json:"config_diff"`
 	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
+	FromReleaseSet         *ProjectReleaseSetResponse           `json:"from_release_set,omitempty"`
+	ToReleaseSet           *ProjectReleaseSetResponse           `json:"to_release_set,omitempty"`
 	PromotionHash          string                               `json:"promotion_hash"`
 	PromotionToken         string                               `json:"promotion_token"`
 }
