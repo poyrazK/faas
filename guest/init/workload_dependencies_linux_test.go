@@ -146,7 +146,7 @@ func TestSupervisorLifecycleHooksFireOnce(t *testing.T) {
 }
 
 func TestNewSupervisorFor_InitNeverRestarts(t *testing.T) {
-	sup := newSupervisorFor(workloadSpec{Name: "migrate", Type: "init", Essential: true}, nil, nil, nil, nil)
+	sup := newSupervisorFor(workloadSpec{Name: "migrate", Type: "init", Essential: true}, nil, nil, nil)
 	if sup.Max != 0 {
 		t.Fatalf("init Max = %d, want 0", sup.Max)
 	}

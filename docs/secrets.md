@@ -28,6 +28,9 @@ The companion gets only the app secrets it declares; it does not inherit the
 main workload's secret set. Each reference resolves in the deployment's scope and
 must name the same secret as its environment key. Missing grants fail the
 wake rather than silently creating an empty variable.
+Legacy sidecar images without a baked workload manifest preserve their command
+and non-sensitive `api_env` compatibility behavior, but do not inherit main
+workload app secrets.
 
 This is a per-workload delivery allowlist, not a security boundary between
 hostile workloads in one VM. Workloads share the guest kernel and privileged
