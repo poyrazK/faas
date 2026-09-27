@@ -10,7 +10,7 @@ export type CreatePlatformTenantAccessTokenResponse = {
   tenant_id: string;
   name: string;
   prefix: string;
-  scopes: Array<'platform_tenant:usage:read' | 'platform_tenant:statements:read'>;
+  scopes: Array<'platform_tenant:usage:read' | 'platform_tenant:statements:read' | 'platform_tenant:activation:read'>;
   created_at: string;
   expires_at: string;
   last_used_at?: string;

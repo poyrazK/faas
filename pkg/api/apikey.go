@@ -392,6 +392,7 @@ const (
 	// account-wide API-key scopes.
 	ScopePlatformTenantUsageRead      = "platform_tenant:usage:read"
 	ScopePlatformTenantStatementsRead = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead = "platform_tenant:activation:read"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -552,4 +553,5 @@ var (
 	// Tenant-self scopes are intentionally not satisfied by account admin keys.
 	ScopesPlatformTenantUsageReadSurface      = []string{ScopePlatformTenantUsageRead}
 	ScopesPlatformTenantStatementsReadSurface = []string{ScopePlatformTenantStatementsRead}
+	ScopesPlatformTenantActivationReadSurface = []string{ScopePlatformTenantActivationRead}
 )

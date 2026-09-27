@@ -1095,6 +1095,14 @@ from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardRespo
 from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_self_activation_hostname_response import PlatformTenantSelfActivationHostnameResponse
+from .platform_tenant_self_activation_response import PlatformTenantSelfActivationResponse
+from .platform_tenant_self_activation_response_status import PlatformTenantSelfActivationResponseStatus
+from .platform_tenant_self_activation_surface_response import PlatformTenantSelfActivationSurfaceResponse
+from .platform_tenant_self_activation_surface_response_cert_state import (
+    PlatformTenantSelfActivationSurfaceResponseCertState,
+)
+from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
@@ -2788,6 +2796,12 @@ __all__ = (
     "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantSelfActivationHostnameResponse",
+    "PlatformTenantSelfActivationResponse",
+    "PlatformTenantSelfActivationResponseStatus",
+    "PlatformTenantSelfActivationSurfaceResponse",
+    "PlatformTenantSelfActivationSurfaceResponseCertState",
+    "PlatformTenantSelfActivationSurfaceResponseStatus",
     "PlatformTenantSelfStatementListResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",

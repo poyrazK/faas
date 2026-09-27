@@ -114,6 +114,13 @@ func (c *Client) GetPlatformTenantSelfUsage(ctx context.Context, opts APIConsume
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetPlatformTenantSelfActivation reads the caller tenant's redacted,
+// cross-app activation snapshot using a tenant-bound activation:read token.
+func (c *Client) GetPlatformTenantSelfActivation(ctx context.Context) (PlatformTenantSelfActivationResponse, error) {
+	var out PlatformTenantSelfActivationResponse
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/activation", nil, &out)
+}
+
 // ListPlatformTenantSelfStatements returns only finalized statements owned by
 // the tenant represented by the caller's access token.
 func (c *Client) ListPlatformTenantSelfStatements(ctx context.Context, start, end time.Time, limit, offset int) (PlatformTenantSelfStatementListResponse, error) {

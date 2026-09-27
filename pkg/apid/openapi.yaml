@@ -4710,6 +4710,23 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/platform-tenant-self/activation:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfActivation
+      summary: Read this tenant's own redacted activation snapshot.
+      description: Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge tokens, and app IDs are omitted.
+      responses:
+        '200':
+          description: Current activation state for the caller's linked surfaces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfActivationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/platform-tenant-self/usage:
     get:
       tags: [platform-tenants]
@@ -23604,6 +23621,42 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantActivationSurfaceResponse' }
 
+    PlatformTenantSelfActivationHostnameResponse:
+      description: Hostname verification status for the tenant-bound downstream activation view; challenge material and raw errors are omitted.
+      type: object
+      required: [hostname, verified]
+      properties:
+        hostname: { type: string }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+
+    PlatformTenantSelfActivationSurfaceResponse:
+      description: Redacted state for one surface linked to the caller's platform tenant.
+      type: object
+      required: [id, name, status, cert_state, ready, hostnames]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [pending, active, suspended] }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: string, format: date-time }
+        ready: { type: boolean }
+        hostnames:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationHostnameResponse' }
+
+    PlatformTenantSelfActivationResponse:
+      description: Current read-only activation snapshot for the tenant bound to the bearer; ready requires every linked surface to be ready.
+      type: object
+      required: [status, enabled, ready, surfaces]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+        enabled: { type: boolean }
+        ready: { type: boolean }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationSurfaceResponse' }
+
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
       type: object
@@ -23804,7 +23857,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -23818,7 +23871,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -23835,7 +23888,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }

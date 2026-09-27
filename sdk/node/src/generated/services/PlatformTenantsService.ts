@@ -29,6 +29,7 @@ import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenan
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
+import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
@@ -1122,6 +1123,24 @@ export class PlatformTenantsService {
         'token_id': tokenId,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's own redacted activation snapshot.
+   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge tokens, and app IDs are omitted.
+   * @returns PlatformTenantSelfActivationResponse Current activation state for the caller's linked surfaces.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfActivation(): CancelablePromise<PlatformTenantSelfActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/activation',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
       },
     });
