@@ -33,6 +33,8 @@
 //   its payload/result projection.
 //   deliver a queue row through a first-class queue trigger without a manual
 //   receive call, and persist both invocation and trigger-record success.
+//   preserve actionable worker response diagnostics through queue-trigger
+//   retry exhaustion into invocation and queue dead-letter reads.
 //   deliver multiple queue rows without dropping messages.
 //   exhaust queue retries and expose the preserved row in dead-letter reads.
 //   hold a delayed task until scheduled_at, then deliver it through the real
@@ -925,6 +927,99 @@ func TestE2E_NormalPath_QueueTriggerPushesWithoutReceive(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("trigger record for queue invocation %q did not reach succeeded", sent.ID)
+}
+
+// TestE2E_NormalPath_QueuePushExhaustionPreservesResponseError ensures a
+// malformed worker response remains actionable after the queue trigger uses
+// its retry budget, both through invocation reads and the queue DLQ API.
+func TestE2E_NormalPath_QueuePushExhaustionPreservesResponseError(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-queue-push-error")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "queue-push-error")
+	f.vmmd.SetVersion(instance.ID, "queue-push-error")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:queue-push-error\n", 10*time.Second)
+	f.vmmd.SetResponse(instance.ID, e2etest.FakeResponse{
+		Status:  http.StatusOK,
+		Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    []byte(`{"batchItemFailures":"bad"}`),
+	})
+
+	maxAttempts := 2
+	createdBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/triggers", api.CreateTriggerRequest{
+			AppID:       f.app.ID,
+			Kind:        api.TriggerKindQueue,
+			Slug:        "queue-push-error",
+			Config:      json.RawMessage(`{"mode":"queue"}`),
+			MaxAttempts: &maxAttempts,
+		})
+	if statusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/triggers: status=%d body=%s", statusCode, createdBody)
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(createdBody, &trigger); err != nil {
+		t.Fatalf("decode trigger response: %v body=%s", err, createdBody)
+	}
+
+	payload := json.RawMessage(`{"diagnostic":"preserve-me"}`)
+	sentBody, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/apps/normal-queue-push-error/queues/send", api.QueueSendRequest{Payload: payload})
+	if statusCode != http.StatusCreated {
+		t.Fatalf("POST /queues/send: status=%d body=%s", statusCode, sentBody)
+	}
+	var sent api.QueueSendResponse
+	if err := json.Unmarshal(sentBody, &sent); err != nil {
+		t.Fatalf("decode queue send response: %v body=%s", err, sentBody)
+	}
+
+	before := f.vmmd.ForwardCount()
+	invocation := waitForNormalPathInvocationState(t, f.store, sent.ID, state.InvocationDeadLetter, 15*time.Second)
+	if invocation.Outcome == nil || *invocation.Outcome != state.OutcomeDeadLetter {
+		t.Fatalf("invocation outcome=%v, want dead_letter", invocation.Outcome)
+	}
+	assertResponseError := func(surface, lastError string) {
+		t.Helper()
+		for _, want := range []string{"response_malformed", "parseBatchFailures", "batchItemFailures must be an array"} {
+			if !strings.Contains(lastError, want) {
+				t.Fatalf("%s last_error=%q, want %q", surface, lastError, want)
+			}
+		}
+	}
+	assertResponseError("stored invocation", invocation.LastError)
+	if got := f.vmmd.ForwardCount() - before; got < maxAttempts {
+		t.Fatalf("worker attempts=%d, want retry exhaustion after %d attempts", got, maxAttempts)
+	}
+
+	invocationBody, statusCode := doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/invocations/"+sent.ID, nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("GET /v1/invocations/%s: status=%d body=%s", sent.ID, statusCode, invocationBody)
+	}
+	var invocationResponse api.Invocation
+	if err := json.Unmarshal(invocationBody, &invocationResponse); err != nil {
+		t.Fatalf("decode invocation response: %v body=%s", err, invocationBody)
+	}
+	assertResponseError("GET /v1/invocations", invocationResponse.LastError)
+
+	dlqBody, statusCode := doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/apps/normal-queue-push-error/queues/dead_letter", nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("GET /queues/dead_letter: status=%d body=%s", statusCode, dlqBody)
+	}
+	var dlqResponse api.QueueDeadLetterResponse
+	if err := json.Unmarshal(dlqBody, &dlqResponse); err != nil {
+		t.Fatalf("decode dead-letter response: %v body=%s", err, dlqBody)
+	}
+	for _, message := range dlqResponse.Messages {
+		if message.ID != sent.ID {
+			continue
+		}
+		assertResponseError("GET /queues/dead_letter", message.LastError)
+		return
+	}
+	t.Fatalf("queue invocation %q missing from dead-letter response: %s", sent.ID, dlqBody)
 }
 
 // TestE2E_NormalPath_QueueDeliversMultipleMessages catches queue worker

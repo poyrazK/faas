@@ -184,6 +184,10 @@ type terminalNacker interface {
 	NackTerminal(context.Context, sqlc.Trigger, []string, string) error
 }
 
+type detailedNacker interface {
+	NackWithDetails(context.Context, sqlc.Trigger, []string, string, map[string]string) error
+}
+
 // triggerWakeup is the channel-side wakeup signal the schedd's
 // pg_notify subscriber delivers on trigger-record mutations, trigger
 // mutations, and bound queue invocation_due payloads. The Loop's run()
@@ -629,6 +633,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	succeedItems := []string{}
 	retryItems := []string{}
 	dlqItems := []string{}
+	retryErrors := make(map[string]string)
 	_, isQueuePoller := poller.(*queuePoller)
 	queueRetry := func(c sqlc.TriggerRecord, itemID, lastError string) {
 		attempts := c.Attempts + 1
@@ -643,6 +648,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		retryIDs = append(retryIDs, c.ID.String())
 		retryItems = append(retryItems, itemID)
 		retryAttempts = append(retryAttempts, attempts)
+		retryErrors[itemID] = lastError
 	}
 
 	for _, c := range claimed {
@@ -657,7 +663,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			succeedIDs = append(succeedIDs, c.ID.String())
 			succeedItems = append(succeedItems, itemID)
 		case "retry", "broker_error":
-			queueRetry(c, itemID, status.Error)
+			queueRetry(c, itemID, triggerDispatchError(status))
 		case "dead_letter":
 			dlqIDs = append(dlqIDs, c.ID.String())
 			dlqItems = append(dlqItems, itemID)
@@ -671,9 +677,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			// when the gateway didn't classify.
 			reason := classifyDLQReason(status.Code, status.Error)
 			dlqReasons = append(dlqReasons, reason)
-			dlqErrors = append(dlqErrors, status.Error)
+			lastError := triggerDispatchError(status)
+			dlqErrors = append(dlqErrors, lastError)
 		default:
-			queueRetry(c, itemID, status.Error)
+			queueRetry(c, itemID, triggerDispatchError(status))
 		}
 	}
 	// Record terminal dispositions and end-to-end consumer latency before
@@ -766,7 +773,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if err := poller.Nack(ctx, t, retryItems, triggerReasonBrokerError); err != nil {
+		if err := nackWithDetails(ctx, poller, t, retryItems, triggerReasonBrokerError, retryErrors); err != nil {
 			l.log.Warn("sched trigger tick: poller nack",
 				"trigger_id", t.ID.String(), "err", err)
 		}
@@ -817,21 +824,25 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		// durable DLQ reason, including when one batch contains both.
 		poisonItems := make([]string, 0, len(dlqItems))
 		maxAttemptItems := make([]string, 0, len(dlqItems))
+		poisonErrors := make(map[string]string)
+		maxAttemptErrors := make(map[string]string)
 		for i, item := range dlqItems {
 			if dlqReasons[i] == triggerReasonMaxAttempts {
 				maxAttemptItems = append(maxAttemptItems, item)
+				maxAttemptErrors[item] = dlqErrors[i]
 			} else {
 				poisonItems = append(poisonItems, item)
+				poisonErrors[item] = dlqErrors[i]
 			}
 		}
 		if len(poisonItems) > 0 {
-			if err := poller.Nack(ctx, t, poisonItems, triggerReasonPoisonRecord); err != nil {
+			if err := nackWithDetails(ctx, poller, t, poisonItems, triggerReasonPoisonRecord, poisonErrors); err != nil {
 				l.log.Warn("sched trigger tick: poller nack (dlq)",
 					"trigger_id", t.ID.String(), "err", err)
 			}
 		}
 		if len(maxAttemptItems) > 0 {
-			if err := poller.Nack(ctx, t, maxAttemptItems, triggerReasonMaxAttempts); err != nil {
+			if err := nackWithDetails(ctx, poller, t, maxAttemptItems, triggerReasonMaxAttempts, maxAttemptErrors); err != nil {
 				l.log.Warn("sched trigger tick: poller nack (max attempts)",
 					"trigger_id", t.ID.String(), "err", err)
 			}
@@ -880,6 +891,23 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 // A future PR can batch-encode and short-circuit Invoke() if a
 // target VM is already RUNNING; that change is out of scope
 // here.
+func nackWithDetails(ctx context.Context, poller triggerSource, trigger sqlc.Trigger, ids []string, reason string, details map[string]string) error {
+	if poller, ok := poller.(detailedNacker); ok {
+		return poller.NackWithDetails(ctx, trigger, ids, reason, details)
+	}
+	return poller.Nack(ctx, trigger, ids, reason)
+}
+
+func triggerDispatchError(result triggerDispatchResult) string {
+	if result.Code == "" {
+		return result.Error
+	}
+	if result.Error == "" {
+		return result.Code
+	}
+	return result.Code + ": " + result.Error
+}
+
 func closeBatch(records []SourceRecord, sizeMax, byteCap int) []SourceRecord {
 	if sizeMax <= 0 {
 		sizeMax = len(records)
