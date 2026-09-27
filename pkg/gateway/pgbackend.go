@@ -2310,17 +2310,20 @@ func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
 // state.GetCorsPresetByID. The compile path bakes the
 // preset's allow_origins / allow_methods / etc. into the
 // resolved EdgeRuleCORSResolved slice, so a preset edit
-// leaves stale resolved shapes in the LRU. Wholesale flush
-// matches ResetEdgeRules semantics; the per-account payload
-// is informational (the LRU is per-host keyed, not per-
-// account; per-account eviction would require a richer
-// key — see backend.go's handleInvalidation case for the
-// trade-off discussion). nil-safe.
+// leaves stale resolved shapes in the LRU. Also purge the
+// response cache: a cached response may carry CORS headers
+// produced by the prior policy. Wholesale flush matches
+// ResetEdgeRules semantics; the per-account payload is
+// informational (the LRU is per-host keyed, not per-account;
+// per-account eviction would require a richer key — see
+// backend.go's handleInvalidation case for the trade-off).
+// nil-safe.
 func (b *PGBackend) ResetCorsPresets(accountID string) {
 	if b == nil {
 		return
 	}
 	b.ResetEdgeRules()
+	b.InvalidateResponseCacheAll()
 }
 
 func (b *PGBackend) getApp(appID string) (App, bool) {
@@ -2380,6 +2383,29 @@ func (b *PGBackend) InvalidateResponseCacheByApp(appID string) {
 	b.refreshResponseCacheMetrics()
 }
 
+// PurgeResponseCacheByApp is the error-reporting variant used by the durable
+// explicit-purge path. Other invalidation callers retain their best-effort
+// contract, while a purge watermark advances only after both tiers succeed.
+func (b *PGBackend) PurgeResponseCacheByApp(appID string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateByAppStrict(appID)
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
+// PurgeResponseCacheAll performs a strict startup purge for unnamed single-box
+// gateways, which have no stable per-node cursor to resume after restart.
+func (b *PGBackend) PurgeResponseCacheAll() error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateAllStrict()
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
 // InvalidateResponseCacheByPath drops the matching cached paths for one app.
 // A nil cache is treated as an already-completed purge.
 func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error {
@@ -2387,9 +2413,7 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppPath(appID, pathGlob)
-	if err == nil {
-		b.refreshResponseCacheMetrics()
-	}
+	b.refreshResponseCacheMetrics()
 	return err
 }
 
@@ -2399,9 +2423,7 @@ func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppTag(appID, tag)
-	if err == nil {
-		b.refreshResponseCacheMetrics()
-	}
+	b.refreshResponseCacheMetrics()
 	return err
 }
 

@@ -484,6 +484,11 @@ type UpdateAppRequest struct {
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
+	// request token bucket without changing the deployment. Zero restores the
+	// plan default; positive values may lower, but never exceed, the plan cap.
+	RequestRateLimitRPS   *int `json:"request_rate_limit_rps,omitempty"`
+	RequestRateLimitBurst *int `json:"request_rate_limit_burst,omitempty"`
 	// RetryPolicy replaces the app-level invocation retry default. An
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`

@@ -943,6 +943,18 @@ func (l *Loop) Run(ctx context.Context) error {
 	if l.instStats != nil {
 		l.runInstanceStats(ctx)
 	}
+	// Scheduler policy is read directly from apps by the scale-up, target,
+	// floor, and reaper loops. Keep a durable observation watermark so policy
+	// status can tell that this schedd has loaded the latest revision. The
+	// periodic read repairs missed app_changed notifications and is separate
+	// from deployment lifecycle; it never creates or modifies a deployment.
+	var scalingPolicyObservationTick <-chan time.Time
+	if l.hasScalingPolicyObservationStore() {
+		t := time.NewTicker(state.AppScalingPolicyObservationInterval)
+		defer t.Stop()
+		scalingPolicyObservationTick = t.C
+		l.runScalingPolicyObservation(ctx)
+	}
 	// Scale-up trigger ticker (issue #169 / #172).
 	// Per-app reactive scale-up: every Interval() seconds, run
 	// the trigger's Tick so a hot RPS / CPU signal can pre-empt
@@ -1154,6 +1166,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDiskDrift(ctx)
 		case <-instStatsTick(instStatsT):
 			l.runInstanceStats(ctx)
+		case <-scalingPolicyObservationTick:
+			l.runScalingPolicyObservation(ctx)
 		case <-scaleupTick(scaleupT):
 			l.runScaleUp(ctx)
 		case <-targetsTick(targetsT):
@@ -1692,6 +1706,74 @@ func (l *Loop) runInstanceDivergence(ctx context.Context) {
 	}
 }
 
+func (l *Loop) hasScalingPolicyObservationStore() bool {
+	if l == nil || l.engine == nil {
+		return false
+	}
+	_, ok := l.engine.Store().(state.AppScalingPolicyConvergenceStore)
+	return ok
+}
+
+// runScalingPolicyObservation records the revisions in the app rows this
+// schedd can own. Scaling controllers continue to make decisions on their
+// existing cadence; this watermark reports that the scheduler has loaded the
+// runtime policy, not that a metric-driven replica target has been attained.
+func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
+	if l == nil || l.engine == nil {
+		return
+	}
+	store := l.engine.Store()
+	observer, ok := store.(state.AppScalingPolicyConvergenceStore)
+	if !ok {
+		return
+	}
+	ownerNodeID := l.engine.OwnerNodeID()
+	var apps []state.App
+	var err error
+	if ownerNodeID != "" {
+		apps, err = store.ListAppsByNodeID(ctx, ownerNodeID)
+	} else {
+		apps, err = store.ListAllApps(ctx)
+	}
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			l.log.Warn("scaling policy observation: list apps", "err", err)
+		}
+		return
+	}
+	for _, app := range apps {
+		if app.ScalingPolicyRevision <= 0 {
+			continue
+		}
+		if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, ownerNodeID, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
+			l.log.Warn("scaling policy observation: record app", "app", app.ID, "revision", app.ScalingPolicyRevision, "err", err)
+		}
+	}
+}
+
+func (l *Loop) observeAppScalingPolicy(ctx context.Context, appID string) {
+	if l == nil || l.engine == nil {
+		return
+	}
+	observer, ok := l.engine.Store().(state.AppScalingPolicyConvergenceStore)
+	if !ok {
+		return
+	}
+	app, err := l.engine.Store().AppByID(ctx, appID)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			l.log.Warn("scaling policy observation: load app", "app", appID, "err", err)
+		}
+		return
+	}
+	if app.ScalingPolicyRevision <= 0 {
+		return
+	}
+	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, l.engine.OwnerNodeID(), app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("scaling policy observation: record changed app", "app", app.ID, "revision", app.ScalingPolicyRevision, "err", err)
+	}
+}
+
 // runScaleUp dispatches one tick of the per-app reactive scale-up
 // trigger (issue #169 / #172). The tick runs asynchronously because
 // its optional Prometheus scrape can otherwise hold the scheduler loop
@@ -2029,6 +2111,10 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 					l.engine.ReconcileServiceApp(reconcileCtx, appID)
 					l.engine.ReconcileWorkerApp(reconcileCtx, appID)
 				}
+				// app_changed is a fast wake-up only. Read the current app row
+				// and acknowledge its durable revision; periodic observation
+				// repairs missed notifications after reconnects or restarts.
+				l.observeAppScalingPolicy(reconcileCtx, appID)
 				if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
 					l.log.Warn("sched: warm pool reconcile", "app", appID, "err", err)
 				}

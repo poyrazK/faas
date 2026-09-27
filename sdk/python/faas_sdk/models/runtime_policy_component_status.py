@@ -6,17 +6,25 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.runtime_policy_component_status_scope import (
+    RuntimePolicyComponentStatusScope,
+    check_runtime_policy_component_status_scope,
+)
 from ..models.runtime_policy_component_status_state import (
     RuntimePolicyComponentStatusState,
     check_runtime_policy_component_status_state,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RuntimePolicyComponentStatus")
 
 
 @_attrs_define
 class RuntimePolicyComponentStatus:
-    """Fresh serving-gateway application status for a policy ledger with its own revision sequence."""
+    """Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within
+    that component's ledger or filtered projection.
+
+    """
 
     desired_revision: int
     state: RuntimePolicyComponentStatusState
@@ -24,6 +32,7 @@ class RuntimePolicyComponentStatus:
     applied_gateways: int
     pending_gateways: int
     stale_gateways: int
+    scope: RuntimePolicyComponentStatusScope | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +48,10 @@ class RuntimePolicyComponentStatus:
 
         stale_gateways = self.stale_gateways
 
+        scope: str | Unset = UNSET
+        if not isinstance(self.scope, Unset):
+            scope = self.scope
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -51,6 +64,8 @@ class RuntimePolicyComponentStatus:
                 "stale_gateways": stale_gateways,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
 
         return field_dict
 
@@ -69,6 +84,13 @@ class RuntimePolicyComponentStatus:
 
         stale_gateways = d.pop("stale_gateways")
 
+        _scope = d.pop("scope", UNSET)
+        scope: RuntimePolicyComponentStatusScope | Unset
+        if isinstance(_scope, Unset):
+            scope = UNSET
+        else:
+            scope = check_runtime_policy_component_status_scope(_scope)
+
         runtime_policy_component_status = cls(
             desired_revision=desired_revision,
             state=state,
@@ -76,6 +98,7 @@ class RuntimePolicyComponentStatus:
             applied_gateways=applied_gateways,
             pending_gateways=pending_gateways,
             stale_gateways=stale_gateways,
+            scope=scope,
         )
 
         runtime_policy_component_status.additional_properties = d

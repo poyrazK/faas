@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -3675,6 +3676,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.Status == "" {
 		app.Status = AppActive
 	}
+	app.ScalingPolicyRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -3823,6 +3825,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	if app.Status == "" {
 		app.Status = AppActive
 	}
+	app.ScalingPolicyRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -4730,6 +4733,7 @@ func (m *MemStore) SetAppNodeID(_ context.Context, appID, nodeID string) error {
 		return ErrConflict
 	}
 	a.NodeID = nodeID
+	a.ScalingPolicyRevision++
 	m.apps[appID] = a
 	return nil
 }
@@ -4821,6 +4825,9 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	now := time.Now()
 	a.NodeID = toNodeID
+	if fromNodeID != toNodeID {
+		a.ScalingPolicyRevision++
+	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
 	return nil
@@ -5276,12 +5283,27 @@ func (m *MemStore) AuthDefaultFlippedAt(_ context.Context) (time.Time, error) {
 }
 
 func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (App, error) {
+	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
+		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
+		return App{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	if a.ScalingPolicyRevision <= 0 {
+		a.ScalingPolicyRevision = 1
+	}
+	oldScalingPolicy := a.ScalingPolicy
+	oldMinInstances := a.MinInstances
+	oldMaxConcurrency := a.MaxConcurrency
+	oldIdleTimeoutS := a.IdleTimeoutS
+	oldAutoscaleTargetRPS := a.AutoscaleTargetRPS
+	oldAutoscaleTargetCPUPct := a.AutoscaleTargetCPUPct
+	oldWorkloadClass := a.WorkloadClass
+	oldNodeID := a.NodeID
 	// ADR-119: cross-app unique-IP check. Mirrors the pgstore
 	// apps_static_egress_ip_key partial unique index. The
 	// index covers apps in the same account only (a future
@@ -5575,6 +5597,12 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			a.CORSDefaultOrigins = dst
 		}
 	}
+	if p.SetRequestRateLimitRPS {
+		a.RequestRateLimitRPS = positiveIntPointer(p.RequestRateLimitRPS)
+	}
+	if p.SetRequestRateLimitBurst {
+		a.RequestRateLimitBurst = positiveIntPointer(p.RequestRateLimitBurst)
+	}
 	// ADR-119: per-app static egress IP. SetStaticEgressIP
 	// distinguishes "don't touch" (false) from "explicit set or
 	// clear" (true). Apid gates the plan and the IPv4-only
@@ -5592,6 +5620,12 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			now := time.Now().UTC()
 			a.StaticEgressIPSetAt = &now
 		}
+	}
+	if a.MinInstances != oldMinInstances || a.MaxConcurrency != oldMaxConcurrency ||
+		a.IdleTimeoutS != oldIdleTimeoutS || a.AutoscaleTargetRPS != oldAutoscaleTargetRPS ||
+		a.AutoscaleTargetCPUPct != oldAutoscaleTargetCPUPct || !reflect.DeepEqual(a.ScalingPolicy, oldScalingPolicy) ||
+		a.WorkloadClass != oldWorkloadClass || a.NodeID != oldNodeID {
+		a.ScalingPolicyRevision++
 	}
 	m.apps[id] = a
 	if ramChanged {
@@ -5678,6 +5712,9 @@ func (m *MemStore) SetAppWorkloadClass(_ context.Context, appID string, class Wo
 	a, ok := m.apps[appID]
 	if !ok {
 		return App{}, ErrNotFound
+	}
+	if a.WorkloadClass != class {
+		a.ScalingPolicyRevision++
 	}
 	a.WorkloadClass = class
 	m.apps[appID] = a
@@ -17409,6 +17446,14 @@ func intOrZero(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+func positiveIntPointer(p *int) *int {
+	if p == nil || *p <= 0 {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // boolOrFalse is the *bool counterpart to intOrZero, used by both

@@ -908,12 +908,21 @@ type App struct {
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
+	// RequestRateLimitRPS and RequestRateLimitBurst are optional per-app
+	// overrides for the gateway-wide app bucket. Nil inherits the plan default.
+	RequestRateLimitRPS   *int
+	RequestRateLimitBurst *int
 	// MinInstances is the per-app floor the reaper honors when parking
 	// idle instances (ux_spec §6.5). 0 => scale to zero (default);
 	// >0 => keep at least this many RUNNING instances alive regardless
 	// of idle timeout. Pro/Scale only — the apid updateApp handler
 	// rejects Hobby/Free with 403 plan_min_instances_not_allowed.
 	MinInstances int
+	// ScalingPolicyRevision is the monotonic desired revision for the
+	// scheduler-owned scaling controls on this app. It changes when a
+	// scaling input or the owning scheduler node changes; schedulers
+	// acknowledge observing this revision without creating a deployment.
+	ScalingPolicyRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -5525,6 +5534,13 @@ type UpdateAppParams struct {
 	// matchOrigin matcher verbatim against this list.
 	CORSDefaultOrigins    *[]string
 	SetCORSDefaultOrigins bool
+	// Request-rate overrides are nullable in storage. A Set bit distinguishes
+	// an omitted PATCH from zero, which clears that dimension back to its plan
+	// default. Positive values have already been checked against the plan cap.
+	RequestRateLimitRPS      *int
+	SetRequestRateLimitRPS   bool
+	RequestRateLimitBurst    *int
+	SetRequestRateLimitBurst bool
 }
 
 // AppPublicAuthUpdate (issue #477 / ADR-079) is the

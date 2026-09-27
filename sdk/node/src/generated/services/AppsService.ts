@@ -210,14 +210,24 @@ export class AppsService {
     });
   }
   /**
-   * Check whether serving gateways have applied app-cache and traffic changes.
-   * Reports the latest durable app/traffic change and the serving gateway
-   * fleet's applied position. `active` requires every registered serving
-   * gateway to have a fresh observation at or beyond that revision. This
-   * attests gateway cache invalidation and traffic weights, not scheduler,
-   * VM, or guest-side policy convergence.
-   * `unverified` means no revision or no serving fleet can be observed.
-   * Other policy kinds are not yet included in this status.
+   * Check whether runtime policy changes have reached their serving consumers.
+   * Reports desired/applied positions for the gateway request envelope,
+   * gateway app-cache and traffic policy, edge rules, account CORS presets,
+   * explicit response-cache purges, app egress allowlists on nodes hosting
+   * live instances, and scheduler scaling-policy observation. The
+   * `request_policy` component covers app-row request settings such as
+   * request timeout and concurrency, and excludes deployment-traffic
+   * revisions. A response-cache purge is active only after every serving
+   * gateway has invalidated its local cache and optional shared tier. The
+   * top-level state and gateway counts remain the app-cache/traffic
+   * projection; use each named component for its own convergence state.
+   * `active` requires fresh observations from every relevant serving
+   * consumer. The egress allowlist is replayed from current app state by
+   * schedd if a notification is missed. Scheduler scaling `active` means
+   * the owning schedd loaded the policy, not that the replica target was
+   * reached. This does not attest host-level firewall policy or guest
+   * configuration.
+   * `unverified` means no revision or no relevant serving fleet can be observed.
    *
    * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
    * @throws ApiError
@@ -2289,8 +2299,10 @@ export class AppsService {
   }
   /**
    * Purge cached responses for an app.
-   * Requests a response-cache purge on every gateway and on the optional
-   * distributed cache tier. The optional path glob limits the purge to
+   * Records a durable response-cache purge request for every gateway and
+   * the optional distributed cache tier. Gateways replay missed requests;
+   * `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+   * The optional path glob limits the purge to
    * matching normalized request paths. The optional tag limits it to
    * responses carrying that Cache-Tag. Path and tag are mutually exclusive;
    * omit both to purge the complete app cache.

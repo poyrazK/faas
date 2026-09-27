@@ -191,6 +191,13 @@ func (s *stubVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
+// UpdateAppCPULimit is not used by the gateway request path. Return success so
+// this client stub satisfies the generated interface as vmmd gains runtime
+// policy RPCs.
+func (s *stubVmmdClient) UpdateAppCPULimit(context.Context, *vmmdpb.UpdateAppCPULimitRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
+}
+
 // UpdateEgressCircuit (ADR-201 §3) — the gateway hot path doesn't drive
 // circuit pushes; schedd's egress-circuit loop does. Returns success so the
 // gRPC VmmdClient interface stays satisfied. Mirrors UpdateEgressAllowlist.

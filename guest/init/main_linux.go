@@ -203,6 +203,7 @@ func boot() error {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
 			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			updateMainWorkloadCPULimit,
 		); err != nil {
 			slog.Default().Warn("vsock resume listener unavailable", "err", err)
 		}

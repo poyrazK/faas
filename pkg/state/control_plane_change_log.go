@@ -100,6 +100,19 @@ func (s *PgStore) PruneControlPlaneChangeLog(ctx context.Context, before time.Ti
 		        AND n.gateway_target_url IS NOT NULL
 		        AND btrim(n.gateway_target_url) <> ''
 		  ), 9223372036854775807::bigint)
+		  AND (
+		      NOT EXISTS (
+		          SELECT 1 FROM apps a
+		          WHERE a.id = control_plane_change_log.app_id
+		      )
+		      OR EXISTS (
+		          SELECT 1
+		          FROM control_plane_change_log newer
+		          WHERE newer.app_id = control_plane_change_log.app_id
+		            AND newer.resource_type = control_plane_change_log.resource_type
+		            AND newer.id > control_plane_change_log.id
+		      )
+		  )
 	`, before.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("state: prune control-plane change log: %w", err)

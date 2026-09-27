@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1294,6 +1295,43 @@ func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec,
 	return nil
 }
 
+// UpdateCPULimit changes the aggregate Firecracker cgroup ceiling for a live
+// app VM. The VMM lock serializes this write with Kill and the startup-boost
+// tail; canceling that tail prevents its captured boot-time quota from
+// overwriting a newer runtime policy after this method returns.
+func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: update CPU limit: empty instance")
+	}
+	if l.IsBuilder || !l.Plan.Valid() {
+		return fmt.Errorf("vmm: update CPU limit: invalid app lease for instance %s", l.Instance)
+	}
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
+	}
+	// Only disarm the startup tail after the live write succeeds. If the
+	// cgroup write fails, leave its callback armed so it can still restore
+	// the previous configured quota instead of leaving the temporary startup
+	// allowance in place indefinitely.
+	if tail := v.cpuBoostTails[l.Instance]; tail != nil {
+		if tail.timer != nil {
+			tail.timer.Stop()
+		}
+		delete(v.cpuBoostTails, l.Instance)
+	}
+	return nil
+}
+
 // scheduleStartupCPUBoostTail keeps the bounded startup allowance in place
 // after readiness and restores the configured quota asynchronously. The
 // callback is owned by this vmmd process and canceled by Kill, so wake
@@ -2054,6 +2092,9 @@ const extensionHookDialDeadline = extension.DefaultTimeout
 
 const extensionHookMaxBodyBytes = extension.MaxEventBytes
 
+const appCPULimitHookMsgType = runtimepolicyproto.AppCPULimitMessageType
+const appCPULimitHookMaxBodyBytes = runtimepolicyproto.AppCPULimitMaxBodyBytes
+
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
 // VsockResumePort.
@@ -2354,6 +2395,92 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 		case <-timer.C:
 		}
 	}
+}
+
+// UpdateAppWorkloadCPULimit updates the main workload's guest cgroup for a
+// multi-workload app. The host parent cgroup remains the aggregate app ceiling;
+// this guest leaf update removes the old boot-time duplicate as a limiting
+// factor when the app ceiling is raised.
+func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	if v == nil || l.Instance == "" || v.chrootBase == "" {
+		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
+	}
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("vmm: update guest app CPU limit: invalid cpu_millicores %d", cpuMillicores)
+	}
+	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: cpuMillicores})
+	if err != nil {
+		return fmt.Errorf("vmm: marshal app CPU policy: %w", err)
+	}
+	if len(body) == 0 || len(body) > appCPULimitHookMaxBodyBytes {
+		return fmt.Errorf("vmm: app CPU policy body %d bytes exceeds %d", len(body), appCPULimitHookMaxBodyBytes)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, resumeHookDialDeadline)
+	defer cancel()
+	sock := v.vsockUDSSock(l.Instance)
+	var lastErr error
+	for {
+		if err := callCtx.Err(); err != nil {
+			if lastErr != nil {
+				return fmt.Errorf("vmm: app CPU policy dial vsock uds %s: %w", sock, lastErr)
+			}
+			return fmt.Errorf("vmm: app CPU policy dial vsock uds %s: %w", sock, err)
+		}
+		conn, dialErr := net.DialTimeout("unix", sock, 20*time.Millisecond)
+		if dialErr != nil {
+			lastErr = dialErr
+		} else {
+			stopClose := context.AfterFunc(callCtx, func() { _ = conn.Close() })
+			_ = conn.SetDeadline(time.Now().Add(resumeHookDialDeadline))
+			connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
+			if _, err = conn.Write([]byte(connectCmd)); err == nil {
+				var connectAck string
+				connectAck, err = readConnectAck(conn)
+				if err == nil && connectAck == "OK" {
+					msg := make([]byte, 8+len(body))
+					binary.BigEndian.PutUint32(msg[:4], appCPULimitHookMsgType)
+					binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+					copy(msg[8:], body)
+					err = writeVMMControlFrame(conn, msg)
+					if err == nil {
+						ack := []byte{0}
+						_, err = io.ReadFull(conn, ack)
+						if err == nil {
+							stopClose()
+							_ = conn.Close()
+							if ack[0] == 0 {
+								return nil
+							}
+							return fmt.Errorf("vmm: guest rejected app CPU policy (ack=%d)", ack[0])
+						}
+					}
+				}
+			}
+			lastErr = err
+			stopClose()
+			_ = conn.Close()
+		}
+		timer := time.NewTimer(resumeHookDialStep)
+		select {
+		case <-callCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func writeVMMControlFrame(w io.Writer, payload []byte) error {
+	for len(payload) > 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrUnexpectedEOF
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 // SendStatelessAdvisory is the host-side receiver for one batch

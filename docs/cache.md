@@ -80,8 +80,13 @@ Tags are case-insensitive ASCII identifiers using letters, digits, `-`, `_`,
 `.`, `:`, or `/`. A response may have up to 32 distinct tags, each at most 128
 bytes, in at most 2 KiB of `Cache-Tag` header values. Invalid tags make the
 response ineligible for caching. `--tag` and `--path` are mutually exclusive.
-The purge request is asynchronous: a successful command means the gateways
-were notified, not that every gateway has already evicted the entry.
+The purge request is asynchronous and durable. A successful command records
+the request; gateways apply it from a replayable ledger, so a missed
+notification does not strand stale entries. Check
+`GET /v1/apps/{slug}/policy/status` and its `response_cache` component to see
+whether every serving gateway has invalidated its local cache and optional
+shared Redis tier. `active` means the purge was applied; `pending` means at
+least one gateway is behind or its shared-cache invalidation failed.
 
 Rule changes and deployments also invalidate affected app entries. Purges
 apply to the local gateway caches and, when configured, the shared Redis tier.

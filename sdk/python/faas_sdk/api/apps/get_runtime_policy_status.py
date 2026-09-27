@@ -85,15 +85,25 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
 ) -> Response[Problem | RuntimePolicyStatusResponse]:
-    """Check whether serving gateways have applied app-cache and traffic changes.
+    """Check whether runtime policy changes have reached their serving consumers.
 
-     Reports the latest durable app/traffic change and the serving gateway
-    fleet's applied position. `active` requires every registered serving
-    gateway to have a fresh observation at or beyond that revision. This
-    attests gateway cache invalidation and traffic weights, not scheduler,
-    VM, or guest-side policy convergence.
-    `unverified` means no revision or no serving fleet can be observed.
-    Other policy kinds are not yet included in this status.
+     Reports desired/applied positions for the gateway request envelope,
+    gateway app-cache and traffic policy, edge rules, account CORS presets,
+    explicit response-cache purges, app egress allowlists on nodes hosting
+    live instances, and scheduler scaling-policy observation. The
+    `request_policy` component covers app-row request settings such as
+    request timeout and concurrency, and excludes deployment-traffic
+    revisions. A response-cache purge is active only after every serving
+    gateway has invalidated its local cache and optional shared tier. The
+    top-level state and gateway counts remain the app-cache/traffic
+    projection; use each named component for its own convergence state.
+    `active` requires fresh observations from every relevant serving
+    consumer. The egress allowlist is replayed from current app state by
+    schedd if a notification is missed. Scheduler scaling `active` means
+    the owning schedd loaded the policy, not that the replica target was
+    reached. This does not attest host-level firewall policy or guest
+    configuration.
+    `unverified` means no revision or no relevant serving fleet can be observed.
 
     Args:
         slug (str):
@@ -125,15 +135,25 @@ def sync(
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
 ) -> Problem | RuntimePolicyStatusResponse | None:
-    """Check whether serving gateways have applied app-cache and traffic changes.
+    """Check whether runtime policy changes have reached their serving consumers.
 
-     Reports the latest durable app/traffic change and the serving gateway
-    fleet's applied position. `active` requires every registered serving
-    gateway to have a fresh observation at or beyond that revision. This
-    attests gateway cache invalidation and traffic weights, not scheduler,
-    VM, or guest-side policy convergence.
-    `unverified` means no revision or no serving fleet can be observed.
-    Other policy kinds are not yet included in this status.
+     Reports desired/applied positions for the gateway request envelope,
+    gateway app-cache and traffic policy, edge rules, account CORS presets,
+    explicit response-cache purges, app egress allowlists on nodes hosting
+    live instances, and scheduler scaling-policy observation. The
+    `request_policy` component covers app-row request settings such as
+    request timeout and concurrency, and excludes deployment-traffic
+    revisions. A response-cache purge is active only after every serving
+    gateway has invalidated its local cache and optional shared tier. The
+    top-level state and gateway counts remain the app-cache/traffic
+    projection; use each named component for its own convergence state.
+    `active` requires fresh observations from every relevant serving
+    consumer. The egress allowlist is replayed from current app state by
+    schedd if a notification is missed. Scheduler scaling `active` means
+    the owning schedd loaded the policy, not that the replica target was
+    reached. This does not attest host-level firewall policy or guest
+    configuration.
+    `unverified` means no revision or no relevant serving fleet can be observed.
 
     Args:
         slug (str):
@@ -160,15 +180,25 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
 ) -> Response[Problem | RuntimePolicyStatusResponse]:
-    """Check whether serving gateways have applied app-cache and traffic changes.
+    """Check whether runtime policy changes have reached their serving consumers.
 
-     Reports the latest durable app/traffic change and the serving gateway
-    fleet's applied position. `active` requires every registered serving
-    gateway to have a fresh observation at or beyond that revision. This
-    attests gateway cache invalidation and traffic weights, not scheduler,
-    VM, or guest-side policy convergence.
-    `unverified` means no revision or no serving fleet can be observed.
-    Other policy kinds are not yet included in this status.
+     Reports desired/applied positions for the gateway request envelope,
+    gateway app-cache and traffic policy, edge rules, account CORS presets,
+    explicit response-cache purges, app egress allowlists on nodes hosting
+    live instances, and scheduler scaling-policy observation. The
+    `request_policy` component covers app-row request settings such as
+    request timeout and concurrency, and excludes deployment-traffic
+    revisions. A response-cache purge is active only after every serving
+    gateway has invalidated its local cache and optional shared tier. The
+    top-level state and gateway counts remain the app-cache/traffic
+    projection; use each named component for its own convergence state.
+    `active` requires fresh observations from every relevant serving
+    consumer. The egress allowlist is replayed from current app state by
+    schedd if a notification is missed. Scheduler scaling `active` means
+    the owning schedd loaded the policy, not that the replica target was
+    reached. This does not attest host-level firewall policy or guest
+    configuration.
+    `unverified` means no revision or no relevant serving fleet can be observed.
 
     Args:
         slug (str):
@@ -198,15 +228,25 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
 ) -> Problem | RuntimePolicyStatusResponse | None:
-    """Check whether serving gateways have applied app-cache and traffic changes.
+    """Check whether runtime policy changes have reached their serving consumers.
 
-     Reports the latest durable app/traffic change and the serving gateway
-    fleet's applied position. `active` requires every registered serving
-    gateway to have a fresh observation at or beyond that revision. This
-    attests gateway cache invalidation and traffic weights, not scheduler,
-    VM, or guest-side policy convergence.
-    `unverified` means no revision or no serving fleet can be observed.
-    Other policy kinds are not yet included in this status.
+     Reports desired/applied positions for the gateway request envelope,
+    gateway app-cache and traffic policy, edge rules, account CORS presets,
+    explicit response-cache purges, app egress allowlists on nodes hosting
+    live instances, and scheduler scaling-policy observation. The
+    `request_policy` component covers app-row request settings such as
+    request timeout and concurrency, and excludes deployment-traffic
+    revisions. A response-cache purge is active only after every serving
+    gateway has invalidated its local cache and optional shared tier. The
+    top-level state and gateway counts remain the app-cache/traffic
+    projection; use each named component for its own convergence state.
+    `active` requires fresh observations from every relevant serving
+    consumer. The egress allowlist is replayed from current app state by
+    schedd if a notification is missed. Scheduler scaling `active` means
+    the owning schedd loaded the policy, not that the replica target was
+    reached. This does not attest host-level firewall policy or guest
+    configuration.
+    `unverified` means no revision or no relevant serving fleet can be observed.
 
     Args:
         slug (str):

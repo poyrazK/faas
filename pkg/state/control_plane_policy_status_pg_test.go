@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -48,6 +49,12 @@ func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 	if got := find(); got.LastChangeID != 0 {
 		t.Fatalf("unobserved node revision = %d, want 0", got.LastChangeID)
 	}
+	if err := store.UpsertGatewayResponseCachePurgeWatermark(ctx, node.Name, 7); err != nil {
+		t.Fatalf("upsert response-cache purge watermark: %v", err)
+	}
+	if got := find(); got.LastResponseCachePurgeID != 7 || got.ResponseCachePurgesObservedAt.Before(time.Now().Add(-time.Minute)) {
+		t.Fatalf("response-cache purge status = %+v; want fresh revision 7", got)
+	}
 	bootA, bootB := uuid.NewString(), uuid.NewString()
 	for _, revision := range []int64{5, 4} {
 		if err := store.UpsertGatewayControlPlaneWatermark(ctx, node.Name, bootA, revision); err != nil {
@@ -62,6 +69,70 @@ func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 	}
 	if got := find(); got.LastChangeID != 2 {
 		t.Fatalf("new-boot revision = %d, want reset to 2", got.LastChangeID)
+	}
+}
+
+func TestPgLatestAppRequestPolicyRevisionExcludesTrafficChanges(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	suffix := uuid.NewString()
+	acct, err := store.CreateAccount(ctx, "request-policy-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "request-policy-" + suffix[:8], Type: state.AppTypeApp, Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM control_plane_change_log WHERE app_id = $1`, app.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM apps WHERE id = $1`, app.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM control_plane_change_log WHERE app_id = $1`, app.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, acct.ID)
+	})
+	createdRevision, err := store.LatestAppRequestPolicyRevision(ctx, app.ID)
+	if err != nil || createdRevision <= 0 {
+		t.Fatalf("created app request-policy revision = %d, %v; want positive revision", createdRevision, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE apps SET max_concurrency = max_concurrency + 1 WHERE id = $1`, app.ID); err != nil {
+		t.Fatalf("update app request policy: %v", err)
+	}
+	updatedRevision, err := store.LatestAppRequestPolicyRevision(ctx, app.ID)
+	if err != nil || updatedRevision <= createdRevision {
+		t.Fatalf("updated app request-policy revision = %d, %v; want > %d", updatedRevision, err, createdRevision)
+	}
+	trafficResourceID := uuid.NewString()
+	var trafficRevision int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO control_plane_change_log (resource_type, resource_id, app_id, operation)
+		VALUES ('deployment_traffic', $1, $2, 'updated')
+		RETURNING id
+	`, trafficResourceID, app.ID).Scan(&trafficRevision); err != nil {
+		t.Fatalf("insert traffic change: %v", err)
+	}
+	got, err := store.LatestAppRequestPolicyRevision(ctx, app.ID)
+	if err != nil || got != updatedRevision || trafficRevision <= got {
+		t.Fatalf("request-policy revision after later traffic change = %d, %v; traffic=%d app=%d", got, err, trafficRevision, updatedRevision)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE control_plane_change_log SET created_at = now() - interval '40 days' WHERE app_id = $1`, app.ID); err != nil {
+		t.Fatalf("age app change history: %v", err)
+	}
+	if _, err := store.PruneControlPlaneChangeLog(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
+		t.Fatalf("prune app change history: %v", err)
+	}
+	got, err = store.LatestAppRequestPolicyRevision(ctx, app.ID)
+	if err != nil || got != updatedRevision {
+		t.Fatalf("request-policy revision after history pruning = %d, %v; want retained revision %d", got, err, updatedRevision)
+	}
+	got, err = store.LatestAppControlPlaneChangeID(ctx, app.ID)
+	if err != nil || got != trafficRevision {
+		t.Fatalf("latest app/traffic revision after history pruning = %d, %v; want retained traffic revision %d", got, err, trafficRevision)
 	}
 }
 

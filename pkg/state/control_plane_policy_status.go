@@ -11,21 +11,28 @@ import (
 // its most recent durable repair position. An epoch ObservedAt means that
 // gateway has not reported a position yet.
 type ServingGatewayControlPlaneState struct {
-	NodeName             string
-	LastChangeID         int64
-	ObservedAt           time.Time
-	LastEdgeRuleChangeID int64
-	EdgeRulesObservedAt  time.Time
+	NodeName                      string
+	LastChangeID                  int64
+	ObservedAt                    time.Time
+	LastEdgeRuleChangeID          int64
+	EdgeRulesObservedAt           time.Time
+	LastCorsPresetChangeID        int64
+	CorsPresetsObservedAt         time.Time
+	LastResponseCachePurgeID      int64
+	ResponseCachePurgesObservedAt time.Time
 }
 
 // ControlPlanePolicyStatusStore is additive to Store so in-memory test stores
 // need not implement PostgreSQL-only gateway observations.
 type ControlPlanePolicyStatusStore interface {
 	LatestAppControlPlaneChangeID(context.Context, string) (int64, error)
+	LatestAppRequestPolicyRevision(context.Context, string) (int64, error)
 	LatestAppEdgeRuleChangeID(context.Context, string) (int64, error)
+	LatestAccountCorsPresetChangeID(context.Context, string) (int64, error)
 	ListServingGatewayControlPlaneStates(context.Context) ([]ServingGatewayControlPlaneState, error)
 	UpsertGatewayControlPlaneWatermark(context.Context, string, string, int64) error
 	UpsertGatewayEdgeRuleWatermark(context.Context, string, string, int64) error
+	UpsertGatewayCorsPresetWatermark(context.Context, string, string, int64) error
 }
 
 var _ ControlPlanePolicyStatusStore = (*PgStore)(nil)
@@ -50,6 +57,27 @@ func (s *PgStore) LatestAppControlPlaneChangeID(ctx context.Context, appID strin
 	return id, nil
 }
 
+// LatestAppRequestPolicyRevision is the latest durable app-row revision read
+// by the gateway request path. It intentionally excludes deployment traffic
+// changes: those can lag independently while the request envelope is already
+// current. The gateway's app-cache watermark is the applied position because
+// replay invalidates its cached app projection before advancing that cursor.
+func (s *PgStore) LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, fmt.Errorf("state: request policy status has nil pool")
+	}
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(id), 0)
+		FROM control_plane_change_log
+		WHERE app_id = $1 AND resource_type = 'app'
+	`, appID).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("state: latest app request policy revision: %w", err)
+	}
+	return id, nil
+}
+
 // ListServingGatewayControlPlaneStates uses the same active compute-node
 // membership predicate as the edge-rule barrier. A missing watermark stays
 // visible with revision zero, so the API cannot silently call it active.
@@ -62,10 +90,16 @@ func (s *PgStore) ListServingGatewayControlPlaneStates(ctx context.Context) ([]S
 		       COALESCE(w.last_change_id, 0),
 	       COALESCE(w.observed_at, 'epoch'::timestamptz),
 	       COALESCE(e.last_change_id, 0),
-	       COALESCE(e.observed_at, 'epoch'::timestamptz)
+		       COALESCE(e.observed_at, 'epoch'::timestamptz),
+	       COALESCE(c.last_change_id, 0),
+	       COALESCE(c.observed_at, 'epoch'::timestamptz),
+	       COALESCE(r.last_change_id, 0),
+	       COALESCE(r.observed_at, 'epoch'::timestamptz)
 		FROM compute_nodes n
 		LEFT JOIN gateway_control_plane_watermarks w ON w.node_name = n.name
 		LEFT JOIN gateway_edge_rule_watermarks e ON e.node_name = n.name
+		LEFT JOIN gateway_cors_preset_watermarks c ON c.node_name = n.name
+		LEFT JOIN gateway_response_cache_purge_watermarks r ON r.node_name = n.name
 		WHERE n.active = true
 		  AND n.role IN ('compute-only', 'compute-node')
 		  AND n.gateway_target_url IS NOT NULL
@@ -80,7 +114,9 @@ func (s *PgStore) ListServingGatewayControlPlaneStates(ctx context.Context) ([]S
 	for rows.Next() {
 		var state ServingGatewayControlPlaneState
 		if err := rows.Scan(&state.NodeName, &state.LastChangeID, &state.ObservedAt,
-			&state.LastEdgeRuleChangeID, &state.EdgeRulesObservedAt); err != nil {
+			&state.LastEdgeRuleChangeID, &state.EdgeRulesObservedAt,
+			&state.LastCorsPresetChangeID, &state.CorsPresetsObservedAt,
+			&state.LastResponseCachePurgeID, &state.ResponseCachePurgesObservedAt); err != nil {
 			return nil, fmt.Errorf("state: scan serving gateway control-plane state: %w", err)
 		}
 		states = append(states, state)

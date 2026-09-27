@@ -3591,15 +3591,25 @@ paths:
     get:
       tags: [apps]
       operationId: getRuntimePolicyStatus
-      summary: Check whether serving gateways have applied app-cache and traffic changes.
+      summary: Check whether runtime policy changes have reached their serving consumers.
       description: |
-        Reports the latest durable app/traffic change and the serving gateway
-        fleet's applied position. `active` requires every registered serving
-        gateway to have a fresh observation at or beyond that revision. This
-        attests gateway cache invalidation and traffic weights, not scheduler,
-        VM, or guest-side policy convergence.
-        `unverified` means no revision or no serving fleet can be observed.
-        Other policy kinds are not yet included in this status.
+        Reports desired/applied positions for the gateway request envelope,
+        gateway app-cache and traffic policy, edge rules, account CORS presets,
+        explicit response-cache purges, app egress allowlists on nodes hosting
+        live instances, and scheduler scaling-policy observation. The
+        `request_policy` component covers app-row request settings such as
+        request timeout and concurrency, and excludes deployment-traffic
+        revisions. A response-cache purge is active only after every serving
+        gateway has invalidated its local cache and optional shared tier. The
+        top-level state and gateway counts remain the app-cache/traffic
+        projection; use each named component for its own convergence state.
+        `active` requires fresh observations from every relevant serving
+        consumer. The egress allowlist is replayed from current app state by
+        schedd if a notification is missed. Scheduler scaling `active` means
+        the owning schedd loaded the policy, not that the replica target was
+        reached. This does not attest host-level firewall policy or guest
+        configuration.
+        `unverified` means no revision or no relevant serving fleet can be observed.
       parameters:
         - name: wait
           in: query
@@ -7496,8 +7506,10 @@ paths:
       operationId: purgeAppCache
       summary: Purge cached responses for an app.
       description: |
-        Requests a response-cache purge on every gateway and on the optional
-        distributed cache tier. The optional path glob limits the purge to
+        Records a durable response-cache purge request for every gateway and
+        the optional distributed cache tier. Gateways replay missed requests;
+        `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+        The optional path glob limits the purge to
         matching normalized request paths. The optional tag limits it to
         responses carrying that Cache-Tag. Path and tag are mutually exclusive;
         omit both to purge the complete app cache.
@@ -7513,7 +7525,7 @@ paths:
           schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
           description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
-        '204': { description: Purge requested. }
+        '204': { description: Purge durably requested; check policy status for application. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -21484,8 +21496,8 @@ components:
         concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
-        app_request_rate_rps: { type: integer, description: "Per-app edge token-bucket refill rate, in requests per second." }
-        app_request_burst: { type: integer, description: "Per-app edge token-bucket burst capacity." }
+        app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
+        app_request_burst: { type: integer, description: "Effective per-app edge token-bucket burst capacity after any app-level runtime override." }
         account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
         request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
@@ -21543,31 +21555,64 @@ components:
       enum: [allow, deny]
 
     RuntimePolicyStatusResponse:
-      description: Fresh serving-gateway status for app-cache and deployment traffic changes. The edge_rules component reports its separate revision sequence.
+      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection; consumers use their existing acknowledged cursor.
       type: object
-      required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, edge_rules]
+      required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, request_policy, edge_rules, cors_presets, response_cache, egress_allowlist, cpu_limit, scheduler_scaling]
       properties:
         app_id: { type: string }
         desired_revision: { type: integer, format: int64, minimum: 0, description: Latest desired control-plane revision for app-cache and deployment traffic policy. }
         state: { type: string, enum: [active, pending, unverified] }
-        coverage: { type: array, items: { type: string }, example: [gateway_app_cache, deployment_traffic] }
+        coverage: { type: array, items: { type: string }, example: [gateway_app_cache, gateway_request_policy, deployment_traffic, response_cache_purge, app_egress_allowlist, app_cpu_limit, scheduler_scaling] }
         serving_gateways: { type: integer, minimum: 0 }
         applied_gateways: { type: integer, minimum: 0 }
         pending_gateways: { type: integer, minimum: 0 }
         stale_gateways: { type: integer, minimum: 0 }
+        request_policy: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
         edge_rules: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        cors_presets: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        response_cache: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        egress_allowlist: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
+        cpu_limit: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
+        scheduler_scaling: { $ref: '#/components/schemas/RuntimePolicySchedulerStatus' }
 
     RuntimePolicyComponentStatus:
-      description: Fresh serving-gateway application status for a policy ledger with its own revision sequence.
+      description: Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within that component's ledger or filtered projection.
       type: object
       required: [desired_revision, state, serving_gateways, applied_gateways, pending_gateways, stale_gateways]
       properties:
+        scope: { type: string, enum: [app, account] }
         desired_revision: { type: integer, format: int64, minimum: 0 }
         state: { type: string, enum: [active, pending, unverified] }
         serving_gateways: { type: integer, minimum: 0 }
         applied_gateways: { type: integer, minimum: 0 }
         pending_gateways: { type: integer, minimum: 0 }
         stale_gateways: { type: integer, minimum: 0 }
+
+    RuntimePolicyNodeStatus:
+      description: Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This shape is used by the egress_allowlist and cpu_limit components.
+      type: object
+      required: [desired_revision, state, serving_nodes, applied_nodes, pending_nodes, stale_nodes]
+      properties:
+        scope: { type: string, enum: [app] }
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        serving_nodes: { type: integer, minimum: 0 }
+        applied_nodes: { type: integer, minimum: 0 }
+        pending_nodes: { type: integer, minimum: 0 }
+        stale_nodes: { type: integer, minimum: 0 }
+
+    RuntimePolicySchedulerStatus:
+      description: Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded, not that a metric-driven replica target has been reached.
+      type: object
+      required: [scope, desired_revision, observed_revision, state, stale]
+      properties:
+        scope: { type: string, enum: [app] }
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        observed_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        scheduler_node_id: { type: string, description: Scheduler owner node when this app is sharded. }
+        observed_at: { type: [string, "null"], format: date-time }
+        stale: { type: boolean }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
@@ -23051,6 +23096,14 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        request_rate_limit_rps:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment."
+        request_rate_limit_burst:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment."
         service_replicas:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'

@@ -147,6 +147,10 @@ type App struct {
 	// Zero uses the type-aware plan default; positive values are validated by
 	// apid and still capped by the plan request-budget ceiling at the edge.
 	RequestTimeoutS int
+	// RequestRateLimitRPS and RequestRateLimitBurst optionally tighten the
+	// app-wide edge bucket. Zero uses the current plan default.
+	RequestRateLimitRPS   int
+	RequestRateLimitBurst int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -6137,7 +6141,7 @@ haveApp:
 	}
 
 	// Per-app rate limit (spec §4.1). Over-limit → 429.
-	if !deploymentSmoke && !h.limiter.Allow(r.Context(), app.ID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
+	if !deploymentSmoke && !h.limiter.AllowAppWithLimits(r.Context(), app.ID, app.Plan, app.RequestRateLimitRPS, app.RequestRateLimitBurst) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "app")
 		// 429 path: write the post-decrement bucket snapshot so

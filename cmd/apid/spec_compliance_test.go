@@ -70,7 +70,7 @@ const (
 	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
-	runtimePolicyFile             = "runtime_policy.go"             // app and traffic control-plane convergence status
+	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
 )
 
 // routeExclude lists server.go routes that are deliberately not in the

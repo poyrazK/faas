@@ -982,6 +982,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		maxInstances = a.ScalingPolicy.MaxInstances
 	}
 	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
 	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
@@ -989,13 +990,24 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
-		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
+		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
 	}
+}
+
+func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
+	rpsOverride, burstOverride := 0, 0
+	if a.RequestRateLimitRPS != nil {
+		rpsOverride = *a.RequestRateLimitRPS
+	}
+	if a.RequestRateLimitBurst != nil {
+		burstOverride = *a.RequestRateLimitBurst
+	}
+	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
 }
 
 func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {

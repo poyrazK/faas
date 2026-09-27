@@ -488,6 +488,10 @@ func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	panic("UpdateEgressAllowlist: not stubbed")
 }
 
+func (f *fakeVmmdClient) UpdateAppCPULimit(context.Context, *vmmdpb.UpdateAppCPULimitRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	panic("UpdateAppCPULimit: not stubbed")
+}
+
 // UpdateEgressCircuit (ADR-201 §3) — same posture as the sibling above: the
 // gateway hot path never pushes circuits, schedd's egress-circuit loop does,
 // so reaching this from a gateway test is a wiring bug worth failing loudly.
