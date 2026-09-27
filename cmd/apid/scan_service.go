@@ -916,6 +916,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		// Project apply admits builds through consumeAccountDeployRate
+		// directly, so it skipped the account gate admitAccountDeploy
+		// applies to every other deploy path (spec §4.7: past_due and
+		// later cannot deploy).
+		if !acct.MayDeploy() {
+			res.Error = "deploys are blocked until the outstanding payment is resolved"
+			out = append(out, res)
+			continue
+		}
 		workload := workloadByName[strings.ToLower(app.WorkloadName)]
 		kind := state.DeploymentKindTarball
 		if app.Manifest.BuildDockerfile != "" {
