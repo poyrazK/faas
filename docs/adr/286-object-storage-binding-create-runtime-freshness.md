@@ -1,4 +1,4 @@
-# ADR-283 · Runtime freshness for object-storage binding creation
+# ADR-286 · Runtime freshness for object-storage binding creation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

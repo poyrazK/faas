@@ -1,4 +1,4 @@
-# ADR-282 · Atomic object-storage binding creation
+# ADR-285 · Atomic object-storage binding creation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

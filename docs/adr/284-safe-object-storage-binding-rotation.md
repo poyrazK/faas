@@ -1,4 +1,4 @@
-# ADR-281 · Safe object-storage binding rotation
+# ADR-284 · Safe object-storage binding rotation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

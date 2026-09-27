@@ -1,4 +1,4 @@
-# ADR-284 · Atomic object-storage binding revocation
+# ADR-287 · Atomic object-storage binding revocation
 
 - **Status:** accepted
 - **Date:** 2026-09-27
