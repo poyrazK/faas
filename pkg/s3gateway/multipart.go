@@ -499,6 +499,7 @@ func multipartETag(parts []api.ObjectMultipartCompletedPart) string {
 		if err != nil || len(raw) != md5.Size {
 			return ""
 		}
+		// codeql[go/weak-sensitive-data-hashing] -- S3 multipart ETags require this MD5-of-part-digests identifier; it is not a security hash.
 		_, _ = digest.Write(raw)
 	}
 	if len(parts) == 0 {

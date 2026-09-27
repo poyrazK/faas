@@ -3896,6 +3896,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/policy/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRuntimePolicyStatus
+      summary: Check whether runtime policy changes have reached their serving consumers.
+      description: |
+        Reports desired/applied positions for the gateway request envelope,
+        gateway app-cache and traffic policy, edge rules, account CORS presets,
+        explicit response-cache purges, app egress allowlists on nodes hosting
+        live instances, and scheduler scaling-policy observation. The
+        `request_policy` component covers app-row request settings such as
+        request timeout and concurrency, and excludes deployment-traffic
+        revisions. A response-cache purge is active only after every serving
+        gateway has invalidated its local cache and optional shared tier. The
+        top-level state and gateway counts remain the app-cache/traffic
+        projection; use each named component for its own convergence state.
+        `active` requires fresh observations from every relevant serving
+        consumer. The egress allowlist is replayed from current app state by
+        schedd if a notification is missed. Scheduler scaling `active` means
+        the owning schedd loaded the policy, not that the replica target was
+        reached. This does not attest host-level firewall policy or guest
+        configuration.
+        `unverified` means no revision or no relevant serving fleet can be observed.
+      parameters:
+        - name: wait
+          in: query
+          description: Optional bounded wait for active state, up to 10s.
+          schema: { type: string, example: 5s }
+      responses:
+        '200':
+          description: Current application state; pending remains possible after wait expires.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimePolicyStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/platform-tenants:
     get:
       tags: [platform-tenants]
@@ -8286,8 +8327,10 @@ paths:
       operationId: purgeAppCache
       summary: Purge cached responses for an app.
       description: |
-        Requests a response-cache purge on every gateway and on the optional
-        distributed cache tier. The optional path glob limits the purge to
+        Records a durable response-cache purge request for every gateway and
+        the optional distributed cache tier. Gateways replay missed requests;
+        `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+        The optional path glob limits the purge to
         matching normalized request paths. The optional tag limits it to
         responses carrying that Cache-Tag. Path and tag are mutually exclusive;
         omit both to purge the complete app cache.
@@ -8303,7 +8346,7 @@ paths:
           schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
           description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
-        '204': { description: Purge requested. }
+        '204': { description: Purge durably requested; check policy status for application. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -13968,6 +14011,11 @@ paths:
         required: true
         description: Source environment whose live releases are compared with the target.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: sync_config
+        in: query
+        required: false
+        description: Opt in to copying the source's non-secret configuration atomically with the target release graph.
+        schema: { type: boolean, default: false }
     get:
       tags: [projects]
       operationId: getProjectEnvironmentPromotionPreview
@@ -13977,7 +14025,10 @@ paths:
         response includes non-secret configuration changes, live deployment
         identities, target protection state, and an opaque promotion token
         bound to those identities. It does not create deployments or audit
-        mutations.
+        mutations. Configuration remains target-scoped by default;
+        `sync_config=true` opts into applying the source's non-secret
+        configuration snapshot with the release graph, and is blocked unless
+        the target already has an active release graph for atomic cutover.
       responses:
         '200':
           description: Promotion preview and immutable promotion identity.
@@ -14017,7 +14068,8 @@ paths:
         issued for that exact promotion. After cutover, every target artifact
         is verified against its source release and target environment. A
         failed verification automatically rolls back the promotion. Target
-        configuration and secrets are never copied from the source environment.
+        configuration remains target-scoped unless the token was created with
+        `sync_config=true`; secrets are never copied from the source environment.
       requestBody:
         required: true
         content:
@@ -22836,8 +22888,8 @@ components:
         concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
-        app_request_rate_rps: { type: integer, description: "Per-app edge token-bucket refill rate, in requests per second." }
-        app_request_burst: { type: integer, description: "Per-app edge token-bucket burst capacity." }
+        app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
+        app_request_burst: { type: integer, description: "Effective per-app edge token-bucket burst capacity after any app-level runtime override." }
         account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
         request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
@@ -22947,6 +22999,66 @@ components:
       description: "Production target policy for internal service calls from preview apps. `allow` preserves existing behavior; `deny` rejects preview callers before waking the target."
       type: string
       enum: [allow, deny]
+
+    RuntimePolicyStatusResponse:
+      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection; consumers use their existing acknowledged cursor.
+      type: object
+      required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, request_policy, edge_rules, cors_presets, response_cache, egress_allowlist, cpu_limit, scheduler_scaling]
+      properties:
+        app_id: { type: string }
+        desired_revision: { type: integer, format: int64, minimum: 0, description: Latest desired control-plane revision for app-cache and deployment traffic policy. }
+        state: { type: string, enum: [active, pending, unverified] }
+        coverage: { type: array, items: { type: string }, example: [gateway_app_cache, gateway_request_policy, deployment_traffic, response_cache_purge, app_egress_allowlist, app_cpu_limit, scheduler_scaling] }
+        serving_gateways: { type: integer, minimum: 0 }
+        applied_gateways: { type: integer, minimum: 0 }
+        pending_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
+        request_policy: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        edge_rules: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        cors_presets: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        response_cache: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+        egress_allowlist: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
+        cpu_limit: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
+        scheduler_scaling: { $ref: '#/components/schemas/RuntimePolicySchedulerStatus' }
+
+    RuntimePolicyComponentStatus:
+      description: Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within that component's ledger or filtered projection.
+      type: object
+      required: [desired_revision, state, serving_gateways, applied_gateways, pending_gateways, stale_gateways]
+      properties:
+        scope: { type: string, enum: [app, account] }
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        serving_gateways: { type: integer, minimum: 0 }
+        applied_gateways: { type: integer, minimum: 0 }
+        pending_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
+
+    RuntimePolicyNodeStatus:
+      description: Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This shape is used by the egress_allowlist and cpu_limit components.
+      type: object
+      required: [desired_revision, state, serving_nodes, applied_nodes, pending_nodes, stale_nodes]
+      properties:
+        scope: { type: string, enum: [app] }
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        serving_nodes: { type: integer, minimum: 0 }
+        applied_nodes: { type: integer, minimum: 0 }
+        pending_nodes: { type: integer, minimum: 0 }
+        stale_nodes: { type: integer, minimum: 0 }
+
+    RuntimePolicySchedulerStatus:
+      description: Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded, not that a metric-driven replica target has been reached.
+      type: object
+      required: [scope, desired_revision, observed_revision, state, stale]
+      properties:
+        scope: { type: string, enum: [app] }
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        observed_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        scheduler_node_id: { type: string, description: Scheduler owner node when this app is sharded. }
+        observed_at: { type: [string, "null"], format: date-time }
+        stale: { type: boolean }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
@@ -24735,6 +24847,14 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        request_rate_limit_rps:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment."
+        request_rate_limit_burst:
+          type: [integer, "null"]
+          minimum: 0
+          description: "Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment."
         service_replicas:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
@@ -25892,7 +26012,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DeploymentHealthcheck'
             - type: 'null'
-          description: "Readiness-probe override. Persisted verbatim; the actual HTTP probe is a follow-up — today waitReady stays a bare TCP accept."
+          description: "Startup readiness-probe override echoed verbatim."
+        override_readiness_probe:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentReadinessProbe'
+            - type: 'null'
+          description: "Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted."
+        override_main_depends_on:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/WorkloadDependency' }
+          description: "Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."
         override_liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
@@ -27290,7 +27420,7 @@ components:
         duplicate: { type: boolean }
 
     CreateDeploymentRequest:
-      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
+      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
       type: object
       properties:
         image:
@@ -27300,7 +27430,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/CreateDeploymentOverrides'
             - type: 'null'
-          description: "Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image as-is."
+          description: "Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe, liveness_probe). nil/omitted = deploy the image as-is."
         # Issue #472 / ADR-054: per-deploy require_signed opt-in.
         # Only honoured when effective app signature enforcement is
         # already false (i.e. the customer is volunteering to gate
@@ -27412,10 +27542,9 @@ components:
 
     CreateDeploymentOverrides:
       description: |
-        Fargate-shaped deploy-time override object on `POST /v1/apps/{slug}/deployments`
-        (issue #460 / ADR-053). Field list is FROZEN — six fields, no more. Any extra
-        field on this object 400s the request. ADR-053 §Decision 1 documents the freeze;
-        the handler enforces it via `DisallowUnknownFields` on the JSON decoder.
+        Deploy-time override object on `POST /v1/apps/{slug}/deployments`
+        (issue #460 / ADR-053). Unknown fields 400 the request; each supported
+        field has an explicit persistence and runtime contract.
 
         - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
         - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
@@ -27427,8 +27556,11 @@ components:
         - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
           mixing the two surfaces.
         - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
-        - `healthcheck` is the readiness-probe shape; the actual HTTP probe ships
-          in a follow-up ADR.
+        - `healthcheck` configures startup readiness admission.
+        - `readiness_probe` is an optional recurring traffic gate, independent of
+          the one-shot startup check and VM liveness policy.
+        - `main_depends_on` gates the primary workload on named long-running
+          companions; init companions already run before the primary workload.
       type: object
       properties:
         entrypoint:
@@ -27460,7 +27592,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DeploymentHealthcheck'
             - type: 'null'
-          description: "Readiness-probe shape. Persisted today; the HTTP probe variant ships in a follow-up ADR."
+          description: "Startup readiness-probe shape. The selected action gates instance startup before it becomes available."
+        readiness_probe:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentReadinessProbe'
+            - type: 'null'
+          description: "Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing; successful probes restore it without restarting the VM."
+        main_depends_on:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/WorkloadDependency' }
+          description: "Companions that must reach the specified lifecycle condition before the primary workload starts. Targets must be declared long-running companions; init companions already gate startup."
         liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
@@ -27634,10 +27776,10 @@ components:
 
     DeploymentHealthcheck:
       description: |
-        Readiness-probe shape on the deploy-time override object (issue #460 /
+        Startup healthcheck shape on the deploy-time override object (issue #460 /
         ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
-        Check) selects the readiness action. The gRPC probe uses the app's
-        published port; an empty service checks overall server health.
+        Check) selects the startup admission action. The gRPC probe uses the
+        app's published port; an empty service checks overall server health.
 
         Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
         - Exactly one of `path` and `grpc` must be set.
@@ -27670,6 +27812,24 @@ components:
       description: "Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health."
       properties:
         service: { type: string, maxLength: 256, description: "Service passed to the health.v1 Check request; omit it to query the server rather than a named service." }
+
+    DeploymentReadinessProbe:
+      description: |
+        Continuous primary-app readiness policy. It is evaluated only after
+        startup readiness succeeds. Once `failure_threshold` consecutive checks
+        fail, the running instance is removed from request routing. A successful
+        check restores routing; readiness failures never restart the VM.
+
+        Defaults are period 5 seconds, timeout 2 seconds, and failure threshold
+        3. Zero means use the corresponding default. Exactly one of `path`
+        (HTTP) and `grpc` (standard gRPC health.v1 Check) is required.
+      type: object
+      properties:
+        path: { type: string, pattern: '^/', description: "HTTP path requested on the app's runtime port; must start with `/`. Set exactly one of path or grpc." }
+        grpc: { $ref: '#/components/schemas/DeploymentGRPCHealthcheck', description: "Use standard gRPC health.v1 Check. Set exactly one of path or grpc." }
+        period_s: { type: integer, minimum: 0, maximum: 60, description: "Probe interval in seconds; 0 = default (5)." }
+        timeout_s: { type: integer, minimum: 0, maximum: 5, description: "Per-probe timeout in seconds; 0 = default (2)." }
+        failure_threshold: { type: integer, minimum: 0, maximum: 10, description: "Consecutive failures before traffic is withdrawn; 0 = default (3). A passing probe immediately restores routing." }
 
     DeploymentLivenessProbe:
       description: |
@@ -28104,12 +28264,13 @@ components:
     # ─── Domains ──────────────────────────────────────────────────────────
 
     CustomDomainResponse:
-      description: "A custom domain binding: domain string, target app, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface."
+      description: "A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface."
       type: object
       required: [domain, app_id, verified]
       properties:
         domain: { type: string , example: "app.example.com"}
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        environment: { type: string, description: "Project environment that owns the route; omitted for legacy application-wide domains." }
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
@@ -28123,12 +28284,13 @@ components:
         dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
 
     CreateCustomDomainRequest:
-      description: "Bind a custom domain to an app."
+      description: "Bind a custom domain to an app, optionally routing it to one project environment."
       type: object
       required: [domain, app_id]
       properties:
         domain: { type: string , example: "app.example.com"}
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Optional project environment slug. When set, traffic follows only that environment's active release graph." }
 
     DomainDoctorReport:
       description: "Per-domain doctor report (ADR-120). Carries 5 Render-style checks (dns_record, points_to_gregale, tls_certificate, caa_permits, ipv6_conflict) plus the durable row's app_id and observed_at. `stale:true` means the cached observation row was older than FAAS_DOMAIN_DOCTOR_TTL_SECONDS (default 300) when the handler ran a synchronous re-probe."
@@ -29312,10 +29474,18 @@ components:
           type: array
           items: { type: string }
 
+    ProjectEnvironmentDomainResponse:
+      description: Custom hostname routed to one workload in this project environment.
+      type: object
+      required: [domain, verified]
+      properties:
+        domain: { type: string }
+        verified: { type: boolean }
+
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies]
       properties:
         app_id: { type: string, format: uuid }
         workload_slug: { type: string }
@@ -29330,6 +29500,9 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+        domains:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
 
@@ -29481,10 +29654,23 @@ components:
         before: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
         after: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
 
-    ProjectEnvironmentWorkloadDiffResponse:
-      description: Release, variable, secret, and binding changes for one workload.
+    ProjectEnvironmentDomainDiffResponse:
+      description: Environment-owned hostname changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
+      required: [kind, before, after]
+      properties:
+        kind: { type: string, enum: [unchanged, changed] }
+        before:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
+        after:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
+
+    ProjectEnvironmentWorkloadDiffResponse:
+      description: Release, variable, secret, binding, and domain changes for one workload.
+      type: object
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -29498,6 +29684,7 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
+        domains: { $ref: '#/components/schemas/ProjectEnvironmentDomainDiffResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
 
@@ -29613,11 +29800,14 @@ components:
     ProjectEnvironmentPromotionPreviewResponse:
       description: Read-only promotion preview between two registered project environments.
       type: object
-      required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, promotion_hash, promotion_token]
+      required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, release_graph_mode, promotion_hash, promotion_token]
       properties:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether this exact promotion will copy the source's non-secret configuration to the target.
         to_environment_protected: { type: boolean }
         approval_required: { type: boolean }
         can_promote: { type: boolean }
@@ -29636,6 +29826,14 @@ components:
           allOf:
             - $ref: '#/components/schemas/ProjectReleaseSetResponse'
           description: Immutable active release graph snapshot for the target environment, when present.
+        release_graph_mode:
+          type: boolean
+          description: True when promotion stages deployments dark and atomically activates a project release graph.
+        release_ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+          description: Compatibility window used by the promoted release graph.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         promotion_token: { type: string, minLength: 1 }
 
@@ -29725,10 +29923,25 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether this promotion copied the source's non-secret configuration.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        release_graph: { $ref: '#/components/schemas/ProjectEnvironmentPromotionReleaseGraphResponse' }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionWorkloadResponse' }
+
+    ProjectEnvironmentPromotionReleaseGraphResponse:
+      description: Immutable graph identities involved in a graph-aware promotion and rollback.
+      type: object
+      required: [ttl_seconds]
+      properties:
+        source_release_set_id: { type: string, format: uuid }
+        previous_target_release_set_id: { type: string, format: uuid }
+        target_release_set_id: { type: string, format: uuid }
+        restored_target_release_set_id: { type: string, format: uuid }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
 
     ProjectEnvironmentPromotionStatusWorkloadResponse:
       description: Durable checkpoint for one workload in an environment promotion.
@@ -29763,6 +29976,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Config sync was enabled for this promotion.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         status:
           type: string
@@ -29783,6 +29999,7 @@ components:
         verification_error: { type: string }
         verification_started_at: { type: string, format: date-time }
         verification_completed_at: { type: string, format: date-time }
+        release_graph: { $ref: '#/components/schemas/ProjectEnvironmentPromotionReleaseGraphResponse' }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }
@@ -29796,6 +30013,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether the operation copied non-secret source config to its target.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         status: { type: string, enum: [running, succeeded, failed] }
         error: { type: string }
@@ -34970,8 +35190,8 @@ components:
 
     RequestAnalyticsDependency:
       type: object
-      description: "Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count."
-      required: [type, name, samples, calls, error_calls, p95_ms, exclusive_p95_ms]
+      description: "Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count. Deployment observations compare the same route and dependency across immutable revisions when chronology and sample size permit."
+      required: [type, name, samples, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p95_ms]
       properties:
         type: { type: string, description: "Allowlisted dependency category." }
         kind: { type: string, description: "Allowlisted dependency kind when available." }
@@ -34979,8 +35199,37 @@ components:
         samples: { type: integer, format: int64, minimum: 0, description: "Number of retained span observations." }
         calls: { type: integer, format: int64, minimum: 0, description: "Observed span sample count weighted by the collapsed request-row count; not a full call count." }
         error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "Error calls divided by observed weighted calls." }
+        p50_ms: { type: integer, minimum: 0, description: "Weighted p50 inclusive span duration." }
         p95_ms: { type: integer, minimum: 0, description: "Weighted p95 inclusive span duration." }
+        p99_ms: { type: integer, minimum: 0, description: "Weighted p99 inclusive span duration." }
         exclusive_p95_ms: { type: integer, minimum: 0, description: "Weighted p95 span duration excluding overlapping direct child spans." }
+        deployment_observations:
+          type: array
+          description: "At most the five newest deployment observations for this route/dependency pair; comparisons are advisory and require at least 20 retained span observations on each deployment."
+          items: { $ref: '#/components/schemas/RequestAnalyticsDependencyDeploymentObservation' }
+
+    RequestAnalyticsDependencyDeploymentObservation:
+      type: object
+      description: "Sampled latency and error measurements for one route dependency under a single immutable deployment, with an advisory comparison to a prior sampled revision when possible."
+      required: [deployment_id, samples, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p95_ms, regression]
+      properties:
+        deployment_id: { type: string, description: "Immutable deployment owning these sampled dependency observations." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string, description: "RFC 3339 creation time used to order comparable revisions." }
+        samples: { type: integer, format: int64, minimum: 0, description: "Retained dependency span observations attached to this deployment." }
+        calls: { type: integer, format: int64, minimum: 0, description: "Observed span sample count weighted by collapsed request-row count." }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "Error share among this deployment's observed weighted calls." }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+        exclusive_p95_ms: { type: integer, minimum: 0 }
+        p95_change_pct: { type: number, format: double, description: "P95 percentage change from the preceding comparable deployment, when its baseline is non-zero." }
+        error_rate_change_pct: { type: number, format: double, description: "Error-rate change in percentage points from the preceding comparable deployment." }
+        compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID used as the preceding revision baseline." }
+        regression: { type: boolean, description: "True when p95 rose by at least 25% or error rate rose by at least 2 percentage points." }
 
     RequestAnalyticsComputeCost:
       type: object

@@ -1,4 +1,4 @@
-# ADR-282 · Persistent managed realtime callback outbox
+# ADR-285 · Persistent managed realtime callback outbox
 
 - **Status:** accepted
 - **Date:** 2026-09-27

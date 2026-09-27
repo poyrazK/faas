@@ -1,4 +1,4 @@
-# ADR-284 · Live managed realtime callback credential rotation
+# ADR-287 · Live managed realtime callback credential rotation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

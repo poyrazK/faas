@@ -46,6 +46,7 @@ type fakeVMM struct {
 	// updateAllowlistFn (tier-2 PR-B) lets the UpdateEgressAllowlist
 	// handler test decide what the fake reports. nil = success.
 	updateAllowlistFn func(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	updateCPULimitFn  func(ctx context.Context, appID string, revision int64, cpuMillicores int) error
 	// instancePIDFn (M8 §11) lets the SeccompStatus handler test
 	// decide what the fake returns. nil = (0, false) — the handler
 	// maps that to NotFound, which is the right answer for the
@@ -200,6 +201,13 @@ func (f *fakeVMM) ExportDirFor(instance string) string {
 func (f *fakeVMM) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
 	if f.updateAllowlistFn != nil {
 		return f.updateAllowlistFn(ctx, appID, allowlist)
+	}
+	return nil
+}
+
+func (f *fakeVMM) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if f.updateCPULimitFn != nil {
+		return f.updateCPULimitFn(ctx, appID, revision, cpuMillicores)
 	}
 	return nil
 }

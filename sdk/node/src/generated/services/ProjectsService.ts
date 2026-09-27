@@ -1090,7 +1090,10 @@ export class ProjectsService {
    * response includes non-secret configuration changes, live deployment
    * identities, target protection state, and an opaque promotion token
    * bound to those identities. It does not create deployments or audit
-   * mutations.
+   * mutations. Configuration remains target-scoped by default;
+   * `sync_config=true` opts into applying the source's non-secret
+   * configuration snapshot with the release graph, and is blocked unless
+   * the target already has an active release graph for atomic cutover.
    *
    * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview and immutable promotion identity.
    * @throws ApiError
@@ -1099,6 +1102,7 @@ export class ProjectsService {
     slug,
     environment,
     from,
+    syncConfig = false,
   }: {
     /**
      * Project slug owning the environment promotion preview.
@@ -1112,6 +1116,10 @@ export class ProjectsService {
      * Source environment whose live releases are compared with the target.
      */
     from: string,
+    /**
+     * Opt in to copying the source's non-secret configuration atomically with the target release graph.
+     */
+    syncConfig?: boolean,
   }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1122,6 +1130,7 @@ export class ProjectsService {
       },
       query: {
         'from': from,
+        'sync_config': syncConfig,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -1142,7 +1151,8 @@ export class ProjectsService {
    * issued for that exact promotion. After cutover, every target artifact
    * is verified against its source release and target environment. A
    * failed verification automatically rolls back the promotion. Target
-   * configuration and secrets are never copied from the source environment.
+   * configuration remains target-scoped unless the token was created with
+   * `sync_config=true`; secrets are never copied from the source environment.
    *
    * @returns ProjectEnvironmentPromotionResponse Promotion result for each project workload.
    * @throws ApiError

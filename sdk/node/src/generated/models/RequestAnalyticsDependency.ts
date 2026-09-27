@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RequestAnalyticsDependencyDeploymentObservation } from './RequestAnalyticsDependencyDeploymentObservation.js';
 /**
- * Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count.
+ * Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count. Deployment observations compare the same route and dependency across immutable revisions when chronology and sample size permit.
  */
 export type RequestAnalyticsDependency = {
   /**
@@ -28,12 +29,28 @@ export type RequestAnalyticsDependency = {
   calls: number;
   error_calls: number;
   /**
+   * Error calls divided by observed weighted calls.
+   */
+  error_rate_pct: number;
+  /**
+   * Weighted p50 inclusive span duration.
+   */
+  p50_ms: number;
+  /**
    * Weighted p95 inclusive span duration.
    */
   p95_ms: number;
   /**
+   * Weighted p99 inclusive span duration.
+   */
+  p99_ms: number;
+  /**
    * Weighted p95 span duration excluding overlapping direct child spans.
    */
   exclusive_p95_ms: number;
+  /**
+   * At most the five newest deployment observations for this route/dependency pair; comparisons are advisory and require at least 20 retained span observations on each deployment.
+   */
+  deployment_observations?: Array<RequestAnalyticsDependencyDeploymentObservation>;
 };
 

@@ -310,6 +310,75 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 	}
 }
 
+func TestUploadSession_CommitPersistsManifestMainWorkloadDependencies(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	withTestSidecarRecipient(t)
+	e := setup(t, api.PlanPro)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "manifest-deps"}, nil)
+	manifest := `main_depends_on:
+  - name: proxy
+    condition: healthy
+companions:
+  - name: proxy
+    image: ` + goodSidecarImage + `
+    startup_probe:
+      tcp_socket:
+        port: 8081
+`
+	raw := buildTestTarGz(t,
+		[]tar.Header{{Name: "index.js"}, {Name: "gregale.yaml"}},
+		map[string][]byte{"index.js": []byte("ok\n"), "gregale.yaml": []byte(manifest)},
+	)
+	companion := api.Companion{
+		Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+		StartupProbe: &api.SidecarProbe{TCPSocket: &api.SidecarTCPSocketProbe{Port: 8081}},
+	}
+	body, err := json.Marshal(startUploadRequest{
+		AppSlug: "manifest-deps", TotalSize: int64(len(raw)),
+		DeployOptions: &api.UploadDeployOptions{Companions: api.Companions{companion}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	var started startUploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if rec := appendChunk(t, e, started.UploadID, 0, raw); rec.Code != http.StatusOK {
+		t.Fatalf("append: %d %s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec = httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
+	}
+	var response api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	deployment, err := e.store.LatestDeployment(t.Context(), response.AppID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var dependencies []api.WorkloadDependency
+	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {
+		t.Fatalf("unmarshal OverrideMainDependsOn %q: %v", deployment.OverrideMainDependsOn, err)
+	}
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("OverrideMainDependsOn = %+v, want proxy/healthy", dependencies)
+	}
+}
+
 func TestUploadSession_Cancel(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
 	e := setup(t, api.PlanFree)

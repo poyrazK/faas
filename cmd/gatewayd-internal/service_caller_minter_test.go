@@ -151,6 +151,27 @@ func TestServiceCallerMinterPublishesPublicKey(t *testing.T) {
 	}
 }
 
+func TestServiceCallerMinterPublishesDefaultLocalKeyWithoutNodeName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gatewayd.ed25519")
+	t.Setenv(serviceCallerEnabledEnv, "1")
+	t.Setenv(serviceCallerKeyPathEnv, path)
+	store := state.NewMemStore()
+
+	if newServiceCallerMinter(context.Background(), store, "", testLogger()) == nil {
+		t.Fatal("minter is nil")
+	}
+	keys, err := store.ListServiceCallerKeys(context.Background())
+	if err != nil {
+		t.Fatalf("list keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("published %d keys, want 1", len(keys))
+	}
+	if keys[0].NodeID != state.DefaultLocalNodeName {
+		t.Errorf("published key node = %q, want %q", keys[0].NodeID, state.DefaultLocalNodeName)
+	}
+}
+
 // Publication is best-effort: a store failure must not stop the node serving
 // traffic for a feature nothing consumes yet.
 func TestServiceCallerMinterSurvivesPublishFailure(t *testing.T) {
