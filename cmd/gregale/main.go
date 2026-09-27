@@ -146,7 +146,13 @@ func run(args []string) (status int) {
 				return 0
 			}
 		}
-		PrintUsage(os.Stderr, "unknown help topic: "+strings.Join(args[1:], " "), "cli")
+		message := "unknown help topic: " + strings.Join(args[1:], " ")
+		if len(args) == 2 {
+			if suggestion, ok := suggestCommand(args[1]); ok {
+				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
+			}
+		}
+		PrintUsage(os.Stderr, message, "cli")
 		return 1
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
@@ -573,6 +579,9 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
+		if suggestion, ok := suggestCommand(args[0]); ok {
+			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", args[0], suggestion))
+		}
 		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
 	}
 }
@@ -639,7 +648,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// public help paths aligned with their actual dispatchers.
 	switch command.Name {
 	case "rollback":
-		PrintUsage(w, rollbackUsage, command.DocSlug)
+		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		if len(command.Examples) > 0 {
+			_, _ = fmt.Fprintln(w, "\nExamples:")
+			printCLIExamples(w, command.Examples)
+		}
+		_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 		return
 	case "rollouts":
 		PrintUsage(w, rolloutsUsage, command.DocSlug)
@@ -672,9 +686,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		}
 	}
 	if command.Name == "deploy" {
-		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD at the repository root when origin exists.")
-		_, _ = fmt.Fprintln(w, "Use --path DIR for a subtree or --worktree to include local changes.")
-		_, _ = fmt.Fprintln(w, "\nExamples:\n  gregale deploy --plan\n  gregale deploy --path packages/api\n  gregale deploy --worktree")
+		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD when origin exists; otherwise it uses local files.")
+		_, _ = fmt.Fprintln(w, "Use --source=head to require a commit, --source=worktree to include local changes, or --path DIR for a subtree.")
+	}
+	if len(command.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, command.Examples)
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
@@ -707,6 +724,10 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(sub.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, sub.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
@@ -722,7 +743,17 @@ func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(leaf.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, leaf.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func printCLIExamples(w io.Writer, examples []string) {
+	for _, example := range examples {
+		_, _ = fmt.Fprintf(w, "  %s\n", example)
+	}
 }
 
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
