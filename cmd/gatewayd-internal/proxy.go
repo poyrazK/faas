@@ -400,11 +400,9 @@ func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 //     call which CodeQL doesn't reach without a literal call
 //     site passing tainted data.
 //
-//  2. lgtm/codeql[] suppression comments DON'T work in this
-//     codebase's CodeQL setup — alert #138 at
-//     pkg/middleware/authlimit.go:81 carries the identical
-//     suppression comment shape and is STILL OPEN. The named-
-//     field shape is a structural fix, not a comment-based one.
+//  2. Source-suppression comments only mark SARIF results; the
+//     CodeQL workflow must honor that metadata before upload for
+//     GitHub's pull-request check to omit those results.
 //
 // All Write / WriteHeader / Flush methods still satisfy
 // http.ResponseWriter (the type implements that interface

@@ -72,6 +72,26 @@ func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger, cpuMil
 	return prepareWorkloadCgroupWithIO(typ, name, ramMB, log, firstCPUOption(cpuMillicoresOpt), "")
 }
 
+// updateMainWorkloadCPULimit changes the main workload's guest cgroup in
+// place. App-wide CPU policy is also enforced by vmmd's outer Firecracker
+// cgroup; this inner write is needed for multi-workload VMs, where main-app
+// used to retain a boot-time duplicate ceiling that could mask live increases.
+func updateMainWorkloadCPULimit(cpuMillicores int) error {
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("invalid app CPU policy %d millicores", cpuMillicores)
+	}
+	leaf := leafDir("main", "app")
+	if leaf == "" {
+		return fmt.Errorf("invalid main workload cgroup name")
+	}
+	const periodUS = 100_000
+	quotaUS := cpuMillicores * periodUS / 1000
+	if err := os.WriteFile(filepath.Join(leaf, "cpu.max"), []byte(fmt.Sprintf("%d %d\n", quotaUS, periodUS)), 0o644); err != nil {
+		return fmt.Errorf("write main workload cpu.max: %w", err)
+	}
+	return nil
+}
+
 func firstCPUOption(options []int) int {
 	if len(options) == 0 {
 		return 0

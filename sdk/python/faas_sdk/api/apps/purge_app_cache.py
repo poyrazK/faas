@@ -95,8 +95,10 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
+     Records a durable response-cache purge request for every gateway and
+    the optional distributed cache tier. Gateways replay missed requests;
+    `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+    The optional path glob limits the purge to
     matching normalized request paths. The optional tag limits it to
     responses carrying that Cache-Tag. Path and tag are mutually exclusive;
     omit both to purge the complete app cache.
@@ -136,8 +138,10 @@ def sync(
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
+     Records a durable response-cache purge request for every gateway and
+    the optional distributed cache tier. Gateways replay missed requests;
+    `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+    The optional path glob limits the purge to
     matching normalized request paths. The optional tag limits it to
     responses carrying that Cache-Tag. Path and tag are mutually exclusive;
     omit both to purge the complete app cache.
@@ -172,8 +176,10 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
+     Records a durable response-cache purge request for every gateway and
+    the optional distributed cache tier. Gateways replay missed requests;
+    `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+    The optional path glob limits the purge to
     matching normalized request paths. The optional tag limits it to
     responses carrying that Cache-Tag. Path and tag are mutually exclusive;
     omit both to purge the complete app cache.
@@ -211,8 +217,10 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
-     Requests a response-cache purge on every gateway and on the optional
-    distributed cache tier. The optional path glob limits the purge to
+     Records a durable response-cache purge request for every gateway and
+    the optional distributed cache tier. Gateways replay missed requests;
+    `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+    The optional path glob limits the purge to
     matching normalized request paths. The optional tag limits it to
     responses carrying that Cache-Tag. Path and tag are mutually exclusive;
     omit both to purge the complete app cache.

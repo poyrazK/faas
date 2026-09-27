@@ -34,6 +34,7 @@ type recordingRouterVMM struct {
 	// staticCalls (ADR-119) is the parallel per-node log for
 	// UpdateStaticEgressIP patches.
 	staticCalls []recordedStaticIPCall
+	cpuCalls    []recordedCPULimitCall
 	// nodeErrors is an optional per-nodeID error injection. nil
 	// entries succeed.
 	nodeErrors map[string]error
@@ -52,6 +53,166 @@ type recordedStaticIPCall struct {
 	NodeID string
 	AppID  string
 	IP     string
+}
+
+type recordedCPULimitCall struct {
+	NodeID        string
+	AppID         string
+	Revision      int64
+	CPUMillicores int
+}
+
+type durableCPUTestStore struct {
+	*durableEgressTestStore
+	cpuEntries  []state.AppCPUPolicyApplyTarget
+	cpuStates   []state.AppCPUPolicyNodeState
+	cpuRevision int64
+}
+
+func (s *durableCPUTestStore) LatestAppCPUPolicyRevision(context.Context, string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cpuRevision, nil
+}
+
+func (s *durableCPUTestStore) ListPendingAppCPUPolicyTargets(_ context.Context, appID string, _ time.Duration, limit int) ([]state.AppCPUPolicyApplyTarget, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]state.AppCPUPolicyApplyTarget, 0, len(s.cpuEntries))
+	for _, entry := range s.cpuEntries {
+		if appID != "" && entry.AppID != appID {
+			continue
+		}
+		out = append(out, entry)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *durableCPUTestStore) RecordAppCPUPolicyApply(_ context.Context, appID, nodeID string, revision int64, applyErr error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lastError := ""
+	if applyErr != nil {
+		lastError = applyErr.Error()
+	}
+	found := false
+	for i := range s.cpuStates {
+		if s.cpuStates[i].NodeName != nodeID {
+			continue
+		}
+		s.cpuStates[i].DesiredRevision = revision
+		s.cpuStates[i].ObservedAt = time.Now().UTC()
+		s.cpuStates[i].LastError = lastError
+		if applyErr == nil && revision > s.cpuStates[i].AppliedRevision {
+			s.cpuStates[i].AppliedRevision = revision
+		}
+		found = true
+		break
+	}
+	if !found {
+		status := state.AppCPUPolicyNodeState{NodeName: nodeID, DesiredRevision: revision, ObservedAt: time.Now().UTC(), LastError: lastError}
+		if applyErr == nil {
+			status.AppliedRevision = revision
+		}
+		s.cpuStates = append(s.cpuStates, status)
+	}
+	if applyErr == nil {
+		kept := s.cpuEntries[:0]
+		for _, entry := range s.cpuEntries {
+			if entry.AppID == appID && entry.NodeID == nodeID && entry.Revision <= revision {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		s.cpuEntries = kept
+	}
+	return nil
+}
+
+func (s *durableCPUTestStore) ListServingAppCPUPolicyNodeStates(context.Context, string) ([]state.AppCPUPolicyNodeState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]state.AppCPUPolicyNodeState(nil), s.cpuStates...), nil
+}
+
+type durableEgressTestStore struct {
+	*state.MemStore
+	mu      sync.Mutex
+	entries []state.AppEgressPolicyApplyTarget
+	states  []state.AppEgressPolicyNodeState
+}
+
+func (s *durableEgressTestStore) LatestAppEgressPolicyRevision(context.Context, string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest int64
+	for _, entry := range s.entries {
+		if entry.Revision > latest {
+			latest = entry.Revision
+		}
+	}
+	return latest, nil
+}
+
+func (s *durableEgressTestStore) ListPendingAppEgressPolicyTargets(_ context.Context, appID string, _ time.Duration, limit int) ([]state.AppEgressPolicyApplyTarget, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]state.AppEgressPolicyApplyTarget, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if appID != "" && entry.AppID != appID {
+			continue
+		}
+		entry.Allowlist = append([]netip.Prefix(nil), entry.Allowlist...)
+		out = append(out, entry)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *durableEgressTestStore) RecordAppEgressPolicyApply(_ context.Context, appID, nodeID string, revision int64, applyErr error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lastError := ""
+	if applyErr != nil {
+		lastError = applyErr.Error()
+	}
+	for i := range s.states {
+		if s.states[i].NodeName == nodeID {
+			s.states[i].ObservedAt = time.Now().UTC()
+			s.states[i].LastError = lastError
+			if applyErr == nil && revision > s.states[i].AppliedRevision {
+				s.states[i].AppliedRevision = revision
+			}
+			s.states[i].DesiredRevision = revision
+			goto removeOrKeep
+		}
+	}
+	s.states = append(s.states, state.AppEgressPolicyNodeState{
+		NodeName: nodeID, DesiredRevision: revision, ObservedAt: time.Now().UTC(), LastError: lastError,
+	})
+removeOrKeep:
+	if applyErr == nil {
+		kept := s.entries[:0]
+		for _, entry := range s.entries {
+			if entry.AppID == appID && entry.NodeID == nodeID && entry.Revision <= revision {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		s.entries = kept
+	}
+	return nil
+}
+
+func (s *durableEgressTestStore) ListServingAppEgressPolicyNodeStates(context.Context, string) ([]state.AppEgressPolicyNodeState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]state.AppEgressPolicyNodeState(nil), s.states...), nil
 }
 
 func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, appID string, allowlist []netip.Prefix) error {
@@ -93,6 +254,18 @@ func (r *recordingRouterVMM) UpdateStaticEgressIP(_ context.Context, nodeID, acc
 	return nil
 }
 
+func (r *recordingRouterVMM) UpdateAppCPULimit(_ context.Context, nodeID, appID string, revision int64, cpuMillicores int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cpuCalls = append(r.cpuCalls, recordedCPULimitCall{NodeID: nodeID, AppID: appID, Revision: revision, CPUMillicores: cpuMillicores})
+	if r.nodeErrors != nil {
+		if err, ok := r.nodeErrors[nodeID]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *recordingRouterVMM) callsByNode() map[string]int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -113,6 +286,12 @@ func (r *recordingRouterVMM) snapshotLen() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.calls)
+}
+
+func (r *recordingRouterVMM) cpuCallsSnapshot() []recordedCPULimitCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recordedCPULimitCall(nil), r.cpuCalls...)
 }
 
 // snapshot returns a copy of the recorded calls under the lock.
@@ -479,6 +658,88 @@ func TestEgressDrift_ChannelCloseReturnsNil(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return on channel close")
+	}
+}
+
+func TestEgressDrift_ReplaysMissedNotificationAndRetriesFailure(t *testing.T) {
+	base := state.NewMemStore()
+	app, _ := seedEgressApp(t, base, "egress-owner-durable@example.com", []string{"node-A"})
+	allowlist := []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}
+	durable := &durableEgressTestStore{
+		MemStore: base,
+		entries: []state.AppEgressPolicyApplyTarget{{
+			AppID: app.ID, NodeID: "node-A", Slug: app.Slug, Revision: 3, Allowlist: allowlist,
+		}},
+	}
+	router := &recordingRouterVMM{nodeErrors: map[string]error{"node-A": errors.New("vmmd temporarily unavailable")}}
+	engine := newEngine(t, durable, router, &fakeNotifier{}, "")
+	sub := NewEgressDriftSubscriber(engine, router, silenceLog())
+	feed := newFakeNotify(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- sub.Run(ctx, feed.Channel()) }()
+
+	// Startup replay repairs a change whose LISTEN/NOTIFY delivery was missed.
+	if err := waitFor(func() bool { return router.snapshotLen() == 1 }, 2*time.Second); err != nil {
+		t.Fatalf("startup replay did not attempt pending policy: %v", err)
+	}
+	durable.mu.Lock()
+	pendingAfterFailure := len(durable.entries)
+	durable.mu.Unlock()
+	if pendingAfterFailure != 1 {
+		t.Fatalf("failed VMM apply left %d pending entries, want 1", pendingAfterFailure)
+	}
+
+	// A later repair pass retries the durable desired revision without another
+	// database notification, then records success only after the RPC succeeds.
+	router.mu.Lock()
+	delete(router.nodeErrors, "node-A")
+	router.mu.Unlock()
+	sub.reconcilePending(ctx)
+	if got := router.snapshotLen(); got != 2 {
+		t.Fatalf("VMM attempts = %d, want failed attempt plus retry", got)
+	}
+	durable.mu.Lock()
+	defer durable.mu.Unlock()
+	if len(durable.entries) != 0 || len(durable.states) != 1 || durable.states[0].AppliedRevision != 3 || durable.states[0].LastError != "" {
+		t.Fatalf("durable state after retry = pending:%+v applied:%+v; want revision 3 applied", durable.entries, durable.states)
+	}
+}
+
+func TestAppCPUPolicy_ReplaysAndRetriesPerNodeApply(t *testing.T) {
+	base := state.NewMemStore()
+	app, _ := seedEgressApp(t, base, "cpu-policy-durable@example.com", []string{"node-A"})
+	durable := &durableCPUTestStore{
+		durableEgressTestStore: &durableEgressTestStore{MemStore: base},
+		cpuRevision:            2,
+		cpuEntries: []state.AppCPUPolicyApplyTarget{{
+			AppID: app.ID, NodeID: "node-A", Slug: app.Slug, Revision: 2, CPUMillicores: 500,
+		}},
+	}
+	router := &recordingRouterVMM{nodeErrors: map[string]error{"node-A": errors.New("vmmd temporarily unavailable")}}
+	engine := newEngine(t, durable, router, &fakeNotifier{}, "")
+	sub := NewEgressDriftSubscriber(engine, router, silenceLog())
+
+	sub.reconcileAppCPULimit(context.Background(), app.ID)
+	if calls := router.cpuCallsSnapshot(); len(calls) != 1 || calls[0].AppID != app.ID || calls[0].NodeID != "node-A" || calls[0].Revision != 2 || calls[0].CPUMillicores != 500 {
+		t.Fatalf("failed CPU apply calls = %+v, want node-A/app revision 2 at 500m", calls)
+	}
+	durable.mu.Lock()
+	if len(durable.cpuEntries) != 1 || len(durable.cpuStates) != 1 || durable.cpuStates[0].AppliedRevision != 0 || durable.cpuStates[0].LastError == "" {
+		t.Fatalf("CPU state after failure: pending=%+v observed=%+v", durable.cpuEntries, durable.cpuStates)
+	}
+	router.nodeErrors = nil
+	durable.mu.Unlock()
+
+	sub.reconcilePendingCPULimits(context.Background())
+	durable.mu.Lock()
+	defer durable.mu.Unlock()
+	if len(durable.cpuEntries) != 0 || len(durable.cpuStates) != 1 || durable.cpuStates[0].AppliedRevision != 2 || durable.cpuStates[0].LastError != "" {
+		t.Fatalf("CPU state after retry: pending=%+v observed=%+v; want revision 2 applied", durable.cpuEntries, durable.cpuStates)
+	}
+	if calls := router.cpuCallsSnapshot(); len(calls) != 2 {
+		t.Fatalf("CPU update calls after retry = %+v, want failed attempt plus successful retry", calls)
 	}
 }
 

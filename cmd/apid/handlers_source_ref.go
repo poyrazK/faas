@@ -201,18 +201,13 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
-		if len(manifest.Companions) > 0 || len(manifest.Extensions) > 0 {
-			sidecars, sidecarErr := manifest.ToSidecars()
-			if sidecarErr != nil {
-				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", sidecarErr.Error()))
-				return
-			}
-			rolloutReq.Sidecars = sidecars
-			if sidecarProblem := s.validateAndPlanSidecars(rolloutReq, acct, limits); sidecarProblem != nil {
-				api.WriteProblem(w, sidecarProblem)
-				return
-			}
-			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+		if workloadProblem != nil {
+			api.WriteProblem(w, workloadProblem)
+			return
+		}
+		if applied {
+			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, overrides, limits, acct.Plan)
 			if rolloutProblem != nil {
 				api.WriteProblem(w, rolloutProblem)
 				return
@@ -296,6 +291,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		ReleaseCommandShell:    releaseCommand.shell,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {

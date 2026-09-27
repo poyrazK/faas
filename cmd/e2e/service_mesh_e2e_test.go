@@ -14,29 +14,44 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/servicecaller"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // serviceCall issues an internal service-proxy request on the loopback control
 // listener. callerAppID is empty to exercise the unauthenticated path.
-func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string) (int, http.Header, string) {
+func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, extraHeaders ...http.Header) (int, http.Header, string) {
+	return serviceCallWithMethod(t, h, callerAppID, service, http.MethodGet, path, extraHeaders...)
+}
+
+func serviceCallWithMethod(t *testing.T, h *e2etest.Harness, callerAppID, service, method, path string, extraHeaders ...http.Header) (int, http.Header, string) {
 	t.Helper()
 	url := h.GatewayControlURL + "/v1/internal/services/" + service + path
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		t.Fatalf("build service request: %v", err)
 	}
 	if callerAppID != "" {
 		req.Header.Set("X-Faas-Caller-App", callerAppID)
+	}
+	for _, headers := range extraHeaders {
+		for name, values := range headers {
+			for _, value := range values {
+				req.Header.Add(name, value)
+			}
+		}
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -72,14 +87,14 @@ func createServiceApp(t *testing.T, f *normalPathFixture, slug string, patch map
 // pollServiceCall retries until the expected status lands or the budget
 // expires. Wake and cache-invalidation are asynchronous at the edges, so a
 // single shot would be testing timing rather than behaviour.
-func pollServiceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, want int, budget time.Duration) (int, http.Header, string) {
+func pollServiceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, want int, budget time.Duration, extraHeaders ...http.Header) (int, http.Header, string) {
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	var status int
 	var header http.Header
 	var body string
 	for time.Now().Before(deadline) {
-		status, header, body = serviceCall(t, h, callerAppID, service, path)
+		status, header, body = serviceCall(t, h, callerAppID, service, path, extraHeaders...)
 		if status == want {
 			return status, header, body
 		}
@@ -122,6 +137,79 @@ func TestE2E_ServiceMesh_ForwardsToWarmTarget(t *testing.T) {
 		if strings.EqualFold(hdr.GetName(), "x-faas-caller-app") {
 			t.Errorf("caller header leaked to the guest: %s: %s", hdr.GetName(), hdr.GetValue())
 		}
+	}
+}
+
+// ADR-206/279: exercise the complete assertion trust path. The gateway mints
+// the assertion after resolving and authorizing the caller, publishes its
+// public key through apid, and forwards exactly one platform-owned assertion
+// over the VMMD guest bridge. A caller-provided assertion must not survive.
+func TestE2E_ServiceMesh_VerifiesForwardedCallerAssertion(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "service-caller.ed25519")
+	f := newNormalPathFixtureWithPlanAndEnv(t, "mesh-signed-caller", api.PlanHobby,
+		"FAAS_SERVICE_CALLER_ASSERTIONS=1",
+		"FAAS_SERVICE_CALLER_KEY_PATH="+keyPath,
+	)
+	if f == nil {
+		return
+	}
+	target := createServiceApp(t, f, "meshsignedtarget", nil)
+	_, instance := createNormalPathLiveDeployment(t, f, target.ID, "v1")
+	f.vmmd.SetVersion(instance.ID, "v1")
+
+	forged := make(http.Header)
+	forged.Add(gateway.ServiceCallerAssertionHeader, "forged.first.token")
+	forged.Add(gateway.ServiceCallerAssertionHeader, "forged.second.token")
+	status, _, body := serviceCall(t, f.h, f.app.ID, "meshsignedtarget", "/health", forged)
+	if status != http.StatusOK {
+		t.Fatalf("service status = %d, want 200; body=%s", status, body)
+	}
+
+	request := f.vmmd.LastRequest()
+	if request == nil {
+		t.Fatal("fake vmmd received no ForwardHTTPStream request")
+	}
+	var assertion string
+	assertionCount := 0
+	for _, header := range request.Headers {
+		if strings.EqualFold(header.GetName(), gateway.ServiceCallerAssertionHeader) {
+			assertion = header.GetValue()
+			assertionCount++
+		}
+	}
+	if assertionCount != 1 {
+		t.Fatalf("guest received %d caller assertion headers, want exactly one", assertionCount)
+	}
+	if assertion == "forged.first.token" || assertion == "forged.second.token" {
+		t.Fatalf("caller-supplied assertion reached guest: %q", assertion)
+	}
+
+	keys, err := servicecaller.FetchTrustedKeys(context.Background(), nil, f.h.APIDURL+"/v1/service-caller-keys")
+	if err != nil {
+		t.Fatalf("fetch published service-caller keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("published key count = %d, want the gateway's single test key", len(keys))
+	}
+	verified, err := servicecaller.Verify(assertion, keys, target.ID, time.Now())
+	if err != nil {
+		t.Fatalf("verify guest-bound assertion against published JWKS: %v", err)
+	}
+	if verified.CallerAppID != f.app.ID {
+		t.Errorf("verified caller = %q, want %q", verified.CallerAppID, f.app.ID)
+	}
+	if verified.TargetAppID != target.ID {
+		t.Errorf("verified target audience = %q, want %q", verified.TargetAppID, target.ID)
+	}
+	source, err := f.store.AppByID(f.ctx, f.app.ID)
+	if err != nil {
+		t.Fatalf("load caller app for account assertion: %v", err)
+	}
+	if verified.AccountID != source.AccountID {
+		t.Errorf("verified account = %q, want %q", verified.AccountID, source.AccountID)
+	}
+	if verified.ID == "" {
+		t.Error("verified assertion has no unique ID")
 	}
 }
 
@@ -256,5 +344,90 @@ func TestE2E_ServiceMesh_AccessBoundaries(t *testing.T) {
 				t.Errorf("status = %d, want %d; body=%s", status, tc.wantCode, body)
 			}
 		})
+	}
+}
+
+// ADR-266: a target's explicit deny-all caller policy overrides legacy
+// same-account reachability and runs before endpoint routing or waking.
+func TestE2E_ServiceMesh_TargetCallerAllowlistDeniesBeforeWake(t *testing.T) {
+	f := newNormalPathFixture(t, "mesh-target-denied-caller")
+	if f == nil {
+		return
+	}
+	createServiceApp(t, f, "meshrestricted", map[string]any{
+		"allowed_service_callers": []string{},
+	})
+
+	forwardCount := f.vmmd.ForwardCount()
+	restoreCount := len(f.vmmd.RestoreCalls())
+	coldBootCount := len(f.vmmd.ColdBootCalls())
+	status, _, body := serviceCall(t, f.h, f.app.ID, "meshrestricted", "/health")
+	if status != http.StatusForbidden || !strings.Contains(body, "target does not allow this service caller") {
+		t.Fatalf("status = %d, want target-policy 403; body=%s", status, body)
+	}
+	if got := f.vmmd.ForwardCount(); got != forwardCount {
+		t.Errorf("VMMD forwarded %d requests, want unchanged count %d", got, forwardCount)
+	}
+	if got := len(f.vmmd.RestoreCalls()); got != restoreCount {
+		t.Errorf("VMMD restored %d instances, want unchanged count %d", got, restoreCount)
+	}
+	if got := len(f.vmmd.ColdBootCalls()); got != coldBootCount {
+		t.Errorf("VMMD cold-booted %d instances, want unchanged count %d", got, coldBootCount)
+	}
+}
+
+// ADR-266: scoped target grants must survive API persistence and be enforced
+// by the real gateway before it looks up endpoints or wakes the target.
+func TestE2E_ServiceMesh_EnforcesTargetMethodPathScopes(t *testing.T) {
+	f := newNormalPathFixture(t, "mesh-scoped-caller")
+	if f == nil {
+		return
+	}
+	target := createServiceApp(t, f, "meshscopedtarget", map[string]any{
+		"allowed_service_call_scopes": map[string]any{
+			f.app.Slug: map[string]any{
+				"methods":       []string{http.MethodGet},
+				"path_prefixes": []string{"/v1/orders"},
+			},
+		},
+	})
+
+	forwardCount := f.vmmd.ForwardCount()
+	restoreCount := len(f.vmmd.RestoreCalls())
+	coldBootCount := len(f.vmmd.ColdBootCalls())
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "outside path prefix", method: http.MethodGet, path: "/v1/admin"},
+		{name: "prefix is not a string prefix", method: http.MethodGet, path: "/v1/orders-archive"},
+		{name: "outside method scope", method: http.MethodPost, path: "/v1/orders"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, body := serviceCallWithMethod(t, f.h, f.app.ID, target.Slug, tc.method, tc.path)
+			if status != http.StatusForbidden || !strings.Contains(body, "target service does not allow this caller method and path") {
+				t.Fatalf("status = %d, want target-scope 403; body=%s", status, body)
+			}
+		})
+	}
+	if got := f.vmmd.ForwardCount(); got != forwardCount {
+		t.Errorf("out-of-scope calls forwarded %d requests, want unchanged count %d", got, forwardCount)
+	}
+	if got := len(f.vmmd.RestoreCalls()); got != restoreCount {
+		t.Errorf("out-of-scope calls restored %d instances, want unchanged count %d", got, restoreCount)
+	}
+	if got := len(f.vmmd.ColdBootCalls()); got != coldBootCount {
+		t.Errorf("out-of-scope calls cold-booted %d instances, want unchanged count %d", got, coldBootCount)
+	}
+
+	_, instance := createNormalPathLiveDeployment(t, f, target.ID, "v1")
+	f.vmmd.SetVersion(instance.ID, "v1")
+	status, _, body := serviceCallWithMethod(t, f.h, f.app.ID, target.Slug, http.MethodGet, "/v1/orders/42")
+	if status != http.StatusOK {
+		t.Fatalf("in-scope descendant request status = %d, want 200; body=%s", status, body)
+	}
+	if request := f.vmmd.LastRequest(); request == nil || request.GetRequestUri() != "/v1/orders/42" {
+		t.Errorf("guest request = %v, want URI /v1/orders/42", request)
 	}
 }

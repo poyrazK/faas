@@ -1,4 +1,4 @@
-# ADR-281 · Managed realtime revocation and delivery outcomes
+# ADR-284 · Managed realtime revocation and delivery outcomes
 
 - **Status:** accepted
 - **Date:** 2026-09-27

@@ -275,9 +275,11 @@ type connection struct {
 }
 
 type endpointState struct {
-	config   atomic.Pointer[Endpoint]
-	gate     sync.Mutex
-	reserved atomic.Int64
+	config atomic.Pointer[Endpoint]
+	gate   sync.Mutex
+	// reserved is shared across policy refreshes so live connections continue
+	// to release against the count used during admission.
+	reserved *atomic.Int64
 	revoked  atomic.Bool
 }
 
@@ -421,7 +423,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 		existing.(*endpointState).config.Store(&e)
 		return nil
 	}
-	state := &endpointState{}
+	state := &endpointState{reserved: new(atomic.Int64)}
 	state.config.Store(&e)
 	m.endpoints.Store(e.ID, state)
 	return nil

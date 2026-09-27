@@ -97,15 +97,16 @@ import (
 )
 
 type normalPathFixture struct {
-	h         *e2etest.Harness
-	vmmd      *e2etest.FakeVMMD
-	store     *state.PgStore
-	app       api.AppResponse
-	key       string
-	nodeID    string
-	host      string
-	ctx       context.Context
-	artifacts storage.StorageBackend
+	h                 *e2etest.Harness
+	vmmd              *e2etest.FakeVMMD
+	store             *state.PgStore
+	app               api.AppResponse
+	key               string
+	nodeID            string
+	host              string
+	ctx               context.Context
+	artifacts         storage.StorageBackend
+	spansWriterSocket string
 }
 
 func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {

@@ -35,7 +35,17 @@ jobs:
       matrix:
         include:
           - language: actions
+            queries: security-and-quality
+            upload: always
           - language: go
+            queries: security-and-quality
+            # The Go suppression query has kind `alert-suppression`, so it
+            # must be added as a query-pack query rather than a local query
+            # in the alert-only suite.
+            packs: codeql/go-queries:AlertSuppression.ql
+            # GitHub's code-scanning check does not honor SARIF InSource
+            # suppressions itself; filter those marked results before upload.
+            upload: never
 
     steps:
       - name: Checkout
@@ -50,7 +60,8 @@ jobs:
           languages: ${{ matrix.language }}
           # 'security-and-quality' adds lint-style checks (unpinned
           # dependencies, etc.) on top of pure security queries.
-          queries: security-and-quality
+          queries: ${{ matrix.queries }}
+          packs: ${{ matrix.packs }}
           # Issue #995 / ADR-121 — paths-ignore lives in the
           # separate config file referenced below; see the file's
           # header comment for rationale.
@@ -66,3 +77,17 @@ jobs:
         with:
           # category names the alert category in the SARIF upload.
           category: "/language:${{ matrix.language }}"
+          output: codeql-results
+          upload: ${{ matrix.upload }}
+
+      - name: Filter source-suppressed Go results
+        if: matrix.language == 'go'
+        run: node .github/codeql/filter-in-source-suppressions.mjs codeql-results/go.sarif
+
+      - name: Upload filtered Go results
+        if: matrix.language == 'go'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codeql-results/go.sarif
+          category: "/language:${{ matrix.language }}"
+          wait-for-processing: true
