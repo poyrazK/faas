@@ -19,7 +19,6 @@ AccountByProviderCustomerID
 AccountPasswordByAccountID
 AccountsByIDs
 ActiveComputeNodes
-AddOrgMember
 AlertPresetByName
 AlertRuleByAccountAppAndPresetName
 AlertRuleByID
@@ -73,7 +72,6 @@ ConsumeCliAuthCode
 ConsumeEmailVerificationToken
 ConsumeLoginToken
 ConsumeMFADisableRequest
-ConsumeOrgInvitation
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
 ConsumerKeyByAppAndPrefix
@@ -129,10 +127,8 @@ CreateDeploymentScopeExclusion
 CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateInstanceWithMode
-CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
-CreateOrgInvitation
 CreateProjectEnvironmentApproval
 CreateQueueBinding
 CreateSession
@@ -491,7 +487,6 @@ OrgByID
 OrgByPersonalAccount
 OrgBySlug
 OrgInvitationByTokenHash
-OrgMemberByAccount
 PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
@@ -535,7 +530,6 @@ RecoverRollout
 RefreshCertExpiryStates
 RegistryCredentialQuotaCheck
 ReinviteMigratingInstance
-RemoveOrgMember
 RenameApp
 ReorderDeployment
 ReplaceProvisionedStaticEgressIPs

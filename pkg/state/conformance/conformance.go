@@ -85,6 +85,7 @@ func Run(t *testing.T, open Open) {
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
+		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

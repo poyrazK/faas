@@ -22658,8 +22658,10 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	}
 	// Insert membership; surface ErrOrgAlreadyMember if a parallel
 	// accept beat us.
+	// A removed member's row stays (removed_at stamped); accepting a new
+	// invitation reactivates it rather than colliding with it.
 	k := orgAccountKey{OrgID: inv.OrgID, AccountID: acceptingAccount.ID}
-	if _, exists := m.memberships[k]; exists {
+	if existing, exists := m.memberships[k]; exists && existing.RemovedAt == nil {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgAlreadyMember
 	}
 	now := time.Now().UTC()

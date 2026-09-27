@@ -27202,9 +27202,19 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 		ib := *inv.InvitedByAccountID
 		inviter = &ib
 	}
+	// Removal keeps the (org_id, account_id) row with removed_at set, so a
+	// plain insert collided with it and a removed member could never
+	// rejoin ("already a member"). Reactivate the removed row instead;
+	// an active row still affects no rows and reads as already-member.
 	tag, err := tx.Exec(ctx, `
 		insert into org_memberships (org_id, account_id, role, invited_by_account_id)
 		values ($1, $2, $3, $4)
+		on conflict (org_id, account_id) do update
+		   set role = excluded.role,
+		       invited_by_account_id = excluded.invited_by_account_id,
+		       joined_at = now(),
+		       removed_at = null
+		 where org_memberships.removed_at is not null
 	`, inv.OrgID, accepting.ID, string(inv.Role), inviter)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -27212,6 +27222,9 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 			return OrgMembership{}, OrgInvitation{}, ErrOrgAlreadyMember
 		}
 		return OrgMembership{}, OrgInvitation{}, fmt.Errorf("state: consume org invitation insert: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return OrgMembership{}, OrgInvitation{}, ErrOrgAlreadyMember
 	}
 	if tag.RowsAffected() != 1 {
 		return OrgMembership{}, OrgInvitation{}, fmt.Errorf("state: consume org invitation rows=%d", tag.RowsAffected())
