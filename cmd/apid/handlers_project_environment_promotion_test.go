@@ -207,6 +207,14 @@ func (s *corruptProjectEnvironmentPromotionVerificationStore) ActiveProjectRelea
 	return s.Store.(state.ProjectReleaseSetReader).ActiveProjectReleaseSet(ctx, accountID, projectID, environment)
 }
 
+func (s *corruptProjectEnvironmentPromotionVerificationStore) ProjectReleaseSetByID(ctx context.Context, accountID, projectID, environment, id string) (state.ProjectReleaseSet, error) {
+	return s.Store.(state.ProjectReleaseSetReader).ProjectReleaseSetByID(ctx, accountID, projectID, environment, id)
+}
+
+func (s *corruptProjectEnvironmentPromotionVerificationStore) ListProjectReleaseSetsBefore(ctx context.Context, accountID, projectID, environment string, before time.Time, beforeID string, limit int) ([]state.ProjectReleaseSet, error) {
+	return s.Store.(state.ProjectReleaseSetReader).ListProjectReleaseSetsBefore(ctx, accountID, projectID, environment, before, beforeID, limit)
+}
+
 func (s *corruptProjectEnvironmentPromotionVerificationStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (state.ProjectEnvironmentPromotion, error) {
 	promotion, err := s.Store.UpdateProjectEnvironmentPromotionVerification(ctx, accountID, id, status, errorMessage, startedAt, completedAt)
 	if err != nil || status != "verifying" {
