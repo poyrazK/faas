@@ -178,6 +178,22 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	if analyticsRoute.Requests < 1 || analyticsRoute.ErrorRequests != 0 || analyticsRoute.P95MS < analyticsRoute.P50MS || analyticsRoute.P99MS < analyticsRoute.P95MS {
 		t.Fatalf("route analytics = %+v, want successful requests and ordered latency percentiles", *analyticsRoute)
 	}
+	if analytics.ComputeCost == nil || analytics.ComputeCost.RequestCount < 1 {
+		t.Fatalf("route compute cost = %+v, want an estimate allocated over persisted requests", analytics.ComputeCost)
+	}
+	if analytics.DeploymentCosts == nil {
+		t.Fatal("deployment cost breakdown is missing from route analytics")
+	}
+	var deploymentCost *api.RequestAnalyticsDeploymentCost
+	for i := range analytics.DeploymentCosts.Deployments {
+		if analytics.DeploymentCosts.Deployments[i].DeploymentID == sourceDeployment.ID {
+			deploymentCost = &analytics.DeploymentCosts.Deployments[i]
+			break
+		}
+	}
+	if deploymentCost == nil || deploymentCost.Requests < 1 {
+		t.Fatalf("deployment cost rows = %+v, want deployment %s with at least one request", analytics.DeploymentCosts.Deployments, sourceDeployment.ID)
+	}
 
 	timeseriesPath := "/v1/apps/normal-debugger/analytics/timeseries?since=24h&route=" +
 		url.QueryEscape(request.Route) + "&method=" + url.QueryEscape(request.Method)
