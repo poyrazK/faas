@@ -273,3 +273,39 @@ func TestDashboardMFANext_OnlySameOriginDashboardPaths(t *testing.T) {
 		}
 	}
 }
+
+// TestOrgAPIKeys_RequireTheCallersScope — the org key routes checked the
+// member's org role but not the calling key's scopes, so an org owner's
+// apps:read key minted an admin key (POST /v1/keys refused the same key).
+func TestOrgAPIKeys_RequireTheCallersScope(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanPro, "")
+	call := func(key, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Active-Org", "scope-team")
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := call(env.key, "POST", "/v1/orgs", `{"slug":"scope-team","name":"Scope"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", rec.Code, rec.Body)
+	}
+	readOnly, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.CreateAPIKey(t.Context(), env.acct.ID, hash, "ci-read", []string{api.ScopeAppsRead}); err != nil {
+		t.Fatal(err)
+	}
+	rec := call(readOnly, "POST", "/v1/orgs/scope-team/keys", `{"label":"escalated","scopes":["admin"]}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "insufficient_scope") {
+		t.Fatalf("apps:read key minting an org admin key = %d %s, want 403 insufficient_scope", rec.Code, rec.Body)
+	}
+	if rec := call(env.key, "POST", "/v1/orgs/scope-team/keys", `{"label":"legit","scopes":["admin"]}`); rec.Code != http.StatusCreated {
+		t.Fatalf("admin key minting an org key = %d %s, want 201", rec.Code, rec.Body)
+	}
+	if rec := call(readOnly, "GET", "/v1/orgs/scope-team/keys", ""); rec.Code != http.StatusOK {
+		t.Fatalf("apps:read key listing org keys = %d %s, want 200", rec.Code, rec.Body)
+	}
+}

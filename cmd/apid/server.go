@@ -2395,17 +2395,21 @@ func (s *server) handler() http.Handler {
 
 	// PR 6 (issue #190 / IAM-6 / ADR-061) — org-scoped API key surface.
 	// Compose s.loadOrg (resolves X-Active-Org / ?org= to a membership)
-	// followed by s.authLimited. No requireMFA / no requireScope: the
-	// OrgAction closed-vocab (OrgActionCreateApiKey, OrgActionRevokeApiKey)
-	// is the deny gate, and the membership's role (owner + admin) is
-	// already stricter than api.ScopeAdmin. Cross-org probes collapse
-	// to 404 in the Store layer (IDOR-safe). operationIds match the Go
-	// SDK method names 1:1 so cmd/sdk-coverage compiles cleanly.
-	mux.HandleFunc("GET /v1/orgs/{slug}/keys", s.authLimited(s.loadOrg(s.listOrgAPIKeys)))
-	mux.HandleFunc("POST /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.loadOrg(s.requireStepUp(5*time.Minute)(s.createOrgAPIKey)))))
-	mux.HandleFunc("GET /v1/orgs/{slug}/keys/{id}", s.authLimited(s.loadOrg(s.getOrgAPIKey)))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}/keys/{id}", s.authLimited(s.loadOrg(s.revokeOrgAPIKey)))
-	mux.HandleFunc("POST /v1/orgs/{slug}/keys/{id}/rotate", s.authLimited(s.requireMFA(s.loadOrg(s.requireStepUp(5*time.Minute)(s.rotateOrgAPIKey)))))
+	// followed by s.authLimited. The OrgAction closed-vocab
+	// (OrgActionCreateApiKey, OrgActionRevokeApiKey) gates the member's
+	// role; it says nothing about the credential making the call. These
+	// routes had no requireScope on the reasoning that the owner/admin
+	// role is stricter than api.ScopeAdmin — so an owner's apps:read key
+	// minted an admin key here while POST /v1/keys refused it. They
+	// carry the same scope and MFA gates as their /v1/keys twins.
+	// Cross-org probes collapse to 404 in the Store layer (IDOR-safe).
+	// operationIds match the Go SDK method names 1:1 so
+	// cmd/sdk-coverage compiles cleanly.
+	mux.HandleFunc("GET /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgAPIKeys)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.createOrgAPIKey))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgAPIKey)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.revokeOrgAPIKey)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/keys/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.rotateOrgAPIKey))))))
 
 	// Operator-only billing surface (issue #279). The admin allowlist
 	// is enforced inside the handler (adminAllows), not just at the
