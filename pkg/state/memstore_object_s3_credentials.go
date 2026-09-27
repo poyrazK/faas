@@ -153,6 +153,56 @@ func (m *MemStore) RevokeObjectS3Credential(_ context.Context, accountID, bucket
 	return nil
 }
 
+func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bucketID, bindingID string) (bool, error) {
+	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
+		return false, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.objectS3Credentials[bindingID]
+	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.ManagedAppID == "" || c.RotationParentID != "" {
+		return false, ErrNotFound
+	}
+	now := time.Now().UTC()
+	changed := false
+	if c.Status == ObjectS3CredentialStatusActive {
+		c.Status, c.RevokedAt = ObjectS3CredentialStatusRevoked, &now
+		m.objectS3Credentials[bindingID] = c
+		changed = true
+	}
+	for id, stage := range m.objectS3Credentials {
+		if stage.RotationParentID == bindingID && stage.Status == ObjectS3CredentialStatusActive {
+			stage.Status, stage.RevokedAt = ObjectS3CredentialStatusRevoked, &now
+			m.objectS3Credentials[id] = stage
+			changed = true
+		}
+	}
+	for key, secret := range m.secrets {
+		if secret.ManagedObjectStorageCredentialID == bindingID {
+			delete(m.secrets, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	if now.After(m.runtimeConfigChangedAt[c.ManagedAppID]) {
+		m.runtimeConfigChangedAt[c.ManagedAppID] = now
+	}
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+	return true, nil
+}
+
 func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -3744,6 +3744,15 @@ ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at;
 UPDATE snapshots SET stale=true
 WHERE deployment_id IN (SELECT id FROM deployments WHERE app_id=$1) AND stale=false;
 
+-- name: ObjectS3BindingRevokeLock :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE;
+
+-- name: ObjectS3BindingDeleteSecrets :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1;
+
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)

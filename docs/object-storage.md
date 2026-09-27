@@ -248,9 +248,11 @@ retires that key after old instances drain; `GET .../compute-bindings` shows
 `rotation_pending` until retirement. Retrying the rotate request while
 pending requeues the same refresh without creating another key. For an app
 with no live deployment or resident instances, rotation retires the previous
-key immediately. Revocation invalidates both keys first, then removes the
-managed app secrets. Ordinary secret
-PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+key immediately. Revocation commits both-key invalidation, managed-secret
+removal, a runtime-config change stamp, and snapshot invalidation together.
+The next wake therefore cannot restore a snapshot containing the revoked
+binding. Ordinary secret PUT/DELETE calls cannot overwrite or remove a managed
+binding secret.
 
 ### Declare storage bindings in `gregale.yaml`
 
