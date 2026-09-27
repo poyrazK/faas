@@ -388,34 +388,43 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
-	// Comparison fires. Build the cool-down bucket key.
+	// Comparison fires. Apply the cool-down, then build the dedupe key.
 	//
-	// The bucket is `last_fired_at / cooldownSeconds` (when the rule
-	// has fired before) or `now / cooldownSeconds` (first-ever fire
-	// — last_fired_at is the zero time). The crucial invariant:
-	// ClaimAlertFire re-stamps `last_fired_at` to `now`, so the
-	// bucket key after a successful fire is `now /
-	// cooldownSeconds`; subsequent ticks within the cooldown window
-	// read the same stamped `last_fired_at` and compute the SAME
-	// bucket key — UNIQUE collides, dedupe holds. Backdating
-	// `last_fired_at` by 2× cooldown (cmd/e2e/meterd_alerts_e2e_test.go
-	// Phase 3) shifts the bucket by exactly 2, landing the next
-	// claim in a fresh key. The +1 from the previous revision is
-	// gone: it was producing a different key on the first vs second
-	// tick because last_fired_at advanced from zero to now in a
-	// single step.
-	cooldownSeconds := int64(rule.CooldownMinutes) * 60
-	if cooldownSeconds <= 0 {
-		cooldownSeconds = 60 // belt + braces; the schema defaults to ≥ 1
+	// The cool-down is a plain time gate on last_fired_at. The dedupe key
+	// names "the fire that follows the one at last_fired_at": every
+	// evaluator that read the same last_fired_at competes for the same
+	// key, the UNIQUE on alert_deliveries.idempotency_key lets exactly
+	// one win, and the winner's claim advances last_fired_at so the next
+	// fire has a fresh key.
+	//
+	// The key used to be last_fired_at / cooldown (or now / cooldown on a
+	// first fire). last_fired_at only moves when a claim wins, so after
+	// the first fire every later tick produced that same key and lost:
+	// each rule fired exactly once and then stayed silent — through a
+	// sustained breach past its cool-down and for every new incident.
+	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
+	if cooldown <= 0 {
+		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
-	var bucketUnix int64
-	if rule.LastFiredAt.IsZero() {
-		bucketUnix = now.Unix()
-	} else {
-		bucketUnix = rule.LastFiredAt.Unix()
+	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
+		// Still breaching inside the cool-down: a degraded read that has
+		// recovered goes back to firing, as a lost claim did before.
+		if rule.State == state.AlertStateDegraded {
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
+				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
+			}
+		}
+		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
+			e.log.Warn("alerts: stamp last_evaluated_at (cool-down)",
+				"rule", rule.ID, "err", err)
+		}
+		return
 	}
-	bucket := bucketUnix / cooldownSeconds
-	idempotencyKey := rule.ID + ":" + strconv.FormatInt(bucket, 10)
+	var previousFire int64
+	if !rule.LastFiredAt.IsZero() {
+		previousFire = rule.LastFiredAt.UnixNano()
+	}
+	idempotencyKey := rule.ID + ":after:" + strconv.FormatInt(previousFire, 10)
 
 	// Stamp last_evaluated_at up-front so a successful claim still
 	// records "evaluated N seconds ago" if the dispatch path then

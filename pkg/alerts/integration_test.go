@@ -213,3 +213,55 @@ func TestPgStore_DeleteAccount_CascadesAlertRules(t *testing.T) {
 // guard the imports so the integration_test file compiles even when
 // pgtest.Open skips.
 var _ = alerts.AlertSecretNamespace
+
+// TestPgEvaluator_RefiresAfterCooldown drives the evaluator against real
+// Postgres: after a fire, a breach that outlasts the cool-down fires again.
+// The old last_fired_at-derived dedupe key made every rule one-shot.
+func TestPgEvaluator_RefiresAfterCooldown(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	acct, err := s.CreateAccount(ctx, "alerts-refire-"+time.Now().Format(time.RFC3339Nano)+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "alerts-refire-" + time.Now().Format("150405.000000"),
+		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := s.CreateAlertRule(ctx, state.AlertRule{
+		AccountID: acct.ID, AppID: app.ID, Name: "refire", Enabled: true,
+		Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt, Threshold: 5,
+		WindowSpec: state.AlertWindow5m, WebhookURL: "https://example.com/hook",
+		WebhookSecretSealed: []byte("sealed-secret"), CooldownMinutes: 30,
+	}); err != nil {
+		t.Fatalf("CreateAlertRule: %v", err)
+	}
+	tick := func(at time.Time) int {
+		t.Helper()
+		ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store: s, PromQL: &stubPromQL{value: 10}, Now: func() time.Time { return at }, Log: discardLog(),
+		})
+		stats, err := ev.RunOnce(ctx)
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+		return stats.Fired
+	}
+	t0 := time.Now().UTC().Truncate(time.Second)
+	if n := tick(t0); n != 1 {
+		t.Fatalf("first breach fired %d times, want 1", n)
+	}
+	if n := tick(t0.Add(10 * time.Minute)); n != 0 {
+		t.Fatalf("inside the 30m cool-down fired %d times, want 0", n)
+	}
+	if n := tick(t0.Add(31 * time.Minute)); n != 1 {
+		t.Fatalf("breach past the cool-down fired %d times, want 1", n)
+	}
+}
