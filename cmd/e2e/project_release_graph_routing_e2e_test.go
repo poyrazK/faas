@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -49,6 +50,31 @@ func setReleaseGraphCallerIP(t *testing.T, f *normalPathFixture, instance state.
 	if err := f.store.SetInstanceRuntime(f.ctx, instance.ID, "fc-"+instance.ID, hostIP, 20000); err != nil {
 		t.Fatalf("set caller instance network identity: %v", err)
 	}
+}
+
+func createReleaseGraphLiveDeployment(t *testing.T, f *normalPathFixture, appID, version string) (state.Deployment, state.Instance) {
+	t.Helper()
+	digestByte := "1"
+	if version == "v2" {
+		digestByte = "2"
+	}
+	deployment, err := f.store.CreateDeployment(f.ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:" + strings.Repeat(digestByte, 64), Scope: "production",
+	})
+	if err != nil {
+		t.Fatalf("create %s production deployment: %v", version, err)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, deployment.ID); err != nil {
+		t.Fatalf("mark %s production deployment live: %v", version, err)
+	}
+	publishNormalPathLayer(t, f, deployment.ID)
+	instance, err := f.store.CreateInstance(f.ctx, appID, deployment.ID, string(state.StateRunning),
+		e2etest.FakeSnapshotRAMMB, f.nodeID, "")
+	if err != nil {
+		t.Fatalf("create %s production instance: %v", version, err)
+	}
+	return deployment, instance
 }
 
 func releaseGraphServiceProxy(t *testing.T, f *normalPathFixture, accountID string, callerApp, targetApp state.App, endpoints ...gateway.ServiceEndpoint) *gateway.ServiceProxy {
@@ -152,8 +178,8 @@ func TestE2E_ProjectReleaseGraphPinsClientAndServiceCallsAcrossCutoverAndExpiry(
 	apiApp := createReleaseGraphApp(t, f, accountApp.AccountID, project.ID, "skewapi-"+suffix, "api")
 	billingApp := createReleaseGraphApp(t, f, accountApp.AccountID, project.ID, "skewbilling-"+suffix, "billing")
 
-	apiV1, apiInstanceV1 := createNormalPathLiveDeployment(t, f, apiApp.ID, "v1")
-	billingV1, billingInstanceV1 := createNormalPathLiveDeployment(t, f, billingApp.ID, "v1")
+	apiV1, apiInstanceV1 := createReleaseGraphLiveDeployment(t, f, apiApp.ID, "v1")
+	billingV1, billingInstanceV1 := createReleaseGraphLiveDeployment(t, f, billingApp.ID, "v1")
 	f.vmmd.SetVersion(apiInstanceV1.ID, "api-v1")
 	setReleaseGraphCallerIP(t, f, apiInstanceV1, "10.100.0.21")
 
@@ -186,8 +212,8 @@ func TestE2E_ProjectReleaseGraphPinsClientAndServiceCallsAcrossCutoverAndExpiry(
 			oldServiceCall.Header().Get("X-Test-Forwarded-Revision"), billingV1.ID, graphA.ID)
 	}
 
-	apiV2, apiInstanceV2 := createNormalPathLiveDeployment(t, f, apiApp.ID, "v2")
-	billingV2, billingInstanceV2 := createNormalPathLiveDeployment(t, f, billingApp.ID, "v2")
+	apiV2, apiInstanceV2 := createReleaseGraphLiveDeployment(t, f, apiApp.ID, "v2")
+	billingV2, billingInstanceV2 := createReleaseGraphLiveDeployment(t, f, billingApp.ID, "v2")
 	f.vmmd.SetVersion(apiInstanceV2.ID, "api-v2")
 	setReleaseGraphCallerIP(t, f, apiInstanceV2, "10.100.0.22")
 	if _, err := f.store.PublishProjectReleaseSet(ctx, accountApp.AccountID, project.ID, "production", 3600, []state.ProjectReleaseMember{
