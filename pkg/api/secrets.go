@@ -24,6 +24,7 @@ type PutAppSecretRequest struct {
 // signal outcome with an optional separately-versioned application ack.
 type SecretRuntimeReloadObservation struct {
 	InstanceID              string `json:"instance_id"`
+	WorkloadName            string `json:"workload_name,omitempty"`
 	RuntimeState            string `json:"runtime_state"`
 	ReloadSupport           string `json:"reload_support"`
 	Reported                bool   `json:"reported"`

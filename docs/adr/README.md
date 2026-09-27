@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 |---|---|---|---|
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
+| 283 | [Sidecar runtime secret reload](283-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |

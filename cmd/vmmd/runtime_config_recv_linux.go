@@ -38,6 +38,7 @@ const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 type runtimeConfigRequest struct {
 	Kind                    string `json:"kind,omitempty"`
 	Scope                   string `json:"scope"`
+	WorkloadName            string `json:"workload_name,omitempty"`
 	Revision                string `json:"revision,omitempty"`
 	Projection              string `json:"projection,omitempty"`
 	Signal                  string `json:"signal,omitempty"`
@@ -237,28 +238,28 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		if req.Scope != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		}
-		if !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
+		if !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
 			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
-		return r.handleRuntimeSecrets(instance, req.Revision, conn)
+		return r.handleRuntimeSecrets(instance, req.WorkloadName, req.Revision, conn)
 	}
 	if req.Kind == "secret_reload_status" {
-		if req.Scope != "" || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) ||
+		if req.Scope != "" || !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) ||
 			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecretReloadStatus(instance, req, conn)
 	}
 	if req.Kind == "secret_reload_ack" {
-		if req.Scope != "" || !state.ValidSecretApplicationReloadAck(req.Revision,
+		if req.Scope != "" || !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !state.ValidSecretApplicationReloadAck(req.Revision,
 			state.SecretApplicationReloadAckStatus(req.ApplicationAck), req.ApplicationAckErrorCode) ||
 			req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecretReloadAck(instance, req, conn)
 	}
-	if (req.Kind != "" && req.Kind != "env") || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
+	if (req.Kind != "" && req.Kind != "env") || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
 		req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
@@ -284,7 +285,7 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 	return responseRuntimeConfig(r.log, conn, response)
 }
 
-func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, knownRevision string, conn net.Conn) (string, error) {
+func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, workloadName, knownRevision string, conn net.Conn) (string, error) {
 	store, ok := r.store.(runtimeSecretsStore)
 	if !ok || r.mgr == nil {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
@@ -295,7 +296,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, knownRevision str
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
-	response, err := loadRuntimeSecretsIfChanged(requestCtx, store, r.mgr, deploymentID, appID, accountID, knownRevision)
+	response, err := loadRuntimeSecretsForWorkloadIfChanged(requestCtx, store, r.mgr, deploymentID, appID, accountID, workloadName, knownRevision)
 	if err != nil {
 		r.log.Debug("runtime secrets refresh unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
 		code := "secrets_unavailable"
@@ -325,7 +326,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string,
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
-	selection, err := selectRuntimeSecretRows(requestCtx, store, deploymentID, appID, accountID)
+	selection, err := selectRuntimeSecretRowsForWorkload(requestCtx, store, deploymentID, appID, accountID, req.WorkloadName)
 	if err != nil {
 		r.log.Debug("runtime secret reload status unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
@@ -338,7 +339,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string,
 		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	_, err = reloadStore.RecordAppSecretRuntimeReload(requestCtx, state.AppSecretRuntimeReloadResult{
-		AccountID: accountID, AppID: appID, InstanceID: instance, Revision: req.Revision,
+		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision,
 		Projection: state.SecretReloadProjectionStatus(req.Projection),
 		Signal:     state.SecretReloadSignalStatus(req.Signal), ErrorCode: req.ErrorCode,
 		AttemptedAt: time.Now().UTC(), Candidates: candidates,
@@ -365,7 +366,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
-	selection, err := selectRuntimeSecretRows(requestCtx, store, deploymentID, appID, accountID)
+	selection, err := selectRuntimeSecretRowsForWorkload(requestCtx, store, deploymentID, appID, accountID, req.WorkloadName)
 	if err != nil {
 		r.log.Debug("runtime secret application ack unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
@@ -378,7 +379,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	_, err = ackStore.RecordAppSecretRuntimeReloadAck(requestCtx, state.AppSecretRuntimeReloadAckResult{
-		AccountID: accountID, AppID: appID, InstanceID: instance, Revision: req.Revision,
+		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision,
 		Status: state.SecretApplicationReloadAckStatus(req.ApplicationAck), ErrorCode: req.ApplicationAckErrorCode,
 		AttemptedAt: time.Now().UTC(), Candidates: candidates,
 	})
@@ -406,10 +407,14 @@ func loadRuntimeSecrets(ctx context.Context, store runtimeSecretsStore, mgr *fcv
 }
 
 func loadRuntimeSecretsIfChanged(ctx context.Context, store runtimeSecretsStore, mgr *fcvm.Manager, deploymentID, appID, accountID, knownRevision string) (runtimeConfigResponse, error) {
+	return loadRuntimeSecretsForWorkloadIfChanged(ctx, store, mgr, deploymentID, appID, accountID, "", knownRevision)
+}
+
+func loadRuntimeSecretsForWorkloadIfChanged(ctx context.Context, store runtimeSecretsStore, mgr *fcvm.Manager, deploymentID, appID, accountID, workloadName, knownRevision string) (runtimeConfigResponse, error) {
 	if ctx == nil || store == nil || mgr == nil || deploymentID == "" || appID == "" || accountID == "" {
 		return runtimeConfigResponse{}, errors.New("runtime secrets dependencies are not configured")
 	}
-	selection, err := selectRuntimeSecretRows(ctx, store, deploymentID, appID, accountID)
+	selection, err := selectRuntimeSecretRowsForWorkload(ctx, store, deploymentID, appID, accountID, workloadName)
 	if err != nil {
 		return runtimeConfigResponse{}, err
 	}
@@ -430,8 +435,15 @@ type runtimeSecretSelection struct {
 }
 
 func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, deploymentID, appID, accountID string) (runtimeSecretSelection, error) {
+	return selectRuntimeSecretRowsForWorkload(ctx, store, deploymentID, appID, accountID, "")
+}
+
+func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecretsStore, deploymentID, appID, accountID, workloadName string) (runtimeSecretSelection, error) {
 	if ctx == nil || store == nil || deploymentID == "" || appID == "" || accountID == "" {
 		return runtimeSecretSelection{}, errors.New("runtime secret selection dependencies are not configured")
+	}
+	if !state.ValidSecretRuntimeWorkloadName(workloadName) {
+		return runtimeSecretSelection{}, errors.New("invalid runtime secret workload name")
 	}
 	deployment, err := store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
@@ -440,10 +452,9 @@ func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, dep
 	if deployment.ID != deploymentID || deployment.AppID != appID {
 		return runtimeSecretSelection{}, errors.New("live instance and deployment identity mismatch")
 	}
-	if hasSidecars, err := runtimeDeploymentHasSidecars(deployment.Sidecars); err != nil {
-		return runtimeSecretSelection{}, fmt.Errorf("decode deployment sidecars: %w", err)
-	} else if hasSidecars {
-		return runtimeSecretSelection{}, errRuntimeSecretSidecarsUnsupported
+	allowedKeys, err := runtimeSecretWorkloadAllowlist(deployment, workloadName)
+	if err != nil {
+		return runtimeSecretSelection{}, err
 	}
 	scope := deployment.Scope
 	if scope == "" {
@@ -455,10 +466,6 @@ func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, dep
 	rows, err := store.ListAppSecretsInScope(ctx, accountID, appID, scope)
 	if err != nil {
 		return runtimeSecretSelection{}, fmt.Errorf("list app secrets: %w", err)
-	}
-	allowedKeys, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
-	if err != nil {
-		return runtimeSecretSelection{}, fmt.Errorf("decode deployment secret allowlist: %w", err)
 	}
 	selected := make([]state.AppSecret, 0, len(rows))
 	entries := make([]fcvm.SealedEnvEntry, 0, len(rows))
@@ -493,6 +500,47 @@ func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, dep
 	}
 	revision := runtimeSecretRevision(scope, selected)
 	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision}, nil
+}
+
+func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName string) (map[string]struct{}, error) {
+	if workloadName == "" {
+		hasSidecars, err := runtimeDeploymentHasSidecars(deployment.Sidecars)
+		if err != nil {
+			return nil, fmt.Errorf("decode deployment sidecars: %w", err)
+		}
+		if hasSidecars {
+			return nil, errRuntimeSecretSidecarsUnsupported
+		}
+		allowed, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
+		if err != nil {
+			return nil, fmt.Errorf("decode deployment secret allowlist: %w", err)
+		}
+		return allowed, nil
+	}
+	var sidecars []api.Sidecar
+	if err := json.Unmarshal(deployment.Sidecars, &sidecars); err != nil {
+		return nil, fmt.Errorf("decode deployment sidecars: %w", err)
+	}
+	for _, sidecar := range sidecars {
+		if sidecar.Name != workloadName {
+			continue
+		}
+		if sidecar.Type != api.SidecarTypeSidecar {
+			return nil, fmt.Errorf("workload %q is not a long-running sidecar", workloadName)
+		}
+		if len(sidecar.EnvSecrets) == 0 {
+			return nil, fmt.Errorf("workload %q has no explicit secret grants", workloadName)
+		}
+		allowed := make(map[string]struct{}, len(sidecar.EnvSecrets))
+		for envKey, ref := range sidecar.EnvSecrets {
+			if api.ValidateEnvKey(envKey) != nil || ref != api.SecretRefPrefix+envKey {
+				return nil, fmt.Errorf("workload %q has an invalid secret grant", workloadName)
+			}
+			allowed[envKey] = struct{}{}
+		}
+		return allowed, nil
+	}
+	return nil, fmt.Errorf("workload %q is not declared by the deployment", workloadName)
 }
 
 func validRuntimeSecretRevision(revision string) bool {

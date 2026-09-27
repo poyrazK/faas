@@ -3064,6 +3064,10 @@ type Store interface {
 	// updated_at so a re-imaged rebuild's new key replaces the
 	// prior build's key without orphaned-key drift.
 	SetDeploymentSidecarLayer(ctx context.Context, layer DeploymentSidecarLayer) (DeploymentSidecarLayer, error)
+	// SetDeploymentSidecarSecretReloadSignal persists the immutable OCI opt-in
+	// discovered while building the named sidecar image. Empty explicitly means
+	// that sidecar does not support in-process secret reload.
+	SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error
 	// ListDeploymentSidecarLayers returns the deployment's full
 	// sidecar set, ordered by sidecar_name ASC for deterministic
 	// iteration. Returns an empty slice when the deployment has

@@ -2499,6 +2499,12 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
 		}
+		if sc.Type == api.SidecarTypeSidecar {
+			if err := h.store.SetDeploymentSidecarSecretReloadSignal(ctx, dep.ID, sc.Name, workloadManifest.SecretReloadSignal); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q secret reload metadata", sc.Name))
+				return findings, fmt.Errorf("imaged: persist sidecar %q secret reload support: %w", sc.Name, err)
+			}
+		}
 		if err := h.replicateLayer(ctx, layerKey); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "replicate sidecar layer")
 			return findings, err
@@ -2552,15 +2558,16 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	}
 
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:              cloneEnvMap(cfg.Env),
-		Entrypoint:       entrypoint,
-		Cmd:              cmd,
-		WorkingDir:       cfg.WorkingDir,
-		User:             cfg.User,
-		ExposedPorts:     cfg.ExposedPorts,
-		Healthcheck:      cfg.Healthcheck,
-		StopSignal:       cfg.StopSignal,
-		StopGracePeriodS: cfg.StopGracePeriodS,
+		Env:                cloneEnvMap(cfg.Env),
+		Entrypoint:         entrypoint,
+		Cmd:                cmd,
+		WorkingDir:         cfg.WorkingDir,
+		User:               cfg.User,
+		ExposedPorts:       cfg.ExposedPorts,
+		Healthcheck:        cfg.Healthcheck,
+		StopSignal:         cfg.StopSignal,
+		StopGracePeriodS:   cfg.StopGracePeriodS,
+		SecretReloadSignal: cfg.SecretReloadSignal,
 	})
 	if err != nil {
 		return api.AppManifest{}, err

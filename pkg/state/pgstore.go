@@ -22718,8 +22718,9 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	updated := 0
 	for _, candidate := range result.Candidates {
-		tag, err := tx.Exec(ctx,
-			`update app_secrets
+		if result.WorkloadName == "" {
+			tag, err := tx.Exec(ctx,
+				`update app_secrets
 			 set last_runtime_reload_version = $5,
 			     last_runtime_reload_revision = $6,
 			     last_runtime_reload_projection = $7,
@@ -22729,23 +22730,24 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 			     last_runtime_reload_instance_id = $11
 			 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
 			   and delivery_version = $5`,
-			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-			result.Revision, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.InstanceID)
-		if err != nil {
-			return 0, mapErr(err)
-		}
-		if tag.RowsAffected() != 1 {
-			return 0, ErrConflict
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+				result.Revision, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.InstanceID)
+			if err != nil {
+				return 0, mapErr(err)
+			}
+			if tag.RowsAffected() != 1 {
+				return 0, ErrConflict
+			}
 		}
 		observationTag, err := tx.Exec(ctx,
 			`insert into app_secret_runtime_reload_observations
-				(app_id, scope, key, instance_id, secret_version, projection, signal, observed_at, error_code)
-			 select s.app_id, s.scope, s.key, i.id, $5, $7, $8, $9, nullif($10, '')
+				(app_id, scope, key, instance_id, workload_name, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, $11, $5, $7, $8, $9, nullif($10, '')
 			 from app_secrets s
 			 join instances i on i.id = $6 and i.app_id = s.app_id
 			 where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
 			   and s.delivery_version = $5
-			 on conflict (app_id, scope, key, instance_id) do update
+			 on conflict (app_id, scope, key, instance_id, workload_name) do update
 			 set secret_version = excluded.secret_version,
 				     projection = excluded.projection,
 				     signal = excluded.signal,
@@ -22757,7 +22759,7 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END
 			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version`,
 			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-			result.InstanceID, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode)
+			result.InstanceID, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.WorkloadName)
 		if err != nil {
 			return 0, mapErr(err)
 		}
@@ -22796,7 +22798,7 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 			        application_ack_status = $6,
 			        application_ack_at = $7,
 			        application_ack_error_code = nullif($8, '')
-			  where o.app_id = $2 and o.scope = $3 and o.key = $4 and o.instance_id = $9
+			  where o.app_id = $2 and o.scope = $3 and o.key = $4 and o.instance_id = $9 and o.workload_name = $10
 			    and o.secret_version <= $5 and coalesce(o.application_ack_version, 0) <= $5
 			    and exists (
 			        select 1 from app_secrets s
@@ -22805,7 +22807,7 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 			          and s.delivery_version = $5
 			    )`,
 			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-			string(result.Status), attemptedAt, result.ErrorCode, result.InstanceID)
+			string(result.Status), attemptedAt, result.ErrorCode, result.InstanceID, result.WorkloadName)
 		if err != nil {
 			return 0, mapErr(err)
 		}
@@ -22825,7 +22827,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, ac
 		return nil, ErrInvalidArgument
 	}
 	rows, err := s.pool.Query(ctx,
-		`select o.scope, o.key, o.instance_id::text, o.secret_version,
+		`select o.scope, o.key, o.instance_id::text, o.workload_name, o.secret_version,
 		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, ''),
 	        coalesce(o.application_ack_version, 0), coalesce(o.application_ack_status, ''),
 	        o.application_ack_at, coalesce(o.application_ack_error_code, '')
@@ -22834,7 +22836,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, ac
 	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
 	  where s.account_id = $1 and o.app_id = $2 and ($3 = '' or o.scope = $3)
 	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
-	  order by o.scope asc, o.key asc, o.instance_id asc`, accountID, appID, scope)
+	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc`, accountID, appID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -22844,7 +22846,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, ac
 		var observation AppSecretRuntimeReloadObservation
 		var projection, signal string
 		var ackStatus string
-		if err := rows.Scan(&observation.Scope, &observation.Key, &observation.InstanceID,
+		if err := rows.Scan(&observation.Scope, &observation.Key, &observation.InstanceID, &observation.WorkloadName,
 			&observation.Version, &projection, &signal, &observation.ObservedAt, &observation.ErrorCode,
 			&observation.ApplicationAckVersion, &ackStatus, &observation.ApplicationAckAt, &observation.ApplicationAckErrorCode); err != nil {
 			return nil, err
@@ -22872,6 +22874,30 @@ func (s *PgStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, signa
 	return nil
 }
 
+func (s *PgStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error {
+	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) || !validSecretReloadSignal(signal) {
+		return ErrInvalidArgument
+	}
+	tag, err := s.pool.Exec(ctx,
+		`insert into deployment_sidecar_secret_reload_signals (deployment_id, sidecar_name, signal)
+		 select d.id, $2, $3
+		   from deployments d
+		  where d.id = $1
+		    and exists (
+		      select 1 from jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+	       where sidecar.value->>'name' = $2 and sidecar.value->>'type' = 'sidecar'
+		    )
+		 on conflict (deployment_id, sidecar_name) do update set signal = excluded.signal`,
+		mustPgUUID(deploymentID), sidecarName, signal)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error) {
 	if accountID == "" || appID == "" {
 		return nil, ErrInvalidArgument
@@ -22886,7 +22912,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, account
 	out := make([]AppSecretRuntimeReloadTarget, 0, len(rows))
 	for _, row := range rows {
 		target := AppSecretRuntimeReloadTarget{
-			Scope: row.Scope, Key: row.Key, InstanceID: row.InstanceID,
+			Scope: row.Scope, Key: row.Key, InstanceID: row.InstanceID, WorkloadName: row.WorkloadName,
 			RuntimeState: row.RuntimeState, ReloadSupport: row.ReloadSupport,
 			Reported: row.SecretVersion.Valid, ErrorCode: row.ErrorCode.String,
 			ApplicationAck:          SecretApplicationReloadAckStatus(row.ApplicationAckStatus.String),

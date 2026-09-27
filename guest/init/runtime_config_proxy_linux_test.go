@@ -68,7 +68,7 @@ func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
 				return
 			}
 			var request runtimeConfigRequest
-			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_ack" || request.Revision != revision ||
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_ack" || request.WorkloadName != "worker" || request.Revision != revision ||
 				request.ApplicationAck != "applied" || request.ApplicationAckErrorCode != "" {
 				return
 			}
@@ -76,7 +76,7 @@ func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
 		}()
 		return client, nil
 	}
-	req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint,
+	req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint+"?workload=worker",
 		strings.NewReader(`{"revision":"`+revision+`","status":"applied"}`))
 	rec := httptest.NewRecorder()
 	metadataSecretReloadAckHandler(rec, req)
@@ -96,6 +96,23 @@ func TestMetadataSecretReloadAckHandlerRejectsInvalidRequest(t *testing.T) {
 		metadataSecretReloadAckHandler(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("request %s returned %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestMetadataSecretReloadAckHandlerRejectsAmbiguousWorkloadQuery(t *testing.T) {
+	for _, query := range []string{
+		"?workload=worker&workload=proxy",
+		"?workload=",
+		"?workload=worker&scope=prod",
+		"?workload=%GG",
+	} {
+		req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint+query,
+			strings.NewReader(`{"revision":"`+strings.Repeat("a", 64)+`","status":"applied"}`))
+		rec := httptest.NewRecorder()
+		metadataSecretReloadAckHandler(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("query %q returned %d, want 400", query, rec.Code)
 		}
 	}
 }

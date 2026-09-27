@@ -79,22 +79,26 @@ LABEL com.gregale.secret-reload-signal="SIGHUP"
 The supported signals are `SIGHUP`, `SIGUSR1`, and `SIGUSR2`; the selected
 signal must differ from the image's `STOPSIGNAL`. On rotation, guest-init polls
 the deployment's current secret scope, atomically replaces a JSON map at the
-path in `FAAS_SECRETS_FILE`, then forwards the configured signal to the main
-application. The file is mode `0400`, owned by the app user, and lives on the
-guest's `/tmp` tmpfs. The process environment itself cannot change after
+path in `FAAS_SECRETS_FILE`, then forwards the configured signal to the opted-in
+workload. The file is mode `0400`, owned by the workload user, and lives on its
+`/tmp` tmpfs. The process environment itself cannot change after
 `exec`, so the application must handle the signal, reread the file, and update
 its own clients or connection pools. Refresh is checked every 10 seconds; use
 `--restart` when the app cannot implement that contract or when a rolling
 replacement is preferred.
 
-This opt-in currently supports single-workload deployments only. A deployment
-with sidecars is rejected when the image declares the reload label. Sidecars
-can separately receive explicitly granted app secrets through their own
-`env_secrets` maps; grants are never inherited from the main workload and are
-applied only at cold boot or restart. Sidecar in-process reload and app
-acknowledgements are not supported yet. Secret reload requests are resolved
-against the live deployment's scope and main-workload `env_secrets` allowlist
-(legacy deployments without an allowlist keep their existing
+The main image's reload opt-in still supports single-workload deployments only;
+a main image declaring the reload label is rejected when that deployment has
+sidecars. Independently, each long-running sidecar image may declare the same
+OCI label to opt that workload into live refresh. It receives only its own
+explicit `env_secrets` grants; init helpers and sidecars without the image
+opt-in retain restart delivery. Each workload gets its own `FAAS_SECRETS_FILE`,
+revision file, signal target, status observation, and optional acknowledgement.
+For sidecars, the platform stamps the workload name into the acknowledgement
+endpoint URL so the self-attestation is recorded against that sidecar. Secret
+reload requests are resolved against the live deployment's scope and the
+requesting workload's allowlist. The main workload uses its `env_secrets`
+allowlist (legacy single-workload deployments without one retain their
 all-secrets-in-scope behavior). The application is responsible
 for confirming to itself that it successfully reloaded. `secrets list` reports
 wake-time delivery and a complete roster of active runtimes currently

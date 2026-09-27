@@ -25423,7 +25423,7 @@ components:
         secret_reload_signal:
           type: [string, "null"]
           enum: [SIGHUP, SIGUSR1, SIGUSR2, null]
-          description: "Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222)."
+          description: "Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must differ from stop_signal (ADR-222)."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -27995,7 +27995,8 @@ components:
         app secrets selected by explicit `secret:KEY` references.
         References resolve in the deployment's scope at each wake;
         sidecars do not inherit main-workload secrets. Secret rotation
-        reaches sidecars through a restart, not in-process reload.
+        reaches sidecars through a restart by default; a long-running
+        sidecar image may opt into runtime projection and signal delivery.
 
         - `name` matches RFC 1123 label (lowercase alphanumeric
           + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -28016,7 +28017,9 @@ components:
           `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
           and referenced app-secret name must match. Missing secrets fail
           the wake; an empty/omitted map grants no app secrets to this
-          sidecar. These values refresh on cold boot or restart only.
+          sidecar. Values refresh on cold boot or restart by default;
+          long-running sidecars can also opt into runtime projection and
+          signal delivery through their image metadata.
         - `port` ∈ {0, 1..65535}. 0 = absent.
         - `primary_ingress` routes the application's normal hostname and
           custom domains through this long-running helper. It requires port.
@@ -28073,7 +28076,7 @@ components:
         env_secrets:
           type: object
           additionalProperties: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
-          description: "Per-sidecar positive allowlist of same-named app secrets, resolved at wake in the deployment scope. Values refresh on restart; sidecars do not inherit main secrets."
+          description: "Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery through their image metadata. Sidecars never inherit main secrets."
         port:
           type: integer
           minimum: 0
@@ -33197,11 +33200,12 @@ components:
         runtime_reload_targets_complete: { type: boolean, description: "True when this response includes the complete active, secret-authorized runtime roster. The field is absent from older control-plane responses; callers must fail closed when waiting for acknowledgements." }
 
     SecretRuntimeReloadObservation:
-      description: "Non-sensitive active runtime target and optional guest-init projection/signal outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not independent verification."
+      description: "Non-sensitive active main or explicitly authorized sidecar workload target and optional guest-init projection/signal outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not independent verification."
       type: object
       required: [instance_id, runtime_state, reload_support, reported]
       properties:
         instance_id: { type: string, description: "Authorized active runtime instance ID." }
+        workload_name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', description: "Sidecar workload name. Omitted for the main workload." }
         runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm], description: "Current active instance state." }
         reload_support: { type: string, enum: [enabled, disabled, unknown], description: "Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted metadata." }
         reported: { type: boolean, description: "Whether this runtime has reported a guest-init outcome. False is unknown, never success." }

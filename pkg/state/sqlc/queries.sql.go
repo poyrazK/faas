@@ -5297,6 +5297,7 @@ const listAppSecretRuntimeReloadTargets = `-- name: ListAppSecretRuntimeReloadTa
 SELECT s.scope,
        s.key,
        i.id::text AS instance_id,
+       ''::text AS workload_name,
        i.state AS runtime_state,
        CASE
          WHEN d.secret_reload_signal IS NULL THEN 'unknown'
@@ -5317,21 +5318,50 @@ SELECT s.scope,
   JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
   LEFT JOIN app_secret_runtime_reload_observations o
     ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = ''
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND ($3::text = '' OR s.scope = $3::text)
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
-   AND (
-       coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
-       OR d.override_env_secrets ? s.key
-       OR EXISTS (
-           SELECT 1
-             FROM jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
-             CROSS JOIN LATERAL jsonb_each_text(coalesce(sidecar.value->'env_secrets', '{}'::jsonb)) AS secret_ref(env_key, ref)
-            WHERE secret_ref.ref = 'secret:' || s.key
-       )
-   )
-ORDER BY s.scope ASC, s.key ASC, i.id ASC
+   AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+         AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
+        OR d.override_env_secrets ? s.key)
+UNION ALL
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       sidecar.value->>'name' AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN reload.signal IS NULL THEN 'unknown'
+         WHEN reload.signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+  LEFT JOIN deployment_sidecar_secret_reload_signals reload
+    ON reload.deployment_id = d.id AND reload.sidecar_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = sidecar.value->>'name'
+ WHERE s.account_id = $1::uuid
+   AND i.app_id = $2::uuid
+   AND ($3::text = '' OR s.scope = $3::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND sidecar.value->>'type' = 'sidecar'
+   AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
+ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC
 `
 
 type ListAppSecretRuntimeReloadTargetsParams struct {
@@ -5344,6 +5374,7 @@ type ListAppSecretRuntimeReloadTargetsRow struct {
 	Scope                   string
 	Key                     string
 	InstanceID              string
+	WorkloadName            string
 	RuntimeState            string
 	ReloadSupport           string
 	SecretVersion           pgtype.Int8
@@ -5374,6 +5405,7 @@ func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX
 			&i.Scope,
 			&i.Key,
 			&i.InstanceID,
+			&i.WorkloadName,
 			&i.RuntimeState,
 			&i.ReloadSupport,
 			&i.SecretVersion,

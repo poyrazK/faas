@@ -6098,28 +6098,30 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
-	AccountID   string
-	AppID       string
-	InstanceID  string
-	Revision    string
-	Projection  SecretReloadProjectionStatus
-	Signal      SecretReloadSignalStatus
-	ErrorCode   string
-	AttemptedAt time.Time
-	Candidates  []AppSecretDeliveryCandidate
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Projection   SecretReloadProjectionStatus
+	Signal       SecretReloadSignalStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
 }
 
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
-	AccountID   string
-	AppID       string
-	InstanceID  string
-	Revision    string
-	Status      SecretApplicationReloadAckStatus
-	ErrorCode   string
-	AttemptedAt time.Time
-	Candidates  []AppSecretDeliveryCandidate
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Status       SecretApplicationReloadAckStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
 }
 
 // AppSecretRuntimeReloadObservation is the latest guest-init projection and
@@ -6130,6 +6132,7 @@ type AppSecretRuntimeReloadObservation struct {
 	Scope                   string
 	Key                     string
 	InstanceID              string
+	WorkloadName            string
 	Version                 int64
 	Projection              SecretReloadProjectionStatus
 	Signal                  SecretReloadSignalStatus
@@ -6150,6 +6153,7 @@ type AppSecretRuntimeReloadTarget struct {
 	Scope                   string
 	Key                     string
 	InstanceID              string
+	WorkloadName            string
 	RuntimeState            string
 	ReloadSupport           string
 	Reported                bool

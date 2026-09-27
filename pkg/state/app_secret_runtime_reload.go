@@ -7,6 +7,7 @@ import (
 
 func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool {
 	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+		!ValidSecretRuntimeWorkloadName(result.WorkloadName) ||
 		!ValidSecretReloadOutcome(result.Revision, result.Projection, result.Signal, result.ErrorCode) {
 		return false
 	}
@@ -19,7 +20,8 @@ func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool
 }
 
 func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult) bool {
-	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" || !validSecretRevision(result.Revision) {
+	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) {
 		return false
 	}
 	if !ValidSecretApplicationReloadAck(result.Revision, result.Status, result.ErrorCode) {
@@ -27,6 +29,26 @@ func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult
 	}
 	for _, candidate := range result.Candidates {
 		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidSecretRuntimeWorkloadName accepts the empty main-workload identity or a
+// DNS-label sidecar name used to scope runtime secret delivery and reporting.
+func ValidSecretRuntimeWorkloadName(name string) bool {
+	if name == "" {
+		return true // the main workload retains the original wire identity
+	}
+	if len(name) > 63 {
+		return false
+	}
+	for i, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+		if i == 0 && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}
 	}

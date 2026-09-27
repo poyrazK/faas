@@ -469,6 +469,7 @@ type AppSecretRuntimeReloadObservation struct {
 	Scope                   string
 	Key                     string
 	InstanceID              pgtype.UUID
+	WorkloadName            string
 	SecretVersion           int64
 	Projection              string
 	Signal                  string
@@ -1009,6 +1010,12 @@ type DeploymentSidecarLayer struct {
 	ContentDigest string
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type DeploymentSidecarSecretReloadSignal struct {
+	DeploymentID pgtype.UUID
+	SidecarName  string
+	Signal       string
 }
 
 type DomainDoctorObservation struct {

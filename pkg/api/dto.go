@@ -6809,10 +6809,10 @@ type Sidecar struct {
 	Env map[string]string `json:"env,omitempty"`
 	// EnvSecrets is an explicit per-sidecar allowlist of app secrets.
 	// Each entry maps an environment key to the same-named app secret
-	// (`DB_URL`: `secret:DB_URL`). Values are resolved at wake time in the
+	// (`DB_URL`: `secret:DB_URL`). Values are resolved in the
 	// deployment's scope; sidecars never inherit the main workload's set.
-	// These secrets are restart-delivered only; sidecar live reload is not
-	// currently supported.
+	// Restart is the default delivery path. Long-running sidecars can also opt
+	// into runtime projection and signal delivery through image metadata.
 	EnvSecrets map[string]string `json:"env_secrets,omitempty"`
 	// Port is the listen port. 0 means "absent / fall back to
 	// image default" (1..65535 enforced at the API layer). The

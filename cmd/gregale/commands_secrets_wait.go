@@ -84,7 +84,7 @@ func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceI
 					pending++
 					continue
 				}
-				return targetCount, pending, fmt.Errorf("runtime %s reported that it could not apply the rotated secret", target.InstanceID)
+				return targetCount, pending, fmt.Errorf("%s reported that it could not apply the rotated secret", secretRuntimeTargetName(target))
 			}
 		}
 		if target.ReloadSupport != "enabled" {
@@ -92,7 +92,7 @@ func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceI
 				pending++
 				continue
 			}
-			return targetCount, pending, fmt.Errorf("runtime %s has reload support %s; redeploy with com.gregale.secret-reload-signal or use --restart", target.InstanceID, target.ReloadSupport)
+			return targetCount, pending, fmt.Errorf("%s has reload support %s; opt in with com.gregale.secret-reload-signal or use --restart", secretRuntimeTargetName(target), target.ReloadSupport)
 		}
 		if target.Reported && target.Version == secret.DeliveryVersion &&
 			(target.Projection == "failed" || target.Signal == "failed") {
@@ -100,11 +100,18 @@ func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceI
 				pending++
 				continue
 			}
-			return targetCount, pending, fmt.Errorf("runtime %s could not deliver the rotated secret to the application", target.InstanceID)
+			return targetCount, pending, fmt.Errorf("%s could not deliver the rotated secret to the application", secretRuntimeTargetName(target))
 		}
 		pending++
 	}
 	return targetCount, pending, nil
+}
+
+func secretRuntimeTargetName(target api.SecretRuntimeReloadObservation) string {
+	if target.WorkloadName == "" {
+		return "runtime " + target.InstanceID
+	}
+	return fmt.Sprintf("sidecar %s in runtime %s", target.WorkloadName, target.InstanceID)
 }
 
 func secretAckTimeoutError(ctx context.Context, targetCount, pending int) error {

@@ -132,7 +132,7 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
-	// SecretReloadSignal opts the main workload into live secret-file
+	// SecretReloadSignal opts this image's workload into live secret-file
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`

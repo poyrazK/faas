@@ -4090,6 +4090,7 @@ func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 		Cmd:           w.Cmd,
 		Entrypoint:    w.Entrypoint,
 		DependsOn:     w.DependsOn,
+		SecretKeys:    w.SecretKeys,
 		// StorageKey is omitted: the guest doesn't need to know
 		// the host-side path; it just reads the workload spec
 		// from the manifest and ignores the storage key. ADR-069
@@ -4148,6 +4149,10 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
+	secretKeyBytes := int64(0)
+	for _, key := range w.SecretKeys {
+		secretKeyBytes += int64(len(key)) * 2
+	}
 	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe) + projectedSidecarProbeBytes(w.ReadinessProbe)
 	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
@@ -4156,7 +4161,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + probeBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + secretKeyBytes + probeBytes + fixedOverhead
 }
 
 func projectedSidecarProbeBytes(probe *api.SidecarProbe) int64 {
@@ -4245,6 +4250,7 @@ type workloadManifest struct {
 	Port           int                      `json:"port"`
 	RamMB          int                      `json:"ram_mb"`
 	ScratchMB      int                      `json:"scratch_mb,omitempty"`
+	SecretKeys     []string                 `json:"secret_keys,omitempty"`
 	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
 	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
 	Type           string                   `json:"type"`
@@ -4363,6 +4369,7 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			Cmd:            sc.Cmd,
 			Entrypoint:     sc.Entrypoint,
 			DependsOn:      sc.DependsOn,
+			SecretKeys:     sc.SecretKeys,
 		})
 	}
 	blob, err := json.Marshal(roster)

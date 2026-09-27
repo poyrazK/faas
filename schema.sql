@@ -2656,6 +2656,21 @@ CREATE TABLE public.deployments (
 
 
 --
+-- Name: deployment_sidecar_secret_reload_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_sidecar_secret_reload_signals (
+    deployment_id uuid NOT NULL,
+    sidecar_name text NOT NULL,
+    signal text NOT NULL,
+    CONSTRAINT deployment_sidecar_secret_reload_signals_pkey PRIMARY KEY (deployment_id, sidecar_name),
+    CONSTRAINT deployment_sidecar_secret_reload_signals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE,
+    CONSTRAINT deployment_sidecar_secret_reload_name_chk CHECK ((sidecar_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT deployment_sidecar_secret_reload_signal_chk CHECK ((signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))
+);
+
+
+--
 -- Name: domain_doctor_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3060,6 +3075,7 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
     scope text NOT NULL,
     key text NOT NULL,
     instance_id uuid NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
     secret_version bigint NOT NULL,
     projection text NOT NULL,
     signal text NOT NULL,
@@ -3069,9 +3085,10 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
     application_ack_status text,
     application_ack_at timestamp with time zone,
     application_ack_error_code text,
-    CONSTRAINT app_secret_runtime_reload_observations_pkey PRIMARY KEY (app_id, scope, key, instance_id),
+    CONSTRAINT app_secret_runtime_reload_observations_pkey PRIMARY KEY (app_id, scope, key, instance_id, workload_name),
     CONSTRAINT app_secret_runtime_reload_observation_secret_fkey FOREIGN KEY (app_id, scope, key) REFERENCES public.app_secrets(app_id, scope, key) ON DELETE CASCADE,
     CONSTRAINT app_secret_runtime_reload_observation_instance_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_runtime_reload_observation_workload_name_chk CHECK (((workload_name = ''::text) OR (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT app_secret_runtime_reload_observation_version_chk CHECK ((secret_version >= 1)),
     CONSTRAINT app_secret_runtime_reload_observation_projection_chk CHECK ((projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text]))),
     CONSTRAINT app_secret_runtime_reload_observation_signal_chk CHECK ((signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text]))),

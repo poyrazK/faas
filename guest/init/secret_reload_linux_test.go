@@ -24,14 +24,14 @@ func TestFetchRuntimeSecretsUsesDedicatedRequestKind(t *testing.T) {
 				return
 			}
 			var request runtimeConfigRequest
-			if json.Unmarshal(body, &request) != nil || request.Kind != "secrets" || request.Revision != "" {
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secrets" || request.WorkloadName != "worker" || request.Revision != "" {
 				return
 			}
 			_ = writeRuntimeConfigFrame(server, []byte(`{"secrets":{"DB_URL":"postgres://new"},"revision":"r2"}`))
 		}()
 		return client, nil
 	}
-	response, err := fetchRuntimeSecrets("")
+	response, err := fetchRuntimeSecretsForWorkload("worker", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
 			}
 			var request runtimeConfigRequest
 			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_status" ||
-				request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
+				request.WorkloadName != "worker" || request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
 				request.Signal != "sent" || request.ErrorCode != "" {
 				return
 			}
@@ -62,7 +62,7 @@ func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
 		return client, nil
 	}
 	accepted, stale, err := sendRuntimeSecretReloadReport(runtimeSecretReloadReport{
-		Revision: strings.Repeat("a", 64), Projection: "updated", Signal: "sent",
+		Revision: strings.Repeat("a", 64), WorkloadName: "worker", Projection: "updated", Signal: "sent",
 	})
 	if err != nil || !accepted || stale {
 		t.Fatalf("sendRuntimeSecretReloadReport = accepted %t stale %t err %v", accepted, stale, err)

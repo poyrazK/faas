@@ -79,6 +79,10 @@ func runtimeSecretsEqual(a, b map[string]string) bool {
 }
 
 func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger) {
+	startRuntimeSecretReloaderForWorkload(ctx, manifest, secrets, sup, log, "", secretReloadFilePath, secretReloadRevisionFilePath)
+}
+
+func startRuntimeSecretReloaderForWorkload(ctx context.Context, manifest api.AppManifest, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger, workloadName, projectionPath, revisionPath string) {
 	if ctx == nil || secrets == nil || sup == nil || manifest.SecretReloadSignal == "" {
 		return
 	}
@@ -108,7 +112,7 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 			}
 		}
 		for {
-			response, err := fetchRuntimeSecrets(lastRevision)
+			response, err := fetchRuntimeSecretsForWorkload(workloadName, lastRevision)
 			if err != nil {
 				log.Debug("guest-init: runtime secret refresh unavailable", "err_kind", "fetch_failed")
 			} else if response.Error != "" {
@@ -133,23 +137,23 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 					fresh = map[string]string{}
 				}
 				if runtimeSecretsEqual(current, fresh) {
-					if err := writeRuntimeSecretRevisionProjection(secretReloadRevisionFilePath, lookupUID(manifest.EffectiveUser()), response.Revision); err != nil {
+					if err := writeRuntimeSecretRevisionProjection(revisionPath, lookupUID(manifest.EffectiveUser()), response.Revision); err != nil {
 						lastRevision = ""
 						log.Warn("guest-init: runtime secret revision projection update failed", "err_kind", "write_failed")
 					} else {
 						lastRevision = response.Revision
 						pendingReport = &runtimeSecretReloadReport{
-							Revision: response.Revision, Projection: "unchanged", Signal: "not_attempted",
+							Revision: response.Revision, Projection: "unchanged", Signal: "not_attempted", WorkloadName: workloadName,
 						}
 					}
-				} else if err := secrets.publish(secretReloadFilePath, secretReloadRevisionFilePath, lookupUID(manifest.EffectiveUser()), fresh, response.Revision); err != nil {
+				} else if err := secrets.publish(projectionPath, revisionPath, lookupUID(manifest.EffectiveUser()), fresh, response.Revision); err != nil {
 					log.Warn("guest-init: runtime secret projection update failed", "err_kind", "write_failed")
 					pendingReport = &runtimeSecretReloadReport{
-						Revision: response.Revision, Projection: "failed", Signal: "not_attempted", ErrorCode: "projection_failed",
+						Revision: response.Revision, Projection: "failed", Signal: "not_attempted", ErrorCode: "projection_failed", WorkloadName: workloadName,
 					}
 				} else {
 					lastRevision = response.Revision
-					report := &runtimeSecretReloadReport{Revision: response.Revision, Projection: "updated", Signal: "sent"}
+					report := &runtimeSecretReloadReport{Revision: response.Revision, Projection: "updated", Signal: "sent", WorkloadName: workloadName}
 					queued, err := sup.ForwardSignalOnStartWithStatus(signal)
 					if err != nil {
 						report.Signal = "failed"
@@ -173,10 +177,11 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 }
 
 type runtimeSecretReloadReport struct {
-	Revision   string
-	Projection string
-	Signal     string
-	ErrorCode  string
+	Revision     string
+	WorkloadName string
+	Projection   string
+	Signal       string
+	ErrorCode    string
 }
 
 func sendRuntimeSecretReloadReport(report runtimeSecretReloadReport) (accepted, stale bool, err error) {
@@ -187,7 +192,7 @@ func sendRuntimeSecretReloadReport(report runtimeSecretReloadReport) (accepted, 
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
 	body, err := json.Marshal(runtimeConfigRequest{
-		Kind: "secret_reload_status", Revision: report.Revision,
+		Kind: "secret_reload_status", WorkloadName: report.WorkloadName, Revision: report.Revision,
 		Projection: report.Projection, Signal: report.Signal, ErrorCode: report.ErrorCode,
 	})
 	if err != nil {
@@ -222,13 +227,17 @@ func validGuestRuntimeSecretRevision(revision string) bool {
 }
 
 func fetchRuntimeSecrets(revision string) (runtimeConfigResponse, error) {
+	return fetchRuntimeSecretsForWorkload("", revision)
+}
+
+func fetchRuntimeSecretsForWorkload(workloadName, revision string) (runtimeConfigResponse, error) {
 	conn, err := dialRuntimeConfigHost()
 	if err != nil {
 		return runtimeConfigResponse{}, err
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	body, err := json.Marshal(runtimeConfigRequest{Kind: "secrets", Revision: revision})
+	body, err := json.Marshal(runtimeConfigRequest{Kind: "secrets", WorkloadName: workloadName, Revision: revision})
 	if err != nil {
 		return runtimeConfigResponse{}, err
 	}

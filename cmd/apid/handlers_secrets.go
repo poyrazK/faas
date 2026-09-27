@@ -234,7 +234,7 @@ func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accoun
 	for _, row := range rows {
 		key := secretObservationKey{Scope: row.Scope, Key: row.Key}
 		observation := api.SecretRuntimeReloadObservation{
-			InstanceID: row.InstanceID, RuntimeState: row.RuntimeState,
+			InstanceID: row.InstanceID, WorkloadName: row.WorkloadName, RuntimeState: row.RuntimeState,
 			ReloadSupport: row.ReloadSupport, Reported: row.Reported,
 			ErrorCode:             row.ErrorCode,
 			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
