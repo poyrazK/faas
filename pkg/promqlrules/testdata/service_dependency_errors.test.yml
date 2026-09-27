@@ -1,0 +1,63 @@
+# Synthetic rule-engine tests for per-edge service dependency error alerting.
+# The fixture uses only the production counters; no gateway or database is
+# required. It pins both the traffic and error-count floors as well as the
+# sustained alert duration.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "sustained dependency errors above threshold fire for the edge"
+    input_series:
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-1",target_app="target-1",outcome="error"}'
+        values: '0+1x80'
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-1",target_app="target-1",outcome="success"}'
+        values: '0+3x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasServiceDependencyErrorsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: service_dependency
+              caller_app: caller-1
+              target_app: target-1
+            exp_annotations:
+              summary: "Service dependency errors are high from caller-1 to target-1"
+              description: "This trusted caller-to-target edge has exceeded a 10% final error rate with at least five errors across twenty calls in the last ten minutes for five minutes. The alert labels contain app UUIDs; use the runbook to identify the apps and inspect the edge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceDependencyErrorsHigh.md"
+
+  - interval: 30s
+    name: "low-volume failing edge stays quiet"
+    input_series:
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-sparse",target_app="target-down",outcome="error"}'
+        values: '0+0.2x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasServiceDependencyErrorsHigh
+
+  - interval: 30s
+    name: "enough traffic but fewer than five errors stays quiet"
+    input_series:
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-low-error-count",target_app="target-steady",outcome="error"}'
+        values: '0+0.2x80'
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-low-error-count",target_app="target-steady",outcome="success"}'
+        values: '0+0.8x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasServiceDependencyErrorsHigh
+
+  - interval: 30s
+    name: "error rate at or below ten percent stays quiet"
+    input_series:
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-healthy",target_app="target-steady",outcome="error"}'
+        values: '0+1x80'
+      - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-healthy",target_app="target-steady",outcome="success"}'
+        values: '0+9x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasServiceDependencyErrorsHigh
