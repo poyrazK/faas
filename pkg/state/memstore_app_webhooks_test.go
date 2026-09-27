@@ -35,6 +35,21 @@ func webhookFixture(t *testing.T) (m *MemStore, ctx context.Context, account Acc
 	return m, ctx, acct, a
 }
 
+func claimMemWebhookDelivery(t *testing.T, m *MemStore, ctx context.Context, id string) AppWebhookDelivery {
+	t.Helper()
+	claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 100, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("claim delivery %s: %v", id, err)
+	}
+	for _, d := range claimed {
+		if d.ID == id {
+			return d
+		}
+	}
+	t.Fatalf("delivery %s was not claimed", id)
+	return AppWebhookDelivery{}
+}
+
 // memSampleWebhook is the simplest valid AppWebhook the tests use.
 // Fresh per call so callers can mutate fields without aliasing.
 func memSampleWebhook(accountID, appID string) AppWebhook {
@@ -360,6 +375,43 @@ func TestMemStoreAppWebhookDelivery_ClaimHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	d, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "leased"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second).UTC().Truncate(time.Microsecond)
+	first, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(first) != 1 || first[0].ID != d.ID {
+		t.Fatalf("first claim = %+v, %v", first, err)
+	}
+	if got := first[0].NextAttemptAt; !got.Equal(now.Add(AppWebhookClaimLease)) {
+		t.Fatalf("claim deadline = %v, want %v", got, now.Add(AppWebhookClaimLease))
+	}
+	early, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now.Add(AppWebhookClaimLease-time.Microsecond))
+	if err != nil || len(early) != 0 {
+		t.Fatalf("reclaim before expiry = %+v, %v", early, err)
+	}
+	second, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, first[0].NextAttemptAt.Add(time.Second))
+	if err != nil || len(second) != 1 || second[0].ID != d.ID {
+		t.Fatalf("reclaim after expiry = %+v, %v", second, err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, first[0].Attempt, first[0].NextAttemptAt, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, first[0].Attempt, first[0].NextAttemptAt, "stale", now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale retry = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, first[0].Attempt, first[0].NextAttemptAt, "stale"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale dead letter = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, second[0].Attempt, second[0].NextAttemptAt, now); err != nil {
+		t.Fatalf("current completion: %v", err)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
 	// Two accounts, three deliveries each. The claim query returns
@@ -417,7 +469,8 @@ func TestMemStoreAppWebhookDelivery_MarkSucceeded(t *testing.T) {
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
 	now := time.Now()
-	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, d.Attempt, now); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, d.Attempt, d.NextAttemptAt, now); err != nil {
 		t.Fatalf("MarkSucceeded: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -440,7 +493,8 @@ func TestMemStoreAppWebhookDelivery_MarkFailed(t *testing.T) {
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
 	resched := time.Now().Add(30 * time.Second)
-	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, d.Attempt, "boom", resched); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, d.Attempt, d.NextAttemptAt, "boom", resched); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -459,7 +513,8 @@ func TestMemStoreAppWebhookDelivery_MarkDead(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted"); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted"); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -475,7 +530,8 @@ func TestMemStoreAppWebhookDelivery_DeadLetterProjectionAndReplay(t *testing.T) 
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	delivery, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "dead-letter"))
-	if err := m.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, "receiver unavailable"); err != nil {
+	delivery = claimMemWebhookDelivery(t, m, ctx, delivery.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, delivery.NextAttemptAt, "receiver unavailable"); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 	events, err := m.ListDeadLetterEvents(ctx, app.ID, 20, "")
@@ -505,7 +561,8 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted")
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted")
 	now := time.Now()
 	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, acct.ID, now); err != nil {
 		t.Fatalf("ResetFromDead: %v", err)
@@ -526,7 +583,8 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead_IDORGuarded(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted")
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted")
 	// Wrong account id → ErrNotFound (no info leak).
 	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, "other-acct", time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("wrong acct: expected ErrNotFound, got %v", err)
@@ -545,13 +603,13 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead_IDORGuarded(t *testing.T) {
 func TestMemStoreAppWebhookDelivery_MarkerNotFound(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
-	if err := m.MarkAppWebhookDeliverySucceeded(ctx, "missing", 200, 0, time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, "missing", 200, 0, time.Time{}, time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkSucceeded missing: %v", err)
 	}
-	if err := m.MarkAppWebhookDeliveryFailed(ctx, "missing", 500, 0, "x", time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, "missing", 500, 0, time.Time{}, "x", time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkFailed missing: %v", err)
 	}
-	if err := m.MarkAppWebhookDeliveryDead(ctx, "missing", 0, "x"); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliveryDead(ctx, "missing", 0, time.Time{}, "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkDead missing: %v", err)
 	}
 }

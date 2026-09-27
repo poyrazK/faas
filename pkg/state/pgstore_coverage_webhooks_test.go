@@ -415,7 +415,8 @@ func TestPg_CoverageSweepAppWebhooks(t *testing.T) {
 		}
 		// Mark succeeded so the row doesn't leak into the
 		// ClaimDueAppWebhookDeliveries_Empty sub-test below.
-		if err := s.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, 0, time.Now()); err != nil {
+		d = claimPgWebhookDelivery(t, s, ctx, d.ID)
+		if err := s.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, d.Attempt, d.NextAttemptAt, time.Now()); err != nil {
 			t.Fatalf("MarkAppWebhookDeliverySucceeded cleanup: %v", err)
 		}
 	})
@@ -472,27 +473,27 @@ func TestPg_CoverageSweepAppWebhooks(t *testing.T) {
 			t.Errorf("claimed Status = %q, want in_flight", ours.Status)
 		}
 		// Mark our row succeeded so it doesn't leak into later tests.
-		if err := s.MarkAppWebhookDeliverySucceeded(ctx, ours.ID, 200, 0, time.Now()); err != nil {
+		if err := s.MarkAppWebhookDeliverySucceeded(ctx, ours.ID, 200, ours.Attempt, ours.NextAttemptAt, time.Now()); err != nil {
 			t.Fatalf("MarkAppWebhookDeliverySucceeded: %v", err)
 		}
 	})
 
 	t.Run("MarkAppWebhookDeliverySucceeded_Missing", func(t *testing.T) {
-		err := s.MarkAppWebhookDeliverySucceeded(ctx, "00000000-0000-0000-0000-000000000000", 200, 0, time.Now())
+		err := s.MarkAppWebhookDeliverySucceeded(ctx, "00000000-0000-0000-0000-000000000000", 200, 0, time.Time{}, time.Now())
 		if !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("MarkAppWebhookDeliverySucceeded missing = %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("MarkAppWebhookDeliveryFailed_Missing", func(t *testing.T) {
-		err := s.MarkAppWebhookDeliveryFailed(ctx, "00000000-0000-0000-0000-000000000000", 500, 0, "boom", time.Now())
+		err := s.MarkAppWebhookDeliveryFailed(ctx, "00000000-0000-0000-0000-000000000000", 500, 0, time.Time{}, "boom", time.Now())
 		if !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("MarkAppWebhookDeliveryFailed missing = %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("MarkAppWebhookDeliveryDead_Missing", func(t *testing.T) {
-		err := s.MarkAppWebhookDeliveryDead(ctx, "00000000-0000-0000-0000-000000000000", 0, "boom")
+		err := s.MarkAppWebhookDeliveryDead(ctx, "00000000-0000-0000-0000-000000000000", 0, time.Time{}, "boom")
 		if !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("MarkAppWebhookDeliveryDead missing = %v, want ErrNotFound", err)
 		}
@@ -513,7 +514,8 @@ func TestPg_CoverageSweepAppWebhooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RecordAppWebhookDelivery: %v", err)
 		}
-		if err := s.MarkAppWebhookDeliveryDead(ctx, d.ID, 0, "exhausted"); err != nil {
+		d = claimPgWebhookDelivery(t, s, ctx, d.ID)
+		if err := s.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted"); err != nil {
 			t.Fatalf("MarkAppWebhookDeliveryDead: %v", err)
 		}
 		if err := s.ResetAppWebhookDeliveryFromDead(ctx, d.ID, w.ID, app.AccountID, time.Now()); err != nil {
@@ -536,7 +538,8 @@ func TestPg_CoverageSweepAppWebhooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RecordAppWebhookDelivery: %v", err)
 		}
-		if err := s.MarkAppWebhookDeliveryDead(ctx, d.ID, 0, "exhausted"); err != nil {
+		d = claimPgWebhookDelivery(t, s, ctx, d.ID)
+		if err := s.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted"); err != nil {
 			t.Fatalf("MarkAppWebhookDeliveryDead: %v", err)
 		}
 		// Wrong account id → ErrNotFound (existence-leak-safe).

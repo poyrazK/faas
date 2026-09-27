@@ -48,23 +48,20 @@ delivery path is unchanged; the new surface lives at
 
 ### 3.2 Per-account fairness via SQL round-robin claim
 
-`ORDER BY account_id, next_attempt_at` inside a `FOR UPDATE SKIP
-LOCKED` claim is sufficient at the 32-row-per-tick cap. Property
-test `TestDispatcher_Fairness_PerAccountRoundRobin` (pkg/webhook/
-dispatcher_property_test.go) pins: given N accounts with equal
-queue depth, no account gets more than ceil(32/N) deliveries per
-tick over a 10-tick window. No token bucket, no rate-limiter
-state table, no config knob — the round-robin emerges naturally
-from the claim query.
+The original design assumed `ORDER BY account_id, next_attempt_at`
+would produce round-robin claims. It actually groups all due rows
+from the first account before the next account, so a busy account
+can fill the 32-row batch. Fair selection still needs a separate
+implementation and a test that counts delivered rows by webhook.
 
 ### 3.3 DLQ at attempt 7 with three retry-policy presets
 
-The 7.5-hour total budget is pinned at 7 attempts with the default
-schedule (`30s`, `2m`, `10m`, `1h`, `6h`, exhausted). Three closed
+The nominal 7.5-hour retry window has 7 attempts with the default
+schedule (`30s`, `2m`, `10m`, `20m`, `1h`, `6h`, exhausted). Three closed
 presets:
 
 - `default` — schedule above.
-- `aggressive` — halves each interval (`15s`, `1m`, `5m`, `30m`,
+- `aggressive` — halves each interval (`15s`, `1m`, `5m`, `10m`, `30m`,
   `3h`, exhausted).
 - `none` — DLQ on first 5xx (no retries).
 

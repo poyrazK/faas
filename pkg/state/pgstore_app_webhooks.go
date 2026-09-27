@@ -323,12 +323,9 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //     dispatcher restart) → 'in_flight'.
 //  3. Returns the locked rows.
 //
-// Mirrors pkg/sched/drain.go's claim shape. The ORDER BY
-// account_id, next_attempt_at produces per-account round-robin:
-// within a single 32/tick batch, account A's first row precedes
-// account B's first row, which precedes account C's first row,
-// etc. Combined with the 32/tick cap, no account gets more than
-// ceil(32/N) rows in a single tick for an N-account fleet.
+// Mirrors pkg/sched/drain.go's claim shape. ORDER BY account_id,
+// next_attempt_at groups each account's rows; it does not provide
+// round-robin fairness across accounts.
 func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -349,7 +346,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	`, now, limit)
 	// Index app_webhook_deliveries_pending_idx
 	// (account_id, next_attempt_at) WHERE status IN ('pending','in_flight')
-	// covers both the bounding predicate and the round-robin ORDER BY.
+	// covers both the bounding predicate and the claim ordering.
 	if err != nil {
 		return nil, fmt.Errorf("state: claim query: %w", err)
 	}
@@ -376,22 +373,22 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 		return nil, nil
 	}
 
-	// Transition pending → in_flight for the claimed rows. The
-	// 'in_flight' rows that re-appear in the claim (orphaned by a
-	// dispatcher restart) stay 'in_flight' — the mark methods below
-	// move them to succeeded / failed / dead at attempt end.
+	// Move the claim deadline beyond the HTTP attempt. A running claim
+	// cannot be picked up again on the next five-second dispatcher tick.
+	claimUntil := now.Add(AppWebhookClaimLease).UTC().Truncate(time.Microsecond)
 	ids := make([]string, len(claimed))
 	for i, d := range claimed {
 		ids[i] = d.ID
 		d.Status = AppWebhookDeliveryInFlight
+		d.NextAttemptAt = claimUntil
 		d.UpdatedAt = now
 		claimed[i] = d
 	}
 	if _, err := tx.Exec(ctx, `
 		update app_webhook_deliveries
-		   set status = 'in_flight', updated_at = $2
+		   set status = 'in_flight', next_attempt_at = $2, updated_at = $3
 		 where id = any($1::uuid[])
-	`, ids, now); err != nil {
+	`, ids, claimUntil, now); err != nil {
 		return nil, fmt.Errorf("state: mark in_flight: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -400,7 +397,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	return claimed, nil
 }
 
-func (s *PgStore) MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode, currentAttempt int, deliveredAt time.Time) error {
+func (s *PgStore) MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
 		update app_webhook_deliveries set
 			status = 'succeeded',
@@ -409,18 +406,19 @@ func (s *PgStore) MarkAppWebhookDeliverySucceeded(ctx context.Context, id string
 			attempt = $4,
 			next_attempt_at = 'epoch'::timestamptz,
 			updated_at = now()
-		where id = $1
-	`, id, deliveredAt, responseCode, currentAttempt+1)
+		where id = $1 and status = 'in_flight' and attempt = $5
+		  and next_attempt_at = $6
+	`, id, deliveredAt, responseCode, currentAttempt+1, currentAttempt, claimUntil)
 	if err != nil {
 		return fmt.Errorf("state: mark succeeded: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return s.appWebhookMarkMiss(ctx, id)
 	}
 	return nil
 }
 
-func (s *PgStore) MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode, currentAttempt int, errMsg string, nextAttemptAt time.Time) error {
+func (s *PgStore) MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error {
 	// Reset status='pending' (not 'failed') so the dispatcher's
 	// partial-index claim (`WHERE status IN ('pending','in_flight')
 	// AND next_attempt_at <= now()`) re-picks the row up when the
@@ -434,18 +432,19 @@ func (s *PgStore) MarkAppWebhookDeliveryFailed(ctx context.Context, id string, r
 			last_error = $4,
 			attempt = $5,
 			updated_at = now()
-		where id = $1
-	`, id, nextAttemptAt, responseCode, errMsg, currentAttempt+1)
+		where id = $1 and status = 'in_flight' and attempt = $6
+		  and next_attempt_at = $7
+	`, id, nextAttemptAt, responseCode, errMsg, currentAttempt+1, currentAttempt, claimUntil)
 	if err != nil {
 		return fmt.Errorf("state: mark failed: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return s.appWebhookMarkMiss(ctx, id)
 	}
 	return nil
 }
 
-func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, errMsg string) error {
+func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error {
 	tag, err := s.pool.Exec(ctx, `
 		update app_webhook_deliveries set
 			status = 'dead',
@@ -453,15 +452,29 @@ func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, cur
 			attempt = $3,
 			next_attempt_at = 'epoch'::timestamptz,
 			updated_at = now()
-		where id = $1
-	`, id, errMsg, currentAttempt+1)
+		where id = $1 and status = 'in_flight' and attempt = $4
+		  and next_attempt_at = $5
+	`, id, errMsg, currentAttempt+1, currentAttempt, claimUntil)
 	if err != nil {
 		return fmt.Errorf("state: mark dead: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return s.appWebhookMarkMiss(ctx, id)
 	}
 	return nil
+}
+
+func (s *PgStore) appWebhookMarkMiss(ctx context.Context, id string) error {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`select exists(select 1 from app_webhook_deliveries where id = $1)`, id,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("state: probe app webhook delivery claim: %w", err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrConflict
 }
 
 func (s *PgStore) ResetAppWebhookDeliveryFromDead(ctx context.Context, id, webhookID, accountID string, now time.Time) error {

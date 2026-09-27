@@ -1,6 +1,6 @@
 // Package webhook is the outbound webhook delivery dispatcher for
 // cmd/schedd (issue #476 / ADR-076). It owns the durable queue
-// drain + per-account fairness + retry-with-backoff + DLQ-at-7
+// drain + retry-with-backoff + DLQ-at-7
 // state machine for app_webhook_deliveries rows.
 //
 // Architecture:
@@ -12,7 +12,7 @@
 //   - The Dispatcher's hot path is a 5-second ticker. Each tick:
 //     1. Claims up to DefaultCap rows in a single FOR UPDATE
 //     SKIP LOCKED transaction, ORDER BY account_id,
-//     next_attempt_at (the per-account fairness contract).
+//     next_attempt_at.
 //     2. For each claimed row, fires a goroutine that POSTs to
 //     the customer's target_url via pkg/webhookout.Dispatcher
 //     with the webhook HeaderSet.
@@ -32,26 +32,17 @@
 //     clock. Mirrors pkg/webhookdedupe.nowFunc's design intent
 //     (sweeper_test.go:36-58).
 //
-// Why per-account fairness matters here:
-//   - The claim query is bounded to DefaultCap rows per tick. Without
-//     ORDER BY account_id, a noisy account with 1000 pending
-//     deliveries would monopolise every tick and starve every other
-//     account. The ORDER BY + LIMIT emerges round-robin: account A's
-//     first row precedes account B's first row, etc.
-//
-// Why not token-bucket:
-//   - A token bucket would add a state table (per-account state
-//     rows), a config knob, and a refresh tick — for a benefit no
-//     current customer reads. The ORDER BY contract is sufficient at
-//     the 32/tick cap and is observable from a single SQL
-//     statement (handy for the operator's "why is account X's queue
-//     not draining?" debug query).
+// Queue ordering:
+//   - The claim query is bounded to DefaultCap rows per tick and
+//     groups rows by account_id. This is not round-robin: a noisy
+//     account can fill a batch. Fair claim selection remains a
+//     separate follow-up.
 //
 // Why exponential backoff with ±25% jitter:
 //   - Matches the pkg/webhookout backoff shape (5 attempts,
 //     2s/8s/32s/128s ±25%) so the customer-facing retry behaviour is
 //     consistent across the alert + webhook surfaces. The webhook
-//     dispatcher extends the ladder to 7 attempts (30s/2m/10m/1h/6h
+//     dispatcher extends the ladder to 7 attempts (30s/2m/10m/20m/1h/6h
 //     on default retry policy) to absorb longer customer outages.
 //
 // Why DLQ at attempt 7:
@@ -97,7 +88,7 @@ const (
 )
 
 // defaultBackoff is the retry schedule for retry_policy='default'.
-// Mirrors issue #476's "30s, 2m, 10m, 1h, 6h" ladder — 6 retries
+// Uses a "30s, 2m, 10m, 20m, 1h, 6h" ladder — 6 retries
 // after the initial attempt = 7 attempts total. Lives as a package-
 // level constant (not a struct field) because the schedule is
 // read-only after init — schedd runs one Dispatcher per process,
@@ -107,6 +98,7 @@ var defaultBackoff = []time.Duration{
 	30 * time.Second,
 	2 * time.Minute,
 	10 * time.Minute,
+	20 * time.Minute,
 	1 * time.Hour,
 	6 * time.Hour,
 }
@@ -117,6 +109,7 @@ var aggressiveBackoff = []time.Duration{
 	15 * time.Second,
 	1 * time.Minute,
 	5 * time.Minute,
+	10 * time.Minute,
 	30 * time.Minute,
 	3 * time.Hour,
 }
@@ -377,16 +370,14 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		// the dispatcher claim — FK CASCADE should have wiped the
 		// delivery row too, so this branch is unreachable in
 		// practice. Mark dead defensively so the row doesn't leak.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: subscription %s missing: %v", row.WebhookID, err))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: subscription %s missing: %v", row.WebhookID, err))
 		return
 	}
 	if !hook.Enabled {
 		// The customer disabled the subscription while a delivery
 		// was in flight. Park the row in dead with a "disabled"
 		// reason so the operator can grep for it.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			"webhook: subscription disabled")
+		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
 
@@ -409,21 +400,19 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		// pkg/alerts/evaluator.go:404-426 short-circuit.
 		d.log.Warn("webhook: identity loader returned nil; marking dead",
 			"webhook_id", hook.ID, "delivery_id", row.ID)
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			"webhook: no age identity available")
-		d.emitAudit(ctx, "webhook.dead", row, hook,
-			fmt.Errorf("no age identity available"), 0)
+		if d.markDead(ctx, row, "webhook: no age identity available") {
+			d.emitAudit(ctx, "webhook.dead", row, hook,
+				fmt.Errorf("no age identity available"), 0)
+		}
 		return
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(openIdents, hook.SecretSealed)
 	if err != nil {
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: unseal secret: %v", err))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: unseal secret: %v", err))
 		return
 	}
 	if ns != "APP_WEBHOOK" {
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: namespace mismatch: got=%s want=APP_WEBHOOK", ns))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: namespace mismatch: got=%s want=APP_WEBHOOK", ns))
 		return
 	}
 	secret := plaintext
@@ -480,8 +469,17 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 
 	now := d.Now()
 	if res.Err == nil {
-		_ = d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, now)
-		d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
+		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now); d.markRecorded(row, err) {
+			d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
+		}
+		return
+	}
+	if errors.Is(res.Err, webhookout.ErrTerminal) ||
+		errors.Is(res.Err, webhookout.ErrBodyTooLarge) ||
+		errors.Is(res.Err, oci.ErrImageEgressDenied) {
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err)) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
 
@@ -490,25 +488,39 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	schedule := d.scheduleFor(hook.RetryPolicy)
 	if len(schedule) == 0 {
 		// retry_policy='none' — first failure is terminal.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err))
-		d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err)) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
 	delay, scheduleErr := ComputeBackoff(schedule, row.Attempt)
 	if scheduleErr != nil {
 		// Past the schedule → DLQ.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1))
-		d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1)) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
 	// Mark 'failed' with the next attempt scheduled at now + delay.
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
-	_ = d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		fmt.Sprintf("webhook: %v", res.Err), now.Add(delay))
-	d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
+	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), now.Add(delay)); d.markRecorded(row, err) {
+		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
+	}
+}
+
+func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string) bool {
+	return d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason))
+}
+
+func (d *Dispatcher) markRecorded(row state.AppWebhookDelivery, err error) bool {
+	if err == nil {
+		return true
+	}
+	d.log.Warn("webhook: attempt outcome not recorded", "delivery_id", row.ID,
+		"attempt", row.Attempt+1, "err", err)
+	return false
 }
 
 // emitAudit writes the audit row. Best-effort: a failed audit emission

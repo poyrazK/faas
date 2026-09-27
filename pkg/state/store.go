@@ -6063,35 +6063,32 @@ type Store interface {
 	// In a single transaction it:
 	//   1. Locks up to `limit` rows whose status IN
 	//      ('pending','in_flight') AND next_attempt_at <= `now`,
-	//      ORDER BY account_id, next_attempt_at (per-account round-
-	//      robin emerges from the ORDER BY).
-	//   2. Transitions status='pending' → 'in_flight' for the locked
-	//      rows. 'in_flight' rows that were already past
-	//      next_attempt_at (orphaned by a dispatcher restart) are
-	//      re-claimed and re-tried — see MarkAppWebhookDeliveryFailed
-	//      for the crash-recovery reasoning.
+	//      ORDER BY account_id, next_attempt_at.
+	//   2. Transitions the rows to 'in_flight' and sets
+	//      next_attempt_at to the claim deadline. Only expired
+	//      in_flight claims can be reclaimed after a crash.
 	//   3. Returns the locked rows for the caller to process.
 	// The transaction commits before the dispatcher starts the HTTP
 	// work; status='in_flight' is the post-commit visible state.
 	ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error)
 	// MarkAppWebhookDeliverySucceeded stamps status='succeeded',
 	// delivered_at=deliveredAt, last_response_code=responseCode,
-	// attempt=currentAttempt+1 (the successful attempt count). The
-	// dispatcher calls this on a 2xx response.
-	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, deliveredAt time.Time) error
-	// MarkAppWebhookDeliveryFailed stamps status='failed',
+	// attempt=currentAttempt+1 (the successful attempt count). A write
+	// only succeeds for the matching in-flight claim deadline.
+	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil, deliveredAt time.Time) error
+	// MarkAppWebhookDeliveryFailed stamps status='pending',
 	// next_attempt_at=nextAttemptAt, attempt=currentAttempt+1,
 	// last_error=errMsg, last_response_code=responseCode. The
 	// dispatcher calls this on a retryable error (5xx/408/429/
 	// network) when the next attempt is within the budget.
-	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, errMsg string, nextAttemptAt time.Time) error
+	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error
 	// MarkAppWebhookDeliveryDead stamps status='dead' with the
 	// supplied errMsg. The dispatcher calls this on:
 	//   - attempt >= 7 (budget exhausted)
 	//   - terminal 4xx (non-408/429)
 	// Once dead, the row stays dead until the customer POSTs
 	// /deliveries/{id}/retry.
-	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, errMsg string) error
+	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error
 	// ResetAppWebhookDeliveryFromDead is the customer-facing
 	// "retry a dead delivery" path. Stamps status='pending',
 	// next_attempt_at=now, attempt=0 (full budget re-armed). Used

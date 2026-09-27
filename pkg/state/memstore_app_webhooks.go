@@ -396,8 +396,8 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 }
 
 // ClaimDueAppWebhookDeliveries mirrors the PgStore's claim
-// transaction shape: per-account round-robin (ORDER BY
-// account_id, next_attempt_at), status='pending' → 'in_flight'
+// transaction shape: ORDER BY account_id, next_attempt_at (grouped
+// by account, not round-robin), status='pending' → 'in_flight'
 // transition. In-flight rows whose next_attempt_at has passed (an
 // orphaned row from a dispatcher restart) are also reclaimable —
 // see the PgStore claim transaction in pgstore_app_webhooks.go.
@@ -421,8 +421,10 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		candidates = candidates[:limit]
 	}
 	out := make([]AppWebhookDelivery, len(candidates))
+	claimUntil := now.Add(AppWebhookClaimLease).UTC().Truncate(time.Microsecond)
 	for i, d := range candidates {
 		d.Status = AppWebhookDeliveryInFlight
+		d.NextAttemptAt = claimUntil
 		d.UpdatedAt = now
 		m.appWebhookDeliveries[d.ID] = d
 		out[i] = d
@@ -430,12 +432,15 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	return out, nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, deliveredAt time.Time) error {
+func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.appWebhookDeliveries[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
+		return ErrConflict
 	}
 	d.Status = AppWebhookDeliverySucceeded
 	d.LastResponseCode = responseCode
@@ -448,12 +453,15 @@ func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string,
 	return nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, errMsg string, nextAttemptAt time.Time) error {
+func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.appWebhookDeliveries[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
+		return ErrConflict
 	}
 	// Reset to 'pending' so the dispatcher's claim query
 	// (`WHERE status IN ('pending','in_flight') AND next_attempt_at <= now()`)
@@ -470,12 +478,15 @@ func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, re
 	return nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, errMsg string) error {
+func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.appWebhookDeliveries[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
+		return ErrConflict
 	}
 	d.Status = AppWebhookDeliveryDead
 	d.LastError = errMsg
@@ -484,6 +495,11 @@ func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, curr
 	d.UpdatedAt = time.Now()
 	m.appWebhookDeliveries[id] = d
 	return nil
+}
+
+func appWebhookClaimMatches(d AppWebhookDelivery, attempt int, claimUntil time.Time) bool {
+	return d.Status == AppWebhookDeliveryInFlight && d.Attempt == attempt &&
+		d.NextAttemptAt.Equal(claimUntil)
 }
 
 func (m *MemStore) ResetAppWebhookDeliveryFromDead(_ context.Context, id, webhookID, accountID string, now time.Time) error {

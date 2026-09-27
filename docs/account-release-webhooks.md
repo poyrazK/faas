@@ -48,6 +48,8 @@ digest in constant time with the hex part of
 `X-Faas-Webhook-Signature: sha256=<hex>`. Reject timestamps outside your
 replay window and deduplicate by delivery ID. Do not parse and re-serialize
 the body before checking the signature.
+The timestamp header is the time of this HTTP attempt; the event time in the
+body can be older when Gregale retries a delivery.
 
 ## Operate and recover
 

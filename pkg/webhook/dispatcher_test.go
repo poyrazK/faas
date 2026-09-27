@@ -539,6 +539,89 @@ func TestDispatcher_Attempt7DLQs(t *testing.T) {
 	}
 }
 
+func TestDispatcher_Terminal4xxGoesDeadWithoutRetry(t *testing.T) {
+	m := state.NewMemStore()
+	loader, sealed := identityForSealedBlob(t)
+	const appID, acctID = "app-terminal", "acct-terminal"
+	if _, err := m.CreateApp(context.Background(), state.App{ID: appID, AccountID: acctID, Slug: "terminal-app", Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer srv.Close()
+	w := newTestAppWebhook(t, m, appID, acctID, srv.URL, state.AppWebhookRetryDefault)
+	if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+		WebhookID: w.ID, AppID: appID, AccountID: acctID,
+		Event: "app.cron.fired", Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := m.ClaimDueAppWebhookDeliveries(context.Background(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	disp.IdentityLoader = loader
+	disp.HTTPClient = srv.Client()
+	disp.deliverOne(context.Background(), claimed[0])
+	got, err := m.AppWebhookDeliveryByID(context.Background(), delivery.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.AppWebhookDeliveryDead || got.Attempt != 1 || requests.Load() != 1 {
+		t.Fatalf("delivery = %+v, requests = %d; want dead after one attempt", got, requests.Load())
+	}
+}
+
+func TestDispatcher_SixthFailureSchedulesSeventhAttempt(t *testing.T) {
+	m := state.NewMemStore()
+	loader, sealed := identityForSealedBlob(t)
+	const appID, acctID = "app-sixth", "acct-sixth"
+	if _, err := m.CreateApp(context.Background(), state.App{ID: appID, AccountID: acctID, Slug: "sixth-app", Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	w := newTestAppWebhook(t, m, appID, acctID, srv.URL, state.AppWebhookRetryDefault)
+	if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+		WebhookID: w.ID, AppID: appID, AccountID: acctID,
+		Event: "app.cron.fired", Payload: json.RawMessage(`{}`), Attempt: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := m.ClaimDueAppWebhookDeliveries(context.Background(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	disp.IdentityLoader = loader
+	disp.HTTPClient = srv.Client()
+	disp.deliverOne(context.Background(), claimed[0])
+	got, err := m.AppWebhookDeliveryByID(context.Background(), delivery.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.AppWebhookDeliveryPending || got.Attempt != 6 {
+		t.Fatalf("delivery = %+v, want pending attempt 6", got)
+	}
+	if delay := time.Until(got.NextAttemptAt); delay < 4*time.Hour || delay > 8*time.Hour {
+		t.Fatalf("next attempt delay = %v, want sixth backoff near 6h", delay)
+	}
+}
+
 // TestDispatcher_NonePolicy_ImmediateDead pins the retry_policy='none'
 // behaviour: first failure is terminal, no retry.
 func TestDispatcher_NonePolicy_ImmediateDead(t *testing.T) {

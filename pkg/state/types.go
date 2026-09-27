@@ -3410,7 +3410,7 @@ func ValidAppWebhookEvent(event AppWebhookEvent) bool {
 // reads this column at claim time and computes next_attempt_at
 // against the matching schedule.
 //
-//   - default:    30s, 2m, 10m, 1h, 6h (5 retries → 7 attempts max)
+//   - default:    30s, 2m, 10m, 20m, 1h, 6h (6 retries → 7 attempts max)
 //   - aggressive: half of each default step
 //   - none:       no retries — first 5xx/408/429 lands the row in
 //     status='dead' immediately
@@ -3584,11 +3584,16 @@ type TCPListener struct {
 	UpdatedAt    time.Time
 }
 
+// AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
+const AppWebhookClaimLease = 30 * time.Second
+
 // AppWebhookDelivery is one (event × target) ledger row. The
 // dispatcher mutates the row in place on every attempt until
-// status='succeeded' or status='dead'. Payload is the wire body the
-// customer receives; the dispatcher signs with HMAC-SHA256 over
+// status='succeeded' or status='dead'. Payload is the event data
+// included in the wire body; the dispatcher signs with HMAC-SHA256 over
 // "<unix>.<delivery_id>.<body>" using the unsealed secret.
+// While in flight, NextAttemptAt is the claim deadline and also fences a
+// completion from an older claim after the delivery has been reclaimed.
 type AppWebhookDelivery struct {
 	ID               string
 	WebhookID        string
