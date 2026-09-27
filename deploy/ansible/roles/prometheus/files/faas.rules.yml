@@ -145,6 +145,45 @@ groups:
           description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
+  - name: outbound_webhook_delivery
+    interval: 30s
+    rules:
+      - alert: FaasWebhookDeliveryQueueOverdue
+        expr: schedd_webhook_delivery_oldest_overdue_seconds > 900
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook queue is over 15 minutes behind"
+          description: "At least one due outbound webhook delivery has remained unclaimed or unfinished for over 15 minutes. Inspect schedd dispatch and database health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookDeliveryDeadSpike
+        expr: increase(schedd_webhook_delivery_dead_total[10m]) > 20
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook deliveries are entering the dead-letter queue"
+          description: "More than 20 outbound webhook deliveries were marked dead in ten minutes. Check receiver failures and host signing identity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookDeliveryHealthPollFailed
+        expr: schedd_webhook_delivery_health_poll_success == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook queue health cannot be read"
+          description: "Schedd's queue health poll is failing, so the overdue-age signal may be stale. Check database connectivity and schedd logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
   - name: faas_consumer_usage_delivery
     interval: 30s
     rules:

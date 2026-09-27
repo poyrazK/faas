@@ -3641,6 +3641,18 @@ type AppWebhookDeliveryAttempt struct {
 	NextAttemptAt    *time.Time
 }
 
+// AppWebhookDeliveryHealth is a scoped snapshot of one webhook's queue.
+// Recent terminal counts use a rolling 24-hour window ending at the query time.
+type AppWebhookDeliveryHealth struct {
+	WebhookID            string
+	PendingCount         int64
+	InFlightCount        int64
+	DeadCount            int64
+	OldestOverdueAt      *time.Time
+	RecentSucceededCount int64
+	RecentDeadCount      int64
+}
+
 // AppWebhookQuotaError is returned by CreateAppWebhookIfUnderQuota
 // when either cap (per-app or per-account) is reached. Mirrors
 // AlertRuleQuotaError at types.go:1030-1053.

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AccountReleaseWebhookResponse } from '../models/AccountReleaseWebhookResponse.js';
 import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
+import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
@@ -479,6 +480,42 @@ export class WebhooksService {
     });
   }
   /**
+   * Read current delivery queue health for one webhook.
+   * @returns AppWebhookDeliveryHealthResponse Current webhook delivery health.
+   * @throws ApiError
+   */
+  public static getAppWebhookDeliveryHealth({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/health',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * List release receivers owned by the active account.
    * @returns AccountReleaseWebhookResponse Account-owned release receivers.
    * @throws ApiError
@@ -777,6 +814,36 @@ export class WebhooksService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read current delivery queue health for one account release webhook.
+   * @returns AppWebhookDeliveryHealthResponse Current account release webhook delivery health.
+   * @throws ApiError
+   */
+  public static getAccountReleaseWebhookDeliveryHealth({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}/health',
+      path: {
+        'id': id,
+      },
+      errors: {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,

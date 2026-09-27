@@ -10,6 +10,7 @@ import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantR
 import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
 import type { ApplyPlatformTenantSelfConsumersResponse } from '../models/ApplyPlatformTenantSelfConsumersResponse.js';
 import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
+import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -1200,6 +1201,37 @@ export class PlatformTenantsService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the tenant webhook's delivery queue health.
+   * @returns AppWebhookDeliveryHealthResponse Current tenant webhook delivery health.
+   * @throws ApiError
+   */
+  public static getPlatformTenantWebhookDeliveryHealth({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant whose webhook health is requested.
+     */
+    id: string,
+    /**
+     * Tenant webhook to inspect.
+     */
+    webhookId: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/health',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
       },

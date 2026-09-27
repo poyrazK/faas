@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -137,6 +138,7 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 
 func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger, rows []state.AppWebhook, appID, accountID string) []dashboard.WebhookPageItem {
 	items := make([]dashboard.WebhookPageItem, 0, len(rows))
+	now := time.Now().UTC()
 	for _, row := range rows {
 		if row.AppID != appID || row.AccountID != accountID {
 			continue
@@ -145,6 +147,26 @@ func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger,
 			ID: row.ID, TargetURL: row.TargetURL, EventFilter: append([]string(nil), row.EventFilter...),
 			RetryPolicy: string(row.RetryPolicy), Enabled: row.Enabled,
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
+		}
+		health, healthErr := s.store.AppWebhookDeliveryHealth(ctx, row.ID, accountID, now)
+		if healthErr != nil {
+			log.Warn("dashboard webhooks: delivery health", "webhook_id", row.ID, "err", healthErr)
+		} else {
+			h := &dashboard.WebhookHealthPageItem{
+				PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
+				RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
+			}
+			if health.OldestOverdueAt != nil {
+				age := int64(now.Sub(*health.OldestOverdueAt).Seconds())
+				if age < 0 {
+					age = 0
+				}
+				h.OldestOverdueAge = fmt.Sprintf("%ds", age)
+			}
+			if terminal := health.RecentSucceededCount + health.RecentDeadCount; terminal > 0 {
+				h.RecentSuccessRate = fmt.Sprintf("%.0f%%", 100*float64(health.RecentSucceededCount)/float64(terminal))
+			}
+			item.Health = h
 		}
 		deliveries, _, err := s.store.ListAppWebhookDeliveries(ctx, row.AppID, row.ID, dashboardWebhookDeliveryLimit, "")
 		if err != nil {

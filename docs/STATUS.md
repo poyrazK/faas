@@ -743,9 +743,9 @@ ADR-075 / issue #475 / migration 00138.
   plaintext is destroyed at function exit and never crosses the
   wire after the create round-trip — the response carries only
   `webhook_secret_sealed_masked: "***"`.
-- **API** — 8 endpoints under `/v1/apps/{slug}/webhooks[/...]`:
+- **API** — endpoints under `/v1/apps/{slug}/webhooks[/...]`:
   list, create, get, update, delete, rotate-secret,
-  list-deliveries, retry-delivery. Plan-tier gate (`WebhookPerApp
+  list-deliveries, attempt-history, delivery-health, retry-delivery. Plan-tier gate (`WebhookPerApp
   == 0` → 402 `plan_webhooks_not_allowed`); quota gate
   (per-app / per-account → 422 `plan_webhook_quota`). Closed enum
   drift on `retry_policy` and `event_filter` surfaces as 400
@@ -769,6 +769,10 @@ ADR-075 / issue #475 / migration 00138.
   `app.webhook_deleted`, `app.webhook_secret_rotated`,
   `app.webhook_delivery_retried`, plus the dispatcher-emitted
   `webhook.delivered` / `webhook.failed` / `webhook.dead`.
+- **Delivery health** — scoped webhook health APIs and the dashboard show
+  queue counts, oldest overdue age, and 24-hour terminal success rate.
+  Schedd exports fleet overdue-age, dead-delivery, and poll-success
+  metrics, with alert rules and an operator runbook.
 
 ADR-076 / issue #476 / migrations 00140 + 00141.
 

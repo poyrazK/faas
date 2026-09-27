@@ -551,6 +551,22 @@ type AppWebhookDeliveryListResponse struct {
 	NextToken  string                       `json:"next_token,omitempty"`
 }
 
+// AppWebhookDeliveryHealthResponse summarizes one subscription at snapshot_at.
+// The 24-hour success rate counts terminal deliveries only; it is absent when
+// the window has no succeeded or dead deliveries.
+type AppWebhookDeliveryHealthResponse struct {
+	WebhookID            string   `json:"webhook_id"`
+	SnapshotAt           string   `json:"snapshot_at"`
+	PendingCount         int64    `json:"pending_count"`
+	InFlightCount        int64    `json:"in_flight_count"`
+	DeadCount            int64    `json:"dead_count"`
+	OldestOverdueAt      string   `json:"oldest_overdue_at,omitempty"`
+	OldestOverdueSeconds *int64   `json:"oldest_overdue_seconds,omitempty"`
+	RecentSucceededCount int64    `json:"recent_succeeded_count"`
+	RecentDeadCount      int64    `json:"recent_dead_count"`
+	RecentSuccessRate    *float64 `json:"recent_success_rate,omitempty"`
+}
+
 // AppWebhookDeliveryAttemptResponse is one completed dispatch. Response bodies,
 // request headers, payloads, and signing secrets are deliberately excluded.
 type AppWebhookDeliveryAttemptResponse struct {

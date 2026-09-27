@@ -344,6 +344,21 @@ func (s *server) listPlatformTenantWebhookDeliveryAttempts(w http.ResponseWriter
 	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
 }
 
+func (s *server) getPlatformTenantWebhookDeliveryHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenant, _, ok := s.tenantWebhookOwner(w, r, acct)
+	if !ok {
+		return
+	}
+	if _, ok := platformTenantWebhookLimits(w, acct); !ok {
+		return
+	}
+	hook, ok := s.platformTenantWebhookByRequest(w, r, acct, tenant)
+	if !ok {
+		return
+	}
+	s.writeAppWebhookDeliveryHealth(w, r, acct.ID, hook.ID)
+}
+
 func (s *server) retryPlatformTenantWebhookDelivery(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	tenant, _, ok := s.tenantWebhookOwner(w, r, acct)
 	if !ok {

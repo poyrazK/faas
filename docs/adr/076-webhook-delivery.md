@@ -137,6 +137,23 @@ newest-first pages. Request and response bodies, headers, and signing
 secrets are not retained. Existing delivery rows have no backfilled
 attempt history; the ledger begins when this migration deploys.
 
+### 3.10 Delivery health and fleet alerts
+
+Each webhook exposes current `pending`, `in_flight`, and `dead` counts,
+the oldest overdue due time, and terminal outcomes over the preceding
+24 hours. The success rate is succeeded / (succeeded + dead) and is
+omitted when no delivery completed in that window. The dashboard and
+scoped app, account release, and platform tenant APIs share this
+snapshot. A webhook-ID index bounds the per-subscription query; a
+partial due-time index backs the fleet oldest-due poll.
+
+Schedd polls the oldest due delivery once a minute. Fleet metrics
+publish its age, newly dead deliveries, and poll success without
+account or webhook labels. Alerts identify a queue older than 15
+minutes, a spike of more than 20 dead deliveries in ten minutes,
+and a failed poll. The poll-failure signal prevents a stale queue-age
+gauge from appearing healthy.
+
 ## Consequences
 
 Positive:

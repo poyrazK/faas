@@ -358,6 +358,17 @@ func (s *server) listAccountReleaseWebhookDeliveryAttempts(w http.ResponseWriter
 	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
 }
 
+func (s *server) getAccountReleaseWebhookDeliveryHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if _, ok := accountReleaseWebhookLimits(w, acct); !ok {
+		return
+	}
+	hook, ok := s.accountReleaseWebhookByRequest(w, r, acct)
+	if !ok {
+		return
+	}
+	s.writeAppWebhookDeliveryHealth(w, r, acct.ID, hook.ID)
+}
+
 func (s *server) retryAccountReleaseWebhookDelivery(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if _, ok := accountReleaseWebhookLimits(w, acct); !ok {
 		return

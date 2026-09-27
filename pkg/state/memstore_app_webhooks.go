@@ -637,3 +637,54 @@ func (m *MemStore) ListAppWebhookDeliveryAttempts(_ context.Context, deliveryID,
 	}
 	return out, nextToken, nil
 }
+
+func (m *MemStore) AppWebhookDeliveryHealth(_ context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	hook, ok := m.appWebhooks[webhookID]
+	if !ok || hook.AccountID != accountID {
+		return AppWebhookDeliveryHealth{}, ErrNotFound
+	}
+	health := AppWebhookDeliveryHealth{WebhookID: webhookID}
+	windowStart := now.Add(-24 * time.Hour)
+	for _, d := range m.appWebhookDeliveries {
+		if d.WebhookID != webhookID || d.AccountID != accountID {
+			continue
+		}
+		switch d.Status {
+		case AppWebhookDeliveryPending:
+			health.PendingCount++
+		case AppWebhookDeliveryInFlight:
+			health.InFlightCount++
+		case AppWebhookDeliveryDead:
+			health.DeadCount++
+			if !d.UpdatedAt.Before(windowStart) {
+				health.RecentDeadCount++
+			}
+		case AppWebhookDeliverySucceeded:
+			if d.DeliveredAt != nil && !d.DeliveredAt.Before(windowStart) {
+				health.RecentSucceededCount++
+			}
+		}
+		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
+			(health.OldestOverdueAt == nil || d.NextAttemptAt.Before(*health.OldestOverdueAt)) {
+			at := d.NextAttemptAt
+			health.OldestOverdueAt = &at
+		}
+	}
+	return health, nil
+}
+
+func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(_ context.Context, now time.Time) (*time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var oldest *time.Time
+	for _, d := range m.appWebhookDeliveries {
+		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
+			(oldest == nil || d.NextAttemptAt.Before(*oldest)) {
+			at := d.NextAttemptAt
+			oldest = &at
+		}
+	}
+	return oldest, nil
+}

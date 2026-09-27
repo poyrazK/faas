@@ -5335,6 +5335,11 @@ func (c *Client) ListAppWebhookDeliveries(ctx context.Context, slug, id string, 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) GetAppWebhookDeliveryHealth(ctx context.Context, slug, id string) (AppWebhookDeliveryHealthResponse, error) {
+	var out AppWebhookDeliveryHealthResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/webhooks/"+id+"/health", nil, &out)
+}
+
 func (c *Client) ListAppWebhookDeliveryAttempts(ctx context.Context, slug, webhookID, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
 	path := "/v1/apps/" + slug + "/webhooks/" + webhookID + "/deliveries/" + deliveryID + "/attempts"
 	return c.listWebhookAttemptPath(ctx, path, opts)
@@ -5412,6 +5417,11 @@ func (c *Client) ListAccountReleaseWebhookDeliveries(ctx context.Context, id str
 
 func (c *Client) ListAccountReleaseWebhookDeliveryAttempts(ctx context.Context, id, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
 	return c.listWebhookAttemptPath(ctx, "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/attempts", opts)
+}
+
+func (c *Client) GetAccountReleaseWebhookDeliveryHealth(ctx context.Context, id string) (AppWebhookDeliveryHealthResponse, error) {
+	var out AppWebhookDeliveryHealthResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks/"+id+"/health", nil, &out)
 }
 
 func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {

@@ -72,6 +72,7 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Webhooks for", "https://example.com/events", "app.deployed", "receiver returned 503", "Retry", "Rotate secret", "Create webhook", delivery.ID,
+		"Queue:", "1 dead", "24h terminal success",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())

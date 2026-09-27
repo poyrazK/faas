@@ -4776,6 +4776,31 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/health:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose webhook health is requested.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Tenant webhook to inspect.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantWebhookDeliveryHealth
+      summary: Read the tenant webhook's delivery queue health.
+      responses:
+        '200':
+          description: Current tenant webhook delivery health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryHealthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/credentials:
     parameters:
       - name: id
@@ -16269,6 +16294,25 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/webhooks/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [webhooks]
+      operationId: getAppWebhookDeliveryHealth
+      summary: Read current delivery queue health for one webhook.
+      responses:
+        '200':
+          description: Current webhook delivery health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryHealthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/release-webhooks:
     get:
       tags: [webhooks]
@@ -16456,6 +16500,24 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AppWebhookDeliveryAttemptListResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [webhooks]
+      operationId: getAccountReleaseWebhookDeliveryHealth
+      summary: Read current delivery queue health for one account release webhook.
+      responses:
+        '200':
+          description: Current account release webhook delivery health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryHealthResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -39885,6 +39947,22 @@ components:
         finished_at: { type: string, format: date-time }
         duration_ms: { type: integer, format: int64, minimum: 0 }
         next_attempt_at: { type: string, format: date-time }
+
+    AppWebhookDeliveryHealthResponse:
+      type: object
+      description: Current queue counts and terminal outcomes over the 24 hours ending at snapshot_at.
+      required: [webhook_id, snapshot_at, pending_count, in_flight_count, dead_count, recent_succeeded_count, recent_dead_count]
+      properties:
+        webhook_id: { type: string, format: uuid }
+        snapshot_at: { type: string, format: date-time }
+        pending_count: { type: integer, format: int64, minimum: 0 }
+        in_flight_count: { type: integer, format: int64, minimum: 0 }
+        dead_count: { type: integer, format: int64, minimum: 0 }
+        oldest_overdue_at: { type: string, format: date-time, description: Earliest due time among pending or expired in-flight deliveries. }
+        oldest_overdue_seconds: { type: integer, format: int64, minimum: 0, description: Age of the oldest overdue delivery at snapshot_at. }
+        recent_succeeded_count: { type: integer, format: int64, minimum: 0 }
+        recent_dead_count: { type: integer, format: int64, minimum: 0 }
+        recent_success_rate: { type: number, format: double, minimum: 0, maximum: 1, description: Recent succeeded divided by recent succeeded plus dead; omitted when there are no terminal deliveries. }
 
     AppWebhookDeliveryAttemptListResponse:
       type: object

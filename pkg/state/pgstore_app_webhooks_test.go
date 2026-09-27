@@ -320,6 +320,53 @@ func TestPgStore_AppWebhookDelivery_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestPgStore_AppWebhookDeliveryHealth(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "delivery-health")
+	hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	first := pgSampleDelivery(hook.ID, app, acct)
+	first.NextAttemptAt = now.Add(-3 * time.Minute)
+	delivered, err := s.RecordAppWebhookDelivery(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := claimPgWebhookDelivery(t, s, ctx, delivered.ID)
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, delivered.ID, 200, claim.Attempt, claim.NextAttemptAt, now); err != nil {
+		t.Fatal(err)
+	}
+	second := pgSampleDelivery(hook.ID, app, acct)
+	second.NextAttemptAt = now.Add(-2 * time.Minute)
+	dead, err := s.RecordAppWebhookDelivery(ctx, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim = claimPgWebhookDelivery(t, s, ctx, dead.ID)
+	if err := s.MarkAppWebhookDeliveryDead(ctx, dead.ID, claim.Attempt, claim.NextAttemptAt, "receiver rejected"); err != nil {
+		t.Fatal(err)
+	}
+	third := pgSampleDelivery(hook.ID, app, acct)
+	third.NextAttemptAt = now.Add(-time.Minute)
+	if _, err := s.RecordAppWebhookDelivery(ctx, third); err != nil {
+		t.Fatal(err)
+	}
+	health, err := s.AppWebhookDeliveryHealth(ctx, hook.ID, acct, now)
+	if err != nil || health.PendingCount != 1 || health.DeadCount != 1 || health.RecentSucceededCount != 1 ||
+		health.RecentDeadCount != 1 || health.OldestOverdueAt == nil || !health.OldestOverdueAt.Equal(third.NextAttemptAt) {
+		t.Fatalf("health = %+v, err=%v", health, err)
+	}
+	oldest, err := s.OldestOverdueAppWebhookDeliveryAt(ctx, now)
+	if err != nil || oldest == nil || !oldest.Equal(third.NextAttemptAt) {
+		t.Fatalf("fleet oldest = %v, err=%v", oldest, err)
+	}
+	if _, err := s.AppWebhookDeliveryHealth(ctx, hook.ID, "00000000-0000-0000-0000-000000000000", now); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("foreign health = %v, want not found", err)
+	}
+}
+
 // TestPgStore_ClaimDueAppWebhookDeliveries exercises the dispatcher's
 // tick entry. Pins the FOR UPDATE SKIP LOCKED claim + status
 // 'pending'/'in_flight' filter + due time + limit clamp.

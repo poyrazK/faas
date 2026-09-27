@@ -103,6 +103,12 @@
               · secret <code>***</code>
             </p>
             <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}all events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
+            {{with .Health}}
+              <p role="status">Queue: <strong>{{.PendingCount}} pending</strong> · {{.InFlightCount}} in flight · {{.DeadCount}} dead
+                · oldest overdue: {{if .OldestOverdueAge}}{{.OldestOverdueAge}}{{else}}none{{end}}
+                · 24h terminal success: {{if .RecentSuccessRate}}{{.RecentSuccessRate}} ({{.RecentSucceededCount}} succeeded, {{.RecentDeadCount}} dead){{else}}no completed deliveries{{end}}
+              </p>
+            {{else}}<p class="muted">Delivery health is temporarily unavailable.</p>{{end}}
             <div class="actions">
               <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
               <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/rotate-secret"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><label>Replacement secret <input name="webhook_secret" type="password" required maxlength="256" autocomplete="new-password" size="24"></label><button type="submit">Rotate secret</button></form>

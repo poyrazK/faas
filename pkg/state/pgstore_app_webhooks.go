@@ -668,6 +668,53 @@ func (s *PgStore) ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID
 	return out, nextToken, nil
 }
 
+func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error) {
+	var health AppWebhookDeliveryHealth
+	var oldest pgtype.Timestamptz
+	err := s.pool.QueryRow(ctx, `
+		select w.id,
+		       count(d.id) filter (where d.status = 'pending'),
+		       count(d.id) filter (where d.status = 'in_flight'),
+		       count(d.id) filter (where d.status = 'dead'),
+		       min(d.next_attempt_at) filter (where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $3),
+		       count(d.id) filter (where d.status = 'succeeded' and d.delivered_at >= $4),
+		       count(d.id) filter (where d.status = 'dead' and d.updated_at >= $4)
+		  from app_webhooks w
+		  left join app_webhook_deliveries d on d.webhook_id = w.id and d.account_id = w.account_id
+		 where w.id = $1 and w.account_id = $2
+		 group by w.id
+	`, webhookID, accountID, now, now.Add(-24*time.Hour)).Scan(
+		&health.WebhookID, &health.PendingCount, &health.InFlightCount, &health.DeadCount,
+		&oldest, &health.RecentSucceededCount, &health.RecentDeadCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppWebhookDeliveryHealth{}, ErrNotFound
+	}
+	if err != nil {
+		return AppWebhookDeliveryHealth{}, fmt.Errorf("state: webhook delivery health: %w", err)
+	}
+	if oldest.Valid {
+		at := oldest.Time
+		health.OldestOverdueAt = &at
+	}
+	return health, nil
+}
+
+func (s *PgStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
+	var oldest pgtype.Timestamptz
+	if err := s.pool.QueryRow(ctx, `
+		select min(next_attempt_at)
+		  from app_webhook_deliveries
+		 where status in ('pending', 'in_flight') and next_attempt_at <= $1
+	`, now).Scan(&oldest); err != nil {
+		return nil, fmt.Errorf("state: oldest overdue webhook delivery: %w", err)
+	}
+	if !oldest.Valid {
+		return nil, nil
+	}
+	at := oldest.Time
+	return &at, nil
+}
+
 // ----------------------------------------------------------------------------
 // scanner helpers
 // ----------------------------------------------------------------------------

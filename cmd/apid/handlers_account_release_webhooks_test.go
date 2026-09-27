@@ -63,6 +63,17 @@ func TestAccountReleaseWebhooks_CRUDAndScope(t *testing.T) {
 	if got := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+appHook.ID, nil, nil); got.Code != http.StatusNotFound {
 		t.Fatalf("app subscription exposed on account route: %d %s", got.Code, got.Body)
 	}
+	healthRec := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+created.ID+"/health", nil, nil)
+	if healthRec.Code != http.StatusOK {
+		t.Fatalf("account health status %d: %s", healthRec.Code, healthRec.Body)
+	}
+	var health api.AppWebhookDeliveryHealthResponse
+	if err := json.Unmarshal(healthRec.Body.Bytes(), &health); err != nil || health.WebhookID != created.ID || health.PendingCount != 0 {
+		t.Fatalf("account health = %+v, err=%v", health, err)
+	}
+	if got := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+appHook.ID+"/health", nil, nil); got.Code != http.StatusNotFound {
+		t.Fatalf("app health exposed on account route: %d %s", got.Code, got.Body)
+	}
 	if got := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+created.ID, nil, nil); got.Code != http.StatusOK {
 		t.Fatalf("get status %d: %s", got.Code, got.Body)
 	}

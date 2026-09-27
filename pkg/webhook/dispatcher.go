@@ -228,7 +228,8 @@ type Dispatcher struct {
 	// dialer) so production egress rules apply on every POST. The
 	// e2e test sets FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit
 	// loopback; that flag is read by oci.NewEgressHTTPClientAllowLoopback.
-	HTTPClient *http.Client
+	HTTPClient    *http.Client
+	HealthMetrics *DeliveryHealthMetrics
 
 	// PerAttempt is the per-attempt HTTP timeout. Default 10s.
 	PerAttempt time.Duration
@@ -305,15 +306,36 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 	ticker := time.NewTicker(d.Tick)
 	defer ticker.Stop()
+	var healthTicker *time.Ticker
+	var healthC <-chan time.Time
+	if d.HealthMetrics != nil {
+		d.refreshHealth(ctx)
+		healthTicker = time.NewTicker(time.Minute)
+		healthC = healthTicker.C
+		defer healthTicker.Stop()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return d.shutdown()
+		case <-healthC:
+			d.refreshHealth(ctx)
 		case <-ticker.C:
 			d.cycle(ctx)
 		}
 	}
+}
+
+func (d *Dispatcher) refreshHealth(ctx context.Context) {
+	now := d.Now()
+	oldest, err := d.store.OldestOverdueAppWebhookDeliveryAt(ctx, now)
+	if err != nil {
+		d.HealthMetrics.markPollFailed()
+		d.log.Warn("webhook: delivery health poll", "err", err)
+		return
+	}
+	d.HealthMetrics.setOldestOverdue(now, oldest)
 }
 
 // shutdown blocks until in-flight goroutines finish or the 10s
@@ -513,7 +535,11 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 }
 
 func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string, meta ...state.AppWebhookAttemptMetadata) bool {
-	return d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason, meta...))
+	if !d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason, meta...)) {
+		return false
+	}
+	d.HealthMetrics.markDead()
+	return true
 }
 
 func (d *Dispatcher) markRecorded(row state.AppWebhookDelivery, err error) bool {

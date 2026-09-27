@@ -883,6 +883,17 @@ type WebhookPageItem struct {
 	CreatedAt   string
 	UpdatedAt   string
 	Deliveries  []WebhookDeliveryPageItem
+	Health      *WebhookHealthPageItem
+}
+
+type WebhookHealthPageItem struct {
+	PendingCount         int64
+	InFlightCount        int64
+	DeadCount            int64
+	OldestOverdueAge     string
+	RecentSucceededCount int64
+	RecentDeadCount      int64
+	RecentSuccessRate    string
 }
 
 // WebhookDeliveryPageItem is the safe, compact delivery ledger projection

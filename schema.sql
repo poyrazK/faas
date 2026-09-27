@@ -6254,10 +6254,24 @@ CREATE INDEX app_webhook_deliveries_account_created_idx ON public.app_webhook_de
 
 
 --
+-- Name: app_webhook_deliveries_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_webhook_deliveries_due_idx ON public.app_webhook_deliveries USING btree (next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'in_flight'::text]));
+
+
+--
 -- Name: app_webhook_deliveries_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX app_webhook_deliveries_pending_idx ON public.app_webhook_deliveries USING btree (account_id, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'in_flight'::text]));
+
+
+--
+-- Name: app_webhook_deliveries_webhook_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_webhook_deliveries_webhook_idx ON public.app_webhook_deliveries USING btree (webhook_id);
 
 
 --

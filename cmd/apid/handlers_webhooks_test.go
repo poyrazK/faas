@@ -103,6 +103,41 @@ func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
 	}
 }
 
+func TestGetAppWebhookDeliveryHealth(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "health-api")
+	hook := mustCreateWebhook(t, e, "health-api", webhookReq())
+	due := time.Now().UTC().Add(-2 * time.Minute)
+	_, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{"private":"never-show"}`),
+		NextAttemptAt: due,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/health-api/webhooks/" + hook.ID + "/health"
+	rec := e.do(t, http.MethodGet, path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+	}
+	var health api.AppWebhookDeliveryHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health.PendingCount != 1 || health.InFlightCount != 0 || health.DeadCount != 0 ||
+		health.OldestOverdueSeconds == nil || *health.OldestOverdueSeconds < 119 || health.RecentSuccessRate != nil {
+		t.Errorf("health = %+v", health)
+	}
+	if strings.Contains(rec.Body.String(), "never-show") {
+		t.Error("health response exposed delivery payload")
+	}
+	foreign := e.do(t, http.MethodGet, "/v1/apps/health-api/webhooks/00000000000000000000000000000000/health", nil, nil)
+	if foreign.Code != http.StatusNotFound {
+		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
+	}
+}
+
 // TestCreateAppWebhook_HappyPath pins the basic round-trip:
 //   - 201 on create
 //   - webhook_secret_sealed_masked == "***"

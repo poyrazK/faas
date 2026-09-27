@@ -128,6 +128,7 @@ export type { AppWakeResponse } from './models/AppWakeResponse.js';
 export type { AppWakeTimelineResponse } from './models/AppWakeTimelineResponse.js';
 export type { AppWebhookDeliveryAttemptListResponse } from './models/AppWebhookDeliveryAttemptListResponse.js';
 export type { AppWebhookDeliveryAttemptResponse } from './models/AppWebhookDeliveryAttemptResponse.js';
+export type { AppWebhookDeliveryHealthResponse } from './models/AppWebhookDeliveryHealthResponse.js';
 export type { AppWebhookDeliveryListResponse } from './models/AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResponse.js';
 export type { AppWebhookResponse } from './models/AppWebhookResponse.js';

@@ -698,6 +698,56 @@ func (s *server) listAppWebhookDeliveryAttempts(w http.ResponseWriter, r *http.R
 	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
 }
 
+func (s *server) getAppWebhookDeliveryHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || limits.WebhookPerApp == 0 {
+		api.WriteProblem(w, api.ErrPlanWebhooksNotAllowed(acct.Plan))
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	hook, err := s.store.AppWebhookByID(r.Context(), r.PathValue("id"))
+	if err != nil || hook.AppID != app.ID || hook.AccountID != acct.ID || hook.Scope != state.AppWebhookScopeApp {
+		s.notFound(w, "webhook not found")
+		return
+	}
+	s.writeAppWebhookDeliveryHealth(w, r, acct.ID, hook.ID)
+}
+
+func (s *server) writeAppWebhookDeliveryHealth(w http.ResponseWriter, r *http.Request, accountID, webhookID string) {
+	now := time.Now().UTC()
+	health, err := s.store.AppWebhookDeliveryHealth(r.Context(), webhookID, accountID, now)
+	if err != nil {
+		s.log.WarnContext(r.Context(), "webhook delivery health", slog.String("err", err.Error()))
+		api.WriteProblem(w, api.ErrCapacity("could not read webhook delivery health"))
+		return
+	}
+	writeJSON(w, http.StatusOK, appWebhookDeliveryHealthResponse(health, now))
+}
+
+func appWebhookDeliveryHealthResponse(health state.AppWebhookDeliveryHealth, now time.Time) api.AppWebhookDeliveryHealthResponse {
+	out := api.AppWebhookDeliveryHealthResponse{
+		WebhookID: health.WebhookID, SnapshotAt: api.FormatAlertTime(now),
+		PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
+		RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
+	}
+	if health.OldestOverdueAt != nil {
+		out.OldestOverdueAt = api.FormatAlertTime(*health.OldestOverdueAt)
+		age := int64(now.Sub(*health.OldestOverdueAt).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		out.OldestOverdueSeconds = &age
+	}
+	if terminal := health.RecentSucceededCount + health.RecentDeadCount; terminal > 0 {
+		rate := float64(health.RecentSucceededCount) / float64(terminal)
+		out.RecentSuccessRate = &rate
+	}
+	return out
+}
+
 func (s *server) writeAppWebhookAttemptPage(w http.ResponseWriter, r *http.Request, accountID string, delivery state.AppWebhookDelivery) {
 	pageSize := 50
 	if raw := r.URL.Query().Get("page_size"); raw != "" {

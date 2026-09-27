@@ -315,6 +315,42 @@ func TestMemStoreAppWebhookDelivery_RecordDefaults(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDeliveryHealth(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	add := func(id string, status AppWebhookDeliveryStatus, next time.Time, delivered *time.Time) {
+		t.Helper()
+		d := memSampleDelivery(hook.ID, app.ID, acct.ID, id)
+		d.Status, d.NextAttemptAt, d.DeliveredAt = status, next, delivered
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("overdue", AppWebhookDeliveryPending, now.Add(-2*time.Minute), nil)
+	add("future", AppWebhookDeliveryPending, now.Add(time.Hour), nil)
+	add("claimed", AppWebhookDeliveryInFlight, now.Add(time.Minute), nil)
+	add("dead", AppWebhookDeliveryDead, now, nil)
+	delivered := now.Add(-time.Hour)
+	add("succeeded", AppWebhookDeliverySucceeded, now, &delivered)
+	health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, now)
+	if err != nil || health.PendingCount != 2 || health.InFlightCount != 1 || health.DeadCount != 1 ||
+		health.RecentSucceededCount != 1 || health.RecentDeadCount != 1 || health.OldestOverdueAt == nil ||
+		!health.OldestOverdueAt.Equal(now.Add(-2*time.Minute)) {
+		t.Fatalf("health = %+v, err=%v", health, err)
+	}
+	oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now)
+	if err != nil || oldest == nil || !oldest.Equal(now.Add(-2*time.Minute)) {
+		t.Fatalf("fleet oldest = %v, err=%v", oldest, err)
+	}
+	if _, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, "another-account", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign health = %v, want not found", err)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_RecordRejectsMissingWebhook(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
 	_, err := m.RecordAppWebhookDelivery(ctx, AppWebhookDelivery{
