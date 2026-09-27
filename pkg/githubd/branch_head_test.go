@@ -167,3 +167,25 @@ func TestHandlePushRequestRechecksBranchHeadAfterScan(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlePushRequestCarriesBranchProvenanceForPromotionFence(t *testing.T) {
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rig := newRig(t, func(fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	svc.BranchHeads = &sequenceBranchHeads{replies: []branchHeadReply{{sha: commit}, {sha: commit}}}
+	enqueuer := &recordingEnqueuer{buildID: "build-current"}
+	svc.Enqueuer = enqueuer
+	body := []byte(`{"ref":"refs/heads/main","after":"` + commit + `","repository":{"full_name":"octo/api","name":"api"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("HandlePushRequest: %v", err)
+	}
+	if len(enqueuer.calls) != 1 {
+		t.Fatalf("enqueue calls = %d, want 1", len(enqueuer.calls))
+	}
+	got := enqueuer.calls[0]
+	if got.githubSourceRef != "main" || got.githubInstallation != 42 {
+		t.Fatalf("branch provenance = (%q, %d), want (main, 42)", got.githubSourceRef, got.githubInstallation)
+	}
+}

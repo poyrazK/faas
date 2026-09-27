@@ -2177,9 +2177,16 @@ type EnqueueBuildRequest struct {
 	// tag is the normalized GitHub release tag (for example "v1.2.3") for
 	// immutable release-tag pushes. Empty for branch and pull-request events.
 	// apid stamps it onto deployments.tag for deployment provenance.
-	Tag           string `protobuf:"bytes,16,opt,name=tag,proto3" json:"tag,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Tag string `protobuf:"bytes,16,opt,name=tag,proto3" json:"tag,omitempty"`
+	// github_source_ref preserves mutable branch intent for webhook push
+	// deployments so imaged can verify the branch head again before promotion.
+	// Empty for tag pushes, pull requests, and legacy callers.
+	GithubSourceRef string `protobuf:"bytes,17,opt,name=github_source_ref,json=githubSourceRef,proto3" json:"github_source_ref,omitempty"`
+	// github_installation_id identifies the installation used to validate
+	// github_source_ref. Zero means no mutable branch provenance was supplied.
+	GithubInstallationId int64 `protobuf:"varint,18,opt,name=github_installation_id,json=githubInstallationId,proto3" json:"github_installation_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *EnqueueBuildRequest) Reset() {
@@ -2322,6 +2329,20 @@ func (x *EnqueueBuildRequest) GetTag() string {
 		return x.Tag
 	}
 	return ""
+}
+
+func (x *EnqueueBuildRequest) GetGithubSourceRef() string {
+	if x != nil {
+		return x.GithubSourceRef
+	}
+	return ""
+}
+
+func (x *EnqueueBuildRequest) GetGithubInstallationId() int64 {
+	if x != nil {
+		return x.GithubInstallationId
+	}
+	return 0
 }
 
 type EnqueueBuildResponse struct {
@@ -2956,7 +2977,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\xb4\x04\n" +
+	"\x12WriteCheckResponse\"\x96\x05\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -2980,7 +3001,9 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\vdelivery_id\x18\x0e \x01(\tR\n" +
 	"deliveryId\x12)\n" +
 	"\x10deployment_scope\x18\x0f \x01(\tR\x0fdeploymentScope\x12\x10\n" +
-	"\x03tag\x18\x10 \x01(\tR\x03tag\"m\n" +
+	"\x03tag\x18\x10 \x01(\tR\x03tag\x12*\n" +
+	"\x11github_source_ref\x18\x11 \x01(\tR\x0fgithubSourceRef\x124\n" +
+	"\x16github_installation_id\x18\x12 \x01(\x03R\x14githubInstallationId\"m\n" +
 	"\x14EnqueueBuildResponse\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +

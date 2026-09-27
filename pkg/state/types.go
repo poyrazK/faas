@@ -2083,8 +2083,8 @@ type Deployment struct {
 	// have an upstream commit.
 	CommitSHA string
 	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
-	// for source-ref deployments. Empty/zero for pinned SHAs, tags, and all
-	// other deployment kinds; imaged checks the branch head before promotion.
+	// for GitHub deployments. Empty/zero for pinned SHAs, tags, and all other
+	// deployment kinds; imaged checks the branch head before promotion.
 	GitHubSourceRef      string
 	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer

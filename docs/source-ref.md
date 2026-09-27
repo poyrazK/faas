@@ -74,6 +74,9 @@ live after a newer deployment was accepted for the same environment. A manual
 `--repo --ref` request is an explicit deployment choice, including an older
 SHA for rollback; its accepted revision takes part in the same promotion
 order. See [ADR-311](adr/311-github-push-freshness-and-promotion-fence.md).
+The final branch-head check also prevents a webhook build from promoting when
+its branch advanced but the newer delivery has not yet been accepted. See
+[ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
 
 To queue the deployment without waiting for the build, pass
 `--no-wait`. This returns the deployment id and URL as soon as the

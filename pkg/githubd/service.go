@@ -624,6 +624,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		toEnqueue, skipped = s.filterByPath(touched, changedFiles, filterMode)
 	}
 	deliveryID := webhookDeliveryID(ctx)
+	githubSourceRef := ""
+	var githubInstallationID int64
+	if !isTag {
+		githubSourceRef = branch
+		githubInstallationID = install.InstallationID
+	}
 
 	// Legacy embeddings expose one repository-wide check. Production uses the
 	// per-app writer below so monorepo workloads do not overwrite one another.
@@ -665,18 +671,20 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			continue
 		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
-			App:          app,
-			DeliveryID:   deliveryID,
-			CommitSHA:    ev.After,
-			RepoFullName: ev.Repository.FullName,
-			Ref:          ev.Ref,
-			Tag:          releaseTag,
-			Branch:       branch,
-			Scope:        deploymentScope,
-			Pusher:       ev.Pusher.Name,
-			SourcePath:   sourcePath,
-			SourceURL:    sourceURL,
-			SourceBytes:  sourceBytes,
+			App:                  app,
+			DeliveryID:           deliveryID,
+			CommitSHA:            ev.After,
+			RepoFullName:         ev.Repository.FullName,
+			Ref:                  ev.Ref,
+			Tag:                  releaseTag,
+			Branch:               branch,
+			GitHubSourceRef:      githubSourceRef,
+			GitHubInstallationID: githubInstallationID,
+			Scope:                deploymentScope,
+			Pusher:               ev.Pusher.Name,
+			SourcePath:           sourcePath,
+			SourceURL:            sourceURL,
+			SourceBytes:          sourceBytes,
 			// Issue #977 / ADR-116: explicit push event kind so the
 			// bridge stamps DeploymentKindGitHub (legacy push path).
 			// PRNumber + SenderLogin stay zero — push events don't

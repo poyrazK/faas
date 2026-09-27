@@ -418,6 +418,75 @@ func TestPreviewSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) 
 	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview)
 }
 
+func TestGitHubWebhookSnapshotCannotPromoteAfterBranchMoves(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "webhook-source-ref@example.test", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "webhook-source-ref", RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	candidate, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindGitHub,
+		SourceURL: "https://codeload.github.com/owner/repo/tar.gz/" + commit,
+		CommitSHA: commit, GitHubSourceRef: "release/2026-q3", GitHubInstallationID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal(err)
+	}
+	backend := mustLocalStorage(t, t.TempDir())
+	notifier := &fakeNotifier{}
+	verifier := &fakeGitHubSourceRefVerifier{sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", found: true}
+	h := New(store, notifier, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).
+		WithStorage(backend).
+		WithGitHubSourceRefVerifier(verifier)
+	key := state.SnapshotCaptureMemKey(candidate.ID, state.SnapshotTierInit, "webhook")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := backend.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: candidate.ID, StorageKey: key, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+	}); err != nil {
+		t.Fatalf("stale webhook snapshot publication: %v", err)
+	}
+
+	got, err := store.DeploymentByID(ctx, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployFailed || got.ErrorCode != api.CodeSourceRefStale {
+		t.Fatalf("moved-branch candidate = (%s, %q), want failed with %q", got.Status, got.ErrorCode, api.CodeSourceRefStale)
+	}
+	stableRow, err := store.DeploymentByID(ctx, stable.ID)
+	if err != nil || stableRow.Status != state.DeployLive {
+		t.Fatalf("serving predecessor = (%+v, %v), want live", stableRow, err)
+	}
+	if verifier.repo != "owner/repo" || verifier.branch != "release/2026-q3" || verifier.installationID != 42 {
+		t.Fatalf("webhook source identity checked = (%q, %q, %d), want owner/repo, release/2026-q3, 42", verifier.repo, verifier.branch, verifier.installationID)
+	}
+	for _, call := range notifier.calls {
+		if strings.Contains(call.payload, `"kind":"candidate_route"`) {
+			t.Fatalf("moved-branch deployment route was published: %+v", call)
+		}
+	}
+}
+
 func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind) {
 	t.Helper()
 	ctx := context.Background()

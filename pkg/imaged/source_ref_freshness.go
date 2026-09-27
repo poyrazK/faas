@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -30,8 +31,8 @@ func (h *Handler) gitHubSourceRefIsStale(ctx context.Context, dep state.Deployme
 	if h.githubSourceRefVerifier == nil {
 		return false, errors.New("GitHub branch verifier is not configured")
 	}
-	repo, ok := sourceRepoFromURL(dep.SourceURL)
-	if !ok {
+	repo, sourceSHA, ok := sourceRepoFromURL(dep.SourceURL)
+	if !ok || !strings.EqualFold(sourceSHA, dep.CommitSHA) {
 		return false, errors.New("deployment has an invalid GitHub source URL")
 	}
 	app, err := h.store.AppByID(ctx, dep.AppID)
@@ -54,20 +55,33 @@ func (h *Handler) gitHubSourceRefIsStale(ctx context.Context, dep state.Deployme
 	return !strings.EqualFold(head, dep.CommitSHA), nil
 }
 
-func sourceRepoFromURL(sourceURL string) (string, bool) {
+func sourceRepoFromURL(sourceURL string) (string, string, bool) {
 	repoAndSHA, ok := strings.CutPrefix(sourceURL, "github://")
-	if !ok {
-		return "", false
+	if ok {
+		repo, sha, ok := strings.Cut(repoAndSHA, "@")
+		if !ok || !validGitHubRepoFullName(repo) || !canonicalCommitSHA(sha) {
+			return "", "", false
+		}
+		return repo, sha, true
 	}
-	repo, sha, ok := strings.Cut(repoAndSHA, "@")
-	if !ok || repo == "" || !canonicalCommitSHA(sha) {
-		return "", false
+	parsed, err := url.Parse(sourceURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "codeload.github.com" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", "", false
 	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(segments) != 4 || segments[2] != "tar.gz" || !canonicalCommitSHA(segments[3]) {
+		return "", "", false
+	}
+	repo := segments[0] + "/" + segments[1]
+	if !validGitHubRepoFullName(repo) {
+		return "", "", false
+	}
+	return repo, segments[3], true
+}
+
+func validGitHubRepoFullName(repo string) bool {
 	owner, name, ok := strings.Cut(repo, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return "", false
-	}
-	return repo, true
+	return ok && owner != "" && name != "" && !strings.Contains(name, "/")
 }
 
 func canonicalCommitSHA(sha string) bool {

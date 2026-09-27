@@ -170,8 +170,9 @@ type EnqueueParams struct {
 	DockerfilePath string
 	SourceURL      string
 	CommitSHA      string
-	// GitHubSourceRef is populated only when a source-ref deploy was
-	// resolved as a branch. Imaged rechecks it immediately before promotion.
+	// GitHubSourceRef is populated when a GitHub deployment was resolved from
+	// a mutable branch (source-ref request or webhook push). Imaged rechecks
+	// it immediately before promotion.
 	GitHubSourceRef      string
 	GitHubInstallationID int64
 	Scope                string

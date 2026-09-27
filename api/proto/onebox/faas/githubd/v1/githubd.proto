@@ -467,6 +467,13 @@ message EnqueueBuildRequest {
   // immutable release-tag pushes. Empty for branch and pull-request events.
   // apid stamps it onto deployments.tag for deployment provenance.
   string tag                = 16;
+  // github_source_ref preserves mutable branch intent for webhook push
+  // deployments so imaged can verify the branch head again before promotion.
+  // Empty for tag pushes, pull requests, and legacy callers.
+  string github_source_ref   = 17;
+  // github_installation_id identifies the installation used to validate
+  // github_source_ref. Zero means no mutable branch provenance was supplied.
+  int64 github_installation_id = 18;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for

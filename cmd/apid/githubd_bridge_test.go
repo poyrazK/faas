@@ -1004,3 +1004,53 @@ func TestEnqueueBuild_RefusesUnverifiedAccount(t *testing.T) {
 		t.Fatalf("EnqueueBuild for an unverified account: err = %v, want FailedPrecondition", err)
 	}
 }
+
+func TestEnqueueBuild_PushPersistsBranchPromotionProvenance(t *testing.T) {
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	accountID := "acct-1"
+	appID := "app-1"
+	stagingRoot := t.TempDir()
+	spoolRoot := t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, commit), []byte("tiny-tar"))
+	store := &bridgeStubStore{app: state.App{ID: appID, AccountID: accountID, Status: state.AppActive}}
+	g := &githubdBridge{
+		store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot,
+	}
+
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: accountID, AppId: appID, CommitSha: commit, SourcePath: path,
+		SourceUrl:   "https://codeload.github.com/owner/repo/tar.gz/" + commit,
+		SourceBytes: size, RepoFullName: "owner/repo", Branch: "main", Ref: "refs/heads/main",
+		GithubSourceRef: "main", GithubInstallationId: 42,
+		EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueBuild: %v", err)
+	}
+	created := store.createDeploymentReturned
+	if created.GitHubSourceRef != "main" || created.GitHubInstallationID != 42 {
+		t.Fatalf("deployment branch provenance = (%q, %d), want (main, 42)", created.GitHubSourceRef, created.GitHubInstallationID)
+	}
+}
+
+func TestEnqueueBuild_RejectsInconsistentBranchPromotionProvenance(t *testing.T) {
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	stagingRoot := t.TempDir()
+	spoolRoot := t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join("acct-1", "app-1", commit), []byte("tiny-tar"))
+	g := &githubdBridge{
+		store: &bridgeStubStore{}, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot,
+	}
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: "acct-1", AppId: "app-1", CommitSha: commit, SourcePath: path,
+		SourceUrl: "https://codeload.github.com/owner/repo/tar.gz/" + commit, SourceBytes: size,
+		RepoFullName: "owner/repo", Branch: "main", Ref: "refs/heads/main",
+		GithubSourceRef: "different-branch", GithubInstallationId: 42,
+		EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("EnqueueBuild error = %v, want InvalidArgument", err)
+	}
+}

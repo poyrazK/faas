@@ -195,6 +195,14 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: invalid deployment_scope %q", req.DeploymentScope)
 		}
 	}
+	if req.GithubSourceRef != "" || req.GithubInstallationId != 0 {
+		if req.GithubSourceRef == "" || req.GithubInstallationId <= 0 ||
+			req.EventKind != githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH ||
+			req.Branch != req.GithubSourceRef || req.Ref != "refs/heads/"+req.GithubSourceRef || req.Tag != "" ||
+			!isCanonicalCommitSHA(req.CommitSha) {
+			return nil, status.Error(codes.InvalidArgument, "EnqueueBuild: incomplete or inconsistent GitHub branch provenance")
+		}
+	}
 
 	// Look up the app. The app_id MUST exist (githubd resolves it
 	// from the binding rows + repo scan; a missing app is a stale
@@ -331,9 +339,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	// pusher_login column, distinct from the local-account FK.
 	//
 	// Ref / Branch / RepoFullName remain intentionally NOT in
-	// pkg/state.Deployment — the proto carries them for forward-
-	// compat and the audit log (g.log.Info below) carries them
-	// on the build_enqueued line.
+	// pkg/state.Deployment. Branch-backed push deployments retain only the
+	// source ref and installation ID needed for the pre-promotion freshness
+	// check; the audit log carries the remaining event details.
 	//
 	// Issue #977 / ADR-116: Pusher + SenderLogin + PullRequestNumber
 	// + Tag stamp the annotation surface onto the deployment row. We
@@ -362,19 +370,21 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
-		Activity:        activity,
-		AppID:           app.ID,
-		DeliveryID:      req.DeliveryId,
-		Kind:            kind,
-		SourcePath:      req.SourcePath,
-		SourceBytes:     req.SourceBytes,
-		SourceRoot:      app.RootDir,
-		SourceURL:       req.SourceUrl,
-		CommitSHA:       req.CommitSha,
-		FunctionRuntime: functionRuntimeForApp(app),
-		Scope:           req.DeploymentScope,
-		LogSpool:        g.spool,
-		Log:             g.log,
+		Activity:             activity,
+		AppID:                app.ID,
+		DeliveryID:           req.DeliveryId,
+		Kind:                 kind,
+		SourcePath:           req.SourcePath,
+		SourceBytes:          req.SourceBytes,
+		SourceRoot:           app.RootDir,
+		SourceURL:            req.SourceUrl,
+		CommitSHA:            req.CommitSha,
+		GitHubSourceRef:      req.GithubSourceRef,
+		GitHubInstallationID: req.GithubInstallationId,
+		FunctionRuntime:      functionRuntimeForApp(app),
+		Scope:                req.DeploymentScope,
+		LogSpool:             g.spool,
+		Log:                  g.log,
 		// Issue #606 / SAFE-RELEASES-E.1: bridge-side actor
 		// attribution. ActorVia is hard-coded to "github"
 		// (the closed-set CHECK on deployments.deployed_via

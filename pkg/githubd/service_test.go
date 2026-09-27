@@ -386,6 +386,9 @@ func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	if len(enq.calls) != 1 || enq.calls[0].tag != "v1.0.0" {
 		t.Errorf("enqueue calls = %#v, want release tag v1.0.0", enq.calls)
 	}
+	if len(enq.calls) == 1 && (enq.calls[0].githubSourceRef != "" || enq.calls[0].githubInstallation != 0) {
+		t.Errorf("tag push has mutable branch provenance = (%q, %d), want empty/zero", enq.calls[0].githubSourceRef, enq.calls[0].githubInstallation)
+	}
 }
 
 func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
@@ -498,24 +501,28 @@ type recordingEnqueuer struct {
 }
 
 type enqueueCall struct {
-	accountID  string
-	appID      string
-	deliveryID string
-	commitSHA  string
-	sourcePath string
-	scope      string
-	tag        string
+	accountID          string
+	appID              string
+	deliveryID         string
+	commitSHA          string
+	sourcePath         string
+	scope              string
+	tag                string
+	githubSourceRef    string
+	githubInstallation int64
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
 	r.calls = append(r.calls, enqueueCall{
-		accountID:  spec.App.AccountID,
-		appID:      spec.App.ID,
-		deliveryID: spec.DeliveryID,
-		commitSHA:  spec.CommitSHA,
-		sourcePath: spec.SourcePath,
-		scope:      spec.Scope,
-		tag:        spec.Tag,
+		accountID:          spec.App.AccountID,
+		appID:              spec.App.ID,
+		deliveryID:         spec.DeliveryID,
+		commitSHA:          spec.CommitSHA,
+		sourcePath:         spec.SourcePath,
+		scope:              spec.Scope,
+		tag:                spec.Tag,
+		githubSourceRef:    spec.GitHubSourceRef,
+		githubInstallation: spec.GitHubInstallationID,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err
