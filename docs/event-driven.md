@@ -535,7 +535,9 @@ Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` within the 30-day identity retention
 window. Fanout work is stored with the event, so delivery resumes after a
-scheduler outage regardless of its duration or backlog size.
+scheduler outage regardless of its duration or backlog size. Fanout matches
+subscriptions that are enabled when processing runs; disabling a subscription
+during an outage also excludes its pending backlog.
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.

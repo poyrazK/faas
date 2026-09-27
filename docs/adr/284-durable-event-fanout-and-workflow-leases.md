@@ -59,3 +59,9 @@ after this migration; historical events are not automatically replayed because
 that could duplicate old application side effects. Delivery remains at least
 once. Invocation IDs and workflow step idempotency keys remain stable on
 recovery.
+
+Fanout reads the currently enabled subscriptions when it processes a receipt.
+Disabling or deleting a subscription during an outage excludes its backlog;
+preserving the subscription set at publish time needs a separate snapshot
+design. Producer scopes are account-wide, without per-source or per-app
+restrictions.
