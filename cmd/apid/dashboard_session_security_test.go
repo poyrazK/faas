@@ -469,3 +469,28 @@ func TestSessionWrites_RejectOtherOrigins(t *testing.T) {
 		t.Errorf("bearer request with a foreign Origin was refused; browsers never attach API keys")
 	}
 }
+
+// TestCLIAuthApproval_ExpiredCodeNamesTheShippedCLI — the approval page
+// told the customer to restart `faas login`; the CLI is gregale.
+func TestCLIAuthApproval_ExpiredCodeNamesTheShippedCLI(t *testing.T) {
+	h, cookie, store, mgr := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := middleware.IssueForAuthenticated(mgr, "cli-auth", acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"code": {"ABCD2345"}, "csrf_token": {token}}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, cliAuthPath, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: token})
+	h.ServeHTTP(rec, r)
+	body := rec.Body.String()
+	if !strings.Contains(body, "gregale login") || strings.Contains(body, "faas login") {
+		t.Fatalf("expired-code page = %d, want a gregale login hint:\n%s", rec.Code, body)
+	}
+}
