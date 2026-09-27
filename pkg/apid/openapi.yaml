@@ -1456,7 +1456,7 @@ paths:
     post:
       operationId: rotateObjectStorageComputeBinding
       summary: Rotate a compute binding credential
-      description: Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+      description: Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
       tags: [storage]
       responses:
         '200':
@@ -21469,7 +21469,7 @@ components:
         secret_access_key: { type: string }
         addressing_style: { type: string }
     ObjectStorageComputeBinding:
-      description: Provider-neutral app-to-bucket compute binding.
+      description: Provider-neutral app-to-bucket compute binding. Rotation responses and binding lists set rotation_pending while the previous key remains valid during a rolling runtime refresh.
       type: object
       required: [id, bucket_id, scope, prefix, credential, secret_keys]
       properties:
@@ -21479,6 +21479,7 @@ components:
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$' }
         credential: { $ref: '#/components/schemas/ObjectS3Credential' }
         secret_keys: { $ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys' }
+        rotation_pending: { type: boolean, description: Previous key is still valid until the rolling refresh has drained old instances. }
     ObjectStorageComputeBindingList:
       description: Active compute bindings for one logical bucket.
       type: object

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -262,14 +263,17 @@ func (s *server) cleanupProjectEnvironmentManagedResourcePayload(
 					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect object storage credential %q: %w", item.CredentialID, err))
 					continue
 				}
-				if credential.ID != "" && credential.Status == state.ObjectS3CredentialStatusActive {
-					if err := credentialStore.RevokeObjectS3Credential(ctx, acct.ID, item.BucketID, item.CredentialID); err != nil && !errors.Is(err, state.ErrNotFound) {
-						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("revoke object storage credential %q: %w", item.CredentialID, err))
+				if credential.ID != "" {
+					changed, err := credentialStore.RevokeObjectS3ComputeBinding(ctx, acct.ID, item.BucketID, item.CredentialID)
+					if err != nil {
+						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("revoke object storage binding %q: %w", item.CredentialID, err))
 						continue
 					}
-				}
-				if err := s.store.DeleteManagedObjectStorageSecrets(ctx, item.CredentialID); err != nil {
-					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove object storage secrets for credential %q: %w", item.CredentialID, err))
+					if changed {
+						s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, state.App{ID: item.AppID}, "binding_revoked", item.Scope, "")
+					}
+				} else if err := s.store.DeleteManagedObjectStorageSecrets(ctx, item.CredentialID); err != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove orphaned object storage secrets for credential %q: %w", item.CredentialID, err))
 					continue
 				}
 				if item.DeleteBucket {
