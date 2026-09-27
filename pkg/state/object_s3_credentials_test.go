@@ -30,6 +30,98 @@ func TestObjectS3CredentialRotationPG(t *testing.T) {
 	objectS3CredentialRotationSuite(t, st)
 }
 
+func TestObjectS3ComputeBindingCreateMem(t *testing.T) {
+	objectS3ComputeBindingCreateSuite(t, state.NewMemStore())
+}
+
+func TestObjectS3ComputeBindingCreatePG(t *testing.T) {
+	st, _ := pgStore(t)
+	objectS3ComputeBindingCreateSuite(t, st)
+}
+
+func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
+	t.Helper()
+	ctx := context.Background()
+	buckets := base.(state.ObjectBucketStore)
+	bindings := base.(state.ObjectS3CredentialBindingStore)
+	acct, err := base.CreateAccount(ctx, "s3-binding-create-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := base.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "s3-binding-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucketID := uuid.NewString()
+	bucket, err := buckets.ReserveObjectBucket(ctx, state.ObjectBucket{ID: bucketID, AccountID: acct.ID, AppID: app.ID, Name: "assets", Scope: "default", Region: "us-east-1", BackendID: "provider", BackendFingerprint: strings.Repeat("a", 64), PhysicalName: "gregale-" + strings.ReplaceAll(bucketID, "-", "")}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buckets.ClaimObjectBucket(ctx, acct.ID, app.ID, bucket.ID, "provision", "provisioning"); err != nil {
+		t.Fatal(err)
+	}
+	if err := buckets.FinishObjectBucket(ctx, bucket.ID, "provision", "ready"); err != nil {
+		t.Fatal(err)
+	}
+	makeRequest := func(prefix, access string) state.ObjectS3ComputeBindingCreateRequest {
+		id := uuid.NewString()
+		req := state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+			ID: id, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: access,
+			SecretSealed: []byte("sealed"), KID: "age1test", Label: "compute", Permission: state.ObjectBucketPermissionReadWrite,
+			Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: "default", ManagedPrefix: prefix,
+		}, MaxCredentialsPerBucket: 10, MaxSecretsPerApp: 12}
+		for _, suffix := range []string{"_ENDPOINT", "_REGION", "_BUCKET", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_ADDRESSING_STYLE"} {
+			req.Secrets = append(req.Secrets, state.AppSecret{AccountID: acct.ID, AppID: app.ID, Scope: "default", Key: prefix + suffix, Ciphertext: []byte("sealed-" + suffix), Kid: "age1test", ValueHash: "0123456789abcdef", ManagedObjectStorageCredentialID: id})
+		}
+		return req
+	}
+	first := makeRequest("GREGALE_S3_ASSETS", "GRGAAAAAAAAAAAAAAAAA")
+	lastKey := first.Secrets[len(first.Secrets)-1].Key
+	if err := base.UpsertAppSecretInScope(ctx, acct.ID, app.ID, "default", lastKey, []byte("customer-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, first); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("late secret conflict = %v", err)
+	}
+	if _, _, err := bindings.ResolveObjectS3Credential(ctx, first.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("credential survived failed create: %v", err)
+	}
+	for _, secret := range first.Secrets[:len(first.Secrets)-1] {
+		if _, err := base.GetAppSecretInScope(ctx, acct.ID, app.ID, "default", secret.Key); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("partial secret %s survived failed create: %v", secret.Key, err)
+		}
+	}
+	untouched, err := base.GetAppSecretInScope(ctx, acct.ID, app.ID, "default", lastKey)
+	if err != nil || string(untouched.Ciphertext) != "customer-secret" {
+		t.Fatalf("conflicting secret changed: %+v, %v", untouched, err)
+	}
+	if err := base.DeleteAppSecretInScope(ctx, acct.ID, app.ID, "default", lastKey); err != nil {
+		t.Fatal(err)
+	}
+	created, err := bindings.CreateObjectS3ComputeBinding(ctx, first)
+	if err != nil || created.ID != first.Credential.ID {
+		t.Fatalf("binding create = %+v, %v", created, err)
+	}
+	for _, secret := range first.Secrets {
+		stored, err := base.GetAppSecretInScope(ctx, acct.ID, app.ID, "default", secret.Key)
+		if err != nil || stored.ManagedObjectStorageCredentialID != created.ID {
+			t.Fatalf("managed secret %s = %+v, %v", secret.Key, stored, err)
+		}
+	}
+	duplicate := makeRequest("GREGALE_S3_ASSETS", "GRGABBBBBBBBBBBBBBBB")
+	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, duplicate); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate prefix = %v", err)
+	}
+	limited := makeRequest("GREGALE_S3_OTHER", "GRGACCCCCCCCCCCCCCCC")
+	limited.MaxSecretsPerApp = 11
+	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, limited); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("secret quota = %v", err)
+	}
+	if _, _, err := bindings.ResolveObjectS3Credential(ctx, limited.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("quota-rejected credential resolved: %v", err)
+	}
+}
+
 func objectS3CredentialRotationSuite(t *testing.T, base state.Store) {
 	t.Helper()
 	ctx := context.Background()

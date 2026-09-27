@@ -151,16 +151,26 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if err != nil {
 		return "", 0, fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
-	credential, err := store.CreateObjectS3Credential(r.Context(), state.ObjectS3Credential{
-		ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
+	credentialID := uuid.NewString()
+	values := objectStorageBindingSecretValues(
+		objectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
+		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
+	)
+	limits := api.MustLimitsFor(acct.Plan)
+	secrets, problem := s.sealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
+	if problem != nil {
+		return "", 0, errors.New(problem.Detail)
+	}
+	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: recipient.String(), Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
 		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
-	}, api.MaxObjectS3CredentialsPerBucket)
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return "", 0, fmt.Errorf("create isolated object storage credential: %w", err)
 	}
-	credentialID, bucketID := credential.ID, bucket.ID
+	bucketID := bucket.ID
 	*cleanup = append(*cleanup, func(ctx context.Context) error {
 		revokeErr := store.RevokeObjectS3Credential(ctx, acct.ID, bucketID, credentialID)
 		if errors.Is(revokeErr, state.ErrNotFound) {
@@ -169,13 +179,6 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 		secretErr := s.store.DeleteManagedObjectStorageSecrets(ctx, credentialID)
 		return errors.Join(revokeErr, secretErr)
 	})
-	values := objectStorageBindingSecretValues(
-		objectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
-		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
-	)
-	if problem := s.persistObjectStorageBindingSecrets(r, acct, plan.app, credential.ID, target, values, api.MustLimitsFor(acct.Plan)); problem != nil {
-		return "", 0, errors.New(problem.Detail)
-	}
 	return credential.ID, len(values), nil
 }
 

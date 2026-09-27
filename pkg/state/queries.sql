@@ -3722,6 +3722,20 @@ WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
 SELECT count(*) FROM object_storage_s3_credentials
 WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL;
 
+-- name: ObjectS3BindingLockApp :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+  AND b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
+FOR UPDATE OF a;
+
+-- name: ObjectS3BindingSecretCount :one
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2;
+
+-- name: ObjectS3BindingSecretInsert :one
+INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key;
+
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)

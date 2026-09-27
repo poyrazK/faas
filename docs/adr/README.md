@@ -303,6 +303,7 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 ## Object-storage binding decisions
 
 - [ADR-281: safe object-storage binding rotation](281-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+- [ADR-282: atomic object-storage binding creation](282-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
 
 ## Snapshot restore optimization decisions
 

@@ -56,6 +56,63 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	return objectS3CredentialFromSQL(row), nil
 }
 
+// CreateObjectS3ComputeBinding makes the credential and all six runtime
+// secrets visible at the same commit boundary.
+func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
+	if !validObjectS3ComputeBindingCreateRequest(req) {
+		return ObjectS3Credential{}, ErrInvalidArgument
+	}
+	c := req.Credential
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if _, err := q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if _, err := q.ObjectS3BindingLockApp(ctx, tx, sqlc.ObjectS3BindingLockAppParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	credentialCount, err := q.ObjectS3CredentialCount(ctx, tx, mustPgUUID(c.BucketID))
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	secretCount, err := q.ObjectS3BindingSecretCount(ctx, tx, sqlc.ObjectS3BindingSecretCountParams{AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.ManagedAppID)})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount+int64(len(req.Secrets)) > int64(req.MaxSecretsPerApp) {
+		return ObjectS3Credential{}, ErrConflict
+	}
+	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
+		ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID),
+		AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission,
+		Column9: c.ManagedAppID, Column10: c.ManagedScope, Column11: c.ManagedPrefix,
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	for _, secret := range req.Secrets {
+		if _, err := q.ObjectS3BindingSecretInsert(ctx, tx, sqlc.ObjectS3BindingSecretInsertParams{
+			AccountID: mustPgUUID(secret.AccountID), AppID: mustPgUUID(secret.AppID), Scope: secret.Scope,
+			Key: secret.Key, Ciphertext: secret.Ciphertext, Kid: pgtype.Text{String: secret.Kid, Valid: true},
+			ValueHash:                        pgtype.Text{String: secret.ValueHash, Valid: true},
+			ManagedObjectStorageCredentialID: mustPgUUID(c.ID),
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ObjectS3Credential{}, ErrConflict
+			}
+			return ObjectS3Credential{}, mapErr(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	return objectS3CredentialFromSQL(row), nil
+}
+
 func (s *PgStore) ListObjectS3Credentials(ctx context.Context, accountID, bucketID string) ([]ObjectS3Credential, error) {
 	rows, err := sqlc.New().ObjectS3CredentialList(ctx, s.pool, sqlc.ObjectS3CredentialListParams{AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID)})
 	if err != nil {

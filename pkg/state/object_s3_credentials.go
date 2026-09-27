@@ -54,6 +54,40 @@ type ObjectS3CredentialRotationRequest struct {
 	Secrets                                []AppSecret
 }
 
+// ObjectS3ComputeBindingCreateRequest contains everything needed to create a
+// binding. Stores commit its credential and six managed secrets together.
+type ObjectS3ComputeBindingCreateRequest struct {
+	Credential              ObjectS3Credential
+	Secrets                 []AppSecret
+	MaxCredentialsPerBucket int
+	MaxSecretsPerApp        int
+}
+
+func validObjectS3ComputeBindingCreateRequest(req ObjectS3ComputeBindingCreateRequest) bool {
+	c := req.Credential
+	if !validObjectS3Credential(c) || c.ManagedAppID == "" || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 6 || len(req.Secrets) != 6 {
+		return false
+	}
+	for _, id := range []string{c.ID, c.AccountID, c.BucketID, c.ManagedAppID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	want := map[string]bool{}
+	for _, suffix := range []string{"_ENDPOINT", "_REGION", "_BUCKET", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_ADDRESSING_STYLE"} {
+		want[c.ManagedPrefix+suffix] = true
+	}
+	for _, secret := range req.Secrets {
+		if !want[secret.Key] || secret.AccountID != c.AccountID || secret.AppID != c.ManagedAppID ||
+			secret.Scope != c.ManagedScope || secret.ManagedObjectStorageCredentialID != c.ID ||
+			len(secret.Ciphertext) == 0 || strings.TrimSpace(secret.Kid) == "" || secret.ValueHash == "" {
+			return false
+		}
+		delete(want, secret.Key)
+	}
+	return len(want) == 0
+}
+
 func validObjectS3CredentialRotationRequest(req ObjectS3CredentialRotationRequest) bool {
 	for _, id := range []string{req.AccountID, req.BucketID, req.BindingID, req.WakeID} {
 		if _, err := uuid.Parse(id); err != nil {
@@ -117,6 +151,7 @@ type ObjectS3CredentialRekeyStore interface {
 type ObjectS3CredentialBindingStore interface {
 	ObjectS3CredentialStore
 	ObjectS3CredentialRotationStore
+	CreateObjectS3ComputeBinding(context.Context, ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error)
 	GetObjectS3Credential(context.Context, string, string, string) (ObjectS3Credential, error)
 }
 

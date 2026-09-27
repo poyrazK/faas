@@ -9523,6 +9523,75 @@ func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg Objec
 	return result.RowsAffected(), nil
 }
 
+const objectS3BindingLockApp = `-- name: ObjectS3BindingLockApp :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND b.id=$3::uuid AND b.account_id=$2::uuid
+FOR UPDATE OF a
+`
+
+type ObjectS3BindingLockAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg ObjectS3BindingLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3BindingLockApp, arg.AppID, arg.AccountID, arg.BucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectS3BindingSecretCount = `-- name: ObjectS3BindingSecretCount :one
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2
+`
+
+type ObjectS3BindingSecretCountParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingSecretCount(ctx context.Context, db DBTX, arg ObjectS3BindingSecretCountParams) (int64, error) {
+	row := db.QueryRow(ctx, objectS3BindingSecretCount, arg.AccountID, arg.AppID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectS3BindingSecretInsert = `-- name: ObjectS3BindingSecretInsert :one
+INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key
+`
+
+type ObjectS3BindingSecretInsertParams struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Scope                            string
+	Key                              string
+	Ciphertext                       []byte
+	Kid                              pgtype.Text
+	ValueHash                        pgtype.Text
+	ManagedObjectStorageCredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingSecretInsert(ctx context.Context, db DBTX, arg ObjectS3BindingSecretInsertParams) (string, error) {
+	row := db.QueryRow(ctx, objectS3BindingSecretInsert,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.ManagedObjectStorageCredentialID,
+	)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
 WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL

@@ -231,7 +231,9 @@ deployment manifests. The request accepts the same `permission` values as a
 standalone credential and an optional uppercase `prefix`. Gregale creates one
 bucket-scoped credential and writes six sealed app secrets under that prefix:
 `ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
-`ADDRESSING_STYLE`. The workload receives them through the existing secret
+`ADDRESSING_STYLE`. Credential and secret creation commit together, so a
+conflicting secret key leaves no active credential or partial binding. The
+workload receives them through the existing secret
 staging path on its next deploy/wake; values are never returned by the binding
 API or stored in plaintext.
 
