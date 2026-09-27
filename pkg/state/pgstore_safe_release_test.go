@@ -10,6 +10,28 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPg_SafeReleaseWorkerLeaseHealth(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	health, err := s.SafeReleaseWorkerLeaseHealth(ctx)
+	if err != nil || health.Exists || health.Ready() {
+		t.Fatalf("missing lease health = %+v, err=%v", health, err)
+	}
+	if err := s.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	health, err = s.SafeReleaseWorkerLeaseHealth(ctx)
+	if err != nil || !health.Ready() || health.SecondsUntilExpiry() <= 0 || health.SecondsUntilExpiry() > 60 {
+		t.Fatalf("fresh lease health = %+v, err=%v", health, err)
+	}
+	if _, err := pool.Exec(ctx, `update safe_release_worker_lease set healthy_at = clock_timestamp() - interval '3 minutes', expires_at = clock_timestamp() - interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	health, err = s.SafeReleaseWorkerLeaseHealth(ctx)
+	if err != nil || health.Ready() || health.SecondsUntilExpiry() >= 0 {
+		t.Fatalf("expired lease health = %+v, err=%v", health, err)
+	}
+}
+
 func TestPg_AbortCanaryOnExpiredWorkerLease(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, priorID := seedLiveDeploy(t, s, ctx, "lease-emergency", "lease-emergency")

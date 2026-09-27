@@ -61,8 +61,15 @@ Confirm the following metrics are present before creating a test rollout:
 
 ```bash
 curl -fsS http://127.0.0.1:9091/metrics \
-  | rg 'canary_progression|safedeploy_orchestrator|deployment_audit_emitted'
+  | rg 'canary_progression|safedeploy_orchestrator|deployment_audit_emitted|faas_safe_release_worker_lease|faas_safe_release_serving_canaries|faas_safe_release_emergency_abort'
 ```
+
+The APID lease gauges should show `worker_lease_check_success=1`,
+`worker_lease_ready=1`, a positive `worker_lease_seconds_until_expiry`, and a
+recent `worker_lease_last_check_timestamp_seconds` before a canary starts.
+`faas_safe_release_serving_canaries` counts live, in-flight canaries with
+nonzero traffic at the latest successful APID sweep. It can briefly include a
+canary that the same sweep has just aborted; check the next 15-second sample.
 
 Create a Pro/Scale canary deployment using the `1-10-50-100` preset. Verify
 the rollout advances on the expected stage boundaries and that the live
@@ -156,7 +163,12 @@ these staging checks against an app with a known-good predecessor:
   additional two-minute grace period plus one 15-second APID sweep. Confirm
   the gateway serves the predecessor at 100%, the candidate at 0%, and the
   deployment audit actor is `apid:safe_release_lease_expired`. Restart meterd
-  and confirm it does not resume the aborted rollout.
+  and confirm it does not resume the aborted rollout. Confirm
+  `FaasSafeReleaseServingCanaryAtRisk` fires while traffic is exposed and
+  `FaasSafeReleaseEmergencyAbort` fires after recovery. Check that both
+  resolve once the lease renews and the alert window passes. In a separate
+  no-canary drill, stop meterd and confirm only
+  `FaasSafeReleaseWorkerLeaseStale` fires after two minutes.
 
 The remaining abort event labels are `abort_p95_latency`,
 `abort_cold_boot_p95`, and `abort_oom`; hold labels include
@@ -186,6 +198,9 @@ slice. Watch these signals for at least one full rollout window:
 - `safedeploy_orchestrator_auto_aborted_total`
 - `safedeploy_orchestrator_auto_abort_failed_total`
 - `faas_safe_release_emergency_abort_total{outcome=~"aborted|failed|skipped|sweep_failed"}`
+- `faas_safe_release_worker_lease_ready` and `faas_safe_release_worker_lease_check_success`
+- `faas_safe_release_worker_lease_seconds_until_expiry` and `faas_safe_release_worker_lease_last_check_timestamp_seconds`
+- `faas_safe_release_serving_canaries`
 
 The default stage and orchestrator cadence is 30 seconds. The default stuck
 threshold is 30 minutes. Once a rollout exceeds that threshold, meterd makes
@@ -201,6 +216,33 @@ predecessor. Check the `apid:safe_release_lease_expired` deployment-audit actor
 and the emergency-abort metric after a worker-loss drill. A missing lease row,
 database error, or absent live predecessor leaves the canary for operator
 inspection and emits an error or skipped outcome.
+
+The `faas_safe_release` Prometheus alert group checks each APID instance:
+
+- `FaasSafeReleaseWorkerLeaseStale` warns after a readable lease is absent or
+  expired for two minutes with no serving canary. Check meterd release ticks,
+  internal APID probe results, and the lease row shown above. A planned Safe
+  Deploy shutdown also expires the lease and needs an acknowledged alert.
+- `FaasSafeReleaseServingCanaryAtRisk` pages when a canary is serving while
+  the lease is expired, absent, or unreadable for 30 seconds. Inspect the
+  rollout and its same-scope predecessor immediately; verify APID completes
+  the abort after the additional two-minute lease grace period.
+- `FaasSafeReleaseLeaseObservationStalled` warns if APID has not completed a
+  lease read for over 90 seconds. Check APID's database connection and its
+  background loop. The last readiness sample may be stale.
+- `FaasSafeReleaseEmergencyAbort` pages on an automatic abort. Confirm the
+  audit actor, the candidate's zero traffic, the predecessor's 100% traffic,
+  and gateway routing before restarting rollouts.
+- `FaasSafeReleaseEmergencyRecoveryFailed` pages when APID could not sweep or
+  abort. Check APID logs and the deployment audit. Use the manual recovery
+  command below if the canary still serves traffic.
+
+`outcome="skipped"` also counts harmless races with another APID instance;
+inspect a persistent serving-canary gauge or a recovery-failure page before
+acting on that counter alone. A lease read error sets `check_success=0`, so a
+serving canary pages even when expiry cannot be determined. A failed canary
+listing leaves the serving gauge at its previous value; the recovery-failure
+alert reports the failed sweep.
 
 ## Kill switch and recovery
 
