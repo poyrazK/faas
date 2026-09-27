@@ -10,6 +10,7 @@ This action is part of the Gregale [control plane](https://github.com/poyrazK/fa
 on:
   push:
     branches: [main]
+    tags: ["v*"]
 
 concurrency:
   group: gregale-${{ github.repository }}-my-app-production
@@ -83,11 +84,14 @@ that check only confirms admission and must not be used as a release gate.
 Check publication is best-effort, so missing permission never
 blocks the deployment.
 
-On a push workflow that deploys `github.sha`, the Action checks the current
+On a branch push that deploys `github.sha`, the Action checks the current
 GitHub branch head before submitting the deployment. A superseded run or an
-old rerun exits with `status=skipped` and never queues a stale release. The
-generated workflow also serializes runs for the same app. A workflow that
-deliberately supplies another `ref` bypasses this push-head check.
+old rerun exits with `status=skipped` and never queues a stale release. On a
+`v*` tag push, it accepts only a new, unforced SemVer tag creation; moved,
+deleted, and invalid tags exit with `status=skipped`. The deployment uses the
+event's immutable `github.sha`, not the mutable tag name. The generated
+workflow also serializes runs for the same app. A workflow that deliberately
+supplies another `ref` bypasses these push-event checks.
 
 Set `rollout: "safe"` for a balanced health-gated canary. The action submits
 the canary, waits for readiness, and then waits for rollout completion when

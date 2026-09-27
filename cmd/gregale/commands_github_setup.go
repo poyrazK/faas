@@ -383,6 +383,8 @@ on:
   push:
     branches:
       - %s
+    tags:
+      - "v*"
   workflow_dispatch:
 
 concurrency:

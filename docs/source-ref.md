@@ -130,7 +130,9 @@ local/tarball deploy whose source can be inspected before mutation.
 - **Not a webhook bind.** `--repo --ref` is a one-shot deploy. For an
   Actions-owned production push workflow, use `gregale github setup` to
   write the workflow and set `production_trigger=actions`; the connected
-  GitHub App continues to manage PR previews. Existing projects with
+  GitHub App continues to manage PR previews. The generated workflow also
+  deploys newly created SemVer `v*` tags from their immutable event commit;
+  moved, deleted, and invalid tag pushes are skipped. Existing projects with
   `production_trigger=webhook` keep the App push deploy path.
 - **Not a git deploy-key fetch.** The server uses the GitHub App
   install token (ADR-012, ADR-020); the control plane never

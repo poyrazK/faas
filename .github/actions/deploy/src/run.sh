@@ -221,6 +221,53 @@ verify_current_push_head() {
 	return 0
 }
 
+# Release-tag deployments are deliberately narrower than arbitrary ref
+# deployments. The generated workflow listens to v* tags, but only a new,
+# unforced SemVer tag creation is a release; moved, deleted, and malformed
+# refs are successful skips. The deployment itself still uses GITHUB_SHA so
+# the source submitted to Gregale is the immutable event commit, not a tag
+# name that could move between validation and source fetch.
+verify_release_tag_push() {
+	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/tags/* ]] ||
+		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] || [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		return 0
+	fi
+
+	local tag="${GITHUB_REF#refs/tags/}"
+	local semver_release_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+	local skip_reason=""
+	if [[ ! "$tag" =~ $semver_release_re ]]; then
+		skip_reason="Skipping non-SemVer release tag ${tag}"
+	fi
+	if [ -z "${GITHUB_EVENT_PATH:-}" ] || [ ! -f "$GITHUB_EVENT_PATH" ] || ! command -v jq >/dev/null 2>&1; then
+		die "cannot verify release tag event"
+	fi
+
+	local before after created forced deleted
+	if ! before="$(jq -er '.before | strings' "$GITHUB_EVENT_PATH")" ||
+		! after="$(jq -er '.after | strings' "$GITHUB_EVENT_PATH")" ||
+		! created="$(jq -r '.created == true' "$GITHUB_EVENT_PATH")" ||
+		! forced="$(jq -r '.forced == true' "$GITHUB_EVENT_PATH")" ||
+		! deleted="$(jq -r '.deleted == true' "$GITHUB_EVENT_PATH")"; then
+		die "cannot read release tag event fields"
+	fi
+	if [ "$deleted" = "true" ]; then
+		skip_reason="Skipping deleted release tag ${tag}"
+	elif [ "$created" != "true" ] || [ "$forced" = "true" ] ||
+		[ "$before" != "0000000000000000000000000000000000000000" ]; then
+		skip_reason="Skipping moved or existing release tag ${tag}"
+	fi
+	if [ -n "$skip_reason" ]; then
+		echo "::notice::${skip_reason}" >&2
+		echo "status=skipped" >> "$GITHUB_OUTPUT"
+		return 1
+	fi
+	if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]] || [ "$after" != "$GITHUB_SHA" ]; then
+		die "release tag event did not match its immutable commit SHA"
+	fi
+	return 0
+}
+
 exchange_oidc() {
 	local refresh="${1:-}"
 	if [ "$refresh" != "refresh" ] && [ -n "${FAAS_TOKEN:-}" ]; then
@@ -275,6 +322,9 @@ cmd_deploy() {
 		echo "rollout=$rollout"
     } >> "$GITHUB_OUTPUT"
 	if ! verify_current_push_head; then
+		return 0
+	fi
+	if ! verify_release_tag_push; then
 		return 0
 	fi
 	exchange_oidc
