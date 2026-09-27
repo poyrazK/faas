@@ -53,6 +53,17 @@ DNS verification and certificate issuance are asynchronous; the apply operation 
 
 ## Issue and rotate customer credentials
 
+Before enabling downstream credential self-service, an account owner can set the maximum consumer-key scopes and active keys per linked consumer:
+
+```http
+PUT /v1/account/platform-tenants/{id}/credential-policy
+Content-Type: application/json
+
+{"allowed_scopes":["read","write"],"max_keys_per_consumer":5}
+```
+
+The policy is disabled by default. The only delegable key scopes are `read`, `write`, and `admin`; choose the narrowest set your integration needs. Set `allowed_scopes` to an empty array and the limit to zero to disable tenant-side management. A policy update does not change existing keys. Writes require the account's deploy-write scope and recent MFA, and changes are audited. See [ADR-301](adr/301-platform-tenant-credential-policy.md).
+
 After onboarding, use `POST /v1/account/platform-tenants/{id}/credentials/apply` to issue keys to linked consumers across apps. Generate each `ck_` credential locally with a cryptographically secure generator (or `api.PreparePlatformTenantCredential` in the Go client), save its plaintext in your secret store **before** calling Gregale, and submit only its eight-character prefix and hex SHA-256 digest. Gregale never receives or returns the plaintext in this flow. For example:
 
 ```json

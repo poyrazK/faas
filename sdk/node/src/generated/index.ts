@@ -566,6 +566,7 @@ export type { PlatformTenantActivityItem } from './models/PlatformTenantActivity
 export type { PlatformTenantActivityResponse } from './models/PlatformTenantActivityResponse.js';
 export type { PlatformTenantCredentialIntent } from './models/PlatformTenantCredentialIntent.js';
 export type { PlatformTenantCredentialMetadata } from './models/PlatformTenantCredentialMetadata.js';
+export type { PlatformTenantCredentialPolicyResponse } from './models/PlatformTenantCredentialPolicyResponse.js';
 export type { PlatformTenantCredentialResult } from './models/PlatformTenantCredentialResult.js';
 export type { PlatformTenantCredentialsResponse } from './models/PlatformTenantCredentialsResponse.js';
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
@@ -791,6 +792,7 @@ export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasReque
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucketAccessGrantRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
+export type { SetPlatformTenantCredentialPolicyRequest } from './models/SetPlatformTenantCredentialPolicyRequest.js';
 export type { SetPlatformTenantHostnamePolicyRequest } from './models/SetPlatformTenantHostnamePolicyRequest.js';
 export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';

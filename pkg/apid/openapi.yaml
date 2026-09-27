@@ -4149,6 +4149,48 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/platform-tenants/{id}/credential-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose downstream credential delegation policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantCredentialPolicy
+      summary: Read a customer's delegated credential policy.
+      description: An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+      responses:
+        '200':
+          description: Current credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantCredentialPolicy
+      summary: Replace a customer's delegated credential policy.
+      description: Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantCredentialPolicyRequest' }
+      responses:
+        '200':
+          description: Updated credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid scope set or per-consumer limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/platform-tenants/{id}/request-budget:
     parameters:
       - name: id
@@ -23822,6 +23864,31 @@ components:
           uniqueItems: true
           items: { type: string, enum: [read, write, admin] }
         expires_at: { type: string, format: date-time }
+
+    SetPlatformTenantCredentialPolicyRequest:
+      description: Explicit scopes and per-consumer key ceiling for tenant-bound credential self-service; empty scopes and zero disable it.
+      type: object
+      required: [allowed_scopes, max_keys_per_consumer]
+      properties:
+        allowed_scopes:
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+
+    PlatformTenantCredentialPolicyResponse:
+      description: Owner-configured scope allowlist and active-key ceiling for delegated credential management.
+      type: object
+      required: [tenant_id, enabled, allowed_scopes, max_keys_per_consumer]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        allowed_scopes:
+          type: array
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+        updated_at: { type: string, format: date-time }
 
     ApplyPlatformTenantCredentialsRequest:
       description: Additive key reconciliation and revocation in one transaction; provide at least one key or revocation.

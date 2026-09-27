@@ -624,6 +624,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/platform-tenants/{id}/rate-cards":                                   "CreatePlatformTenantRateCard",
 	"GET /v1/account/platform-tenants/{id}/credentials":                                   "ListPlatformTenantCredentials",
 	"POST /v1/account/platform-tenants/{id}/credentials/apply":                            "ApplyPlatformTenantCredentials",
+	"GET /v1/account/platform-tenants/{id}/credential-policy":                             "GetPlatformTenantCredentialPolicy",
+	"PUT /v1/account/platform-tenants/{id}/credential-policy":                             "SetPlatformTenantCredentialPolicy",
 	"GET /v1/account/platform-tenants/{id}/access-tokens":                                 "ListPlatformTenantAccessTokens",
 	"POST /v1/account/platform-tenants/{id}/access-tokens":                                "CreatePlatformTenantAccessToken",
 	"DELETE /v1/account/platform-tenants/{id}/access-tokens/{token_id}":                   "RevokePlatformTenantAccessToken",
