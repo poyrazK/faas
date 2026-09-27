@@ -1427,6 +1427,39 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
+// UpdateAppCPULimit pushes the complete per-app CPU ceiling into vmmd's live
+// Firecracker cgroups. The operation is intentionally separate from network
+// policy: unlike guest memory/vCPU topology, the host cgroup quota is mutable
+// while the guest continues serving traffic.
+func (s *Server) UpdateAppCPULimit(ctx context.Context, req *vmmdpb.UpdateAppCPULimitRequest) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	const op = "UpdateAppCPULimit"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAppId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Missing app_id", "app_id is required").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	if !api.ValidAppCPUMillicores(int(req.GetCpuMillicores())) {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid CPU limit", "cpu_millicores must be 250, 500, or 1000").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	if req.GetRevision() <= 0 {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid policy revision", "revision must be a positive integer").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	updater, ok := s.vmm.(interface {
+		UpdateAppCPULimit(context.Context, string, int64, int) error
+	})
+	if !ok {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unimplemented), api.CodeCapacity,
+			"Live CPU policy unavailable", "this vmmd does not support in-place app CPU policy")))
+	}
+	if err := updater.UpdateAppCPULimit(ctx, req.GetAppId(), req.GetRevision(), int(req.GetCpuMillicores())); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
+}
+
 func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePrivateNetworkRequest) (*vmmdpb.UpdatePrivateNetworkAck, error) {
 	const op = "UpdatePrivateNetwork"
 	start := time.Now()

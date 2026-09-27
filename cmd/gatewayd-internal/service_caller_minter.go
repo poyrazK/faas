@@ -67,6 +67,14 @@ func newServiceCallerMinter(ctx context.Context, store state.ServiceCallerKeySto
 	if !serviceCallerAssertionsEnabled() {
 		return nil
 	}
+	// The legacy single-box daemon leaves FAAS_NODE_NAME unset, but its
+	// synthetic compute node still has a stable identity. Publish under that
+	// canonical name so its assertions are discoverable through the same JWKS
+	// as keys minted by named multi-box nodes.
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		nodeID = state.DefaultLocalNodeName
+	}
 	priv, kid, err := loadServiceCallerKey(log)
 	if err != nil {
 		log.Error("gatewayd: service caller assertions enabled but no signing key; calls continue unsigned",

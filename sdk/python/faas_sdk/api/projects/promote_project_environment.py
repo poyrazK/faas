@@ -104,7 +104,8 @@ def sync_detailed(
     issued for that exact promotion. After cutover, every target artifact
     is verified against its source release and target environment. A
     failed verification automatically rolls back the promotion. Target
-    configuration and secrets are never copied from the source environment.
+    configuration remains target-scoped unless the token was created with
+    `sync_config=true`; secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -151,7 +152,8 @@ def sync(
     issued for that exact promotion. After cutover, every target artifact
     is verified against its source release and target environment. A
     failed verification automatically rolls back the promotion. Target
-    configuration and secrets are never copied from the source environment.
+    configuration remains target-scoped unless the token was created with
+    `sync_config=true`; secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -193,7 +195,8 @@ async def asyncio_detailed(
     issued for that exact promotion. After cutover, every target artifact
     is verified against its source release and target environment. A
     failed verification automatically rolls back the promotion. Target
-    configuration and secrets are never copied from the source environment.
+    configuration remains target-scoped unless the token was created with
+    `sync_config=true`; secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -238,7 +241,8 @@ async def asyncio(
     issued for that exact promotion. After cutover, every target artifact
     is verified against its source release and target environment. A
     failed verification automatically rolls back the promotion. Target
-    configuration and secrets are never copied from the source environment.
+    configuration remains target-scoped unless the token was created with
+    `sync_config=true`; secrets are never copied from the source environment.
 
     Args:
         slug (str):

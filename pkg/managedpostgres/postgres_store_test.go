@@ -674,3 +674,45 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 		t.Fatalf("secret survived binding tombstone: %v", err)
 	}
 }
+
+// TestPostgresStoreListUsageDatabasesPagesByKeyset — the usage sweep pages
+// with a (updated_at, id) cursor; every ready database must appear exactly
+// once across pages, including rows that tie on updated_at.
+func TestPostgresStoreListUsageDatabasesPagesByKeyset(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 5; i++ {
+		// i/2: pairs provision at the same instant and tie on updated_at.
+		at := base.Add(time.Duration(i/2) * time.Minute)
+		database := postgresReadyDatabase(t, store, accountID, fmt.Sprintf("orders-%d", i), at)
+		want[database.ID] = true
+	}
+	seen := map[string]bool{}
+	var after UsageDatabaseCursor
+	for pages := 0; ; pages++ {
+		if pages > len(want) {
+			t.Fatalf("paging did not terminate; seen %d of %d", len(seen), len(want))
+		}
+		page, err := store.ListUsageDatabases(ctx, after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, database := range page {
+			if seen[database.ID] {
+				t.Fatalf("database %s listed twice", database.ID)
+			}
+			seen[database.ID] = true
+		}
+		if len(page) < 2 {
+			break
+		}
+		last := page[len(page)-1]
+		after = UsageDatabaseCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("ready database %s never listed", id)
+		}
+	}
+}

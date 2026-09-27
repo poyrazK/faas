@@ -1,6 +1,6 @@
 # ADR-259 · Expiring revision pins and project release sets
 
-- **Status:** implemented for HTTP ingress, durable invocations, and managed service calls
+- **Status:** implemented for HTTP ingress, durable invocations, managed service calls, and graph-aware environment promotion
 - **Date:** 2026-09-25
 - **Decision:** An app may opt into `revision_pin_ttl_seconds` (maximum seven
   days). When a stable, canary, or service rollout replaces a live deployment,
@@ -48,12 +48,22 @@
   graph does not make its members eligible for routing. Environment state
   includes the active set and workload app IDs alongside the existing live
   deployment inventory so clients can compare those selections.
-  These reads do not change activation, environment hostname routing, or
-  promotion semantics. The existing workload-by-workload promotion flow cannot
-  yet select and atomically activate or restore a release graph. Its preview
-  therefore blocks promotions when either environment has an active set;
-  environments without active sets keep the existing promotion behavior until
-  graph-aware execution is available.
+  These reads do not change activation or environment hostname routing.
+  Promotion previews bind both environment graph IDs. When either side has an
+  active graph, promotion stages copied deployments live at 0% traffic, then
+  atomically swaps the target's active graph only after every project workload
+  is ready. The graph TTL is the smaller of the source and previous-target
+  graph TTLs (or the TTL of the graph that exists), and each workload's direct
+  revision-pin TTL must cover it. If the target has no active graph, promotion
+  requires every existing weighted fallback to be either absent or a single
+  100% route; split routes are not guessed into a graph. A compare-and-swap
+  checks that the active graph or captured fallback routes did not change
+  since preview. Verification confirms the exact active graph before success.
+  Rollback atomically republishes the previous target membership under a fresh
+  release ID, or deactivates the promotion graph while checking the captured
+  weighted fallback when there was no previous graph. Retired graph IDs remain
+  usable for their TTL, including across rollback, so connected or delayed
+  clients are not silently moved to a different graph.
 - **Durable work:** Async invoke, delayed tasks, queues, inbox messages, and
   asynchronous edge routes capture the selected release or direct revision
   when enqueued. The scheduler and gateway revalidate it before delivery.

@@ -228,12 +228,12 @@ func defaultDeps() runDeps {
 		subscribeDeletion: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAccountDeletionPending})
 		},
-		// Production wires the same db.Subscribe primitive, scoped
-		// to the app_changed channel. The egress_drift subscriber
-		// filters to kind="updated" internally — wider-list
-		// callers are safe.
+		// app_changed preserves compatibility with existing API producers;
+		// app_egress_policy_changed and app_cpu_limit_policy_changed are emitted
+		// transactionally by their desired-revision triggers. The subscriber
+		// periodically repairs missed notifications from current app/node state.
 		subscribeEgressDrift: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
+			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged, db.NotifyAppEgressPolicyChanged, db.NotifyAppCPULimitPolicyChanged})
 		},
 		// Phase 2 / Gate A: subscribe to NotifyAppChanged and let
 		// PlacementClaimSubscriber filter to kind="created". The
