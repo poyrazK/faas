@@ -425,9 +425,9 @@ func TestMigration_00090_8_DownSymmetry(t *testing.T) {
 	pool := pgtest.Open(t)
 	defer pool.Close()
 
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("MigrateUp: %v", err)
-	}
+	// Stage only through 00090 so later migrations' triggers and indexes do
+	// not depend on apps.node_id while this migration's down body is tested.
+	migrateUpTo(t, ctx, pool, 90)
 
 	// Down body — drop in the reverse order of creation.
 	if _, err := pool.Exec(ctx, `drop index if exists apps_node_id_idx`); err != nil {

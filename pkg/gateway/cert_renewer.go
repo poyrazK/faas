@@ -210,6 +210,13 @@ func (r *SurfaceCertRenewer) tickOnce(ctx context.Context) error {
 			return fmt.Errorf("gateway: list tenant surfaces nearing expiry: %w", err)
 		}
 		for _, s := range page {
+			// Advance past every listed row, touched or not. Advancing
+			// only on success re-listed a failed row forever: a full page
+			// of failures (a write outage, a batch of rows that always
+			// fail) looped on the same page without end. Failed rows are
+			// retried on the next tick.
+			afterCertNotAfter = s.CertNotAfter
+			afterID = s.ID
 			if err := r.store.TouchTenantSurfaceForRenewal(ctx, s.ID); err != nil {
 				r.log.Warn("cert: renewer touch surface",
 					"surface", s.ID,
@@ -217,8 +224,6 @@ func (r *SurfaceCertRenewer) tickOnce(ctx context.Context) error {
 					"err", err)
 				continue
 			}
-			afterCertNotAfter = s.CertNotAfter
-			afterID = s.ID
 			totalTouched++
 		}
 		if len(page) < limit {

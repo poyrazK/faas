@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,6 +60,13 @@ type Router interface {
 // invalidation notification is lost.
 type DynamicRouteHostMatcher interface {
 	IsDynamicRouteHost(host string) bool
+}
+
+// CachedCustomDomainRouteValidator rechecks custom-domain ownership on cache
+// hits. A domain may be deleted and claimed by a different scope even if its
+// invalidation notification is missed.
+type CachedCustomDomainRouteValidator interface {
+	CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error)
 }
 
 // PlatformTenantHostResolver rechecks current tenant-surface state on cached
@@ -999,7 +1007,23 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
 	if target, ok := b.routes.PeekTarget(host); ok {
-		if app, ok := b.getApp(target.AppID); ok {
+		if target.CustomDomain {
+			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
+			if err != nil {
+				if b.log != nil {
+					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
+				}
+				return App{}, false
+			}
+			if !active {
+				b.routes.Invalidate(host)
+				b.stale.Delete(host)
+				ok = false
+			}
+		}
+		if !ok {
+			// Continue below with a fresh authoritative route lookup.
+		} else if app, ok := b.getApp(target.AppID); ok {
 			valid, deny := b.cachedPlatformTenantRouteValid(ctx, host, target, &app)
 			if deny {
 				return App{}, false
@@ -1008,6 +1032,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.PinnedDeploymentID = target.PinnedDeploymentID
 				app.PinnedDeploymentScope = target.PinnedDeploymentScope
 				app.RoutedSurfaceID = target.RoutedSurfaceID
+				app.CustomDomainRoute = target.CustomDomain
 				return app, true
 			}
 			// Route ownership changed. A later lookup error must not revive the
@@ -1025,20 +1050,33 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
+	if app.DynamicRoute {
+		return app, true
+	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
 		RoutedSurfaceID:       app.RoutedSurfaceID,
 		PinnedDeploymentID:    app.PinnedDeploymentID,
 		PinnedDeploymentScope: app.PinnedDeploymentScope,
+		CustomDomain:          app.CustomDomainRoute,
 	})
 	baseApp := app
 	baseApp.PinnedDeploymentID = ""
 	baseApp.PinnedDeploymentScope = ""
 	baseApp.RoutedSurfaceID = ""
 	baseApp.PlatformTenantID = ""
+	baseApp.CustomDomainRoute = false
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
+}
+
+func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	validator, ok := b.router.(CachedCustomDomainRouteValidator)
+	if !ok {
+		return true, nil
+	}
+	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
 }
 
 func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
@@ -1414,15 +1452,42 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	if until, ok := b.staleTargets[staleTargetKey(appID, target.InstanceID)]; ok && until.After(time.Now()) {
 		return
 	}
-	if target.RequiresReadiness && target.ReadinessUpdatedAt.IsZero() {
-		target.Ready = false
-	}
-	if readiness, ok := b.readinessState[staleTargetKey(appID, target.InstanceID)]; ok &&
-		(!target.RequiresReadiness || readinessAfter(readiness.at, readiness.eventID, target.ReadinessUpdatedAt, target.ReadinessEventID)) {
+	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
 		target.RequiresReadiness = true
-		target.Ready = readiness.ready
-		target.ReadinessUpdatedAt = readiness.at
-		target.ReadinessEventID = readiness.eventID
+	}
+	if !target.RequiresReadiness {
+		if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, "")]; ok {
+			target.RequiresReadiness = true
+			applyReadinessState(&target, "", readiness)
+		}
+	}
+	if target.RequiresReadiness {
+		target.ReadinessGates = cloneReadinessGates(target.ReadinessGates)
+		var sources []string
+		if target.ReadinessGates != nil {
+			sources = target.ReadinessGates.RequiredSources
+		}
+		if len(sources) == 0 {
+			sources = []string{""}
+		}
+		for _, source := range sources {
+			if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, source)]; ok {
+				applyReadinessState(&target, source, readiness)
+			}
+		}
+		if target.ReadinessGates == nil || len(target.ReadinessGates.RequiredSources) == 0 {
+			readiness, ok := ReadinessState{}, false
+			if target.ReadinessGates != nil {
+				readiness, ok = target.ReadinessGates.States[""]
+			}
+			if ok {
+				target.Ready = readiness.Ready
+			} else if target.ReadinessUpdatedAt.IsZero() {
+				target.Ready = false
+			}
+		} else {
+			target.Ready = target.routeReady()
+		}
 	}
 	picker := b.appsPicker[appID]
 	if picker == nil {
@@ -1445,10 +1510,17 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	set.add(target)
 }
 
-// SetInstanceReadiness applies the latest sidecar readiness event to every
-// cached copy of an instance. Status updates are timestamp/event-ID ordered so
-// a delayed PostgreSQL notification cannot roll back a newer transition.
+// SetInstanceReadiness retains the legacy unscoped readiness update surface.
+// New callers should use SetInstanceReadinessSource so independent probes are
+// combined instead of overwriting one another.
 func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64) {
+	b.SetInstanceReadinessSource(appID, instanceID, "", status, at, eventID)
+}
+
+// SetInstanceReadinessSource applies one source's latest readiness transition
+// to matching cached targets. Updates are ordered per source so one gate cannot
+// mask or roll back another gate's independent state.
+func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64) {
 	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
 		return
 	}
@@ -1466,7 +1538,7 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	if b.readinessState == nil {
 		b.readinessState = make(map[string]instanceReadiness)
 	}
-	key := staleTargetKey(appID, instanceID)
+	key := readinessStateKey(appID, instanceID, source)
 	current := b.readinessState[key]
 	if !current.at.IsZero() && !readinessAfter(at, eventID, current.at, current.eventID) {
 		return
@@ -1474,9 +1546,13 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	if picker := b.appsPicker[appID]; picker != nil {
 		for _, set := range picker.sets {
 			for _, target := range set.entries {
-				if target.InstanceID == instanceID && !target.ReadinessUpdatedAt.IsZero() &&
-					!readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
-					return
+				if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+					continue
+				}
+				if target.ReadinessGates != nil {
+					if current, ok := target.ReadinessGates.States[source]; ok && !readinessAfter(at, eventID, current.UpdatedAt, current.EventID) {
+						return
+					}
 				}
 			}
 		}
@@ -1489,18 +1565,73 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	for _, set := range picker.sets {
 		for i := range set.entries {
 			target := &set.entries[i]
-			if target.InstanceID != instanceID {
+			if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
 				continue
 			}
-			if !target.ReadinessUpdatedAt.IsZero() && !readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
-				continue
+			if target.ReadinessGates == nil {
+				target.ReadinessGates = &ReadinessGates{}
 			}
+			if target.ReadinessGates.States == nil {
+				target.ReadinessGates.States = make(map[string]ReadinessState)
+			}
+			target.ReadinessGates.States[source] = ReadinessState{Ready: ready, UpdatedAt: at, EventID: eventID}
 			target.RequiresReadiness = true
-			target.Ready = ready
-			target.ReadinessUpdatedAt = at
-			target.ReadinessEventID = eventID
+			if len(target.ReadinessGates.RequiredSources) == 0 {
+				target.Ready = ready
+			} else {
+				target.Ready = target.routeReady()
+			}
+			noteReadinessFreshness(target, at, eventID)
 		}
 	}
+}
+
+func readinessStateKey(appID, instanceID, source string) string {
+	return staleTargetKey(appID, instanceID) + "\x00" + source
+}
+
+func cloneReadinessGates(in *ReadinessGates) *ReadinessGates {
+	if in == nil {
+		return nil
+	}
+	out := &ReadinessGates{RequiredSources: append([]string(nil), in.RequiredSources...), States: make(map[string]ReadinessState, len(in.States))}
+	for source, state := range in.States {
+		out.States[source] = state
+	}
+	return out
+}
+
+func applyReadinessState(target *Target, source string, readiness instanceReadiness) {
+	if target.ReadinessGates == nil {
+		target.ReadinessGates = &ReadinessGates{}
+	}
+	if target.ReadinessGates.States == nil {
+		target.ReadinessGates.States = make(map[string]ReadinessState)
+	}
+	current, ok := target.ReadinessGates.States[source]
+	if !ok || readinessAfter(readiness.at, readiness.eventID, current.UpdatedAt, current.EventID) {
+		target.ReadinessGates.States[source] = ReadinessState{Ready: readiness.ready, UpdatedAt: readiness.at, EventID: readiness.eventID}
+	}
+	noteReadinessFreshness(target, readiness.at, readiness.eventID)
+}
+
+func noteReadinessFreshness(target *Target, at time.Time, eventID int64) {
+	if target.ReadinessUpdatedAt.IsZero() || readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
+		target.ReadinessUpdatedAt = at
+		target.ReadinessEventID = eventID
+	}
+}
+
+func (t Target) requiresReadinessSource(source string) bool {
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.RequiresReadiness && source == ""
+	}
+	for _, required := range t.ReadinessGates.RequiredSources {
+		if required == source {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *PGBackend) purgeReadinessStateLocked(now time.Time) {
@@ -1750,7 +1881,12 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 		b.staleTargets = make(map[string]time.Time)
 	}
 	now := time.Now()
-	delete(b.readinessState, staleTargetKey(appID, instanceID))
+	prefix := staleTargetKey(appID, instanceID) + "\x00"
+	for key := range b.readinessState {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.readinessState, key)
+		}
+	}
 	b.purgeStaleTargetsLocked(now)
 	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
 	picker := b.appsPicker[appID]
@@ -2340,17 +2476,20 @@ func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
 // state.GetCorsPresetByID. The compile path bakes the
 // preset's allow_origins / allow_methods / etc. into the
 // resolved EdgeRuleCORSResolved slice, so a preset edit
-// leaves stale resolved shapes in the LRU. Wholesale flush
-// matches ResetEdgeRules semantics; the per-account payload
-// is informational (the LRU is per-host keyed, not per-
-// account; per-account eviction would require a richer
-// key — see backend.go's handleInvalidation case for the
-// trade-off discussion). nil-safe.
+// leaves stale resolved shapes in the LRU. Also purge the
+// response cache: a cached response may carry CORS headers
+// produced by the prior policy. Wholesale flush matches
+// ResetEdgeRules semantics; the per-account payload is
+// informational (the LRU is per-host keyed, not per-account;
+// per-account eviction would require a richer key — see
+// backend.go's handleInvalidation case for the trade-off).
+// nil-safe.
 func (b *PGBackend) ResetCorsPresets(accountID string) {
 	if b == nil {
 		return
 	}
 	b.ResetEdgeRules()
+	b.InvalidateResponseCacheAll()
 }
 
 func (b *PGBackend) getApp(appID string) (App, bool) {
@@ -2410,6 +2549,29 @@ func (b *PGBackend) InvalidateResponseCacheByApp(appID string) {
 	b.refreshResponseCacheMetrics()
 }
 
+// PurgeResponseCacheByApp is the error-reporting variant used by the durable
+// explicit-purge path. Other invalidation callers retain their best-effort
+// contract, while a purge watermark advances only after both tiers succeed.
+func (b *PGBackend) PurgeResponseCacheByApp(appID string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateByAppStrict(appID)
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
+// PurgeResponseCacheAll performs a strict startup purge for unnamed single-box
+// gateways, which have no stable per-node cursor to resume after restart.
+func (b *PGBackend) PurgeResponseCacheAll() error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateAllStrict()
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
 // InvalidateResponseCacheByPath drops the matching cached paths for one app.
 // A nil cache is treated as an already-completed purge.
 func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error {
@@ -2417,9 +2579,7 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppPath(appID, pathGlob)
-	if err == nil {
-		b.refreshResponseCacheMetrics()
-	}
+	b.refreshResponseCacheMetrics()
 	return err
 }
 
@@ -2429,9 +2589,7 @@ func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppTag(appID, tag)
-	if err == nil {
-		b.refreshResponseCacheMetrics()
-	}
+	b.refreshResponseCacheMetrics()
 	return err
 }
 

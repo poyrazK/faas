@@ -652,11 +652,23 @@ type Store interface {
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
 }
 
+// UsageDatabaseCursor is the keyset position of the last database a usage
+// sweep listed. The zero value lists from the beginning.
+type UsageDatabaseCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
+func (c UsageDatabaseCursor) isZero() bool { return c.ID == "" && c.UpdatedAt.IsZero() }
+
 // UsageStore is the durable metering boundary. It is separate from Store so
 // lifecycle test doubles remain small while production PostgreSQL can provide
 // an atomic, idempotent usage ledger and account snapshot.
 type UsageStore interface {
-	ListUsageDatabases(context.Context, int) ([]Database, error)
+	// ListUsageDatabases returns up to limit ready databases ordered by
+	// (updated_at, id), strictly after the cursor. The zero cursor starts
+	// from the beginning; a sweep pages until a short page.
+	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
 	RecordUsage(context.Context, []UsageRecord) error
 	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
 }

@@ -119,6 +119,112 @@ $$;
 
 
 --
+-- Name: apps_bump_cpu_policy_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_bump_cpu_policy_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.cpu_millicores IS DISTINCT FROM OLD.cpu_millicores THEN
+        NEW.app_cpu_policy_revision := OLD.app_cpu_policy_revision + 1;
+    ELSE
+        NEW.app_cpu_policy_revision := OLD.app_cpu_policy_revision;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_bump_egress_allowlist_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_bump_egress_allowlist_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.egress_allowlist IS DISTINCT FROM OLD.egress_allowlist THEN
+        NEW.egress_allowlist_revision := OLD.egress_allowlist_revision + 1;
+    ELSE
+        NEW.egress_allowlist_revision := OLD.egress_allowlist_revision;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_bump_scaling_policy_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_bump_scaling_policy_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF ROW(
+        NEW.min_instances,
+        NEW.max_concurrency,
+        NEW.idle_timeout_s,
+        NEW.autoscale_target_rps,
+        NEW.autoscale_target_cpu_pct,
+        NEW.scaling_policy,
+        NEW.workload_class,
+        NEW.node_id
+    ) IS DISTINCT FROM ROW(
+        OLD.min_instances,
+        OLD.max_concurrency,
+        OLD.idle_timeout_s,
+        OLD.autoscale_target_rps,
+        OLD.autoscale_target_cpu_pct,
+        OLD.scaling_policy,
+        OLD.workload_class,
+        OLD.node_id
+    ) THEN
+        NEW.scaling_policy_revision := OLD.scaling_policy_revision + 1;
+    ELSE
+        NEW.scaling_policy_revision := OLD.scaling_policy_revision;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_notify_cpu_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_notify_cpu_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'app_cpu_limit_policy_changed',
+        json_build_object('app_id', NEW.id, 'revision', NEW.app_cpu_policy_revision)::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_notify_egress_allowlist_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_notify_egress_allowlist_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'app_egress_policy_changed',
+        json_build_object('app_id', NEW.id, 'revision', NEW.egress_allowlist_revision)::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: apps_maintenance_mode_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1545,6 +1651,7 @@ CREATE TABLE public.apps (
     runtime text,
     ram_mb integer NOT NULL,
     cpu_millicores integer DEFAULT 1000 NOT NULL,
+    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
     idle_timeout_s integer,
     max_concurrency integer DEFAULT 1 NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
@@ -1555,6 +1662,8 @@ CREATE TABLE public.apps (
     github_production_branch text,
     min_instances integer DEFAULT 0 NOT NULL,
     egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
+    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
     autoscale_target_rps integer,
     autoscale_target_cpu_pct integer,
     github_install_binding_id text,
@@ -1603,6 +1712,8 @@ CREATE TABLE public.apps (
     visibility text DEFAULT 'public'::text NOT NULL,
     only_declared_routes boolean DEFAULT false NOT NULL,
     declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    request_rate_limit_rps integer,
+    request_rate_limit_burst integer,
     deleted_at timestamp with time zone,
     delete_grace_until timestamp with time zone,
     purge_claimed_at timestamp with time zone,
@@ -1611,6 +1722,9 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
+    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
+    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
     CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
     CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
     CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
@@ -1635,6 +1749,8 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
     CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
     CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
+    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
+    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
     CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
 );
 
@@ -2165,6 +2281,7 @@ CREATE TABLE public.custom_domains (
     cert_expires_at timestamp with time zone,
     cert_last_error text,
     dns_last_checked_at timestamp with time zone,
+    environment_id uuid,
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
@@ -2456,6 +2573,8 @@ CREATE TABLE public.deployments (
     scanned_at timestamp with time zone,
     override_liveness_probe jsonb,
     secret_reload_signal text,
+    override_readiness_probe jsonb,
+    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     parked_reason text,
     parked_at timestamp with time zone,
     traffic_percent integer DEFAULT 100 NOT NULL,
@@ -2517,6 +2636,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
     CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text])))),
     CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
@@ -2599,6 +2719,116 @@ CREATE TABLE public.egress_policy (
     danger_accept_rfc1918_lateral_movement boolean DEFAULT false NOT NULL,
     CONSTRAINT egress_policy_pair_check CHECK (((NOT danger_accept_rfc1918_lateral_movement) OR (COALESCE(array_length(overlay_exceptions, 1), 0) > 0))),
     CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
+);
+
+
+--
+-- Name: app_cpu_policy_node_status; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_cpu_policy_node_status (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    applied_revision bigint DEFAULT 0 NOT NULL,
+    attempted_revision bigint DEFAULT 0 NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT app_cpu_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
+    CONSTRAINT app_cpu_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
+    CONSTRAINT app_cpu_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+ALTER TABLE ONLY public.app_cpu_policy_node_status
+    ADD CONSTRAINT app_cpu_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+CREATE INDEX app_cpu_policy_node_status_observed_idx ON public.app_cpu_policy_node_status USING btree (observed_at);
+
+ALTER TABLE ONLY public.app_cpu_policy_node_status
+    ADD CONSTRAINT app_cpu_policy_node_status_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.app_cpu_policy_node_status
+    ADD CONSTRAINT app_cpu_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_egress_policy_node_status; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_egress_policy_node_status (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    applied_revision bigint DEFAULT 0 NOT NULL,
+    attempted_revision bigint DEFAULT 0 NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT app_egress_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
+    CONSTRAINT app_egress_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
+    CONSTRAINT app_egress_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+ALTER TABLE ONLY public.app_egress_policy_node_status
+    ADD CONSTRAINT app_egress_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+CREATE INDEX app_egress_policy_node_status_observed_idx ON public.app_egress_policy_node_status USING btree (observed_at);
+
+ALTER TABLE ONLY public.app_egress_policy_node_status
+    ADD CONSTRAINT app_egress_policy_node_status_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.app_egress_policy_node_status
+    ADD CONSTRAINT app_egress_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_scaling_policy_scheduler_status; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_scaling_policy_scheduler_status (
+    app_id uuid NOT NULL,
+    scheduler_node_id uuid,
+    observed_revision bigint NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_scaling_policy_scheduler_status_observed_revision_check CHECK ((observed_revision >= 0))
+);
+
+ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
+    ADD CONSTRAINT app_scaling_policy_scheduler_status_pkey PRIMARY KEY (app_id);
+
+CREATE INDEX app_scaling_policy_scheduler_status_observed_idx ON public.app_scaling_policy_scheduler_status USING btree (observed_at);
+
+ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
+    ADD CONSTRAINT app_scaling_policy_scheduler_status_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
+    ADD CONSTRAINT app_scaling_policy_scheduler_status_scheduler_node_id_fkey FOREIGN KEY (scheduler_node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: response_cache_purge_change_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.response_cache_purge_change_log (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    path_glob text DEFAULT ''::text NOT NULL,
+    tag text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT response_cache_purge_change_log_scope_check CHECK (((path_glob = ''::text) OR (tag = ''::text))),
+    CONSTRAINT response_cache_purge_change_log_path_glob_check CHECK ((octet_length(path_glob) <= 1024)),
+    CONSTRAINT response_cache_purge_change_log_tag_check CHECK (((tag = ''::text) OR (tag ~ '^[A-Za-z0-9._:/-]{1,128}$'::text)))
+);
+
+CREATE INDEX response_cache_purge_change_log_app_idx ON public.response_cache_purge_change_log USING btree (app_id, id);
+CREATE INDEX response_cache_purge_change_log_created_idx ON public.response_cache_purge_change_log USING btree (created_at, id);
+
+
+--
+-- Name: gateway_response_cache_purge_watermarks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gateway_response_cache_purge_watermarks (
+    node_name text PRIMARY KEY CHECK ((node_name <> ''::text)),
+    last_change_id bigint NOT NULL CHECK ((last_change_id >= 0)),
+    observed_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -6403,6 +6633,8 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 
 CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
 
+CREATE INDEX custom_domains_environment_app_idx ON public.custom_domains USING btree (environment_id, app_id) WHERE (environment_id IS NOT NULL);
+
 
 --
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
@@ -7879,6 +8111,41 @@ CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.app_o
 --
 
 CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_egress_allowlist_cidr_check();
+
+
+--
+-- Name: apps apps_bump_cpu_policy_revision_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_bump_cpu_policy_revision_trg BEFORE UPDATE OF cpu_millicores, app_cpu_policy_revision ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_bump_cpu_policy_revision();
+
+
+--
+-- Name: apps apps_bump_egress_allowlist_revision_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_bump_egress_allowlist_revision_trg BEFORE UPDATE OF egress_allowlist, egress_allowlist_revision ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_bump_egress_allowlist_revision();
+
+
+--
+-- Name: apps apps_bump_scaling_policy_revision_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_bump_scaling_policy_revision_trg BEFORE UPDATE OF min_instances, max_concurrency, idle_timeout_s, autoscale_target_rps, autoscale_target_cpu_pct, scaling_policy, workload_class, node_id, scaling_policy_revision ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_bump_scaling_policy_revision();
+
+
+--
+-- Name: apps apps_notify_cpu_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_notify_cpu_policy_changed_trg AFTER UPDATE OF cpu_millicores ON public.apps FOR EACH ROW WHEN ((old.cpu_millicores IS DISTINCT FROM new.cpu_millicores)) EXECUTE FUNCTION public.apps_notify_cpu_policy_changed();
+
+
+--
+-- Name: apps apps_notify_egress_allowlist_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_notify_egress_allowlist_changed_trg AFTER UPDATE OF egress_allowlist ON public.apps FOR EACH ROW WHEN ((old.egress_allowlist IS DISTINCT FROM new.egress_allowlist)) EXECUTE FUNCTION public.apps_notify_egress_allowlist_changed();
 
 
 --
@@ -10234,6 +10501,31 @@ ALTER TABLE ONLY public.deployment_aliases
     ADD CONSTRAINT deployment_aliases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 CREATE INDEX deployment_aliases_deployment_idx ON public.deployment_aliases USING btree (deployment_id);
+
+-- Project environment registry (migration 20260915130000001).
+CREATE TABLE IF NOT EXISTS public.project_environments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    slug text NOT NULL,
+    protected boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
+);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_slug_uniq UNIQUE (project_id, slug);
+CREATE INDEX IF NOT EXISTS project_environments_account_project_idx
+    ON public.project_environments (account_id, project_id, slug);
+ALTER TABLE ONLY public.custom_domains
+    ADD CONSTRAINT custom_domains_environment_id_fkey
+    FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

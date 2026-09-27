@@ -87,6 +87,36 @@ func TestHandlerAttributesAnonymousVerifiedSurfaceOnce(t *testing.T) {
 	}
 }
 
+func TestRequestTelemetryRouteSurvivesDisabledPrometheusRouteMetrics(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{
+		app:  App{ID: appID, AccountID: accountID, Plan: api.PlanPro, RouteMetricsEnabled: true},
+		host: "customer.example", upstream: upstream.Listener.Addr().String(),
+	}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.requestTelemetry = makeTestRecorder()
+	h.WithRouteMetricsEnabled(false)
+
+	r := httptest.NewRequest(http.MethodGet, "http://customer.example/profiles/238", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("request status = %d, want 200", w.Code)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("request telemetry rows = %d, want one", len(rows))
+	}
+	if rows[0].Route != "GET /profiles/{id}" {
+		t.Fatalf("request telemetry route = %q, want normalized route despite disabled metric series", rows[0].Route)
+	}
+}
+
 // adr: 242
 func TestHandlerObserveEnqueuesAuditEvidenceWithoutDebugger(t *testing.T) {
 	q, err := usageoutbox.Open(t.TempDir(), 4096)

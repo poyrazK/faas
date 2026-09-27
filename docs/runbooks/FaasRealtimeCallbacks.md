@@ -1,11 +1,15 @@
 # Managed realtime callback dead letters
 
+## Symptom
+
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.
 `FaasRealtimeCallbackDeadLettersPresent` means the node has retained one or
 more dead letters that need operator review.
 `FaasRealtimeCallbackDeadLettersEvicted` means at least one dead letter was
 removed in the past hour, including during daemon startup.
+
+## Check
 
 1. Identify the affected `realtimed` target in Prometheus. Check
    `realtimed_callback_dead_letters`, `realtimed_callback_dead_letter_bytes`,
@@ -16,11 +20,14 @@ removed in the past hour, including during daemon startup.
    configured `FAAS_REALTIME_CALLBACK_OUTBOX` path). Files contain callback
    payloads and bearer tokens; keep access restricted to operators. Review
    callback status and application logs to correct the delivery failure.
-3. Copy records needed for investigation or manual replay to a restricted
+
+## Recover
+
+1. Copy records needed for investigation or manual replay to a restricted
    location before retention evicts them. The outbox does not replay dead
    letters automatically. If replaying an event, use its event ID to
    deduplicate application effects.
-4. If the configured limit is too small for the investigation window, set
+2. If the configured limit is too small for the investigation window, set
    `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` to a positive byte count in the
    realtimed environment and restart the daemon. Size the limit against
    available node disk space. Lowering it evicts oldest files at startup.
