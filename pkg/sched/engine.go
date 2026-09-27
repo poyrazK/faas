@@ -1659,7 +1659,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
-	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
+	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		// PR-C (issue #460 / ADR-053): resolve the live deployment so
 		// the response's Port field is consistent with what
 		// AdmitInstance would have produced. The instance row
@@ -1733,6 +1733,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			if deploymentID != "" && dep.ID != deploymentID {
 				if hinted, hintedErr := e.store.DeploymentByID(ctx, deploymentID); hintedErr == nil {
 					dep = hinted
+					port = deploymentRuntimePort(hinted)
 				}
 			}
 		} else {
@@ -1774,7 +1775,36 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
+	if deploymentID != "" {
+		return e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+	}
 	return e.admitAndDispatch(ctx, appID, trigger, false)
+}
+
+// An exact wake must never borrow another revision's running instance. The
+// ordinary app-wide lookup deliberately excludes 0%-traffic deployments, so
+// it cannot serve retained revisions; inspect the app's instances instead.
+func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID, scope string) (state.Instance, error) {
+	if deploymentID == "" {
+		return e.store.RunningInstanceForApp(ctx, appID)
+	}
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return state.Instance{}, err
+	}
+	if dep.AppID != appID || dep.Status != state.DeployLive || scope != "" && normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) {
+		return state.Instance{}, state.ErrNotFound
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return state.Instance{}, err
+	}
+	for _, instance := range instances {
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) {
+			return instance, nil
+		}
+	}
+	return state.Instance{}, state.ErrNotFound
 }
 
 // requestedWakeIDKey carries an API-minted wake correlation id through the

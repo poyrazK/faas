@@ -8,6 +8,32 @@ import (
 	"testing"
 )
 
+type serviceDiscoveryWeightStore struct{ rows []DeploymentWeightsRow }
+
+func (s serviceDiscoveryWeightStore) LiveDeployments(context.Context, string) ([]DeploymentWeightsRow, error) {
+	return s.rows, nil
+}
+
+func TestServiceProxyExcludesRetainedRevisionWithoutPin(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil).WithStore(serviceDiscoveryWeightStore{rows: []DeploymentWeightsRow{
+		{ID: "old", TrafficPercent: 0}, {ID: "current", TrafficPercent: 100},
+	}})
+	b.RecordTarget("app-1", Target{NodeID: "node-a", InstanceID: "old-instance", DeploymentID: "old", Port: 8080})
+	b.RecordTarget("app-1", Target{NodeID: "node-a", InstanceID: "current-instance", DeploymentID: "current", Port: 8080})
+	snapshot, err := b.ServiceEndpoints(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary := serviceEndpointsForDeployment(snapshot.Endpoints, "")
+	if len(ordinary) != 1 || ordinary[0].DeploymentID != "current" {
+		t.Fatalf("ordinary endpoints = %+v", ordinary)
+	}
+	pinned := serviceEndpointsForDeployment(snapshot.Endpoints, "old")
+	if len(pinned) != 1 || pinned[0].InstanceID != "old-instance" {
+		t.Fatalf("pinned endpoints = %+v", pinned)
+	}
+}
+
 func TestPGBackendServiceEndpointsDeterministicAndEffectivePort(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
 	b.RecordTarget("app-1", Target{

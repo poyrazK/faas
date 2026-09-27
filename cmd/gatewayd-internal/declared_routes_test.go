@@ -76,6 +76,24 @@ func TestDeclaredRoutesMatcher_ExplicitListTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestDeclaredRoutesMatcher_ResolveObservedRoute(t *testing.T) {
+	store := &declaredRouteDocStoreStub{doc: []byte(`{"openapi":"3.0.0","paths":{"/profile/{id}":{"get":{}},"/profile/me":{"get":{}}}}`)}
+	m := newDeclaredRoutesMatcher(store)
+	app := gateway.App{ID: "app-route", AccountID: "acct-route"}
+	for _, tc := range []struct{ path, want string }{
+		{"/profile/238", "/profile/{id}"},
+		{"/profile/me", "/profile/me"},
+	} {
+		got, matched, err := m.ResolveObservedRoute(context.Background(), app, tc.path, "GET")
+		if err != nil || !matched || got != tc.want {
+			t.Errorf("ResolveObservedRoute(%q) = (%q, %v, %v), want %q", tc.path, got, matched, err, tc.want)
+		}
+	}
+	if store.reads != 1 {
+		t.Fatalf("OpenAPI document reads = %d, want one cached read", store.reads)
+	}
+}
+
 func TestDeclaredRoutesMatcher_TTL(t *testing.T) {
 	store := &declaredRouteDocStoreStub{doc: []byte(`{"openapi":"3.0.0","paths":{"/health":{"get":{}}}}`)}
 	now := time.Unix(100, 0)

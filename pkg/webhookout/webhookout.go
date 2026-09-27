@@ -233,12 +233,12 @@ type Target struct {
 // an "occurred_at" field in the body so the customer's verifier can
 // pin it without parsing the body twice.
 type Event struct {
-	ID         string         `json:"id"`          // X-Faas-Alert-Id header value
-	OccurredAt time.Time      `json:"occurred_at"` // X-Faas-Alert-Timestamp header value
-	Rule       string         `json:"rule"`        // rule name, for audit
-	RuleName   string         `json:"rule_name"`   // alias of Rule — surfaced on the wire for downstream consumers that key dashboards off `rule_name`
-	AppID      string         `json:"app_id"`      // app slug, for the customer
-	Payload    map[string]any `json:"payload"`     // arbitrary JSON-able content
+	ID         string         `json:"id"`               // X-Faas-Alert-Id header value
+	OccurredAt time.Time      `json:"occurred_at"`      // X-Faas-Alert-Timestamp header value
+	Rule       string         `json:"rule"`             // rule name, for audit
+	RuleName   string         `json:"rule_name"`        // alias of Rule — surfaced on the wire for downstream consumers that key dashboards off `rule_name`
+	AppID      string         `json:"app_id,omitempty"` // source app ID; absent when an event has no single app source
+	Payload    map[string]any `json:"payload"`          // arbitrary JSON-able content
 
 	// CloudEvents metadata is populated by the app-webhook dispatcher. These
 	// fields stay out of the legacy JSON body so existing consumers receive the

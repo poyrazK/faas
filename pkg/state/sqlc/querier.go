@@ -567,6 +567,11 @@ type Querier interface {
 	// types — without them sqlc infers $5 as timestamptz from the
 	// leading (received_at) reference, breaking pagination.
 	ListAppErrorRequests(ctx context.Context, db DBTX, arg ListAppErrorRequestsParams) ([]ListAppErrorRequestsRow, error)
+	// Build the complete active roster for each secret from the deployment's
+	// persisted scope/allowlist and reload opt-in. A missing observation remains
+	// a target with nullable outcome fields rather than disappearing from the
+	// denominator.
+	ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX, arg ListAppSecretRuntimeReloadTargetsParams) ([]ListAppSecretRuntimeReloadTargetsRow, error)
 	ListApps(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAppsRow, error)
 	// Backs the regression cron's discovery loop. Walks all apps with
 	// >=1 row in the regression window so the cron doesn't have to query
@@ -733,6 +738,10 @@ type Querier interface {
 	// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
 	// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 	ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error)
+	// Cross-app support view for a platform customer. Always constrain by both
+	// owning account and the immutable request-time tenant snapshot; do not infer
+	// attribution by joining today's consumer/surface links.
+	ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error)
 	// Bounded read path for the historical debugger dependency view. The
 	// account_id predicate is defense in depth for callers that accidentally
 	// pass an app id from another tenant; the app lookup remains the primary
@@ -1011,6 +1020,12 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	// Bounded deployment cost allocation for the customer request analytics
+	// window. Request counts are weighted by the publisher's collapsed `count`.
+	// The window total is computed before LIMIT so the handler can allocate the
+	// omitted deployments into a visible __other__ bucket without an unbounded
+	// response.
+	RequestTelemetryAnalyticsByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByDeploymentParams) ([]RequestTelemetryAnalyticsByDeploymentRow, error)
 	// Top-N customer analytics grouped by one of the bounded dimensions. Rows
 	// outside the top-N are folded into __other__ so a customer cannot turn this
 	// endpoint into an unbounded cardinality surface. Counts and percentiles use
@@ -1052,6 +1067,11 @@ type Querier interface {
 	// weight so callers can report request totals rather than stored
 	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
+	// Bounded candidate/stable health summary for the deployment circuit breaker.
+	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
+	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+	// only one row.
+	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount
 	// of aggregation visible to callers. This query deliberately reports
@@ -1097,6 +1117,9 @@ type Querier interface {
 	// "no code mapped"; null in the column means "not yet stamped" —
 	// both render as "" on the Go side via the coalesce in the SELECT).
 	SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeploymentFailedParams) (SetDeploymentFailedRow, error)
+	// imaged persists the validated image opt-in on each newly built deployment;
+	// the state query keeps legacy NULL rows distinct from explicit opt-outs.
+	SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error)
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error

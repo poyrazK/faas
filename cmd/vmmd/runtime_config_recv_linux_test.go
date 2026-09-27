@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +29,10 @@ func (s runtimeConfigStoreStub) ListAppEnv(context.Context, string, string) ([]s
 
 type runtimeSecretsStoreStub struct {
 	runtimeConfigStoreStub
-	deployment state.Deployment
-	secretRows []state.AppSecret
+	deployment    state.Deployment
+	secretRows    []state.AppSecret
+	reloadResults []state.AppSecretRuntimeReloadResult
+	ackResults    []state.AppSecretRuntimeReloadAckResult
 }
 
 func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
@@ -41,6 +44,100 @@ func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (s
 
 func (s runtimeSecretsStoreStub) ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error) {
 	return s.secretRows, nil
+}
+
+func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReload(_ context.Context, result state.AppSecretRuntimeReloadResult) (int, error) {
+	s.reloadResults = append(s.reloadResults, result)
+	return len(result.Candidates), nil
+}
+
+func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReloadAck(_ context.Context, result state.AppSecretRuntimeReloadAckResult) (int, error) {
+	s.ackResults = append(s.ackResults, result)
+	return len(result.Candidates), nil
+}
+
+func TestRuntimeSecretReloadStatusIsVersionFenced(t *testing.T) {
+	const revisionKey = "DATABASE_URL"
+	store := &runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "prod", Sidecars: json.RawMessage(`[]`),
+	}, secretRows: []state.AppSecret{{
+		AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: revisionKey, DeliveryVersion: 3,
+	}}}
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
+	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
+	revision := runtimeSecretRevision("prod", store.secretRows)
+	request := runtimeConfigRequest{Kind: "secret_reload_status", Revision: revision, Projection: "updated", Signal: "sent"}
+	response := sendRuntimeConfigTestRequest(t, receiver, request)
+	if !response.Accepted || response.Error != "" || len(store.reloadResults) != 1 {
+		t.Fatalf("report response = %+v, records = %d", response, len(store.reloadResults))
+	}
+	result := store.reloadResults[0]
+	if result.Candidates[0].Key != revisionKey || result.Candidates[0].Version != 3 || result.InstanceID != "instance-1" {
+		t.Fatalf("recorded runtime reload = %+v", result)
+	}
+
+	store.secretRows[0].DeliveryVersion++
+	response = sendRuntimeConfigTestRequest(t, receiver, request)
+	if response.Accepted || response.Error != "secret_reload_stale" || len(store.reloadResults) != 1 {
+		t.Fatalf("stale report response = %+v, records = %d", response, len(store.reloadResults))
+	}
+}
+
+func TestRuntimeSecretApplicationAckIsVersionFenced(t *testing.T) {
+	store := &runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "prod", Sidecars: json.RawMessage(`[]`),
+	}, secretRows: []state.AppSecret{{
+		AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "DATABASE_URL", DeliveryVersion: 3,
+	}}}
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
+	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
+	revision := runtimeSecretRevision("prod", store.secretRows)
+	request := runtimeConfigRequest{Kind: "secret_reload_ack", Revision: revision, ApplicationAck: "applied"}
+	response := sendRuntimeConfigTestRequest(t, receiver, request)
+	if !response.Accepted || response.Error != "" || len(store.ackResults) != 1 {
+		t.Fatalf("ack response = %+v, records = %d", response, len(store.ackResults))
+	}
+	result := store.ackResults[0]
+	if result.Candidates[0].Version != 3 || result.InstanceID != "instance-1" || result.Status != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("recorded application ack = %+v", result)
+	}
+
+	store.secretRows[0].DeliveryVersion++
+	response = sendRuntimeConfigTestRequest(t, receiver, request)
+	if response.Accepted || response.Error != "secret_reload_stale" || len(store.ackResults) != 1 {
+		t.Fatalf("stale app ack response = %+v, records = %d", response, len(store.ackResults))
+	}
+}
+
+func sendRuntimeConfigTestRequest(t *testing.T, receiver *runtimeConfigReceiver, request runtimeConfigRequest) runtimeConfigResponse {
+	t.Helper()
+	client, server := net.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := receiver.handleGuestStream("instance-1", server)
+		_ = server.Close()
+		done <- err
+	}()
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRuntimeConfigFrame(client, body); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := readRuntimeConfigFrameLimit(client, runtimeConfigMaxFrame)
+	_ = client.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var response runtimeConfigResponse
+	if err := json.Unmarshal(frame, &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
 }
 
 func TestLoadRuntimeConfigReturnsDefaultScopeAndRevision(t *testing.T) {

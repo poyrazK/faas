@@ -118,6 +118,8 @@ def sync_detailed(
             deployment.
             `command_shell=false` executes argv directly. Shell mode requires one
             command string and is explicit so clients preserve quoting semantics.
+            `__gregale_service_binding_probe_v1__ <service>` is reserved for the
+            Gregale HTTPS service-binding canary and is handled by guest-init.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,6 +163,8 @@ def sync(
             deployment.
             `command_shell=false` executes argv directly. Shell mode requires one
             command string and is explicit so clients preserve quoting semantics.
+            `__gregale_service_binding_probe_v1__ <service>` is reserved for the
+            Gregale HTTPS service-binding canary and is handled by guest-init.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,6 +203,8 @@ async def asyncio_detailed(
             deployment.
             `command_shell=false` executes argv directly. Shell mode requires one
             command string and is explicit so clients preserve quoting semantics.
+            `__gregale_service_binding_probe_v1__ <service>` is reserved for the
+            Gregale HTTPS service-binding canary and is handled by guest-init.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -240,6 +246,8 @@ async def asyncio(
             deployment.
             `command_shell=false` executes argv directly. Shell mode requires one
             command string and is explicit so clients preserve quoting semantics.
+            `__gregale_service_binding_probe_v1__ <service>` is reserved for the
+            Gregale HTTPS service-binding canary and is handled by guest-init.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

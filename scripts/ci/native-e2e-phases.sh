@@ -73,10 +73,8 @@ native_e2e_phase_files() {
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.
     twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
-    # Unimplemented stubs (#2569). Non-blocking in the workflow until they are
-    # implemented, so 11 known failures cannot bury a real regression
-    # elsewhere. Kept as a visible phase rather than deleted so the debt stays
-    # in view.
+    # Real jobs harness and scratch-image workload. This phase remains
+    # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac

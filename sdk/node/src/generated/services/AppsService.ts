@@ -35,12 +35,14 @@ import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
+import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
+import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
@@ -854,6 +856,13 @@ export class AppsService {
    *
    * Counts and percentiles include the recorder's collapsed row `count`,
    * so the result represents original requests rather than stored rows.
+   * Route groups also include cold-request p95 and platform-runner guest
+   * execution wall-time percentiles when available, p95 time from
+   * `wake.boot_started` to `wake.boot_completed` for correlated route wakes,
+   * plus bounded sampled dependency span timings for platform-classified dependencies. The
+   * dependency values are not complete call counts; `dependencies_truncated`
+   * marks row or cardinality caps. CPU time and route memory peaks are not
+   * inferred from these fields.
    * Grouped results contain at most 50 groups plus `__other__`. Consumer
    * grouping uses the stable consumer UUID and reports anonymous traffic
    * as `__anonymous__`. Only a normalized User-Agent family, hostname-only
@@ -988,15 +997,16 @@ export class AppsService {
   }
   /**
    * Per-route breakdown for opt-in apps (ADR-093).
-   * Returns the `routes` array of the per-app metrics surface
-   * directly. Reverse-proxies the gatewayd-internal loopback
-   * control listener at `GET /v1/internal/apps/{slug}/routes`.
+   * Returns the `routes` array of the per-app metrics surface.
+   * Production reads the fleet Prometheus aggregate; single-box
+   * development may use the gatewayd-internal loopback listener.
    * The array is empty when `route_metrics_enabled` is false
    * on the app (the gatewayd handler returns 200 + empty
    * rows rather than 404 — the customer-facing "feature off"
-   * state is not a 404). The route label is method + raw
-   * path (pre-rewrite, ADR-093 D6); the `__route_other__`
-   * bucket surfaces the wildcard-path signal.
+   * state is not a 404). Labels use declared templates when available,
+   * otherwise common numeric/UUID/long-hex segments become `{id}`.
+   * Unrecognized slug segments remain literal, and `__route_other__`
+   * marks the per-app metrics cardinality overflow.
    *
    * @returns AppRoutesResponse The per-route rows for the app.
    * @throws ApiError
@@ -1023,6 +1033,94 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List exact gateway-observed request audit records (opt-in)
+   * Requires an MFA session or an authorized API key. Records are one per
+   * completed request, not collapsed debugger buckets. Only gateway-verified
+   * consumer and platform-tenant IDs are included. Application user,
+   * business action and internal/outbound dependency calls are not inferred.
+   * The trusted public-gateway source IP is included when available.
+   * The default window is 24 hours; at most 31 days may be
+   * queried at once. Undeclared route candidates can contain literal path
+   * segments; enable collection only after reviewing this privacy tradeoff.
+   * Exact records are removed after 30 days. The bounded list has no
+   * cursor export yet and is not a compliance/WORM archive.
+   *
+   * @returns RequestAuditListResponse Bounded exact request evidence, newest first.
+   * @throws ApiError
+   */
+  public static getAppRequestAudit({
+    slug,
+    since,
+    until,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inclusive UTC start of the audit window.
+     */
+    since?: string,
+    /**
+     * Exclusive UTC end of the audit window.
+     */
+    until?: string,
+    /**
+     * Maximum newest records to return.
+     */
+    limit?: number,
+  }): CancelablePromise<RequestAuditListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/audit/requests',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Persisted, bounded API route inventory
+   * Returns up to 500 distinct observed method/template candidates with
+   * first/last seen times and replay-safe request counts. Discovery has
+   * its own operator opt-in, independent of exact request audit and its
+   * 30-day retention. Undeclared paths can retain literal segments, so
+   * operators must review path privacy before enabling discovery.
+   *
+   * @returns DiscoveredRoutesResponse Persisted discovered route candidates.
+   * @throws ApiError
+   */
+  public static getAppDiscoveredRoutes({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DiscoveredRoutesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/discovered-routes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

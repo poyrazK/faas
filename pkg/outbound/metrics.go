@@ -7,10 +7,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Metrics is the bounded observability surface for outboundd. Integration IDs
-// are configuration-owned values, so the label cardinality is bounded by the
-// number of configured integrations rather than by request paths or provider
-// response bodies.
+// Metrics is the bounded observability surface for outboundd. Operator IDs
+// are configuration-owned; customer-created integrations share a fixed label
+// so customer growth cannot create unbounded metric cardinality.
 type Metrics struct {
 	admissions       *prometheus.CounterVec
 	rejections       *prometheus.CounterVec

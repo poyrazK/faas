@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const observedRoutesOther = "__route_other__"
@@ -34,6 +35,8 @@ type observedRoutesSnapshot struct {
 	CollectorsExpected int
 	CollectorsHealthy  int
 	CapHit             bool
+	InventoryAvailable bool
+	InventoryCapHit    bool
 }
 
 func unavailableObservedRoutes(expected int) observedRoutesSnapshot {
@@ -45,7 +48,7 @@ func unavailableObservedRoutes(expected int) observedRoutesSnapshot {
 }
 
 func (o observedRoutesSnapshot) available() bool {
-	return o.Source == api.AppRoutesSourceLive || o.Source == api.AppRoutesSourcePartial
+	return o.Source == api.AppRoutesSourceLive || o.Source == api.AppRoutesSourcePartial || o.InventoryAvailable
 }
 
 func (o observedRoutesSnapshot) rows() []openapidiff.RouteRow {
@@ -67,6 +70,12 @@ func (o observedRoutesSnapshot) cacheSHA() [32]byte {
 	_, _ = h.Write([]byte(strconv.Itoa(o.CollectorsExpected)))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(strconv.Itoa(o.CollectorsHealthy)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatBool(o.InventoryAvailable)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatBool(o.InventoryCapHit)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatBool(o.CapHit)))
 	for _, route := range o.Routes {
 		_, _ = h.Write([]byte{0})
 		_, _ = h.Write([]byte(route))
@@ -77,15 +86,67 @@ func (o observedRoutesSnapshot) cacheSHA() [32]byte {
 }
 
 // collectObservedRoutes uses the fleet aggregate whenever Prometheus is
-// configured. The single gateway control URL remains as a development and
-// single-box fallback; production must never fall back to it after a fleet
-// query failure because that would silently turn incomplete data into live
-// data.
-func (s *server) collectObservedRoutes(ctx context.Context, appID, slug string) observedRoutesSnapshot {
+// configured and the single gateway control URL only as a development
+// fallback. It then adds the durable catalog, if available; a failed catalog
+// read does not mask the live telemetry result.
+func (s *server) collectObservedRoutes(ctx context.Context, accountID, appID, slug string) observedRoutesSnapshot {
+	var snapshot observedRoutesSnapshot
 	if s.promqlClient != nil {
-		return s.collectFleetObservedRoutes(ctx, appID)
+		snapshot = s.collectFleetObservedRoutes(ctx, appID)
+	} else {
+		snapshot = s.collectLegacyObservedRoutes(ctx, appID, slug)
 	}
-	return s.collectLegacyObservedRoutes(ctx, appID, slug)
+	return s.includeDiscoveredRoutes(ctx, accountID, appID, snapshot)
+}
+
+// includeDiscoveredRoutes joins the opt-in, durable route catalog with the
+// current telemetry snapshot. Persistent discovery covers routes seen before
+// the current metrics window; live telemetry still contributes newly active
+// routes while its usage events are being delivered to the catalog.
+func (s *server) includeDiscoveredRoutes(ctx context.Context, accountID, appID string, snapshot observedRoutesSnapshot) observedRoutesSnapshot {
+	store, ok := s.store.(state.APIRouteInventoryStore)
+	if !ok {
+		return snapshot
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, routesDialTimeout)
+	defer cancel()
+	routes, capHit, err := store.ListDiscoveredAPIRoutes(readCtx, accountID, appID, state.DiscoveredRouteLimit)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("observed routes inventory read failed", "account_id", accountID, "app_id", appID, "err", err)
+		}
+		return snapshot
+	}
+	if len(routes) == 0 {
+		return snapshot
+	}
+
+	set := make(map[string]struct{}, len(snapshot.Routes)+len(routes))
+	for _, route := range snapshot.Routes {
+		route = strings.TrimSpace(route)
+		if route != "" {
+			set[route] = struct{}{}
+		}
+	}
+	for _, route := range routes {
+		route := strings.TrimSpace(route.RouteTemplate)
+		if route == "" || route == observedRoutesOther {
+			continue
+		}
+		set[route] = struct{}{}
+	}
+
+	merged := make([]string, 0, len(set))
+	for route := range set {
+		merged = append(merged, route)
+	}
+	sort.Strings(merged)
+	snapshot.Routes = merged
+	snapshot.InventoryAvailable = true
+	snapshot.InventoryCapHit = capHit
+	snapshot.CapHit = snapshot.CapHit || capHit
+	return snapshot
 }
 
 func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) observedRoutesSnapshot {

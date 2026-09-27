@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | List PostgreSQL, object-storage, and queue bindings for an app |
+| [`bindings`](#bindings) | List bindings, verify connectivity, or smoke-test a pinned private service deployment |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -21,7 +21,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`github`](#github) | Manage an app&#39;s GitHub installation and repository binding |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
-| [`crons`](#crons) | Manage scheduled requests |
+| [`crons`](#crons) | Manage scheduled HTTP requests and deployment commands |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`workers`](#workers) | Inspect and manage background worker pools |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
@@ -46,7 +46,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
-| [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
+| [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -171,9 +171,35 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-List PostgreSQL, object-storage, and queue bindings for an app
+List bindings, verify connectivity, or smoke-test a pinned private service deployment
 
-`gregale bindings <app>`
+`gregale bindings [<subcommand>] <app>`
+
+### bindings verify
+
+Check DNS, TLS, authorization, and live routing for one or all bound services
+
+`gregale bindings verify <app> [<service>] [--all] [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | verify every declared service binding |  |
+| `--poll-interval <D>` | status polling interval while the canary runs |  |
+| `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+
+### bindings smoke
+
+Invoke a path on one exact live target deployment over the private HTTPS binding
+
+`gregale bindings smoke <app> <service> --deployment <ID> --path <PATH> [--expect-status <CODE>] [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | exact live target deployment to invoke | required |
+| `--path <PATH>` | absolute path on the target service | required |
+| `--expect-status <CODE>` | require this exact HTTP status; default accepts any 2xx response |  |
+| `--poll-interval <D>` | status polling interval while the smoke task runs |  |
+| `--wait-timeout <D>` | maximum time to wait for the smoke task |  |
 
 
 ## capabilities
@@ -611,7 +637,7 @@ Show per-app default CORS + active rules (defaults to linked context)
 
 ## crons
 
-Manage scheduled requests
+Manage scheduled HTTP requests and deployment commands
 
 `gregale crons [<subcommand>]`
 
@@ -621,7 +647,22 @@ List cron rules
 
 ### crons add
 
-Add a cron rule
+Schedule an HTTP request or deployment command
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (required) | required |
+| `--schedule <EXPR>` | five-field cron expression (required) | required |
+| `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
+| `--command <EXEC>` | executable for a deployment command cron |  |
+| `--arg <ARG>` | append one command argument (repeatable) |  |
+| `--shell` | run --command as one shell string |  |
+| `--timeout-seconds <N>` | command timeout (default 600 seconds) |  |
+| `--max-output-bytes <N>` | captured output limit (default 1048576 bytes) |  |
+| `--timezone <TZ>` | IANA timezone (default UTC) |  |
+| `--skip-if-running` | skip fires while the previous run is active |  |
+| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
 
 ### crons info
 
@@ -631,13 +672,43 @@ Show one cron rule
 
 Update one cron rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--schedule <EXPR>` | new five-field cron expression |  |
+| `--path <PATH>` | HTTP request path |  |
+| `--timezone <TZ>` | IANA timezone |  |
+| `--enable` | enable the cron |  |
+| `--disable` | disable the cron |  |
+| `--skip-if-running` | skip fires while a previous run is active |  |
+| `--allow-overlap` | allow scheduled fires to overlap |  |
+| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
+
 ### crons rm
 
 Delete one cron rule
 
+### crons run
+
+Fire one cron immediately
+
+### crons fire-now
+
+Show the status of a manual fire request
+
 ### crons runs
 
 Show execution history
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | pagination cursor for older runs |  |
+| `--limit <N>` | max runs to show (1..100) |  |
+| `--run <TASK-ID>` | show details and captured output for one command run |  |
+
+### crons cancel
+
+Request cancellation of one command-cron run
 
 
 ## triggers
@@ -796,6 +867,12 @@ List jobs in this account
 
 Create a new job
 
+| Flag | Meaning | |
+|---|---|---|
+| `--image <REF>` | OCI image (required) | required |
+| `--schedule <EXPR>` | recurring five-field cron schedule |  |
+| `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
+
 ### jobs info
 
 Show one job
@@ -803,6 +880,12 @@ Show one job
 ### jobs update
 
 Update one job
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schedule <EXPR>` | replace recurring cron schedule |  |
+| `--timezone <TZ>` | replace schedule IANA timezone |  |
+| `--unschedule` | remove recurring schedule |  |
 
 ### jobs rm
 
@@ -1089,7 +1172,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -1118,7 +1201,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
 | `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
 | `--no-traffic` | stage with 0% production traffic and print the preview URL |  |
-| `--no-triggers` | skip gregale.yaml trigger fan-out |  |
+| `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
 | `--create-only` | create or reserve the app without uploading a deployment |  |
@@ -1385,20 +1468,32 @@ List edge rules
 
 ### edge-rules trace
 
-Preview matching edge rules and simulate request headers and IP/geo decisions
+Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--config <file|->` | load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags |  |
+| `--app <slug>` | app slug (required unless --config is used) |  |
+| `--url <URL>` | absolute HTTP(S) request URL (required unless --config is used) |  |
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
+| `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 
 ### edge-rules create
 
 Add an edge rule
+
+| Flag | Meaning | |
+|---|---|---|
+| `--on-success-webhook <ID>` | success webhook subscription; repeat when updating async policy |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription; repeat when updating async policy |  |
+| `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
+| `--async-retry-base-seconds <N>` | exponential retry base delay |  |
+| `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
+| `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
 
 ### edge-rules get
 
@@ -1407,6 +1502,16 @@ Show one edge rule
 ### edge-rules update
 
 Update one edge rule
+
+| Flag | Meaning | |
+|---|---|---|
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
+| `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
+| `--async-retry-base-seconds <N>` | exponential retry base delay |  |
+| `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
+| `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
 
 ### edge-rules rm
 
@@ -1514,7 +1619,7 @@ Scaffold a reference project from a built-in template (--template NAME --path DI
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -1603,7 +1708,7 @@ Cancel one run
 
 ## invocations
 
-Per-account invocation ledger (invocations list|get &lt;id&gt;)
+Per-account invocation ledger (invocations list|get|wait &lt;id&gt;)
 
 `gregale invocations [<subcommand>] <id>`
 
@@ -1614,6 +1719,15 @@ List invocations
 ### invocations get
 
 Show one invocation
+
+### invocations wait
+
+Wait for one invocation to finish
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
+| `--interval <D>` | time between status checks (default 1s) |  |
 
 
 ## debug
@@ -2282,12 +2396,14 @@ List every secret across apps
 
 ### secrets rotate
 
-Re-seal one secret under the current host key
+Rotate a secret and optionally wait for runtime application
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
+| `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
 
 
 ## slo

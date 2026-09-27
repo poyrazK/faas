@@ -54,6 +54,32 @@ func TestMemoryBackendEnforcesRateAndReleasesConcurrency(t *testing.T) {
 	}
 }
 
+func TestMemoryBackendAppliesBurstReductionImmediately(t *testing.T) {
+	backend := NewMemoryBackend()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	backend.SetClock(func() time.Time { return now })
+	initial := AdmissionSpec{IntegrationID: "integration-1", RatePerSecond: 10, Burst: 10, MaxInFlight: 10, LeaseTTL: time.Second}
+	first, err := backend.Admit(context.Background(), initial)
+	if err != nil || !first.Granted {
+		t.Fatalf("initial admission = %#v, %v", first, err)
+	}
+	if err := backend.Release(context.Background(), initial.IntegrationID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	lowered := AdmissionSpec{IntegrationID: initial.IntegrationID, RatePerSecond: .1, Burst: 1, MaxInFlight: 10, LeaseTTL: time.Second}
+	firstLowered, err := backend.Admit(context.Background(), lowered)
+	if err != nil || !firstLowered.Granted {
+		t.Fatalf("first lowered-policy admission = %#v, %v", firstLowered, err)
+	}
+	if err := backend.Release(context.Background(), lowered.IntegrationID, firstLowered.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	secondLowered, err := backend.Admit(context.Background(), lowered)
+	if err != nil || secondLowered.Granted || secondLowered.Reason != ReasonRate {
+		t.Fatalf("burst reduction left stale tokens: %#v, %v", secondLowered, err)
+	}
+}
+
 func TestHandlersShareOneBackendAcrossInstances(t *testing.T) {
 	entered := make(chan struct{})
 	finish := make(chan struct{})

@@ -55,3 +55,20 @@ func TestGuestExecutionEvidenceHeaders(t *testing.T) {
 		t.Fatalf("success should not have error class: %v", h)
 	}
 }
+
+func TestGuestExecutionEvidenceIncludesMeasuredProcessUsage(t *testing.T) {
+	e := ObserveGuestExecution(context.Background(), "node24", time.Now(), http.StatusOK, nil).
+		WithProcessUsage(GuestProcessUsage{CPUTimeMS: 12, PeakRSSMB: 33, Available: true})
+	h := make(http.Header)
+	e.ApplyResponseHeaders(h)
+	if got := h.Get(api.GuestEvidenceCPUTimeHeader); got != "12" {
+		t.Fatalf("CPU header = %q, want 12", got)
+	}
+	if got := h.Get(api.GuestEvidencePeakRSSHeader); got != "33" {
+		t.Fatalf("RSS header = %q, want 33", got)
+	}
+	if got := ObserveGuestExecution(context.Background(), "node24", time.Now(), http.StatusOK, nil).
+		WithProcessUsage(GuestProcessUsage{CPUTimeMS: -1, PeakRSSMB: 33, Available: true}); got.ResourceUsageAvailable {
+		t.Fatalf("invalid usage should be unavailable: %+v", got)
+	}
+}

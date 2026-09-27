@@ -1,5 +1,7 @@
 # ADR-238: Cross-app platform tenant usage statements
 
+ADR-239 extends these statements with tenant-surface minute lines. The consumer-only line shape below describes the original rollout.
+
 - **Status:** accepted
 - **Date:** 2026-09-24
 - **Decision:** Snapshot tenant-attributed minute usage across apps into one immutable, revisioned, single-currency statement per customer and period. Finalized statements can be handed off once to an external billing system; late usage creates an additive adjustment revision.

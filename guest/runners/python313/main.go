@@ -133,9 +133,9 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	}
 
 	started := time.Now()
-	resp, err := invokeHandler(r.Context(), handlerPath, env)
+	resp, processUsage, err := invokeHandler(r.Context(), handlerPath, env)
 	if err != nil {
-		internal.ObserveGuestExecution(r.Context(), "python313", started, http.StatusInternalServerError, err).ApplyResponseHeaders(w.Header())
+		internal.ObserveGuestExecution(r.Context(), "python313", started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
 		log.Printf("python313 runner: handler error: %v", err)
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
@@ -143,7 +143,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}
-	evidence := internal.ObserveGuestExecution(r.Context(), "python313", started, resp.Status, nil)
+	evidence := internal.ObserveGuestExecution(r.Context(), "python313", started, resp.Status, nil).WithProcessUsage(processUsage)
 	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
 	// writing the response.
 	drainTailHost(r.Context(), env, &resp)
@@ -165,7 +165,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	}
 }
 
-func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, error) {
+func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, internal.GuestProcessUsage, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	binary := pythonBinary()
@@ -174,7 +174,7 @@ func invokeHandler(ctx context.Context, handlerPath string, env envelope) (respo
 	if handled, err := workerpool.InvokeIfSupported(timeoutCtx, workerpool.Spec{
 		Executable: binary, Args: []string{handlerPath}, Env: handlerEnv, HandlerPath: handlerPath,
 	}, env, &pooled); handled {
-		return pooled, err
+		return pooled, internal.GuestProcessUsage{}, err
 	}
 
 	// guest-init deliberately starts workloads with a minimal environment.
@@ -185,7 +185,7 @@ func invokeHandler(ctx context.Context, handlerPath string, env envelope) (respo
 
 	var stdin bytes.Buffer
 	if err := json.NewEncoder(&stdin).Encode(env); err != nil {
-		return response{}, fmt.Errorf("encode envelope: %w", err)
+		return response{}, internal.GuestProcessUsage{}, fmt.Errorf("encode envelope: %w", err)
 	}
 	cmd.Stdin = &stdin
 
@@ -199,16 +199,18 @@ func invokeHandler(ctx context.Context, handlerPath string, env envelope) (respo
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 
 	if err := cmd.Run(); err != nil {
+		usage := internal.ProcessResourceUsage(cmd.ProcessState)
 		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
-			return response{}, fmt.Errorf("handler timeout: %w", context.DeadlineExceeded)
+			return response{}, usage, fmt.Errorf("handler timeout: %w", context.DeadlineExceeded)
 		}
-		return response{}, fmt.Errorf("handler exec: %w (stderr=%s)", err, stderr.String())
+		return response{}, usage, fmt.Errorf("handler exec: %w (stderr=%s)", err, stderr.String())
 	}
+	usage := internal.ProcessResourceUsage(cmd.ProcessState)
 	var resp response
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
-		return response{}, fmt.Errorf("decode response: %w (stdout=%s)", err, stdout.String())
+		return response{}, usage, fmt.Errorf("decode response: %w (stdout=%s)", err, stdout.String())
 	}
-	return resp, nil
+	return resp, usage, nil
 }
 
 func pythonBinary() string {

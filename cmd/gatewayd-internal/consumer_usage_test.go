@@ -19,11 +19,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// adr: 239
+
 type usageReceiverForTest struct {
 	apidpb.UnimplementedRequestTelemetryServer
-	mu       sync.Mutex
-	attempts int
-	events   map[string]int
+	mu             sync.Mutex
+	attempts       int
+	events         map[string]int
+	surfaceID      string
+	surfaceSupport bool
 }
 
 func (r *usageReceiverForTest) RecordConsumerUsage(_ context.Context, event *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
@@ -37,7 +41,10 @@ func (r *usageReceiverForTest) RecordConsumerUsage(_ context.Context, event *api
 		return nil, status.Error(codes.Unavailable, "test outage")
 	}
 	r.events[event.GetEventId()]++
-	return &apidpb.ConsumerUsageReceipt{Applied: r.events[event.GetEventId()] == 1}, nil
+	r.surfaceID = event.GetPlatformTenantSurfaceId()
+	return &apidpb.ConsumerUsageReceipt{
+		Applied: r.events[event.GetEventId()] == 1, SurfaceAttributionSupported: r.surfaceSupport,
+	}, nil
 }
 
 func TestConsumerUsageDeliveryRetainsOnFailureAndAcknowledgesRetry(t *testing.T) {
@@ -105,5 +112,150 @@ func TestConsumerUsageCompatibilityProbeRejectsOldReceiver(t *testing.T) {
 	t.Cleanup(server.Stop)
 	if err := confirmConsumerUsageReceiver(context.Background(), socket, nil); err == nil {
 		t.Fatal("older apid was accepted")
+	}
+}
+
+func TestSurfaceUsageDeliveryRetainsUntilReceiverAcknowledgesAttribution(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "faas-usage-surface-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "usage.sock")
+	lis, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	receiver := &usageReceiverForTest{events: make(map[string]int)}
+	apidpb.RegisterRequestTelemetryServer(server, receiver)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	q, err := usageoutbox.Open(filepath.Join(dir, "spool"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, surfaceID := uuid.NewString(), uuid.NewString()
+	if err := q.Enqueue(usageoutbox.Event{
+		EventID: id, AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		PlatformTenantID: uuid.NewString(), PlatformTenantSurfaceID: surfaceID,
+		WindowStart: time.Now().UTC().Truncate(time.Minute), RequestCount: 1, BillableUnits: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go deliverConsumerUsage(ctx, q, socket, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		receiver.mu.Lock()
+		attempts, gotSurface := receiver.attempts, receiver.surfaceID
+		receiver.mu.Unlock()
+		if attempts >= 2 {
+			if gotSurface != surfaceID {
+				t.Fatalf("surface ID sent = %q, want %q", gotSurface, surfaceID)
+			}
+			if pending := q.Stats().PendingRecords; pending != 1 {
+				t.Fatalf("unsupported receiver acknowledged surface event: pending=%d", pending)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("surface event was not retried")
+}
+
+type receiverWithoutAuditAck struct {
+	apidpb.UnimplementedRequestTelemetryServer
+	called chan struct{}
+}
+
+func (r *receiverWithoutAuditAck) RecordConsumerUsage(_ context.Context, _ *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	select {
+	case r.called <- struct{}{}:
+	default:
+	}
+	return &apidpb.ConsumerUsageReceipt{Applied: true}, nil
+}
+
+func TestAuditEvidenceIsNotAcknowledgedByOldReceiver(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "faas-audit-old-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "usage.sock")
+	lis, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver := &receiverWithoutAuditAck{called: make(chan struct{}, 1)}
+	server := grpc.NewServer()
+	apidpb.RegisterRequestTelemetryServer(server, receiver)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	q, err := usageoutbox.Open(filepath.Join(dir, "spool"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(usageoutbox.Event{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		WindowStart: time.Now().UTC().Truncate(time.Minute), RequestCount: 1, BillableUnits: 1,
+		Audit: &usageoutbox.AuditEvidence{RouteTemplate: "GET /orders/{id}", Method: "GET", HTTPStatus: 200, OccurredAt: time.Now().UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go deliverConsumerUsage(ctx, q, socket, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	select {
+	case <-receiver.called:
+	case <-time.After(3 * time.Second):
+		t.Fatal("receiver was not called")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := q.Stats().PendingRecords; got != 1 {
+		t.Fatalf("audit item acknowledged without audit receipt: pending=%d", got)
+	}
+}
+
+func TestDiscoveryEvidenceIsNotAcknowledgedByOldReceiver(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "faas-discovery-old-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "usage.sock")
+	lis, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver := &receiverWithoutAuditAck{called: make(chan struct{}, 1)}
+	server := grpc.NewServer()
+	apidpb.RegisterRequestTelemetryServer(server, receiver)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	q, err := usageoutbox.Open(filepath.Join(dir, "spool"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(usageoutbox.Event{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		WindowStart: time.Now().UTC().Truncate(time.Minute), RequestCount: 1, BillableUnits: 1,
+		DiscoveredRoute: "GET /profiles/{id}", DiscoveredAtUnixMs: time.Now().UTC().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go deliverConsumerUsage(ctx, q, socket, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	select {
+	case <-receiver.called:
+	case <-time.After(3 * time.Second):
+		t.Fatal("receiver was not called")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := q.Stats().PendingRecords; got != 1 {
+		t.Fatalf("discovery item acknowledged without discovery receipt: pending=%d", got)
 	}
 }

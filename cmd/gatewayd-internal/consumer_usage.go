@@ -63,17 +63,45 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 			}
 			if err == nil {
 				event := item.Event
+				var audit *apidpb.RequestAuditEvidence
+				if event.Audit != nil {
+					audit = &apidpb.RequestAuditEvidence{
+						RouteTemplate: event.Audit.RouteTemplate, Method: event.Audit.Method,
+						HttpStatus: int32(event.Audit.HTTPStatus), LatencyMs: int32(event.Audit.LatencyMS),
+						TraceId: event.Audit.TraceID, DeploymentId: event.Audit.DeploymentID,
+						CommitSha: event.Audit.CommitSHA, OccurredAtUnixMs: event.Audit.OccurredAt.UnixMilli(),
+						RequestId: event.Audit.RequestID,
+						SourceIp:  event.Audit.SourceIP,
+					}
+				}
 				callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				var receipt *apidpb.ConsumerUsageReceipt
 				receipt, err = client.RecordConsumerUsage(callCtx, &apidpb.ConsumerUsageEvent{
 					EventId: event.EventID, AccountId: event.AccountID, AppId: event.AppID,
 					ConsumerId: event.ConsumerID, PlatformTenantId: event.PlatformTenantID,
-					WindowStartUnixMs: event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
+					PlatformTenantSurfaceId:              event.PlatformTenantSurfaceID,
+					PlatformTenantJwtAuthorizationRuleId: event.PlatformTenantJWTAuthorizationRuleID,
+					WindowStartUnixMs:                    event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
 					ErrorCount: event.ErrorCount, BillableUnits: event.BillableUnits,
+					Audit:              audit,
+					DiscoveredRoute:    event.DiscoveredRoute,
+					DiscoveredAtUnixMs: event.DiscoveredAtUnixMs,
 				})
 				cancel()
 				if err == nil && receipt == nil {
 					err = fmt.Errorf("empty usage acknowledgement")
+				}
+				if err == nil && event.PlatformTenantSurfaceID != "" && !receipt.GetSurfaceAttributionSupported() {
+					err = fmt.Errorf("apid does not acknowledge tenant-surface attribution")
+				}
+				if err == nil && event.PlatformTenantJWTAuthorizationRuleID != "" && !receipt.GetJwtTenantAttributionSupported() {
+					err = fmt.Errorf("apid does not acknowledge JWT tenant attribution")
+				}
+				if err == nil && audit != nil && !receipt.GetAuditRecorded() {
+					err = fmt.Errorf("request audit evidence not acknowledged by receiver")
+				}
+				if err == nil && event.DiscoveredRoute != "" && !receipt.GetDiscoveryRecorded() {
+					err = fmt.Errorf("discovered route not acknowledged by receiver")
 				}
 				if err == nil {
 					err = q.Ack(item)

@@ -63,6 +63,13 @@ const (
 	// service call. The service proxy validates it after binding authorization;
 	// unlike VersionKeyHeader, it is not a weighted cohort key.
 	TargetDeploymentHeader = "Gregale-Target-Deployment"
+	// RevisionHeader is an app-scoped, exact deployment pin for public API
+	// clients. It is only honored on apps with a revision pin window enabled.
+	// The edge also returns the selected immutable deployment ID under this
+	// name so clients can store and replay it across deploys.
+	RevisionHeader = "X-Gregale-Revision"
+	// ReleaseHeader identifies an immutable project deployment graph.
+	ReleaseHeader = "X-Gregale-Release"
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about

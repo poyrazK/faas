@@ -280,6 +280,9 @@ type EdgeRuleJWTResolved struct {
 	JWKSURL        string            // already https:// + not private
 	Algorithms     []string          // closed vocab
 	RequiredClaims map[string]string // key=value
+	// PlatformTenantExternalRefClaim opts this verified issuer rule into
+	// resolving one signed custom claim against an account's platform tenant.
+	PlatformTenantExternalRefClaim string
 	// ExtractClaims is a request-local copy-time hint populated by the
 	// handler when the matching throttle keys by jwt_claim. It is never
 	// stored in the edge-rule cache.

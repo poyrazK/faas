@@ -257,6 +257,14 @@ func JobLayerKey(jobID string) string {
 	return "jobs/" + jobID + ".ext4"
 }
 
+// JobLayerAttemptKey returns an immutable, per-build storage key for a job
+// image attempt. The artifact ID is a UUID minted by imaged so an expired
+// worker can never overwrite or delete a later attempt's object. Keeping this
+// key flat preserves the OCI backend's jobs/<tag>.ext4 layout.
+func JobLayerAttemptKey(jobID, artifactID string) string {
+	return "jobs/" + jobID + "__" + artifactID + ".ext4"
+}
+
 // KernelKey returns the storage key for a firecracker kernel artifact
 // pinned to a firecracker version. vmmd fetches this on first boot of
 // the version.

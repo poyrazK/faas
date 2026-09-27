@@ -85,13 +85,15 @@ func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, ap
 }
 
 type compiledDeclaredRoute struct {
-	path    string
-	methods map[string]struct{}
+	path           string
+	methods        map[string]struct{}
+	staticSegments int
 }
 
 type declaredRoutePolicy struct {
 	routes  []compiledDeclaredRoute
 	expires time.Time
+	missing bool
 }
 
 // declaredRoutesMatcher compiles an app's imported OpenAPI document once and
@@ -118,15 +120,38 @@ func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatche
 }
 
 func (m *declaredRoutesMatcher) MatchDeclaredRoute(ctx context.Context, app gateway.App, requestPath, requestMethod string) (bool, error) {
+	policy, err := m.loadPolicy(ctx, app)
+	if err != nil {
+		return false, err
+	}
+	if policy.missing {
+		return false, state.ErrNotFound
+	}
+	_, matched := matchingDeclaredTemplate(policy.routes, requestPath, requestMethod)
+	return matched, nil
+}
+
+// ResolveObservedRoute reuses the declaration cache for metrics and discovery.
+// A missing document is normal for zero-config apps, so the caller can fall
+// back to conservative identifier inference without altering route policy.
+func (m *declaredRoutesMatcher) ResolveObservedRoute(ctx context.Context, app gateway.App, requestPath, requestMethod string) (string, bool, error) {
+	policy, err := m.loadPolicy(ctx, app)
+	if err != nil {
+		return "", false, err
+	}
+	if policy.missing {
+		return "", false, nil
+	}
+	template, matched := matchingDeclaredTemplate(policy.routes, requestPath, requestMethod)
+	return template, matched, nil
+}
+
+func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App) (declaredRoutePolicy, error) {
 	if len(app.DeclaredRoutes) > 0 {
-		policy, err := compileDeclaredRoutes(app.DeclaredRoutes)
-		if err != nil {
-			return false, err
-		}
-		return policyMatches(policy.routes, requestPath, requestMethod), nil
+		return compileDeclaredRoutes(app.DeclaredRoutes)
 	}
 	if m == nil || m.store == nil {
-		return false, fmt.Errorf("declared route document store is not configured")
+		return declaredRoutePolicy{}, fmt.Errorf("declared route document store is not configured")
 	}
 
 	now := m.now()
@@ -134,22 +159,29 @@ func (m *declaredRoutesMatcher) MatchDeclaredRoute(ctx context.Context, app gate
 	entry, ok := m.entries[app.ID]
 	m.mu.RUnlock()
 	if ok && now.Before(entry.expires) {
-		return policyMatches(entry.routes, requestPath, requestMethod), nil
+		return entry, nil
 	}
 
 	doc, _, err := m.store.GetAppOpenAPIDoc(ctx, app.ID, app.AccountID)
+	if errors.Is(err, state.ErrNotFound) {
+		policy := declaredRoutePolicy{expires: now.Add(m.ttl), missing: true}
+		m.mu.Lock()
+		m.entries[app.ID] = policy
+		m.mu.Unlock()
+		return policy, nil
+	}
 	if err != nil {
-		return false, fmt.Errorf("load OpenAPI document for app %s: %w", app.ID, err)
+		return declaredRoutePolicy{}, fmt.Errorf("load OpenAPI document for app %s: %w", app.ID, err)
 	}
 	policy, err := compileOpenAPIDocument(doc)
 	if err != nil {
-		return false, err
+		return declaredRoutePolicy{}, err
 	}
 	policy.expires = now.Add(m.ttl)
 	m.mu.Lock()
 	m.entries[app.ID] = policy
 	m.mu.Unlock()
-	return policyMatches(policy.routes, requestPath, requestMethod), nil
+	return policy, nil
 }
 
 func (m *declaredRoutesMatcher) Invalidate(appID string) {
@@ -198,7 +230,13 @@ func compileDeclaredRoutes(routes []gateway.DeclaredRoute) (declaredRoutePolicy,
 		if len(methods) == 0 {
 			return declaredRoutePolicy{}, fmt.Errorf("declared route %q has no HTTP methods", path)
 		}
-		compiled = append(compiled, compiledDeclaredRoute{path: path, methods: methods})
+		staticSegments := 0
+		for _, segment := range splitDeclaredPath(path) {
+			if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+				staticSegments++
+			}
+		}
+		compiled = append(compiled, compiledDeclaredRoute{path: path, methods: methods, staticSegments: staticSegments})
 	}
 	return declaredRoutePolicy{routes: compiled}, nil
 }
@@ -214,12 +252,15 @@ func normalizeDeclaredPath(path string) string {
 	return path
 }
 
-func policyMatches(routes []compiledDeclaredRoute, requestPath, requestMethod string) bool {
+// Prefer the most specific declared path when a static route overlaps a
+// parameter route, regardless of map iteration order in the OpenAPI parser.
+func matchingDeclaredTemplate(routes []compiledDeclaredRoute, requestPath, requestMethod string) (string, bool) {
 	requestPath = normalizeDeclaredPath(requestPath)
 	if requestPath == "" {
-		return false
+		return "", false
 	}
 	method := strings.ToUpper(strings.TrimSpace(requestMethod))
+	best, bestStatic := "", -1
 	for _, route := range routes {
 		if _, ok := route.methods[method]; !ok {
 			// RFC 7231 permits HEAD wherever GET is declared. Treating it as
@@ -233,10 +274,12 @@ func policyMatches(routes []compiledDeclaredRoute, requestPath, requestMethod st
 			}
 		}
 		if declaredPathMatches(route.path, requestPath) {
-			return true
+			if route.staticSegments > bestStatic || (route.staticSegments == bestStatic && (best == "" || route.path < best)) {
+				best, bestStatic = route.path, route.staticSegments
+			}
 		}
 	}
-	return false
+	return best, best != ""
 }
 
 func declaredPathMatches(template, request string) bool {

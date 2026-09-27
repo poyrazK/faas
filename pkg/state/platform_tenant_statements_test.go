@@ -37,3 +37,22 @@ func TestMemPlatformTenantStatementExpectedPriorStatus(t *testing.T) {
 		t.Fatalf("fresh adjustment: %v, %v", created, err)
 	}
 }
+
+func TestValidatePlatformTenantStatementTenantRateCardLine(t *testing.T) {
+	accountID, tenantID, appID, consumerID, rateCardID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	start := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	input := PlatformTenantStatementInput{AccountID: accountID, TenantID: tenantID,
+		PeriodStart: start, PeriodEnd: start.Add(time.Hour), Revision: 1, Currency: "EUR",
+		BillableUnits: 2, AmountMillicents: 50, AsOf: start.Add(time.Hour),
+		Lines: []PlatformTenantStatementLine{{AppID: appID, ConsumerID: consumerID, WindowStart: start,
+			BillableUnits: 2, PlatformTenantRateCardID: rateCardID, Currency: "EUR",
+			PriceMillicentsPerUnit: 25, AmountMillicents: 50}},
+	}
+	if err := validatePlatformTenantStatementInput(input); err != nil {
+		t.Fatalf("tenant-rate-card statement line: %v", err)
+	}
+	input.Lines[0].RateCardID = uuid.NewString()
+	if err := validatePlatformTenantStatementInput(input); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("both rate-card references = %v, want ErrInvalidArgument", err)
+	}
+}

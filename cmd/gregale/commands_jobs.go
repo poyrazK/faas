@@ -149,7 +149,7 @@ func cmdJobsList(args []string) int {
 // default win.
 func cmdJobsAdd(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
 		return 1
 	}
 	name := args[0]
@@ -164,6 +164,8 @@ func cmdJobsAdd(args []string) int {
 	timeout := fs.Int("timeout", 0, "per-task wall-clock deadline in seconds (0 = plan default)")
 	parallelism := fs.Int("parallelism", 0, "max concurrent tasks across the run (0 = plan default)")
 	retries := fs.Int("retries", 0, "per-task max retries (0 = plan default)")
+	schedule := fs.String("schedule", "", "recurring five-field cron schedule")
+	timezone := fs.String("timezone", "", "IANA timezone for --schedule (default UTC)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -172,18 +174,23 @@ func cmdJobsAdd(args []string) int {
 		return 1
 	}
 	if *image == "" {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
 		return 1
 	}
 	req := api.CreateJobRequest{
 		Name:           name,
 		Kind:           "batch",
+		Schedule:       *schedule,
+		Timezone:       *timezone,
 		ImageRef:       *image,
 		EnvOverrides:   parseEnvOverrides([]string(*env)),
 		RAMMB:          *ram,
 		TaskTimeoutSec: *timeout,
 		MaxParallelism: *parallelism,
 		RetryMax:       *retries,
+	}
+	if *schedule != "" {
+		req.Kind = "recurring"
 	}
 	if *command != "" {
 		req.Command = strings.Split(*command, ",")
@@ -236,7 +243,7 @@ func cmdJobsInfo(args []string) int {
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
 		return 1
 	}
 	name := args[0]
@@ -251,6 +258,9 @@ func cmdJobsUpdate(args []string) int {
 	timeout := fs.Int("timeout", 0, "new per-task timeout (s)")
 	parallelism := fs.Int("parallelism", 0, "new max parallel tasks")
 	retries := fs.Int("retries", 0, "new per-task max retries")
+	schedule := fs.String("schedule", "", "replace recurring five-field cron schedule")
+	timezone := fs.String("timezone", "", "replace schedule IANA timezone")
+	unschedule := fs.Bool("unschedule", false, "remove recurring schedule and convert to batch job")
 	pause := fs.Bool("pause", false, "halt future dispatches (status=paused)")
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
@@ -262,6 +272,10 @@ func cmdJobsUpdate(args []string) int {
 	}
 	if *pause && *resume {
 		PrintUsage(os.Stderr, "--pause and --resume are mutually exclusive", "jobs")
+		return 1
+	}
+	if *unschedule && (*schedule != "" || *timezone != "") {
+		PrintUsage(os.Stderr, "--unschedule is mutually exclusive with --schedule and --timezone", "jobs")
 		return 1
 	}
 	req := api.UpdateJobRequest{}
@@ -301,6 +315,21 @@ func cmdJobsUpdate(args []string) int {
 		req.RetryMax = &r
 		touched = true
 	}
+	if set["schedule"] {
+		s := *schedule
+		req.Schedule = &s
+		touched = true
+	}
+	if set["timezone"] {
+		t := *timezone
+		req.Timezone = &t
+		touched = true
+	}
+	if *unschedule {
+		s := ""
+		req.Schedule = &s
+		touched = true
+	}
 	if len(*env) > 0 {
 		req.EnvOverrides = parseEnvOverrides([]string(*env))
 		touched = true
@@ -316,7 +345,7 @@ func cmdJobsUpdate(args []string) int {
 		touched = true
 	}
 	if !touched {
-		PrintUsage(os.Stderr, "at least one patch field is required (--image / --command / --ram / --timeout / --parallelism / --retries / --env / --pause / --resume)", "jobs")
+		PrintUsage(os.Stderr, "at least one patch field is required (--image / --command / --schedule / --timezone / --unschedule / --ram / --timeout / --parallelism / --retries / --env / --pause / --resume)", "jobs")
 		return 1
 	}
 	client, err := authedClient()
@@ -645,6 +674,12 @@ func renderJobsTable(w io.Writer, jobs []api.JobResponse) {
 // job. Mirrors the renderCronState (commands2.go:1852) shape.
 func renderJobState(w io.Writer, j api.JobResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "name:", j.Name)
+	if j.Schedule != "" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s (%s)\n", "schedule:", j.Schedule, j.Timezone)
+		if j.LastScheduledAt != "" {
+			_, _ = fmt.Fprintf(w, "  %-10s %s\n", "last run:", j.LastScheduledAt)
+		}
+	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image:", j.ImageRef)
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "command:", formatCommand(j.Command))
 	_, _ = fmt.Fprintf(w, "  %-10s %d MB\n", "ram:", j.RAMMB)
@@ -652,6 +687,10 @@ func renderJobState(w io.Writer, j api.JobResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %d\n", "parallel:", j.MaxParallelism)
 	_, _ = fmt.Fprintf(w, "  %-10s %d\n", "retries:", j.RetryMax)
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "status:", j.Status)
+	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image status:", j.ImageMaterializationStatus)
+	if j.ImageMaterializationError != "" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image error:", j.ImageMaterializationError)
+	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "created:", formatTimeAgo(j.CreatedAt))
 }
 

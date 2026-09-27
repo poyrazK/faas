@@ -14,6 +14,8 @@ import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -22,7 +24,7 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
-   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale.
+   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan.
    */
   visibility?: 'public' | 'internal';
   /**
@@ -93,7 +95,7 @@ export type AppResponse = {
   preview_expires_at?: string | null;
   manifest: AppManifest;
   /**
-   * Repository-declared same-account service dependencies currently injected into this workload. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
+   * Declared same-account service dependencies injected into this workload as legacy `_URL` environment variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
    */
   service_bindings?: Array<AppServiceBinding>;
   /**
@@ -101,9 +103,21 @@ export type AppResponse = {
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
+   * Effective canonical service URL transport. Legacy apps without a stored value return `http`.
+   */
+  service_binding_transport?: ServiceBindingTransport;
+  /**
    * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
+  /**
+   * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   */
+  allowed_service_callers?: Array<string>;
+  /**
+   * Per-caller HTTP grants for requests reaching this app through a service binding (ADR-278). A missing caller entry denies that caller; any allowed_service_callers entry must also match.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */
@@ -136,6 +150,10 @@ export type AppResponse = {
    * Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie.
    */
   version_affinity_managed_cookie?: boolean;
+  /**
+   * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
+   */
+  revision_pin_ttl_seconds?: number;
   /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */

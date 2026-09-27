@@ -87,8 +87,10 @@ def sync_detailed(
 ) -> Response[PlatformTenantStatementResponse | Problem]:
     """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
 
-     A draft replays unchanged. After finalization, new units create the next revision; no new units
-    replay the latest revision. Mixed currencies are rejected.
+     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
+    before the tenant's first effective card, app pricing remains the fallback. A draft replays
+    unchanged. After finalization, new units create the next revision; no new units replay the latest
+    revision. Mixed effective currencies are rejected.
 
     Args:
         id (UUID):
@@ -126,8 +128,10 @@ def sync(
 ) -> PlatformTenantStatementResponse | Problem | None:
     """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
 
-     A draft replays unchanged. After finalization, new units create the next revision; no new units
-    replay the latest revision. Mixed currencies are rejected.
+     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
+    before the tenant's first effective card, app pricing remains the fallback. A draft replays
+    unchanged. After finalization, new units create the next revision; no new units replay the latest
+    revision. Mixed effective currencies are rejected.
 
     Args:
         id (UUID):
@@ -160,8 +164,10 @@ async def asyncio_detailed(
 ) -> Response[PlatformTenantStatementResponse | Problem]:
     """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
 
-     A draft replays unchanged. After finalization, new units create the next revision; no new units
-    replay the latest revision. Mixed currencies are rejected.
+     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
+    before the tenant's first effective card, app pricing remains the fallback. A draft replays
+    unchanged. After finalization, new units create the next revision; no new units replay the latest
+    revision. Mixed effective currencies are rejected.
 
     Args:
         id (UUID):
@@ -197,8 +203,10 @@ async def asyncio(
 ) -> PlatformTenantStatementResponse | Problem | None:
     """Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
 
-     A draft replays unchanged. After finalization, new units create the next revision; no new units
-    replay the latest revision. Mixed currencies are rejected.
+     For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card;
+    before the tenant's first effective card, app pricing remains the fallback. A draft replays
+    unchanged. After finalization, new units create the next revision; no new units replay the latest
+    revision. Mixed effective currencies are rejected.
 
     Args:
         id (UUID):

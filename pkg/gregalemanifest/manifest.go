@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,6 +103,76 @@ type EventTrigger struct {
 	Source string `yaml:"source" toml:"source"`
 	Type   string `yaml:"type" toml:"type"`
 	Filter string `yaml:"filter,omitempty" toml:"filter"`
+}
+
+// AsyncRoute declares an HTTP route that accepts a request into Gregale's
+// durable invocation queue. Name is the stable manifest identity within App;
+// changing the match or execution policy updates the same managed edge rule.
+// Destinations are app-webhook IDs, matching the edge-rules API contract.
+type AsyncRoute struct {
+	App           string             `yaml:"app"`
+	Name          string             `yaml:"name"`
+	MatchHost     string             `yaml:"match_host"`
+	MatchPath     string             `yaml:"match_path"`
+	MatchMethods  []string           `yaml:"match_methods,omitempty"`
+	Priority      *int               `yaml:"priority,omitempty"`
+	Enabled       *bool              `yaml:"enabled,omitempty"`
+	OnSuccess     string             `yaml:"on_success,omitempty"`
+	OnFailure     string             `yaml:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
+	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
+}
+
+// Validate checks the manifest-only constraints for an async route. API-level
+// action validation is shared by constructing the same DTO used by edge rules.
+func (r AsyncRoute) Validate(index int) error {
+	field := fmt.Sprintf("async_routes[%d]", index)
+	if !isDNSSafeSlug(r.App) {
+		return fmt.Errorf("%s.app %q must match [a-z0-9-]+", field, r.App)
+	}
+	if !isDNSSafeSlug(r.Name) {
+		return fmt.Errorf("%s.name %q must match [a-z0-9-]+", field, r.Name)
+	}
+	if r.MatchHost == "" || len(r.MatchHost) > 253 {
+		return fmt.Errorf("%s.match_host is required and must be at most 253 characters", field)
+	}
+	if !strings.HasPrefix(r.MatchPath, "/") || len(r.MatchPath) > 2048 {
+		return fmt.Errorf("%s.match_path must start with '/' and be at most 2048 characters", field)
+	}
+	if r.Priority != nil && (*r.Priority < 0 || *r.Priority > 10000) {
+		return fmt.Errorf("%s.priority must be in 0..10000", field)
+	}
+	methods := r.MatchMethods
+	if len(methods) == 0 {
+		methods = []string{"POST"}
+	}
+	seenMethods := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		method = strings.ToUpper(strings.TrimSpace(method))
+		switch method {
+		case "POST", "PUT", "PATCH", "DELETE":
+		default:
+			return fmt.Errorf("%s.match_methods only supports POST, PUT, PATCH, and DELETE (got %q)", field, method)
+		}
+		if _, exists := seenMethods[method]; exists {
+			return fmt.Errorf("%s.match_methods contains duplicate method %q", field, method)
+		}
+		seenMethods[method] = struct{}{}
+	}
+	var retry *api.RetryPolicyDTO
+	if r.RetryPolicy != nil {
+		retry = &api.RetryPolicyDTO{
+			MaxAttempts: r.RetryPolicy.MaxAttempts, BaseSeconds: r.RetryPolicy.BaseSeconds,
+			MaxSeconds: r.RetryPolicy.MaxSeconds, JitterSeconds: r.RetryPolicy.JitterSeconds,
+		}
+	}
+	if problem := (&api.EdgeRuleAsyncAction{
+		OnSuccess: r.OnSuccess, OnFailure: r.OnFailure,
+		RetryPolicy: retry, MaxAgeSeconds: r.MaxAgeSeconds,
+	}).Validate(); problem != nil {
+		return fmt.Errorf("%s: %s", field, problem.Detail)
+	}
+	return nil
 }
 
 // CompanionSpec declares one bounded helper workload in a manifest. A preset
@@ -1001,7 +1072,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `companions`, `extensions`, `workflows`,
+// `triggers`, `event_triggers`, `async_routes`, `companions`, `extensions`, `workflows`,
 // `databases`, `buckets`, and the local-only `dev` profile; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
@@ -1025,8 +1096,11 @@ type Manifest struct {
 	// [[triggers.event]] in gregale.toml. YAML trigger entries remain in
 	// Triggers for backward compatibility; the separate slice keeps event
 	// subscriptions from changing that wire shape.
-	EventTriggers []EventTrigger  `yaml:"event_triggers,omitempty"`
-	Companions    []CompanionSpec `yaml:"companions,omitempty"`
+	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
+	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
+	// existing managed routes unchanged; an explicit empty list clears them.
+	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
+	Companions  []CompanionSpec `yaml:"companions,omitempty"`
 	// Extensions is the legacy name for Companions.
 	Extensions []ExtensionSpec      `yaml:"extensions,omitempty"`
 	Workflows  []api.WorkflowSpec   `yaml:"workflows,omitempty"`
@@ -1474,6 +1548,31 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := validateAppRetryPolicy(m.RetryPolicy); err != nil {
 			return err
 		}
+	}
+	seenAsyncRoutes := make(map[string]struct{}, len(m.AsyncRoutes))
+	seenAsyncMatches := make(map[string]struct{}, len(m.AsyncRoutes))
+	for i, route := range m.AsyncRoutes {
+		if err := route.Validate(i); err != nil {
+			return err
+		}
+		key := route.App + "\x00" + route.Name
+		if _, exists := seenAsyncRoutes[key]; exists {
+			return fmt.Errorf("async_routes[%d]: duplicate name %q for app %q", i, route.Name, route.App)
+		}
+		seenAsyncRoutes[key] = struct{}{}
+		methods := append([]string(nil), route.MatchMethods...)
+		if len(methods) == 0 {
+			methods = []string{"POST"}
+		}
+		for j := range methods {
+			methods[j] = strings.ToUpper(strings.TrimSpace(methods[j]))
+		}
+		sort.Strings(methods)
+		matchKey := strings.ToLower(strings.TrimSpace(route.MatchHost)) + "\x00" + route.MatchPath + "\x00" + strings.Join(methods, ",")
+		if _, exists := seenAsyncMatches[route.App+"\x00"+matchKey]; exists {
+			return fmt.Errorf("async_routes[%d]: duplicate route match for app %q", i, route.App)
+		}
+		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
 	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {

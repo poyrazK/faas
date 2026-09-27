@@ -175,6 +175,9 @@ from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecr
 from .app_secret_response import AppSecretResponse
 from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
 from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
+from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
+from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
+from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -325,6 +328,7 @@ from .create_app_request_eviction_priority import CreateAppRequestEvictionPriori
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
+from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
 from .create_app_request_type import CreateAppRequestType
 from .create_app_request_visibility import CreateAppRequestVisibility
 from .create_app_task_request import CreateAppTaskRequest
@@ -386,7 +390,17 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
+from .create_platform_tenant_access_token_request import CreatePlatformTenantAccessTokenRequest
+from .create_platform_tenant_access_token_request_scopes_item import CreatePlatformTenantAccessTokenRequestScopesItem
+from .create_platform_tenant_access_token_response import CreatePlatformTenantAccessTokenResponse
+from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
+from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_request import CreatePlatformTenantRequest
+from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
+from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
+from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformTenantWebhookRequestRetryPolicy
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
@@ -411,6 +425,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
 from .cron_response import CronResponse
+from .cron_response_kind import CronResponseKind
 from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
@@ -591,6 +606,9 @@ from .diff_request import DiffRequest
 from .diff_request_env_by_scope import DiffRequestEnvByScope
 from .diff_response import DiffResponse
 from .diff_response_plan import DiffResponsePlan
+from .discovered_api_route import DiscoveredAPIRoute
+from .discovered_routes_response import DiscoveredRoutesResponse
+from .discovered_routes_response_source import DiscoveredRoutesResponseSource
 from .dispatch_invocation_batch_body import DispatchInvocationBatchBody
 from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
@@ -604,6 +622,7 @@ from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
 from .edge_rule_async_action import EdgeRuleAsyncAction
+from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
@@ -1002,6 +1021,14 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_app_binding import OutboundAppBinding
+from .outbound_app_binding_list import OutboundAppBindingList
+from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
+from .outbound_integration_offer_list import OutboundIntegrationOfferList
+from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
+from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
+from .outbound_request_policy import OutboundRequestPolicy
 from .parked_deployment_ref import ParkedDeploymentRef
 from .parked_deployment_ref_parked_reason import ParkedDeploymentRefParkedReason
 from .password_forgot_response_200 import PasswordForgotResponse200
@@ -1017,6 +1044,8 @@ from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
+from .plan_async_route import PlanAsyncRoute
+from .plan_async_route_action import PlanAsyncRouteAction
 from .plan_cron import PlanCron
 from .plan_detected_by import PlanDetectedBy
 from .plan_detected_by_detector import PlanDetectedByDetector
@@ -1031,9 +1060,15 @@ from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
+from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
+from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
 from .platform_tenant_activation_response import PlatformTenantActivationResponse
 from .platform_tenant_activation_response_status import PlatformTenantActivationResponseStatus
 from .platform_tenant_activation_surface_response import PlatformTenantActivationSurfaceResponse
+from .platform_tenant_activity_filters import PlatformTenantActivityFilters
+from .platform_tenant_activity_item import PlatformTenantActivityItem
+from .platform_tenant_activity_response import PlatformTenantActivityResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
 from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
@@ -1044,16 +1079,36 @@ from .platform_tenant_credentials_response import PlatformTenantCredentialsRespo
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
+from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
+from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
+from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
+from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
+from .platform_tenant_statement_finalized_webhook_payload_status import (
+    PlatformTenantStatementFinalizedWebhookPayloadStatus,
+)
 from .platform_tenant_statement_handoff_response import PlatformTenantStatementHandoffResponse
 from .platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 from .platform_tenant_statement_list_response import PlatformTenantStatementListResponse
 from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
+from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
+from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
+from .platform_tenant_webhook_list_response import PlatformTenantWebhookListResponse
+from .platform_tenant_webhook_response import PlatformTenantWebhookResponse
+from .platform_tenant_webhook_response_delivery_format import PlatformTenantWebhookResponseDeliveryFormat
+from .platform_tenant_webhook_response_event_filter_item import PlatformTenantWebhookResponseEventFilterItem
+from .platform_tenant_webhook_response_retry_policy import PlatformTenantWebhookResponseRetryPolicy
+from .platform_tenant_webhook_response_scope import PlatformTenantWebhookResponseScope
+from .platform_tenant_webhook_response_webhook_secret_sealed_masked import (
+    PlatformTenantWebhookResponseWebhookSecretSealedMasked,
+)
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
 from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
@@ -1195,6 +1250,8 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_set_member_response import ProjectReleaseSetMemberResponse
+from .project_release_set_response import ProjectReleaseSetResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -1229,12 +1286,17 @@ from .public_status_update_state import PublicStatusUpdateState
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_response import PublishEventResponse
+from .publish_project_release_set_request import PublishProjectReleaseSetRequest
+from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_credential_request import PutOutboundCredentialRequest
+from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
+from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1271,6 +1333,13 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_compute_cost import RequestAnalyticsComputeCost
+from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
+from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
+from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
+from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
+from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
 from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
@@ -1284,6 +1353,8 @@ from .request_analytics_timeseries_response_group_by import RequestAnalyticsTime
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
+from .request_audit_list_response import RequestAuditListResponse
+from .request_audit_record import RequestAuditRecord
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
@@ -1328,10 +1399,25 @@ from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
 from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
+from .scoped_app_secret_response_last_runtime_reload_error_code import ScopedAppSecretResponseLastRuntimeReloadErrorCode
+from .scoped_app_secret_response_last_runtime_reload_projection import (
+    ScopedAppSecretResponseLastRuntimeReloadProjection,
+)
+from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecretResponseLastRuntimeReloadSignal
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
+from .secret_runtime_reload_observation import SecretRuntimeReloadObservation
+from .secret_runtime_reload_observation_application_ack import SecretRuntimeReloadObservationApplicationAck
+from .secret_runtime_reload_observation_application_ack_error_code import (
+    SecretRuntimeReloadObservationApplicationAckErrorCode,
+)
+from .secret_runtime_reload_observation_error_code import SecretRuntimeReloadObservationErrorCode
+from .secret_runtime_reload_observation_projection import SecretRuntimeReloadObservationProjection
+from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloadObservationReloadSupport
+from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
+from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
@@ -1341,6 +1427,15 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_binding_policy import ServiceBindingPolicy
+from .service_binding_transport import ServiceBindingTransport
+from .service_call_scope import ServiceCallScope
+from .service_caller_jwk import ServiceCallerJWK
+from .service_caller_jwk_alg import ServiceCallerJWKAlg
+from .service_caller_jwk_crv import ServiceCallerJWKCrv
+from .service_caller_jwk_kty import ServiceCallerJWKKty
+from .service_caller_jwk_set import ServiceCallerJWKSet
+from .service_caller_jwk_use import ServiceCallerJWKUse
+from .service_caller_scopes import ServiceCallerScopes
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -1355,6 +1450,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
 from .severity_counts import SeverityCounts
@@ -1455,6 +1551,16 @@ from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExe
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
+from .update_app_request_service_binding_policy_type_1 import UpdateAppRequestServiceBindingPolicyType1
+from .update_app_request_service_binding_policy_type_2_type_1 import UpdateAppRequestServiceBindingPolicyType2Type1
+from .update_app_request_service_binding_policy_type_3_type_1 import UpdateAppRequestServiceBindingPolicyType3Type1
+from .update_app_request_service_binding_transport_type_1 import UpdateAppRequestServiceBindingTransportType1
+from .update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+)
+from .update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+)
 from .update_app_request_visibility_type_1 import UpdateAppRequestVisibilityType1
 from .update_app_request_visibility_type_2_type_1 import UpdateAppRequestVisibilityType2Type1
 from .update_app_request_visibility_type_3_type_1 import UpdateAppRequestVisibilityType3Type1
@@ -1488,6 +1594,10 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
+from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
+from .update_platform_tenant_webhook_request_delivery_format import UpdatePlatformTenantWebhookRequestDeliveryFormat
+from .update_platform_tenant_webhook_request_retry_policy import UpdatePlatformTenantWebhookRequestRetryPolicy
 from .update_private_network_policy_request import UpdatePrivateNetworkPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
@@ -1746,6 +1856,9 @@ __all__ = (
     "AppSecretResponse",
     "AppSecretResponseDeliveryStatus",
     "AppSecretResponseLastDeliveryErrorCode",
+    "AppSecretResponseLastRuntimeReloadErrorCode",
+    "AppSecretResponseLastRuntimeReloadProjection",
+    "AppSecretResponseLastRuntimeReloadSignal",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -1874,6 +1987,7 @@ __all__ = (
     "CreateAppRequestExecutionMode",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
+    "CreateAppRequestServiceBindingPolicy",
     "CreateAppRequestType",
     "CreateAppRequestVisibility",
     "CreateAppTaskRequest",
@@ -1931,7 +2045,17 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAllowedMethodsItem",
+    "CreatePlatformTenantAccessTokenRequest",
+    "CreatePlatformTenantAccessTokenRequestScopesItem",
+    "CreatePlatformTenantAccessTokenResponse",
+    "CreatePlatformTenantAccessTokenResponseScopesItem",
+    "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRequest",
+    "CreatePlatformTenantWebhookRequest",
+    "CreatePlatformTenantWebhookRequestDeliveryFormat",
+    "CreatePlatformTenantWebhookRequestRetryPolicy",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
@@ -1952,6 +2076,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
     "CronResponse",
+    "CronResponseKind",
     "CronResponseSuspendedReason",
     "CronRun",
     "CronRunOutcome",
@@ -2132,6 +2257,9 @@ __all__ = (
     "DiffRequestEnvByScope",
     "DiffResponse",
     "DiffResponsePlan",
+    "DiscoveredAPIRoute",
+    "DiscoveredRoutesResponse",
+    "DiscoveredRoutesResponseSource",
     "DispatchInvocationBatchBody",
     "DispatchInvocationBatchBodyRecordsItem",
     "DispatchInvocationBatchBodyRecordsItemHeaders",
@@ -2145,6 +2273,7 @@ __all__ = (
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
     "EdgeRuleAsyncAction",
+    "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
@@ -2539,6 +2668,14 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAppBinding",
+    "OutboundAppBindingList",
+    "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferCredentialSource",
+    "OutboundIntegrationOfferList",
+    "OutboundIntegrationOfferOwnerKind",
+    "OutboundIntegrationUsageResponse",
+    "OutboundRequestPolicy",
     "ParkedDeploymentRef",
     "ParkedDeploymentRefParkedReason",
     "PasswordForgotResponse200",
@@ -2554,6 +2691,8 @@ __all__ = (
     "PaymentMethodSummary",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
+    "PlanAsyncRoute",
+    "PlanAsyncRouteAction",
     "PlanCron",
     "PlanDetectedBy",
     "PlanDetectedByDetector",
@@ -2568,9 +2707,15 @@ __all__ = (
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadTier",
+    "PlatformTenantAccessTokenListResponse",
+    "PlatformTenantAccessTokenResponse",
+    "PlatformTenantAccessTokenResponseScopesItem",
     "PlatformTenantActivationResponse",
     "PlatformTenantActivationResponseStatus",
     "PlatformTenantActivationSurfaceResponse",
+    "PlatformTenantActivityFilters",
+    "PlatformTenantActivityItem",
+    "PlatformTenantActivityResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
     "PlatformTenantCredentialMetadata",
@@ -2581,16 +2726,32 @@ __all__ = (
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantListResponse",
+    "PlatformTenantRateCardListResponse",
+    "PlatformTenantRateCardResponse",
+    "PlatformTenantRateCardResponseUnit",
+    "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantSelfStatementListResponse",
+    "PlatformTenantStatementFinalizedWebhookPayload",
+    "PlatformTenantStatementFinalizedWebhookPayloadStatus",
     "PlatformTenantStatementHandoffResponse",
     "PlatformTenantStatementLineResponse",
     "PlatformTenantStatementListResponse",
     "PlatformTenantStatementResponse",
     "PlatformTenantStatementResponseStatus",
+    "PlatformTenantStatementSummaryResponse",
+    "PlatformTenantStatementSummaryResponseStatus",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
+    "PlatformTenantWebhookListResponse",
+    "PlatformTenantWebhookResponse",
+    "PlatformTenantWebhookResponseDeliveryFormat",
+    "PlatformTenantWebhookResponseEventFilterItem",
+    "PlatformTenantWebhookResponseRetryPolicy",
+    "PlatformTenantWebhookResponseScope",
+    "PlatformTenantWebhookResponseWebhookSecretSealedMasked",
     "PostAccountSessionsRevokeAllBody",
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
@@ -2712,6 +2873,8 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseSetMemberResponse",
+    "ProjectReleaseSetResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
@@ -2746,12 +2909,17 @@ __all__ = (
     "PublishEventRequest",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishProjectReleaseSetRequest",
+    "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundCredentialRequest",
+    "PutOutboundDailyRequestBudgetRequest",
+    "PutOutboundRequestPolicyRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -2788,6 +2956,13 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsComputeCost",
+    "RequestAnalyticsComputeCostAllocationMethod",
+    "RequestAnalyticsComputeCostBasis",
+    "RequestAnalyticsComputeCostCurrency",
+    "RequestAnalyticsDependency",
+    "RequestAnalyticsDeploymentCost",
+    "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",
     "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",
@@ -2801,6 +2976,8 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponseMethod",
     "RequestAnalyticsTimeseriesSeries",
     "RequestAnalyticsTimeseriesSeriesMethod",
+    "RequestAuditListResponse",
+    "RequestAuditRecord",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",
@@ -2843,10 +3020,21 @@ __all__ = (
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",
     "ScopedAppSecretResponseLastDeliveryErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadProjection",
+    "ScopedAppSecretResponseLastRuntimeReloadSignal",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
     "SecretFindingSeverity",
+    "SecretRuntimeReloadObservation",
+    "SecretRuntimeReloadObservationApplicationAck",
+    "SecretRuntimeReloadObservationApplicationAckErrorCode",
+    "SecretRuntimeReloadObservationErrorCode",
+    "SecretRuntimeReloadObservationProjection",
+    "SecretRuntimeReloadObservationReloadSupport",
+    "SecretRuntimeReloadObservationRuntimeState",
+    "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
@@ -2856,6 +3044,15 @@ __all__ = (
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
     "ServiceBindingPolicy",
+    "ServiceBindingTransport",
+    "ServiceCallerJWK",
+    "ServiceCallerJWKAlg",
+    "ServiceCallerJWKCrv",
+    "ServiceCallerJWKKty",
+    "ServiceCallerJWKSet",
+    "ServiceCallerJWKUse",
+    "ServiceCallerScopes",
+    "ServiceCallScope",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
@@ -2870,6 +3067,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
     "SeverityCounts",
@@ -2970,6 +3168,12 @@ __all__ = (
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
+    "UpdateAppRequestServiceBindingPolicyType1",
+    "UpdateAppRequestServiceBindingPolicyType2Type1",
+    "UpdateAppRequestServiceBindingPolicyType3Type1",
+    "UpdateAppRequestServiceBindingTransportType1",
+    "UpdateAppRequestServiceBindingTransportType2Type1",
+    "UpdateAppRequestServiceBindingTransportType3Type1",
     "UpdateAppRequestVisibilityType1",
     "UpdateAppRequestVisibilityType2Type1",
     "UpdateAppRequestVisibilityType3Type1",
@@ -2999,6 +3203,10 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateOutboundBindingPolicyRequest",
+    "UpdatePlatformTenantWebhookRequest",
+    "UpdatePlatformTenantWebhookRequestDeliveryFormat",
+    "UpdatePlatformTenantWebhookRequestRetryPolicy",
     "UpdatePrivateNetworkPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",

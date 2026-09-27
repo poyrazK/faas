@@ -1490,11 +1490,11 @@ groups:
 
       # Outbound admission is deliberately reject-first in v1. A sustained
       # rejection rate means an attached application is exhausting the
-      # provider budget or the integration's in-flight ceiling; it is a
-      # warning rather than a page because this is an explicit back-pressure
-      # signal, not a gateway outage.
+      # integration's rate, concurrency, or daily request policy; it is a
+      # warning rather than a page because this is explicit back-pressure,
+      # not a gateway outage.
       - alert: FaasOutboundBudgetSaturated
-        expr: sum by (integration_id) (rate(outbound_rejections_total{reason=~"rate_limit|concurrency_limit"}[5m])) > 0
+        expr: sum by (integration_id) (rate(outbound_rejections_total{reason=~"rate_limit|concurrency_limit|daily_request_limit"}[5m])) > 0
         for: 10m
         labels:
           severity: warn
@@ -1502,7 +1502,7 @@ groups:
           family: outbound_admission
         annotations:
           summary: "Outbound integration {{ $labels.integration_id }} is rejecting requests"
-          description: "The shared outbound budget for integration {{ $labels.integration_id }} has rejected requests continuously for 10m. Check rate/concurrency settings, provider quotas, and the outbound gateway saturation panels before increasing limits."
+          description: "The shared outbound policy for integration {{ $labels.integration_id }} has rejected requests continuously for 10m. Check rate/concurrency settings, the daily request limit, provider quotas, and the outbound gateway saturation panels before increasing limits."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
 
       - alert: FaasOutboundAdmissionUnavailable

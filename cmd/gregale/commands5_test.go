@@ -1977,6 +1977,7 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 		"function-go":        {"handler.go", "README.md"},
 		"function-node24":    {"handler.js", "package.json", "README.md"},
 		"function-python313": {"handler.py", "requirements.txt", "README.md"},
+		"secret-reload-node": {"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {

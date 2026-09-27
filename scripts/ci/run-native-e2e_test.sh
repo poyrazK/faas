@@ -10,6 +10,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/scripts/ci/run-native-e2e.sh"
 verdict="${repo_root}/scripts/ci/native-e2e-verdict.sh"
+phases="${repo_root}/scripts/ci/native-e2e-phases.sh"
+workflow="${repo_root}/.github/workflows/e2e-native.yml"
 
 fail() {
   echo "native e2e contract: $*" >&2
@@ -18,12 +20,16 @@ fail() {
 
 [[ -x "${runner}" ]] || fail "wrapper is not executable: ${runner}"
 [[ -r "${verdict}" ]] || fail "verdict rules are missing: ${verdict}"
+[[ -r "${phases}" ]] || fail "phase definitions are missing: ${phases}"
+[[ -r "${workflow}" ]] || fail "native e2e workflow is missing: ${workflow}"
 
 # ---------------------------------------------------------------------------
 # The verdict rules, driven with synthetic logs.
 # ---------------------------------------------------------------------------
 # shellcheck source=scripts/ci/native-e2e-verdict.sh
 source "${verdict}"
+# shellcheck source=scripts/ci/native-e2e-phases.sh
+source "${phases}"
 
 [[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 8 ]] ||
   fail "the required-test contract shrank to ${#NATIVE_E2E_REQUIRED_TESTS[@]} tests"
@@ -121,6 +127,94 @@ grep -Fq 'native_e2e_verdict "${e2e_log}"' "${runner}" ||
   fail "the wrapper does not apply the verdict rules to its test log"
 grep -Fq 'source "${repo_root}/scripts/ci/native-e2e-verdict.sh"' "${runner}" ||
   fail "the wrapper does not load the verdict rules"
+
+# 7. Bounded dispatch lanes are held to their exact selected test set. They
+#    must not inherit the full-suite contract, but no selected test may be
+#    skipped, missing, or failing.
+lane_tests=(TestLaneProbeOne TestLaneProbeTwo)
+lane_pass_log() {
+  local out="$1" required
+  shift
+  : > "${out}"
+  for required in "$@"; do
+    printf -- '--- PASS: %s (0.01s)\n' "${required}" >> "${out}"
+  done
+}
+
+lane_pass_log "${work}/lane-green.log" "${lane_tests[@]}"
+native_e2e_lane_verdict "${work}/lane-green.log" "probe lane" "${lane_tests[@]}" \
+  >"${work}/lane-green.out" 2>&1 ||
+  fail "a complete bounded lane was rejected: $(cat "${work}/lane-green.out")"
+grep -Fq 'all 2 required tests passed' "${work}/lane-green.out" ||
+  fail "a complete bounded lane did not report its required tests"
+
+jobs_tests=()
+while IFS= read -r selected_test; do
+  jobs_tests+=("${selected_test}")
+done < <(native_e2e_phase_tests jobs "${repo_root}")
+[[ "${#jobs_tests[@]}" -gt 0 ]] || fail "the Jobs phase selected no tests"
+lane_pass_log "${work}/jobs-only.log" "${jobs_tests[@]}"
+native_e2e_lane_verdict "${work}/jobs-only.log" "jobs-only lane" "${jobs_tests[@]}" \
+  >"${work}/jobs-only.out" 2>&1 ||
+  fail "a complete Jobs-only phase was rejected: $(cat "${work}/jobs-only.out")"
+if native_e2e_verdict "${work}/jobs-only.log" >"${work}/jobs-only-full.out" 2>&1; then
+  fail "the whole-suite verdict unexpectedly accepted a Jobs-only log"
+fi
+
+lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
+grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
+printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
+mv "${work}/lane-skip.tmp" "${work}/lane-skip.log"
+if native_e2e_lane_verdict "${work}/lane-skip.log" "probe lane" "${lane_tests[@]}" \
+  >"${work}/lane-skip.out" 2>&1; then
+  fail "a bounded lane that skipped ${lane_tests[0]} was accepted"
+fi
+grep -Fq "required test ${lane_tests[0]} SKIPPED" "${work}/lane-skip.out" ||
+  fail "the bounded lane did not name its skipped test"
+
+lane_pass_log "${work}/lane-absent.log" "${lane_tests[1]}"
+if native_e2e_lane_verdict "${work}/lane-absent.log" "probe lane" "${lane_tests[@]}" \
+  >"${work}/lane-absent.out" 2>&1; then
+  fail "a bounded lane missing ${lane_tests[0]} was accepted"
+fi
+grep -Fq "required test ${lane_tests[0]} did not pass or run" "${work}/lane-absent.out" ||
+  fail "the bounded lane did not name its absent test"
+
+lane_pass_log "${work}/lane-failed.log" "${lane_tests[@]}"
+grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-failed.log" > "${work}/lane-failed.tmp"
+printf -- '--- FAIL: %s (0.01s)\n' "${lane_tests[0]}" >> "${work}/lane-failed.tmp"
+mv "${work}/lane-failed.tmp" "${work}/lane-failed.log"
+if native_e2e_lane_verdict "${work}/lane-failed.log" "probe lane" "${lane_tests[@]}" \
+  >"${work}/lane-failed.out" 2>&1; then
+  fail "a bounded lane with failing test ${lane_tests[0]} was accepted"
+fi
+grep -Fq "required test ${lane_tests[0]} FAILED" "${work}/lane-failed.out" ||
+  fail "the bounded lane did not name its failed test"
+
+if native_e2e_lane_verdict "${work}/lane-green.log" "empty lane" \
+  >"${work}/lane-empty.out" 2>&1; then
+  fail "a bounded lane with no selected tests was accepted"
+fi
+grep -Fq 'no required tests were selected' "${work}/lane-empty.out" ||
+  fail "an empty bounded lane did not explain the failure"
+
+printf -- '--- PASS: %s (0.01s)\n    --- PASS: %s/subtest (0.01s)\n' \
+  "${lane_tests[0]}" "${lane_tests[1]}" > "${work}/lane-subtest.log"
+if native_e2e_lane_verdict "${work}/lane-subtest.log" "probe lane" "${lane_tests[@]}" \
+  >"${work}/lane-subtest.out" 2>&1; then
+  fail "an indented subtest satisfied a bounded lane requirement"
+fi
+grep -Fq "required test ${lane_tests[1]} did not pass or run" "${work}/lane-subtest.out" ||
+  fail "the bounded lane did not name the absent top-level test"
+
+# Keep dispatch routing explicit: smoke and jobs-only validate their derived
+# selection, while full/qualify continue to use the platform-wide contract.
+grep -Fq 'native_e2e_lane_tests smoke "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the smoke lane does not derive its selected tests for its verdict"
+grep -Fq 'native_e2e_phase_tests jobs "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the Jobs-only lane does not derive its selected tests for its verdict"
+grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
+  fail "full native e2e dispatches no longer apply the platform-wide verdict"
 
 # ---------------------------------------------------------------------------
 # The run set: derived from source, never hand-listed.

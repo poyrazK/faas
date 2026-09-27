@@ -33,6 +33,10 @@ class EdgeRuleJWTAction:
     algorithms: list[EdgeRuleJWTActionAlgorithmsItem]
     audience: list[str] | Unset = UNSET
     required_claims: EdgeRuleJWTActionRequiredClaims | Unset = UNSET
+    platform_tenant_external_ref_claim: str | Unset = UNSET
+    """Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
+    app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
+    rejected before the request reaches the guest."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +57,8 @@ class EdgeRuleJWTAction:
         if not isinstance(self.required_claims, Unset):
             required_claims = self.required_claims.to_dict()
 
+        platform_tenant_external_ref_claim = self.platform_tenant_external_ref_claim
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +72,8 @@ class EdgeRuleJWTAction:
             field_dict["audience"] = audience
         if required_claims is not UNSET:
             field_dict["required_claims"] = required_claims
+        if platform_tenant_external_ref_claim is not UNSET:
+            field_dict["platform_tenant_external_ref_claim"] = platform_tenant_external_ref_claim
 
         return field_dict
 
@@ -94,12 +102,15 @@ class EdgeRuleJWTAction:
         else:
             required_claims = EdgeRuleJWTActionRequiredClaims.from_dict(_required_claims)
 
+        platform_tenant_external_ref_claim = d.pop("platform_tenant_external_ref_claim", UNSET)
+
         edge_rule_jwt_action = cls(
             issuer=issuer,
             jwks_url=jwks_url,
             algorithms=algorithms,
             audience=audience,
             required_claims=required_claims,
+            platform_tenant_external_ref_claim=platform_tenant_external_ref_claim,
         )
 
         edge_rule_jwt_action.additional_properties = d

@@ -14,10 +14,14 @@ order is the canonical reference.
 
 The customer-facing `jobs.image_ref` remains an OCI reference. The
 image-materialization worker resolves that reference, builds the immutable ext4
-rootfs, and persists the resolved artifact at the canonical storage key
-`jobs/<job-id>.ext4` (the helper is `pkg/sched.JobLayerKey`). This keeps the
-source reference separate from the storage key and gives schedd, imaged, and
-vmmd one round-trippable artifact contract. Materialization is lease-claimed,
+rootfs, and persists the resolved artifact at an immutable attempt key
+`jobs/<job-id>__<attempt-id>.ext4`. Publication is fenced by the live claim
+owner, attempt generation, source reference, and lease expiry, so an expired
+worker cannot replace or remove a later worker's artifact. The legacy
+`jobs/<job-id>.ext4` key (the helper is `pkg/sched.JobLayerKey`) remains for
+pre-attempt artifacts and legacy verification. This keeps the source reference
+separate from the storage key and gives schedd, imaged, and vmmd one
+round-trippable artifact contract. Materialization is lease-claimed,
 retry-safe, and gated before task dispatch; account-scoped private-registry
 credentials are sealed at rest and exposed through the Jobs API.
 

@@ -528,6 +528,8 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        app.Manifest.RevisionPinTTLSeconds,
+		ProjectID:                    app.ProjectID,
 		NodeID:                       app.NodeID,
 		Ports:                        gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
 		Sidecars:                     companionRoutes,

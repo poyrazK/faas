@@ -113,6 +113,12 @@ type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
+// PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, read-only
+// control-plane bearer without widening the account API-key vocabulary.
+type PlatformTenantAccessTokenAuthenticator interface {
+	AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error)
+}
+
 type deployTokenLastUsedToucher interface {
 	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
 }
@@ -523,6 +529,55 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			}
 		}
 
+		// (1d) Downstream platform-tenant access bearer. This format is
+		// accepted only for the explicit read-only self-service route set;
+		// all regular account routes remain unreachable even if they happen
+		// to use a compatible scope in the future.
+		if api.ValidPlatformTenantAccessTokenFormat(tok) {
+			if !platformTenantSelfPathAllowed(r.Method, r.URL.Path) {
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+					"Platform tenant token scope is limited", "this credential can only access its tenant's self-service read endpoints"))
+				return
+			}
+			authenticator, ok := m.Authn.(PlatformTenantAccessTokenAuthenticator)
+			if !ok {
+				setBearerChallenge(w, "invalid_token")
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+					"Unauthorized", "provide a valid platform tenant access token"))
+				return
+			}
+			acct, token, err := authenticator.AuthenticatePlatformTenantAccessToken(r.Context(), api.HashAPIKey(tok))
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					setBearerChallenge(w, "invalid_token")
+					api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+						"Unauthorized", "provide a valid platform tenant access token"))
+					return
+				}
+				if m.Log != nil {
+					m.Log.Warn("platform tenant access token authentication failed", "error", err.Error())
+				}
+				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
+				return
+			}
+			if !acct.Active() {
+				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
+				return
+			}
+			if token.AccountID != acct.ID || token.TenantID == "" || len(token.Scopes) == 0 {
+				setBearerChallenge(w, "invalid_token")
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+					"Unauthorized", "provide a valid platform tenant access token"))
+				return
+			}
+			key := state.APIKey{ID: token.ID, AccountID: token.AccountID, PlatformTenantID: token.TenantID,
+				Scopes: append([]string(nil), token.Scopes...), Status: string(state.APIKeyStatusActive)}
+			*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+			next(w, r, acct)
+			return
+		}
+
 		// (1b) OIDC-derived short-lived bearer branch
 		// (issue #270 / ADR-101). Disjoint prefix from ValidAPIKeyFormat
 		// so the two checks never cross-match; same bearer-token
@@ -696,6 +751,20 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "provide a valid API key as a Bearer token or sign in via session cookie"))
 	}
+}
+
+func platformTenantSelfPathAllowed(method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	suffix := strings.TrimPrefix(path, "/v1/platform-tenant-self/")
+	if suffix == path {
+		return false
+	}
+	if suffix == "usage" || suffix == "usage-statements" {
+		return true
+	}
+	return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")
 }
 
 // RequireSessionCookie is the live-row cross-check (IAM-3).

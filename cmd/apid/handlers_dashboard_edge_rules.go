@@ -8,6 +8,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -42,7 +45,7 @@ func parseAppEdgeRulesPath(rest string) (string, bool) {
 	return slug, true
 }
 
-func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
+func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string, traceForm *dashboard.EdgeRuleTraceFormData, traceInput *edgeruletrace.Input) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
 	if err != nil || app.AccountID != acct.ID {
@@ -53,6 +56,20 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	data := dashboard.AppEdgeRulesData{
 		App:    dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain), IsPreview: app.PreviewOfSlug != ""},
 		Action: dashboardEdgeRulesActionFlash(r),
+	}
+	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
+	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
+		data.Trace.Host = appURL.Hostname()
+	}
+	presets, presetErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID)
+	if presetErr != nil {
+		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", presetErr)
+	} else {
+		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
+	}
+	if traceForm != nil {
+		data.Trace = *traceForm
+		data.Trace.Headers = edgeruletrace.RedactHeaderInputForDisplay(data.Trace.Headers)
 	}
 	if rules, listErr := s.store.ListEdgeRulesForApp(ctx, app.ID); listErr != nil {
 		data.ErrorMessage = "Edge-rule data is temporarily unavailable. Please try again shortly."
@@ -65,11 +82,46 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 				break
 			}
 		}
-	}
-	if presets, listErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID); listErr != nil {
-		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
-	} else {
-		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
+		if traceInput != nil {
+			traceContext := *traceInput
+			traceContext.AppMaintenanceLoaded = true
+			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			traceContext.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
+			traceContext.DeclaredRoutes = make([]api.DeclaredRoute, 0, len(app.DeclaredRoutes))
+			for _, route := range app.DeclaredRoutes {
+				traceContext.DeclaredRoutes = append(traceContext.DeclaredRoutes, api.DeclaredRoute{Path: route.Path, Methods: append([]string(nil), route.Methods...)})
+			}
+			if traceContext.OnlyAllowDeclaredRoutes && len(traceContext.DeclaredRoutes) == 0 {
+				doc, _, docErr := s.store.GetAppOpenAPIDoc(ctx, app.ID, acct.ID)
+				switch {
+				case docErr == nil:
+					traceContext.DeclaredRouteDocumentLoaded = true
+					traceContext.DeclaredRouteOpenAPIDoc = append([]byte(nil), doc...)
+				case errors.Is(docErr, state.ErrNotFound):
+					traceContext.DeclaredRouteDocumentMissing = true
+				default:
+					log.Warn("dashboard edge rules: load declared-route OpenAPI document", "account_id", acct.ID, "app_id", app.ID, "err", docErr)
+				}
+			}
+			traceContext.AppCORSDefaultsLoaded = true
+			traceContext.CORSDefaultEnabled = app.CORSDefaultEnabled
+			traceContext.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
+			if presetErr == nil {
+				traceContext.CorsPresets = corsPresetResponsesFromRows(presets)
+			}
+			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
+			for _, rule := range rules {
+				apiRules = append(apiRules, edgeRuleResponse(rule))
+			}
+			result, traceErr := edgeruletrace.Simulate(traceContext, apiRules)
+			if traceErr != nil {
+				data.Trace.ErrorMessage = "The request could not be simulated. Check the request fields and try again."
+			} else {
+				data.Trace.Result = &result
+			}
+		} else if data.Trace.Submitted && data.Trace.ErrorMessage == "" && data.ErrorMessage != "" {
+			data.Trace.ErrorMessage = "Edge rules are temporarily unavailable, so this request could not be traced."
+		}
 	}
 	if s.sessions != nil {
 		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
@@ -96,6 +148,69 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(ctx), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// dashboardTraceEdgeRules simulates a submitted request against the current
+// app's stored edge-rule snapshot. It is a read-only, account-scoped form
+// post; it neither contacts the gateway nor stores request data.
+func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	// VerifyAuthenticatedNamed reads a form value, so apply the body bound
+	// before CSRF validation as well as before the handler parses fields.
+	// Form encoding can expand the bounded UTF-8 body to roughly 3x its
+	// original byte length; cap the complete POST before CSRF parsing.
+	requestLimit := int64(edgeruletrace.MaxTraceBodyBytes*4 + 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, requestLimit)
+	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
+		return
+	}
+	form := dashboard.EdgeRuleTraceFormData{Submitted: true}
+	if err := r.ParseForm(); err != nil {
+		form.ErrorMessage = fmt.Sprintf("The trace form could not be read. The simulated request body is limited to %d bytes.", edgeruletrace.MaxTraceBodyBytes)
+		s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, nil)
+		return
+	}
+	form.Host = strings.TrimSpace(r.FormValue("trace_host"))
+	form.Path = r.FormValue("trace_path")
+	form.Method = r.FormValue("trace_method")
+	form.Headers = r.FormValue("trace_headers")
+	rawBody := r.FormValue("trace_body")
+	form.BodyProvided = r.FormValue("trace_body_provided") != "" || rawBody != ""
+	form.ClientIP = r.FormValue("trace_client_ip")
+	form.Country = r.FormValue("trace_country")
+	lines := strings.Split(strings.ReplaceAll(form.Headers, "\r\n", "\n"), "\n")
+	headerLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.TrimSpace(line) != "" {
+			headerLines = append(headerLines, line)
+		}
+	}
+	headers, err := edgeruletrace.ParseRequestHeaders(headerLines)
+	if err != nil {
+		form.ErrorMessage = "Headers must be valid Name: Value pairs, one per line."
+		s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, nil)
+		return
+	}
+	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
+		App: r.PathValue("slug"), Host: form.Host, Path: form.Path, Method: form.Method,
+		ClientIP: form.ClientIP, Country: form.Country, Headers: headers,
+		Body: []byte(rawBody), BodyProvided: form.BodyProvided,
+		RequestBodyMaxBytes: acct.Plan.MaxRequestBodyBytes(),
+	})
+	if err != nil {
+		form.ErrorMessage = err.Error()
+		s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, nil)
+		return
+	}
+	form.Host, form.Path, form.Method = input.Host, input.Path, input.Method
+	form.ClientIP, form.Country = input.ClientIP, input.Country
+	s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, &input)
 }
 
 func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageItem {

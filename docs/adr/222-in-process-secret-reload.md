@@ -14,8 +14,19 @@
   existing no-snapshot rolling `--restart` path.
 - **Consequences:** The application must handle the selected signal, reread
   `FAAS_SECRETS_FILE`, and apply the values itself. Refresh is polled every 10
-  seconds and does not provide an application-level reload acknowledgement.
-  `secrets list` continues to report wake-time delivery. The feature is
+  seconds. ADR-260 adds an opt-in application self-attestation after the
+  process has reread and applied the projection; Gregale does not independently
+  verify the application's internal state.
+  `secrets list` reports the latest projection/signal outcome separately from
+  wake-time delivery and includes every active runtime authorized for each
+  secret by the deployment scope and `env_secrets` allowlist. Missing reports
+  remain in that denominator as unknown, and each runtime's persisted image
+  opt-in is shown as enabled, disabled, or unknown for pre-migration
+  deployments. The API marks whether the complete roster is available and
+  does not claim that the app applied new values without an explicit
+  self-attestation.
+  Reports are fenced to the exact secret versions and rejected if a rotation
+  wins the race. The feature is
   restricted to single-workload deployments: guest-init rejects an opted-in
   deployment with sidecars, and vmmd independently denies secret refresh for
   deployments that declare sidecars. No cross-app secret sharing is added.

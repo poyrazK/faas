@@ -1596,6 +1596,13 @@ func (c *Client) GetProjectEnvironmentReleases(ctx context.Context, projectSlug,
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// PublishProjectReleaseSet atomically activates a complete project deployment graph.
+func (c *Client) PublishProjectReleaseSet(ctx context.Context, projectSlug, environmentSlug string, req PublishProjectReleaseSetRequest) (ProjectReleaseSetResponse, error) {
+	var out ProjectReleaseSetResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/release-sets"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
 // GetProjectEnvironmentState returns the effective configuration, release,
 // variable, safe secret metadata, and managed bindings for one environment.
 func (c *Client) GetProjectEnvironmentState(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentStateResponse, error) {
@@ -4300,6 +4307,34 @@ func (c *Client) GetAppThrottleSuggestionsOpts(ctx context.Context, slug, rng st
 func (c *Client) GetAppRoutes(ctx context.Context, slug string) (AppRoutesResponse, error) {
 	var out AppRoutesResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/routes", nil, &out)
+}
+
+// GetAppsSlugAuditRequests reads a bounded exact-request window. Zero times
+// use the server defaults; limit 0 uses the server default of 100.
+func (c *Client) GetAppsSlugAuditRequests(ctx context.Context, slug string, since, until time.Time, limit int) (RequestAuditListResponse, error) {
+	var out RequestAuditListResponse
+	q := url.Values{}
+	if !since.IsZero() {
+		q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if !until.IsZero() {
+		q.Set("until", until.UTC().Format(time.RFC3339Nano))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/audit/requests"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppsSlugDiscoveredRoutes returns the durable, bounded route inventory
+// independently of exact request-audit retention.
+func (c *Client) GetAppsSlugDiscoveredRoutes(ctx context.Context, slug string) (DiscoveredRoutesResponse, error) {
+	var out DiscoveredRoutesResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/discovered-routes", nil, &out)
 }
 
 // StreamingCapRequest identifies the request shape used to resolve a

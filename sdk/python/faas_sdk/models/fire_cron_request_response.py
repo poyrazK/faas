@@ -19,10 +19,7 @@ T = TypeVar("T", bound="FireCronRequestResponse")
 
 @_attrs_define
 class FireCronRequestResponse:
-    """Issue #791 PR-D / ADR-090 §Sub-decision 7. Read shape for
-    `GET /v1/cron-fire-now-requests/{request_id}`.
-
-    """
+    """Read shape for `GET /v1/cron-fire-now-requests/{request_id}`."""
 
     request_id: UUID
     cron_id: UUID
@@ -31,6 +28,8 @@ class FireCronRequestResponse:
     account_id: UUID
     finished_at: datetime.datetime | None | Unset = UNSET
     invocation_id: None | Unset | UUID = UNSET
+    task_id: None | Unset | UUID = UNSET
+    """Command task created by this request; absent for HTTP crons or before queueing."""
     error: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -61,6 +60,14 @@ class FireCronRequestResponse:
         else:
             invocation_id = self.invocation_id
 
+        task_id: None | str | Unset
+        if isinstance(self.task_id, Unset):
+            task_id = UNSET
+        elif isinstance(self.task_id, UUID):
+            task_id = str(self.task_id)
+        else:
+            task_id = self.task_id
+
         error: None | str | Unset
         if isinstance(self.error, Unset):
             error = UNSET
@@ -82,6 +89,8 @@ class FireCronRequestResponse:
             field_dict["finished_at"] = finished_at
         if invocation_id is not UNSET:
             field_dict["invocation_id"] = invocation_id
+        if task_id is not UNSET:
+            field_dict["task_id"] = task_id
         if error is not UNSET:
             field_dict["error"] = error
 
@@ -134,6 +143,23 @@ class FireCronRequestResponse:
 
         invocation_id = _parse_invocation_id(d.pop("invocation_id", UNSET))
 
+        def _parse_task_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                task_id_type_0 = UUID(data)
+
+                return task_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        task_id = _parse_task_id(d.pop("task_id", UNSET))
+
         def _parse_error(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -151,6 +177,7 @@ class FireCronRequestResponse:
             account_id=account_id,
             finished_at=finished_at,
             invocation_id=invocation_id,
+            task_id=task_id,
             error=error,
         )
 

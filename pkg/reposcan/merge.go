@@ -1,6 +1,10 @@
 package reposcan
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // mergeByKey collapses workloadSeeds with the same (RootDir, Name)
 // into a single Workload. Merge semantics, verbatim from impl
@@ -54,7 +58,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		dependsOn    []string
 
 		serviceBindingPolicy      ServiceBindingPolicy
+		serviceBindingTransport   ServiceBindingTransport
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
+		allowedServiceCallers     *[]string
+		allowedServiceCallScopes  *api.ServiceCallerScopes
 
 		schedules []CronSchedule
 		ports     []int
@@ -68,7 +75,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		envSet   bool
 
 		serviceBindingPolicySet      bool
+		serviceBindingTransportSet   bool
 		previewServiceCallsPolicySet bool
+		allowedServiceCallersSet     bool
+		allowedServiceCallScopesSet  bool
 
 		dfSet     bool
 		imageSet  bool
@@ -148,9 +158,22 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.serviceBindingPolicy = s.serviceBindingPolicy
 			b.serviceBindingPolicySet = true
 		}
+		if !b.serviceBindingTransportSet && s.serviceBindingTransport != "" {
+			b.serviceBindingTransport = s.serviceBindingTransport
+			b.serviceBindingTransportSet = true
+		}
 		if !b.previewServiceCallsPolicySet && s.previewServiceCallsPolicy != "" {
 			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
 			b.previewServiceCallsPolicySet = true
+		}
+		if !b.allowedServiceCallersSet && s.allowedServiceCallers != nil {
+			callers := append([]string{}, (*s.allowedServiceCallers)...)
+			b.allowedServiceCallers = &callers
+			b.allowedServiceCallersSet = true
+		}
+		if !b.allowedServiceCallScopesSet && s.allowedServiceCallScopes != nil {
+			b.allowedServiceCallScopes = cloneServiceCallerScopes(s.allowedServiceCallScopes)
+			b.allowedServiceCallScopesSet = true
 		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
@@ -202,7 +225,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			DependsOn:    b.dependsOn,
 
 			ServiceBindingPolicy:      b.serviceBindingPolicy,
+			ServiceBindingTransport:   b.serviceBindingTransport,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
+			AllowedServiceCallers:     b.allowedServiceCallers,
+			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 
 			Class:     cls,
 			Schedule:  primarySchedule,
@@ -221,6 +247,20 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		})
 	}
 	return out
+}
+
+func cloneServiceCallerScopes(value *api.ServiceCallerScopes) *api.ServiceCallerScopes {
+	if value == nil {
+		return nil
+	}
+	clone := make(api.ServiceCallerScopes, len(*value))
+	for caller, scope := range *value {
+		clone[caller] = api.ServiceCallScope{
+			Methods:      append([]string(nil), scope.Methods...),
+			PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+		}
+	}
+	return &clone
 }
 
 func containsDetectionCandidate(xs []detectionCandidate, want detectionCandidate) bool {

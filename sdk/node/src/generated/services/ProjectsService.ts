@@ -22,11 +22,13 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
+import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectReleaseSetRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
@@ -591,6 +593,48 @@ export class ProjectsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically activate an immutable project deployment graph.
+   * Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+   * @returns ProjectReleaseSetResponse Published release set.
+   * @throws ApiError
+   */
+  public static publishProjectReleaseSet({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the release set.
+     */
+    slug: string,
+    /**
+     * Target project environment.
+     */
+    environment: string,
+    requestBody: PublishProjectReleaseSetRequest,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

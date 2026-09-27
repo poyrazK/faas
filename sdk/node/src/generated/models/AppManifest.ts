@@ -95,5 +95,9 @@ export type AppManifest = {
    * Whether the edge issues its own host-only rollout-affinity cookie.
    */
   version_affinity_managed_cookie?: boolean;
+  /**
+   * Configured revision pin window in seconds; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
 };
 

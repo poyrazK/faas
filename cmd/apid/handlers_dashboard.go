@@ -101,6 +101,13 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/jobs":
 			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
+		case strings.HasPrefix(path, dashboardAsyncInvocationPath):
+			id := strings.TrimPrefix(path, dashboardAsyncInvocationPath)
+			if id == "" || strings.ContainsRune(id, '/') {
+				http.NotFound(w, r)
+				return
+			}
+			s.renderAsyncInvocationDetail(w, r, log, acct, id)
 		case path == "/dashboard/failed-events":
 			s.renderFailedEvents(w, r, log, acct)
 		case path == "/dashboard/apps/new":
@@ -155,7 +162,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
 			if eslug, ok := parseAppEdgeRulesPath(slug); ok {
-				s.renderAppEdgeRules(w, r, log, acct, eslug)
+				s.renderAppEdgeRules(w, r, log, acct, eslug, nil, nil)
 				return
 			}
 			// G7 / issue #1397 — queue state, pending samples, and
@@ -837,6 +844,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// separate from the live Prometheus snapshot above and is omitted for
 		// plans without request-telemetry retention.
 		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
+		DiscoveredRoutes: s.fetchDashboardDiscoveredRoutes(ctx, log, acct, app),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state

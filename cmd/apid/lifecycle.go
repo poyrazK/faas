@@ -51,6 +51,10 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid crawler policy", err.Error())
 	}
+	if manifest.RevisionPinTTLSeconds < 0 || manifest.RevisionPinTTLSeconds > api.RevisionPinMaxTTLSeconds {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid revision pin window", fmt.Sprintf("revision_pin_ttl_seconds must be between 0 and %d", api.RevisionPinMaxTTLSeconds))
+	}
 	if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid lifecycle configuration", err.Error())
@@ -98,6 +102,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		SessionAffinity:              req.SessionAffinity != nil && *req.SessionAffinity,
 		VersionAffinityCookie:        req.VersionAffinityCookie,
 		VersionAffinityManagedCookie: req.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        req.RevisionPinTTLSeconds,
 	}
 }
 
@@ -140,6 +145,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		SessionAffinity:              manifest.SessionAffinity,
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
 	}
 }
 
@@ -182,6 +188,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		SessionAffinity:              manifest.SessionAffinity,
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
 	}
 }
 
@@ -190,7 +197,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.Ports != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -259,6 +266,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.VersionAffinityManagedCookie != nil {
 		manifest.VersionAffinityManagedCookie = *req.VersionAffinityManagedCookie
 	}
+	if req.RevisionPinTTLSeconds != nil {
+		manifest.RevisionPinTTLSeconds = *req.RevisionPinTTLSeconds
+	}
 	return manifest, true
 }
 
@@ -287,5 +297,6 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.SessionAffinity = manifest.SessionAffinity
 	updated.VersionAffinityCookie = manifest.VersionAffinityCookie
 	updated.VersionAffinityManagedCookie = manifest.VersionAffinityManagedCookie
+	updated.RevisionPinTTLSeconds = manifest.RevisionPinTTLSeconds
 	return &updated, true
 }

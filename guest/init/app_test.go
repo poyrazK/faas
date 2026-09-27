@@ -248,13 +248,23 @@ func TestBuildEnv_FourLayerPrecedence(t *testing.T) {
 }
 
 func TestStampSecretsFileEnvPlatformOwnsOptInPath(t *testing.T) {
-	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker"}, true)
-	if got[len(got)-1] != SecretsFileEnv+"="+secretReloadFilePath {
-		t.Fatalf("secret file env = %q, want platform path", got[len(got)-1])
+	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker", SecretsRevisionEnv + "=/attacker", SecretsReloadAckEnv + "=https://attacker"}, true)
+	want := map[string]string{
+		SecretsFileEnv: secretReloadFilePath, SecretsRevisionEnv: secretReloadRevisionFilePath,
+		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint,
 	}
-	for _, entry := range got[:len(got)-1] {
-		if strings.HasPrefix(entry, SecretsFileEnv+"=") {
-			t.Fatalf("customer secret file path was not replaced: %v", got)
+	for _, key := range []string{SecretsFileEnv, SecretsRevisionEnv, SecretsReloadAckEnv} {
+		found := false
+		for _, entry := range got {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				if entry != key+"="+want[key] {
+					t.Fatalf("%s env = %q, want platform path", key, entry)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s was not stamped: %v", key, got)
 		}
 	}
 	disabled := StampSecretsFileEnv([]string{"A=1"}, false)

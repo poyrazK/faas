@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.6.0" {
-		t.Fatalf("info.version = %v, want 1.6.0 after rollout outcome webhooks", got)
+	if got := info["version"]; got != "1.7.0" {
+		t.Fatalf("info.version = %v, want 1.7.0 after platform tenant statement webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -39,13 +39,14 @@ func TestAsyncAPIContract(t *testing.T) {
 	_ = object(t, securitySchemes, "bearerAuth")
 
 	wantEvents := map[string]string{
-		"appParked":               "app.parked",
-		"appWoken":                "app.woken",
-		"deploymentLive":          "deployment.live",
-		"deploymentFailed":        "deployment.failed",
-		"rolloutCompleted":        "rollout.completed",
-		"rolloutAborted":          "rollout.aborted",
-		"usageStatementFinalized": "usage_statement.finalized",
+		"appParked":                        "app.parked",
+		"appWoken":                         "app.woken",
+		"deploymentLive":                   "deployment.live",
+		"deploymentFailed":                 "deployment.failed",
+		"rolloutCompleted":                 "rollout.completed",
+		"rolloutAborted":                   "rollout.aborted",
+		"usageStatementFinalized":          "usage_statement.finalized",
+		"platformTenantStatementFinalized": "platform_tenant.statement.finalized",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -98,13 +99,14 @@ func TestAsyncAPIContract(t *testing.T) {
 	}
 
 	for operationName, channelName := range map[string]string{
-		"deliverAppParked":               "appParked",
-		"deliverAppWoken":                "appWoken",
-		"deliverDeploymentLive":          "deploymentLive",
-		"deliverDeploymentFailed":        "deploymentFailed",
-		"deliverRolloutCompleted":        "rolloutCompleted",
-		"deliverRolloutAborted":          "rolloutAborted",
-		"deliverUsageStatementFinalized": "usageStatementFinalized",
+		"deliverAppParked":                        "appParked",
+		"deliverAppWoken":                         "appWoken",
+		"deliverDeploymentLive":                   "deploymentLive",
+		"deliverDeploymentFailed":                 "deploymentFailed",
+		"deliverRolloutCompleted":                 "rolloutCompleted",
+		"deliverRolloutAborted":                   "rolloutAborted",
+		"deliverUsageStatementFinalized":          "usageStatementFinalized",
+		"deliverPlatformTenantStatementFinalized": "platformTenantStatementFinalized",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
@@ -198,7 +200,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized"} {
+	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized"} {
 		message := object(t, messages, messageName)
 		if message["contentType"] != "application/cloudevents+json" {
 			t.Errorf("components.messages.%s contentType = %v, want CloudEvents structured JSON", messageName, message["contentType"])
@@ -242,7 +244,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")

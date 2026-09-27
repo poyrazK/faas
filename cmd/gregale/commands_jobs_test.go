@@ -18,7 +18,20 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestRenderJobStateShowsImageFailure(t *testing.T) {
+	var out bytes.Buffer
+	renderJobState(&out, api.JobResponse{
+		Name: "nightly", ImageRef: "registry.example/nightly:v1",
+		ImageMaterializationStatus: "failed", ImageMaterializationError: "registry image not found",
+	})
+	if !strings.Contains(out.String(), "image status: failed") || !strings.Contains(out.String(), "image error: registry image not found") {
+		t.Fatalf("image failure missing from human output: %q", out.String())
+	}
+}
 
 // runWithStderr swaps both os.Stderr and the gregale package's
 // osStderr writer for a pipe, runs fn, drains the pipe, and

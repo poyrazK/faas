@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// AppTaskKind identifies the customer-visible reason for a deployment-
-// attached command. Public admission creates manual tasks only; release tasks
-// are reserved for the deployment orchestrator.
+// AppTaskKind identifies why a deployment-attached command runs. Direct API
+// admission creates manual tasks; release and cron tasks are scheduler-owned.
 type AppTaskKind string
 
 const (
 	AppTaskKindManual  AppTaskKind = "manual"
 	AppTaskKindRelease AppTaskKind = "release"
+	AppTaskKindCron    AppTaskKind = "cron"
 )
 
 // AppTaskStatus is the customer-visible lifecycle for a deployment-attached
@@ -43,9 +43,17 @@ func (s AppTaskStatus) Terminal() bool {
 const (
 	AppTaskDefaultTimeoutSeconds = 600
 	AppTaskDefaultMaxOutputBytes = 1024 * 1024
-	AppTaskMaxCommandArgs        = 64
-	AppTaskMaxCommandArgBytes    = 4096
-	AppTaskMaxCommandBytes       = 16384
+	// AppTaskServiceBindingProbeCommand is a reserved argv[0] handled directly
+	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
+	// or a language runtime in the customer image.
+	AppTaskServiceBindingProbeCommand = "__gregale_service_binding_probe_v1__"
+	// AppTaskServiceBindingSmokeCommand is a reserved argv[0] handled directly
+	// by guest-init. It sends one bounded GET through a declared HTTPS service
+	// binding to an explicitly pinned target deployment.
+	AppTaskServiceBindingSmokeCommand = "__gregale_service_binding_smoke_v1__"
+	AppTaskMaxCommandArgs             = 64
+	AppTaskMaxCommandArgBytes         = 4096
+	AppTaskMaxCommandBytes            = 16384
 	// AppTaskRequestMaxBytes permits JSON escaping overhead while the decoded
 	// command remains bounded by AppTaskMaxCommandBytes.
 	AppTaskRequestMaxBytes int64 = 128 * 1024
@@ -53,7 +61,10 @@ const (
 
 // CreateAppTaskRequest is the public admission contract. Kind and deployment
 // are not caller-selected: public requests are always manual and apid pins the
-// app's current live deployment before persistence.
+// app's current live deployment before persistence. The reserved
+// AppTaskServiceBindingProbeCommand and AppTaskServiceBindingSmokeCommand
+// argv[0] are handled by guest-init for `gregale bindings verify` and
+// `gregale bindings smoke`; neither is an image executable.
 type CreateAppTaskRequest struct {
 	Command        []string `json:"command"`
 	CommandShell   bool     `json:"command_shell,omitempty"`
@@ -128,7 +139,8 @@ func appTaskInvalid(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeValidation, "Invalid app task", detail)
 }
 
-// AppTaskFailure is present for failed and timed-out tasks only.
+// AppTaskFailure is present for a queued retry's latest failed attempt, or a
+// task's terminal failed/timed-out outcome.
 type AppTaskFailure struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -138,26 +150,30 @@ type AppTaskFailure struct {
 // keys, and image digests. DeploymentID is sufficient for a customer to
 // identify the immutable release that was selected at admission.
 type AppTaskResponse struct {
-	ID                string          `json:"id"`
-	AppID             string          `json:"app_id"`
-	DeploymentID      string          `json:"deployment_id"`
-	DeploymentScope   string          `json:"deployment_scope"`
-	Kind              AppTaskKind     `json:"kind"`
-	Command           []string        `json:"command"`
-	CommandShell      bool            `json:"command_shell"`
-	Status            AppTaskStatus   `json:"status"`
-	TimeoutSeconds    int             `json:"timeout_seconds"`
-	MaxOutputBytes    int             `json:"max_output_bytes"`
-	StdoutTail        string          `json:"stdout_tail,omitempty"`
-	StderrTail        string          `json:"stderr_tail,omitempty"`
-	OutputTruncated   bool            `json:"output_truncated"`
-	ExitCode          *int            `json:"exit_code,omitempty"`
-	Failure           *AppTaskFailure `json:"failure,omitempty"`
-	CancelRequestedAt *string         `json:"cancel_requested_at,omitempty"`
-	StartedAt         *string         `json:"started_at,omitempty"`
-	FinishedAt        *string         `json:"finished_at,omitempty"`
-	CreatedAt         string          `json:"created_at"`
-	UpdatedAt         string          `json:"updated_at"`
+	ID                  string          `json:"id"`
+	AppID               string          `json:"app_id"`
+	DeploymentID        string          `json:"deployment_id"`
+	DeploymentScope     string          `json:"deployment_scope"`
+	Kind                AppTaskKind     `json:"kind"`
+	Command             []string        `json:"command"`
+	CommandShell        bool            `json:"command_shell"`
+	Status              AppTaskStatus   `json:"status"`
+	TimeoutSeconds      int             `json:"timeout_seconds"`
+	MaxOutputBytes      int             `json:"max_output_bytes"`
+	RetryMax            int             `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	AttemptCount        int             `json:"attempt_count"`
+	RetryAt             *string         `json:"retry_at,omitempty"`
+	StdoutTail          string          `json:"stdout_tail,omitempty"`
+	StderrTail          string          `json:"stderr_tail,omitempty"`
+	OutputTruncated     bool            `json:"output_truncated"`
+	ExitCode            *int            `json:"exit_code,omitempty"`
+	Failure             *AppTaskFailure `json:"failure,omitempty"`
+	CancelRequestedAt   *string         `json:"cancel_requested_at,omitempty"`
+	StartedAt           *string         `json:"started_at,omitempty"`
+	FinishedAt          *string         `json:"finished_at,omitempty"`
+	CreatedAt           string          `json:"created_at"`
+	UpdatedAt           string          `json:"updated_at"`
 }
 
 type AppTaskListResponse struct {

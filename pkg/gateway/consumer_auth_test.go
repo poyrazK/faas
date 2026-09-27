@@ -1,6 +1,7 @@
 package gateway
 
 // adr: 120
+// adr: 239
 
 import (
 	"context"
@@ -94,7 +95,7 @@ func TestEnforceConsumerAuthPlatformTenantBinding(t *testing.T) {
 	}{
 		{"matching", "customer-a", "customer-a", http.StatusOK},
 		{"different customer", "customer-a", "customer-b", http.StatusUnauthorized},
-		{"unlinked consumer", "", "customer-b", http.StatusOK},
+		{"unlinked consumer", "", "customer-b", http.StatusUnauthorized},
 		{"no surface", "customer-a", "", http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +103,9 @@ func TestEnforceConsumerAuthPlatformTenantBinding(t *testing.T) {
 			store.consumer.PlatformTenantID = tc.consumerTenant
 			h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
 			app := App{ID: "app-1", AccountID: "acct-1", PlatformTenantID: tc.hostTenant, ConsumerAuthMode: api.ConsumerAuthModeRequired}
+			if tc.hostTenant != "" {
+				app.RoutedSurfaceID = "surface-1"
+			}
 			rr, r, ok := runConsumerAuthGate(t, h, app, http.MethodGet, token)
 			if rr.Code != tc.wantStatus || ok != (tc.wantStatus == http.StatusOK) {
 				t.Fatalf("auth result ok=%v status=%d, want %d", ok, rr.Code, tc.wantStatus)

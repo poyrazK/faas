@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,8 +39,11 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
-	ServiceBindingPolicy      string `yaml:"x-gregale-service-policy"`
-	PreviewServiceCallsPolicy string `yaml:"x-gregale-preview-calls"`
+	ServiceBindingPolicy      string                   `yaml:"x-gregale-service-policy"`
+	ServiceBindingTransport   string                   `yaml:"x-gregale-service-transport"`
+	PreviewServiceCallsPolicy string                   `yaml:"x-gregale-preview-calls"`
+	AllowedServiceCallers     *[]string                `yaml:"x-gregale-allow-callers"`
+	AllowedServiceCallScopes  *api.ServiceCallerScopes `yaml:"x-gregale-allow-call-scopes"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -178,12 +182,33 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && serviceBindingPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a build workload", src, name)
 		}
+		serviceBindingTransport, transportErr := normalizeServiceBindingTransport(s.ServiceBindingTransport)
+		if transportErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, transportErr)
+		}
+		if !hasBuild && serviceBindingTransport != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a build workload", src, name)
+		}
 		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
 		if previewPolicyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
 		}
 		if !hasBuild && previewServiceCallsPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a build workload", src, name)
+		}
+		allowedCallers, callersErr := normalizeAllowedServiceCallers(s.AllowedServiceCallers)
+		if callersErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, callersErr)
+		}
+		if !hasBuild && allowedCallers != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-callers requires a build workload", src, name)
+		}
+		allowedCallScopes, scopesErr := normalizeAllowedServiceCallScopes(s.AllowedServiceCallScopes)
+		if scopesErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, scopesErr)
+		}
+		if !hasBuild && allowedCallScopes != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-call-scopes requires a build workload", src, name)
 		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
@@ -236,7 +261,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			dependsOn:    dependencyNames(s.DependsOn),
 
 			serviceBindingPolicy:      serviceBindingPolicy,
+			serviceBindingTransport:   serviceBindingTransport,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
+			allowedServiceCallers:     allowedCallers,
+			allowedServiceCallScopes:  allowedCallScopes,
 
 			ports:   parsePorts(s.Ports),
 			envKeys: envKeys(s.Environment),
@@ -244,6 +272,19 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		})
 	}
 	return seeds, managed, warnings, nil
+}
+
+func normalizeServiceBindingTransport(value string) (ServiceBindingTransport, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "":
+		return "", nil
+	case string(ServiceBindingTransportHTTP):
+		return ServiceBindingTransportHTTP, nil
+	case string(ServiceBindingTransportHTTPS):
+		return ServiceBindingTransportHTTPS, nil
+	default:
+		return "", fmt.Errorf("x-gregale-service-transport must be http or https")
+	}
 }
 
 func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
@@ -270,6 +311,30 @@ func normalizePreviewServiceCallsPolicy(value string) (PreviewServiceCallsPolicy
 	default:
 		return "", fmt.Errorf("x-gregale-preview-calls must be allow or deny")
 	}
+}
+
+// An absent extension keeps the legacy same-account target policy. An
+// explicitly empty array is a deny-all policy and must remain non-nil.
+func normalizeAllowedServiceCallers(value *[]string) (*[]string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	callers, err := api.NormalizeAllowedServiceCallers(*value)
+	if err != nil {
+		return nil, fmt.Errorf("x-gregale-allow-callers: %w", err)
+	}
+	return &callers, nil
+}
+
+func normalizeAllowedServiceCallScopes(value *api.ServiceCallerScopes) (*api.ServiceCallerScopes, error) {
+	if value == nil {
+		return nil, nil
+	}
+	scopes, err := api.NormalizeServiceCallerScopes(*value)
+	if err != nil {
+		return nil, fmt.Errorf("x-gregale-allow-call-scopes: %w", err)
+	}
+	return &scopes, nil
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.

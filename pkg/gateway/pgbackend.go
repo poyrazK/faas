@@ -307,7 +307,9 @@ type PGBackend struct {
 	// hostname lookup has not already populated the app cache. Optional: nil
 	// falls through to the single-sched path. Production wires this to
 	// state.Store.AppByID; tests can return a synthetic App.
-	appResolver func(ctx context.Context, appID string) (App, bool, error)
+	appResolver            func(ctx context.Context, appID string) (App, bool, error)
+	revisionPinResolver    func(context.Context, string, string, string) (bool, error)
+	projectReleaseResolver func(context.Context, string, string, string) (string, string, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
 	// owns the given app. Mandatory when appResolver is set. Production wires
@@ -461,6 +463,32 @@ type ClientForAppFunc func(ctx context.Context, app App) (Scheduler, bool, error
 func (b *PGBackend) WithAppResolver(fn AppResolverFunc) *PGBackend {
 	b.appResolver = fn
 	return b
+}
+
+// WithRevisionPinResolver installs the durable client-pin validator. The
+// public handler fails closed when this seam is absent.
+func (b *PGBackend) WithRevisionPinResolver(fn func(context.Context, string, string, string) (bool, error)) *PGBackend {
+	b.revisionPinResolver = fn
+	return b
+}
+
+func (b *PGBackend) ResolveRevisionPin(ctx context.Context, appID, scope, deploymentID string) (bool, error) {
+	if b == nil || b.revisionPinResolver == nil {
+		return false, errors.New("revision pin resolver unavailable")
+	}
+	return b.revisionPinResolver(ctx, appID, scope, deploymentID)
+}
+
+func (b *PGBackend) WithProjectReleaseResolver(fn func(context.Context, string, string, string) (string, string, error)) *PGBackend {
+	b.projectReleaseResolver = fn
+	return b
+}
+
+func (b *PGBackend) ResolveProjectRelease(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
+	if b == nil || b.projectReleaseResolver == nil {
+		return "", "", errors.New("project release resolver unavailable")
+	}
+	return b.projectReleaseResolver(ctx, appID, scope, requestedID)
 }
 
 // WithClientForApp sets the per-app schedd client factory used by
@@ -869,13 +897,14 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 // targetSet instances live inside sets and are protected by their own
 // mu (b.tgtMu).
 type appPicker struct {
-	weights           []deploymentWeight
-	cum               []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
-	affinityWeights   []deploymentWeight
-	affinityCum       []int
-	affinityNamespace string
-	cursor            atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
-	sets              map[string]*targetSet // deploymentID → targetSet
+	weights              []deploymentWeight
+	weightsAuthoritative bool
+	cum                  []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
+	affinityWeights      []deploymentWeight
+	affinityCum          []int
+	affinityNamespace    string
+	cursor               atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
+	sets                 map[string]*targetSet // deploymentID → targetSet
 }
 
 // deploymentWeight is the per-deployment row of the picker's
@@ -1836,6 +1865,7 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		b.appsPicker[appID] = picker
 	}
 	setPickerWeights(picker, next)
+	picker.weightsAuthoritative = true
 	// Existing per-deployment targetSets in picker.sets are
 	// preserved — instances stay routable through the picker.
 	//

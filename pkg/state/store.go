@@ -2437,6 +2437,10 @@ type Store interface {
 	// apid call site is unchanged.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
+	// SetDeploymentSecretReloadSignal persists the immutable image opt-in on
+	// the deployment so the secret-status surface can determine which active
+	// authorized runtimes can participate in an application reload barrier.
+	SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
 	// returns the per-app 1-based ordinal of the deployment row,
@@ -3330,7 +3334,7 @@ type Store interface {
 	// backfilling this field is the only honest way to rewind a test or
 	// restore an imported schedule.
 	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
-	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error)
+	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)
@@ -3438,7 +3442,8 @@ type Store interface {
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
-	// dispatches via RunCronNow. The interface is the single seam
+	// dispatches via RunCronNow or queues a deployment-attached app task.
+	// The interface is the single seam
 	// between handlers (apid, pkg/api/client.go callers) and the
 	// underlying store; MemStore keeps an in-memory slice for tests,
 	// PgStore uses the cron_fire_now_requests table.
@@ -3963,7 +3968,8 @@ type Store interface {
 	DeleteTriggerRecordsByIDs(ctx context.Context, ids []string) (int, error)
 	// CompleteInvocation finalises a dispatched row with an optional result
 	// envelope (response status + body bytes for sync invoke; nil for the
-	// other sources). State → completed.
+	// other sources). State → completed. A selected on-success webhook delivery
+	// is inserted into the durable delivery ledger in the same transaction.
 	CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error
 	// FailInvocation records a terminal or retryable error. When retryAfter
 	// > 0 the row goes back to state='pending' with due_at = now +
@@ -3987,7 +3993,8 @@ type Store interface {
 	// run-history surface can distinguish a blown deadline from a
 	// generic failure without parsing lastError. Ignored on the
 	// transient branch (the row stays non-terminal, so it carries no
-	// outcome) and overridden by the dead-letter branch.
+	// outcome) and overridden by the dead-letter branch. Terminal state and a
+	// selected on-failure webhook delivery commit atomically.
 	FailInvocation(ctx context.Context, id string, lastError string, retryAfter time.Duration, budget int, opts ...FailOption) error
 	// CountPendingInvocations is index-backed by invocations_app_pending_idx;
 	// used by the apid cap check on POST .../queues/invocations:send and
@@ -4010,6 +4017,10 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListAsyncInvocationsForAccount returns the account-scoped, newest-first
+	// async HTTP invocation history for the dashboard. Its cursor is an
+	// Invocation.ID and the query is backed by the async-source partial index.
+	ListAsyncInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
 	// ListDelayedTasksForApp is the customer-facing delayed-task collection.
 	// It is app- and source-scoped and uses the same stable invocation-id cursor
 	// ordering as ListInvocationsForAccount.
@@ -5590,6 +5601,23 @@ type Store interface {
 	// for the exact secret versions schedd staged. A concurrent rotation wins:
 	// candidates whose version no longer matches remain pending.
 	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
+	// RecordAppSecretRuntimeReload conditionally records guest-init's
+	// projection/signal outcome for the exact secret versions reported by a
+	// runtime. It does not confirm that the application applied the values.
+	RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error)
+	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
+	// claim that it applied (or failed to apply) the current secret revision.
+	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	// ListAppSecretRuntimeReloadObservations returns the latest report for each
+	// active runtime and secret in one app. An empty scope lists all scopes.
+	// Only non-sensitive version, instance and guest-init outcome metadata is
+	// returned; absence of a report is not proof that the runtime lacks access.
+	ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error)
+	// ListAppSecretRuntimeReloadTargets returns every active instance that is
+	// authorized for each secret by its deployment scope and allowlist. Missing
+	// guest reports are included as Reported=false; reload support may be
+	// disabled or unknown for deployments that cannot join a hot-reload barrier.
+	ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted
@@ -6159,6 +6187,9 @@ type Store interface {
 	// pre-clamps the customer limit and adds one lookahead row to determine
 	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
+	// ListRequestTelemetryByPlatformTenant returns retention-bounded debugger
+	// evidence attributed to this tenant at request time, across its apps.
+	ListRequestTelemetryByPlatformTenant(ctx context.Context, arg sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error)
 
 	// ListRequestTelemetryDependencySpans backs the historical dependency
 	// latency debugger view. It returns a strictly bounded set of the newest

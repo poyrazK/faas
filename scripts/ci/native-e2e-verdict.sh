@@ -111,6 +111,51 @@ native_e2e_verdict() {
   return 0
 }
 
+# native_e2e_lane_verdict applies a strict pass contract to a deliberately
+# selected lane. Unlike native_e2e_verdict, which verifies the established
+# platform-wide chain and permits unrelated tests to be absent, this requires
+# every supplied top-level test to PASS. The caller derives the list from the
+# lane or phase definition so the verifier does not keep a second test list.
+native_e2e_lane_verdict() {
+  local log="$1" lane="$2"
+  shift 2
+  local passed skipped failed required rc=0
+
+  if [[ ! -r "${log}" ]]; then
+    echo "native e2e: ${lane}: test log is unreadable: ${log}" >&2
+    return 1
+  fi
+  if [[ "$#" -eq 0 ]]; then
+    echo "native e2e: ${lane}: no required tests were selected" >&2
+    return 1
+  fi
+
+  passed="$(grep -cE '^--- PASS: ' "${log}" || true)"
+  skipped="$(grep -cE '^--- SKIP: ' "${log}" || true)"
+  failed="$(grep -cE '^--- FAIL: ' "${log}" || true)"
+  echo "native e2e: ${lane} — ${passed} passed, ${skipped} skipped, ${failed} failed"
+
+  for required in "$@"; do
+    if grep -qE "^--- SKIP: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} SKIPPED" >&2
+      rc=1
+    elif grep -qE "^--- FAIL: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} FAILED" >&2
+      rc=1
+    elif ! grep -qE "^--- PASS: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} did not pass or run" >&2
+      rc=1
+    fi
+  done
+
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "native e2e: ${lane}: required tests did not all pass" >&2
+    return "${rc}"
+  fi
+  echo "native e2e: ${lane}: all ${#} required tests passed"
+  return 0
+}
+
 # native_e2e_phase_tally reports one phase's result.
 #
 # Deliberately NOT native_e2e_verdict: the required-test contract is a

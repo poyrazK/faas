@@ -861,7 +861,7 @@ type JobVmmSpec struct {
 	RunID      string
 	TaskIndex  int
 	InstanceID string
-	// ImageRef is the resolved StorageBackend key (jobs/<job-id>.ext4).
+	// ImageRef is the resolved immutable StorageBackend key for the job image.
 	// The source OCI reference remains in state.Job.ImageRef.
 	ImageRef       string
 	Command        []string

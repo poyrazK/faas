@@ -43,6 +43,18 @@ func (c *InternalSafeDeployClient) RecoverRolloutAndIdempotencyKey(ctx context.C
 	return out, err
 }
 
+func (c *InternalSafeDeployClient) RecoverDeploymentRolloutAndIdempotencyKey(ctx context.Context, deploymentID, predecessorDeploymentID, action, reason, key string) (RolloutTransitionResponse, error) {
+	var out RolloutTransitionResponse
+	err := c.action.doWithIdempotencyKey(ctx, http.MethodPost,
+		"/v1/internal/safe-deploy/deployments/"+url.PathEscape(deploymentID)+"/rollouts/recover",
+		RecoverDeploymentRolloutRequest{
+			Action:                          action,
+			Reason:                          reason,
+			ExpectedPredecessorDeploymentID: predecessorDeploymentID,
+		}, &out, key)
+	return out, err
+}
+
 func (c *InternalSafeDeployClient) RollbackTo(ctx context.Context, slug, targetDeploymentID string) (DeploymentResponse, error) {
 	return c.RollbackToWithRuleAndIdempotencyKey(ctx, slug, targetDeploymentID, "", "")
 }

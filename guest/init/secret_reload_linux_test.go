@@ -40,6 +40,35 @@ func TestFetchRuntimeSecretsUsesDedicatedRequestKind(t *testing.T) {
 	}
 }
 
+func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
+	previous := dialRuntimeConfigHost
+	t.Cleanup(func() { dialRuntimeConfigHost = previous })
+	dialRuntimeConfigHost = func() (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			body, err := readRuntimeConfigFrame(server)
+			if err != nil {
+				return
+			}
+			var request runtimeConfigRequest
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_status" ||
+				request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
+				request.Signal != "sent" || request.ErrorCode != "" {
+				return
+			}
+			_ = writeRuntimeConfigFrame(server, []byte(`{"accepted":true}`))
+		}()
+		return client, nil
+	}
+	accepted, stale, err := sendRuntimeSecretReloadReport(runtimeSecretReloadReport{
+		Revision: strings.Repeat("a", 64), Projection: "updated", Signal: "sent",
+	})
+	if err != nil || !accepted || stale {
+		t.Fatalf("sendRuntimeSecretReloadReport = accepted %t stale %t err %v", accepted, stale, err)
+	}
+}
+
 func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "projection", "secrets.json")
 	uid, gid := os.Getuid(), os.Getgid()
@@ -69,6 +98,33 @@ func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	}
 	if got["DB_URL"] != "new" || got["TOKEN"] != "next" {
 		t.Fatalf("projection = %#v", got)
+	}
+}
+
+func TestWriteRuntimeSecretRevisionProjectionIsAtomicAndPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projection", "revision")
+	uid, gid := os.Getuid(), os.Getgid()
+	revision := strings.Repeat("a", 64)
+	if err := writeRuntimeSecretRevisionProjectionForOwner(path, uid, uid, gid, revision); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o400 {
+		t.Fatalf("revision file mode = %#o, want 0400", info.Mode().Perm())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != revision {
+		t.Fatalf("revision file = %q, %v", body, err)
+	}
+	if err := writeRuntimeSecretRevisionProjectionForOwner(path, uid, uid, gid, "not-a-revision"); err == nil {
+		t.Fatal("invalid revision was published")
+	}
+	body, err = os.ReadFile(path)
+	if err != nil || string(body) != revision {
+		t.Fatalf("invalid update changed revision file = %q, %v", body, err)
 	}
 }
 

@@ -127,6 +127,15 @@
     state: file
   when: gatewayd_schedd_tls_key_path | default('') | length > 0
 
+- name: gatewayd_internal_service — grant faas access to guest service HTTPS key
+  ansible.builtin.file:
+    path: "{{ gatewayd_service_proxy_tls_key_path }}"
+    owner: root
+    group: faas
+    mode: "0440"
+    state: file
+  when: gatewayd_service_proxy_https_listen | default('') | length > 0
+
 - name: gatewayd_internal_service — grant faas access to schedd client certificate
   ansible.builtin.file:
     path: "{{ gatewayd_schedd_tls_cert_path }}"
