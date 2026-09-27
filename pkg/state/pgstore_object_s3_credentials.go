@@ -56,8 +56,8 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	return objectS3CredentialFromSQL(row), nil
 }
 
-// CreateObjectS3ComputeBinding makes the credential and all six runtime
-// secrets visible at the same commit boundary.
+// CreateObjectS3ComputeBinding makes the credential, six runtime secrets,
+// freshness stamp and snapshot invalidation visible at one commit boundary.
 func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
 	if !validObjectS3ComputeBindingCreateRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
@@ -106,6 +106,12 @@ func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3
 			}
 			return ObjectS3Credential{}, mapErr(err)
 		}
+	}
+	if err := q.ObjectS3BindingStampRuntime(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ObjectS3Credential{}, mapErr(err)

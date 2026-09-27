@@ -233,9 +233,10 @@ bucket-scoped credential and writes six sealed app secrets under that prefix:
 `ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
 `ADDRESSING_STYLE`. Credential and secret creation commit together, so a
 conflicting secret key leaves no active credential or partial binding. The
-workload receives them through the existing secret
-staging path on its next deploy/wake; values are never returned by the binding
-API or stored in plaintext.
+same commit marks existing app snapshots stale and records a runtime-config
+change. The workload receives the values through the existing secret staging
+path on its next deploy/wake; values are never returned by the binding API or
+stored in plaintext.
 
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with

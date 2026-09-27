@@ -9592,6 +9592,26 @@ func (q *Queries) ObjectS3BindingSecretInsert(ctx context.Context, db DBTX, arg 
 	return key, err
 }
 
+const objectS3BindingStaleSnapshots = `-- name: ObjectS3BindingStaleSnapshots :exec
+UPDATE snapshots SET stale=true
+WHERE deployment_id IN (SELECT id FROM deployments WHERE app_id=$1) AND stale=false
+`
+
+func (q *Queries) ObjectS3BindingStaleSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3BindingStaleSnapshots, appID)
+	return err
+}
+
+const objectS3BindingStampRuntime = `-- name: ObjectS3BindingStampRuntime :exec
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
+`
+
+func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3BindingStampRuntime, appID)
+	return err
+}
+
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
 WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL

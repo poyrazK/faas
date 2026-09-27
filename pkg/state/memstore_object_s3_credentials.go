@@ -100,6 +100,18 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 		secret.DeliveryVersion, secret.DeliveryStatus = 1, SecretDeliveryPending
 		m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}] = secret
 	}
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	m.runtimeConfigChangedAt[c.ManagedAppID] = now
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
 	return cloneObjectS3Credential(c), nil
 }
 

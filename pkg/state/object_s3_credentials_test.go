@@ -63,6 +63,15 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	if err := buckets.FinishObjectBucket(ctx, bucket.ID, "provision", "ready"); err != nil {
 		t.Fatal(err)
 	}
+	deployment, err := base.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:binding-snapshot-test", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+		if _, err := base.CreateSnapshot(ctx, state.Snapshot{DeploymentID: deployment.ID, FCVersion: "fc-test", MemBytes: 1024, DiskBytes: 512, StorageKey: "binding-snapshot/" + tier, Tier: tier}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	makeRequest := func(prefix, access string) state.ObjectS3ComputeBindingCreateRequest {
 		id := uuid.NewString()
 		req := state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
@@ -83,6 +92,14 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, first); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("late secret conflict = %v", err)
 	}
+	if _, stamped, err := base.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || stamped {
+		t.Fatalf("failed create changed runtime stamp: stamped=%v, err=%v", stamped, err)
+	}
+	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+		if _, err := base.LatestSnapshotForTier(ctx, deployment.ID, tier); err != nil {
+			t.Fatalf("failed create invalidated %s snapshot: %v", tier, err)
+		}
+	}
 	if _, _, err := bindings.ResolveObjectS3Credential(ctx, first.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("credential survived failed create: %v", err)
 	}
@@ -102,6 +119,15 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	if err != nil || created.ID != first.Credential.ID {
 		t.Fatalf("binding create = %+v, %v", created, err)
 	}
+	stamp, stamped, err := base.AppRuntimeConfigChangedAt(ctx, app.ID)
+	if err != nil || !stamped {
+		t.Fatalf("created binding runtime stamp = %v, %v, %v", stamp, stamped, err)
+	}
+	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+		if _, err := base.LatestSnapshotForTier(ctx, deployment.ID, tier); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("created binding left %s snapshot restorable: %v", tier, err)
+		}
+	}
 	for _, secret := range first.Secrets {
 		stored, err := base.GetAppSecretInScope(ctx, acct.ID, app.ID, "default", secret.Key)
 		if err != nil || stored.ManagedObjectStorageCredentialID != created.ID {
@@ -119,6 +145,9 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	}
 	if _, _, err := bindings.ResolveObjectS3Credential(ctx, limited.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("quota-rejected credential resolved: %v", err)
+	}
+	if after, _, err := base.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !after.Equal(stamp) {
+		t.Fatalf("rejected create changed runtime stamp: before=%v after=%v err=%v", stamp, after, err)
 	}
 }
 

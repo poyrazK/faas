@@ -222,6 +222,7 @@ func (s *server) createObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 		bucketProblem(w, err)
 		return
 	}
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
 	s.audit.Emit(r.Context(), "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": req.Prefix})
 	writeJSON(w, http.StatusCreated, viewObjectStorageComputeBinding(credential))
 }

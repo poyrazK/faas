@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -170,6 +171,7 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if err != nil {
 		return "", 0, fmt.Errorf("create isolated object storage credential: %w", err)
 	}
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, plan.app, "binding_created", target, "")
 	bucketID := bucket.ID
 	*cleanup = append(*cleanup, func(ctx context.Context) error {
 		revokeErr := store.RevokeObjectS3Credential(ctx, acct.ID, bucketID, credentialID)
