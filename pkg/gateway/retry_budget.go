@@ -44,12 +44,12 @@ func NewRetryBudget(window time.Duration, now func() time.Time) *RetryBudget {
 }
 
 // ObserveOriginal records one request admitted under a retry policy.
-func (b *RetryBudget) ObserveOriginal(scope string) {
+func (b *RetryBudget) ObserveOriginal(parent context.Context, scope string) {
 	if b == nil || scope == "" {
 		return
 	}
 	if b.remote != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
 		defer cancel()
 		_ = retryBudgetObserveScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, b.window.Milliseconds()).Err()
 		return
@@ -68,7 +68,7 @@ func (b *RetryBudget) ObserveOriginal(scope string) {
 // AllowRetry atomically spends one retry token. The allowance is the larger
 // of minRetries and ceil(originals*percent/100). Unknown scopes are denied:
 // callers must observe the original first.
-func (b *RetryBudget) AllowRetry(scope string, percent, minRetries int) bool {
+func (b *RetryBudget) AllowRetry(parent context.Context, scope string, percent, minRetries int) bool {
 	if b == nil {
 		return true
 	}
@@ -82,7 +82,7 @@ func (b *RetryBudget) AllowRetry(scope string, percent, minRetries int) bool {
 		minRetries = 0
 	}
 	if b.remote != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
 		defer cancel()
 		admitted, err := retryBudgetAdmitScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, percent, minRetries).Int()
 		// A shared-backend failure must never silently restore a per-process
