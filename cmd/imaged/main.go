@@ -252,7 +252,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// "run `faas sign-keys init`" message without a confusing
 	// storage-dial error stacked on top.
 	if _, err := os.Stat(signKeyPath); err != nil {
-		return fmt.Errorf("imaged: sign key %q: %w (run `faas sign-keys init` to provision)", signKeyPath, err)
+		return fmt.Errorf("imaged: sign key %q: %w (run `gregalectl sign-keys init` to provision)", signKeyPath, err)
 	}
 	log.Info("imaged: build attestation sign key present", "key", signKeyPath)
 

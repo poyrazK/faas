@@ -4003,8 +4003,8 @@ func TestLoadSealedEnvFor(t *testing.T) {
 		if !strings.Contains(err.Error(), "NONEXISTENT") {
 			t.Errorf("error %q should name the missing key", err)
 		}
-		if !strings.Contains(err.Error(), "faas secrets set") {
-			t.Errorf("error %q should hint at faas secrets set", err)
+		if !strings.Contains(err.Error(), "gregale secrets set") {
+			t.Errorf("error %q should hint at gregale secrets set", err)
 		}
 	})
 

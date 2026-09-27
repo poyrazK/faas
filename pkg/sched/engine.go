@@ -7498,7 +7498,7 @@ func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID,
 		// different orders on different wakes. Scope is part of the
 		// error so the operator knows which deployment tripped.
 		sort.Strings(missing)
-		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via faas secrets set --scope %s",
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via gregale secrets set --scope %s",
 			scope, strings.Join(missing, ", "), accountID, appID, scope)
 	}
 	return sealedEnvDelivery{Entries: out, Candidates: candidates}, nil
