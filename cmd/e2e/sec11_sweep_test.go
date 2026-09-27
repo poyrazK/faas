@@ -215,6 +215,7 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		// tests can override both entries via extra after this base environment.
 		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request_telemetry.sock"),
+		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET=" + filepath.Join(telemetryDir, "otel_spans_writer.sock"),
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",
