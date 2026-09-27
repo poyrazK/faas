@@ -427,6 +427,7 @@ func verifyRequestChecksum(header http.Header, body []byte) error {
 	if err != nil || digest == nil {
 		return err
 	}
+	// codeql[go/weak-sensitive-data-hashing] -- SHA-1 is accepted only as an S3 wire checksum for request integrity, not for secret derivation.
 	_, _ = digest.Write(body)
 	if subtle.ConstantTimeCompare(expected, digest.Sum(nil)) != 1 {
 		return badAWSChunkDigest()

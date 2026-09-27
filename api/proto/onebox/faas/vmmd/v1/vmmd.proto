@@ -211,6 +211,12 @@ service Vmmd {
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
 
+  // UpdateAppCPULimit changes the host cgroup CPU ceiling for every live VM
+  // belonging to an app. CPU quota is a cgroup policy and can be changed
+  // without rebooting the guest or creating a deployment. RAM/vCPU topology
+  // remain boot-time settings.
+  rpc UpdateAppCPULimit(UpdateAppCPULimitRequest) returns (UpdateAppCPULimitAck);
+
   // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
   // per-app static egress IP into every live netns the vmmd
   // owns without tearing the netns down. The caller passes
@@ -623,6 +629,11 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // readiness_probe_json is the optional recurring primary-app traffic probe
+  // (distinct from the startup healthcheck and liveness probe). Empty keeps
+  // legacy routing behavior; otherwise vmmd decodes the deployment's validated
+  // readiness_probe override and emits reversible ready/unready transitions.
+  string readiness_probe_json = 27;
   // private_network_cidrs are provider-verified VPC destinations for this
   // app. vmmd installs explicit routes and accept-before-deny rules only when
   // this list is non-empty; pending/error attachments stay fail-closed at the
@@ -645,6 +656,9 @@ message AppSpec {
   // Disables the bounded startup CPU allowance for this deployment. False
   // preserves the established behavior for callers that omit this field.
   bool disable_startup_cpu_boost = 24;
+  // main_depends_on carries the primary workload's startup gates into the
+  // guest workload roster. Empty preserves legacy startup behavior.
+  repeated WorkloadDependency main_depends_on = 28;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1283,6 +1297,18 @@ message UpdateEgressAllowlistRequest {
 // is expected to Park + ColdBoot the affected instances, which
 // the schedd watchdog does on its next tick).
 message UpdateEgressAllowlistAck {}
+
+// UpdateAppCPULimitRequest carries a revision-fenced complete desired per-VM
+// CPU quota. Values use the same closed set as apps.cpu_millicores. vmmd applies
+// the requested quota to every live app VM and cancels any older startup boost
+// tail so a delayed callback cannot restore a stale limit.
+message UpdateAppCPULimitRequest {
+  string app_id = 1;
+  int32 cpu_millicores = 2;
+  int64 revision = 3;
+}
+
+message UpdateAppCPULimitAck {}
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need

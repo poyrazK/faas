@@ -170,7 +170,7 @@ func (s DeploymentStatus) IsTerminal() bool {
 // surface (POST /v1/apps/{slug}/deployments/{id}/cancel) can
 // transition this row. The store layer mirrors the same
 // predicate in the CAS WHERE clause — see
-// pgstore.MarkDeploymentCancelled.
+// CancelDeploymentTx.
 func (s DeploymentStatus) IsCancelEligible() bool {
 	switch s {
 	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
@@ -973,12 +973,21 @@ type App struct {
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
+	// RequestRateLimitRPS and RequestRateLimitBurst are optional per-app
+	// overrides for the gateway-wide app bucket. Nil inherits the plan default.
+	RequestRateLimitRPS   *int
+	RequestRateLimitBurst *int
 	// MinInstances is the per-app floor the reaper honors when parking
 	// idle instances (ux_spec §6.5). 0 => scale to zero (default);
 	// >0 => keep at least this many RUNNING instances alive regardless
 	// of idle timeout. Pro/Scale only — the apid updateApp handler
 	// rejects Hobby/Free with 403 plan_min_instances_not_allowed.
 	MinInstances int
+	// ScalingPolicyRevision is the monotonic desired revision for the
+	// scheduler-owned scaling controls on this app. It changes when a
+	// scaling input or the owning scheduler node changes; schedulers
+	// acknowledge observing this revision without creating a deployment.
+	ScalingPolicyRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -2101,8 +2110,8 @@ type Deployment struct {
 	ErrorFix          string
 	ErrorRelevantLogs []api.LogExcerpt
 	// CancelledAt is the wall-clock at which the row transitioned
-	// to DeployCancelled. Set by MarkDeploymentCancelled /
-	// CancelDeploymentTx (ADR-124). Populates the `cancelled_at`
+	// to DeployCancelled. Set by CancelDeploymentTx (ADR-124).
+	// Populates the `cancelled_at`
 	// column added in migration 00360. Nil for every other row.
 	CancelledAt *time.Time
 	// CancelledByPrincipal is the opaque principal who initiated
@@ -2150,6 +2159,12 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
+	// OverrideReadinessProbe is the optional reversible primary-app traffic
+	// readiness probe. It is independent of startup healthcheck and liveness.
+	OverrideReadinessProbe json.RawMessage `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn is the primary workload's startup dependency list.
+	// It is persisted independently so the runtime can apply the graph at boot.
+	OverrideMainDependsOn json.RawMessage `json:"override_main_depends_on,omitempty"`
 	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
 	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
@@ -2772,8 +2787,11 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain           string
-	AppID            string
+	Domain string
+	AppID  string
+	// EnvironmentID is empty for the legacy application-wide route. A
+	// non-empty value binds the hostname to one project environment.
+	EnvironmentID    string
 	ChallengeToken   string
 	VerifiedAt       time.Time // zero = unverified
 	CertStatus       CustomDomainCertStatus
@@ -5636,6 +5654,13 @@ type UpdateAppParams struct {
 	// matchOrigin matcher verbatim against this list.
 	CORSDefaultOrigins    *[]string
 	SetCORSDefaultOrigins bool
+	// Request-rate overrides are nullable in storage. A Set bit distinguishes
+	// an omitted PATCH from zero, which clears that dimension back to its plan
+	// default. Positive values have already been checked against the plan cap.
+	RequestRateLimitRPS      *int
+	SetRequestRateLimitRPS   bool
+	RequestRateLimitBurst    *int
+	SetRequestRateLimitBurst bool
 }
 
 // AppPublicAuthUpdate (issue #477 / ADR-079) is the
@@ -6452,50 +6477,65 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                      string
-	AccountID               string
-	ProjectID               string
-	ProjectSlug             string
-	FromEnvironment         string
-	ToEnvironment           string
-	PromotionHash           string
-	IdempotencyKey          string
-	Status                  string
-	Error                   string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	CompletedAt             *time.Time
-	RollbackStatus          string
-	RollbackIdempotencyKey  string
-	RollbackError           string
-	RollbackStartedAt       *time.Time
-	RollbackCompletedAt     *time.Time
-	VerificationStatus      string
-	VerificationError       string
-	VerificationStartedAt   *time.Time
-	VerificationCompletedAt *time.Time
+	ID                           string
+	AccountID                    string
+	ProjectID                    string
+	ProjectSlug                  string
+	FromEnvironment              string
+	ToEnvironment                string
+	PromotionHash                string
+	ReleaseGraphMode             bool
+	SourceReleaseSetID           string
+	PreviousTargetReleaseSetID   string
+	TargetReleaseSetID           string
+	RestoredTargetReleaseSetID   string
+	ReleaseTTLSeconds            int
+	IdempotencyKey               string
+	Status                       string
+	Error                        string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+	CompletedAt                  *time.Time
+	RollbackStatus               string
+	RollbackIdempotencyKey       string
+	RollbackError                string
+	RollbackStartedAt            *time.Time
+	RollbackCompletedAt          *time.Time
+	VerificationStatus           string
+	VerificationError            string
+	VerificationStartedAt        *time.Time
+	VerificationCompletedAt      *time.Time
+	RollbackReleaseSetID         string
+	SyncConfig                   bool
+	SourceConfigHash             string
+	PreviousTargetConfigHash     string
+	SourceConfigSnapshot         json.RawMessage
+	PreviousTargetConfigSnapshot json.RawMessage
+	TargetConfigVersion          int64
+	RollbackConfigVersion        int64
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
 // Deployment IDs are strings intentionally: the operation remains readable
 // if a legacy or test deployment identifier is not a UUID.
 type ProjectEnvironmentPromotionWorkload struct {
-	ID                         string
-	PromotionID                string
-	WorkloadSlug               string
-	WorkloadName               string
-	SourceDeploymentID         string
-	PreviousTargetDeploymentID string
-	TargetDeploymentID         string
-	Status                     string
-	Error                      string
-	RollbackStatus             string
-	RestoredTargetDeploymentID string
-	RollbackError              string
-	VerificationStatus         string
-	VerificationError          string
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ID                           string
+	PromotionID                  string
+	WorkloadSlug                 string
+	WorkloadName                 string
+	SourceDeploymentID           string
+	PreviousTargetDeploymentID   string
+	PreviousTargetTrafficPercent int
+	TargetDeploymentID           string
+	Status                       string
+	Error                        string
+	RollbackStatus               string
+	RestoredTargetDeploymentID   string
+	RollbackError                string
+	VerificationStatus           string
+	VerificationError            string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 // IsZero reports whether this is an unset Project (Go zero value).

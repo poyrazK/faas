@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.project_environment_promotion_release_graph_response import (
+        ProjectEnvironmentPromotionReleaseGraphResponse,
+    )
     from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 
 
@@ -23,6 +28,10 @@ class ProjectEnvironmentPromotionResponse:
     to_environment: str
     promotion_hash: str
     workloads: list[ProjectEnvironmentPromotionWorkloadResponse]
+    release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
+    """Immutable graph identities involved in a graph-aware promotion and rollback."""
+    sync_config: bool | Unset = UNSET
+    """Whether this promotion copied the source's non-secret configuration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +50,11 @@ class ProjectEnvironmentPromotionResponse:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        release_graph: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release_graph, Unset):
+            release_graph = self.release_graph.to_dict()
+        sync_config = self.sync_config
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,11 +67,18 @@ class ProjectEnvironmentPromotionResponse:
                 "workloads": workloads,
             }
         )
+        if release_graph is not UNSET:
+            field_dict["release_graph"] = release_graph
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_promotion_release_graph_response import (
+            ProjectEnvironmentPromotionReleaseGraphResponse,
+        )
         from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 
         d = dict(src_dict)
@@ -78,6 +99,14 @@ class ProjectEnvironmentPromotionResponse:
 
             workloads.append(workloads_item)
 
+        _release_graph = d.pop("release_graph", UNSET)
+        release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset
+        if isinstance(_release_graph, Unset):
+            release_graph = UNSET
+        else:
+            release_graph = ProjectEnvironmentPromotionReleaseGraphResponse.from_dict(_release_graph)
+        sync_config = d.pop("sync_config", UNSET)
+
         project_environment_promotion_response = cls(
             promotion_id=promotion_id,
             project_slug=project_slug,
@@ -85,6 +114,8 @@ class ProjectEnvironmentPromotionResponse:
             to_environment=to_environment,
             promotion_hash=promotion_hash,
             workloads=workloads,
+            release_graph=release_graph,
+            sync_config=sync_config,
         )
 
         project_environment_promotion_response.additional_properties = d

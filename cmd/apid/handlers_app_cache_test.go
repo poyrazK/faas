@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,45 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type responseCachePurgeRecorderFake struct {
+	state.Store
+	appID    string
+	pathGlob string
+	tag      string
+	calls    int
+}
+
+func (f *responseCachePurgeRecorderFake) CreateResponseCachePurge(_ context.Context, appID, pathGlob, tag string) (int64, error) {
+	f.appID, f.pathGlob, f.tag = appID, pathGlob, tag
+	f.calls++
+	return int64(f.calls), nil
+}
+
+func TestPurgeAppCacheUsesDurablePurgeStore(t *testing.T) {
+	e, notifier := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	app := seedApp(t, e, "catalog")
+	store := &responseCachePurgeRecorderFake{Store: e.s.store}
+	e.s.store = store
+	e.s.notif = nil // the durable store commits the notification with the ledger row
+	req := httptest.NewRequest(http.MethodDelete, "/v1/apps/catalog/cache?tag=Product%3A42", nil)
+	req.SetPathValue("slug", "catalog")
+	rec := httptest.NewRecorder()
+	e.s.purgeAppCache(rec, req, e.acct)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s; want 204", rec.Code, rec.Body.String())
+	}
+	if store.calls != 1 || store.appID != app.ID || store.pathGlob != "" || store.tag != "product:42" {
+		t.Fatalf("durable purge call = %+v; want app %s and normalized tag", store, app.ID)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.emitted) != 0 {
+		t.Fatalf("notifier fallback emitted %v despite durable store", notifier.emitted)
+	}
+}
 
 func TestPurgeAppCacheTagNotification(t *testing.T) {
 	e, notifier := newTestServerWithCapturingNotifier(t, api.PlanPro)

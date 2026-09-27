@@ -195,6 +195,194 @@ func TestPgProjectReleaseGraphSurvivesExpiredDirectPin(t *testing.T) {
 	}
 }
 
+func TestPgProjectReleasePromotionCASAndRollback(t *testing.T) {
+	s, ctx, _ := pgWithPool(t)
+	account, err := s.CreateAccount(ctx, "graph-promotion-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "promotion-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: account.ID, ProjectID: project.ID, Slug: "workload-" + uuid.NewString()[:8],
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:promotion-previous",
+		Status: state.DeployPending, Scope: "production", TrafficPercent: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:promotion-candidate",
+		Status: state.DeployPending, Scope: "production", TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLiveDark(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if weighted, err := s.LiveDeploymentForScope(ctx, app.ID, "production"); err != nil || weighted.ID != previous.ID {
+		t.Fatalf("dark staging changed weighted route: %+v err=%v", weighted, err)
+	}
+	candidateMembers := []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}}
+	previousMembers := []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: previous.ID}}
+	if _, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "", nil, 1800, candidateMembers); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("activation without matching fallback = %v, want conflict", err)
+	}
+	promoted, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "",
+		previousMembers, 1800, candidateMembers)
+	if err != nil {
+		t.Fatalf("activate candidate graph: %v", err)
+	}
+	if weighted, err := s.LiveDeploymentForScope(ctx, app.ID, "production"); err != nil || weighted.ID != previous.ID {
+		t.Fatalf("graph activation changed weighted fallback: %+v err=%v", weighted, err)
+	}
+	if _, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "", previousMembers, 1800, candidateMembers); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale active-pointer compare-and-swap = %v, want conflict", err)
+	}
+	restored, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", promoted.ID,
+		nil, 1800, previousMembers)
+	if err != nil {
+		t.Fatalf("restore previous graph: %v", err)
+	}
+	if restored.ID == promoted.ID || len(restored.Members) != 1 || restored.Members[0].DeploymentID != previous.ID {
+		t.Fatalf("restored graph=%+v", restored)
+	}
+	if err := s.DeactivateProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", restored.ID, previousMembers); err != nil {
+		t.Fatalf("deactivate first graph after rollback: %v", err)
+	}
+	if _, err := s.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("active graph after deactivation = %v, want not found", err)
+	}
+	if releaseID, deploymentID, err := s.ResolveProjectRelease(ctx, app.ID, "production", promoted.ID); err != nil || releaseID != promoted.ID || deploymentID != candidate.ID {
+		t.Fatalf("client pin to promoted graph did not survive rollback: %q/%q err=%v", releaseID, deploymentID, err)
+	}
+	if releaseID, deploymentID, err := s.ResolveProjectRelease(ctx, app.ID, "production", restored.ID); err != nil || releaseID != restored.ID || deploymentID != previous.ID {
+		t.Fatalf("client pin to restored graph did not survive deactivation: %q/%q err=%v", releaseID, deploymentID, err)
+	}
+	if weighted, err := s.LiveDeploymentForScope(ctx, app.ID, "production"); err != nil || weighted.ID != previous.ID {
+		t.Fatalf("deactivation changed weighted route: %+v err=%v", weighted, err)
+	}
+}
+
+func TestPgProjectEnvironmentPromotionPersistsReleaseGraphCheckpoints(t *testing.T) {
+	s, ctx, _ := pgWithPool(t)
+	account, err := s.CreateAccount(ctx, "promotion-state-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "promotion-state-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: account.ID, ProjectID: project.ID, Slug: "workload-" + uuid.NewString()[:8],
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLive := func(scope, digest string) state.Deployment {
+		t.Helper()
+		deployment, err := s.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: digest,
+			Status: state.DeployPending, Scope: scope, TrafficPercent: 100,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	source := createLive("staging", "sha256:state-source")
+	previous := createLive("production", "sha256:state-previous")
+	sourceGraph, err := s.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: source.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousGraph, err := s.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: previous.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	promotion, workloads, err := s.CreateProjectEnvironmentPromotion(ctx, state.ProjectEnvironmentPromotion{
+		AccountID: account.ID, ProjectID: project.ID, ProjectSlug: project.Slug,
+		FromEnvironment: "staging", ToEnvironment: "production",
+		PromotionHash:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		IdempotencyKey: "promotion-graph-state", Status: "running", VerificationStatus: "pending", ReleaseGraphMode: true,
+		SourceReleaseSetID: sourceGraph.ID, PreviousTargetReleaseSetID: previousGraph.ID, ReleaseTTLSeconds: 1800,
+	}, []state.ProjectEnvironmentPromotionWorkload{{
+		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, SourceDeploymentID: source.ID,
+		PreviousTargetDeploymentID: previous.ID, PreviousTargetTrafficPercent: 100,
+		TargetDeploymentID: previous.ID, Status: "pending",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:state-candidate",
+		Status: state.DeployPending, Scope: "production", TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLiveDark(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	active, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", previousGraph.ID,
+		nil, 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProjectEnvironmentPromotionReleaseSets(ctx, account.ID, promotion.ID, active.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", active.ID,
+		nil, 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: previous.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProjectEnvironmentPromotionReleaseSets(ctx, account.ID, promotion.ID, "", restored.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, gotWorkloads, err := s.ProjectEnvironmentPromotionByID(ctx, account.ID, project.Slug, "production", promotion.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ReleaseGraphMode || got.SourceReleaseSetID != sourceGraph.ID ||
+		got.PreviousTargetReleaseSetID != previousGraph.ID || got.TargetReleaseSetID != active.ID ||
+		got.RestoredTargetReleaseSetID != restored.ID || got.ReleaseTTLSeconds != 1800 {
+		t.Fatalf("persisted release graph promotion=%+v", got)
+	}
+	if len(workloads) != 1 || len(gotWorkloads) != 1 ||
+		workloads[0].PreviousTargetTrafficPercent != 100 || gotWorkloads[0].PreviousTargetTrafficPercent != 100 {
+		t.Fatalf("persisted workload traffic snapshots: create=%+v read=%+v", workloads, gotWorkloads)
+	}
+	byKey, byKeyWorkloads, err := s.ProjectEnvironmentPromotionByIdempotencyKey(ctx, account.ID, project.Slug, "promotion-graph-state")
+	if err != nil || byKey.TargetReleaseSetID != active.ID || byKey.RestoredTargetReleaseSetID != restored.ID || len(byKeyWorkloads) != 1 {
+		t.Fatalf("promotion idempotency lookup=%+v workloads=%+v err=%v", byKey, byKeyWorkloads, err)
+	}
+}
+
 func TestPgLiveInstancesByHostIPRejectsAmbiguityAndSeesReuse(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
 	_, oldApp, oldDep := seedLiveDeploy(t, s, ctx, "identity-old", "identity-old")

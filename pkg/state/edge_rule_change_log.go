@@ -42,6 +42,24 @@ func (s *PgStore) LatestEdgeRuleChangeID(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
+// LatestAppEdgeRuleChangeID returns the desired revision for one app. The
+// IDs remain global so a gateway's global replay watermark can be compared
+// directly to this app's latest mutation.
+func (s *PgStore) LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, fmt.Errorf("state: edge-rule change log has nil pool")
+	}
+	var id int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(id), 0)
+		FROM edge_rule_change_log
+		WHERE app_id = $1
+	`, appID).Scan(&id); err != nil {
+		return 0, fmt.Errorf("state: latest app edge-rule change id: %w", err)
+	}
+	return id, nil
+}
+
 // ListEdgeRuleChangesAfter reads the ledger in ID order. The limit is bounded
 // at the store seam so a future caller cannot turn a repair pass into an
 // unbounded allocation from database-controlled history.
@@ -77,9 +95,10 @@ func (s *PgStore) ListEdgeRuleChangesAfter(ctx context.Context, afterID int64, l
 	return changes, nil
 }
 
-// PruneEdgeRuleChangeLog bounds the retained ledger. The repair loop keeps
-// a recent window for gateways that are temporarily offline; a restarted
-// gateway baselines to the current high-water mark before polling.
+// PruneEdgeRuleChangeLog bounds retained history without deleting changes a
+// serving gateway has not replayed. A restarted gateway has empty caches and
+// baselines to the current high-water mark; a still-serving lagging gateway
+// holds pruning at its last durable watermark.
 func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) (int64, error) {
 	if s == nil || s.pool == nil {
 		return 0, fmt.Errorf("state: edge-rule change log has nil pool")
@@ -87,7 +106,19 @@ func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) 
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: edge-rule change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM edge_rule_change_log WHERE created_at < $1`, before.UTC())
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM edge_rule_change_log
+		WHERE created_at < $1
+		  AND id <= COALESCE((
+		      SELECT MIN(COALESCE(w.last_change_id, 0))
+		      FROM compute_nodes n
+		      LEFT JOIN gateway_edge_rule_watermarks w ON w.node_name = n.name
+		      WHERE n.active = true
+		        AND n.role IN ('compute-only', 'compute-node')
+		        AND n.gateway_target_url IS NOT NULL
+		        AND btrim(n.gateway_target_url) <> ''
+		  ), 9223372036854775807::bigint)
+	`, before.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("state: prune edge-rule change log: %w", err)
 	}

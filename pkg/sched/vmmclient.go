@@ -445,6 +445,9 @@ type AppSpec struct {
 	// each sidecar layer; sealed deployment env overrides travel separately in
 	// the sidecar spec and are opened only by vmmd into the instance upper.
 	Sidecars []fcvm.WorkloadSpec
+	// MainDependsOn carries the deployment's primary-workload startup gates.
+	// The guest roster combines these with sidecar dependencies before launch.
+	MainDependsOn []api.WorkloadDependency
 	// Port (issue #460 / ADR-053 §Decision 1, PR-C) is the per-deployment
 	// override port the customer's app binds inside the guest. 0 = legacy
 	// 8080 (netns.AppPort default at the vmmd wire boundary). The host's
@@ -461,6 +464,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ReadinessProbeJSON carries the optional continuous primary-app
+	// readiness policy. It is separate from HealthcheckPath/GRPC, which
+	// only gate startup admission.
+	ReadinessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -965,6 +972,20 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	return nil
 }
 
+// UpdateAppCPULimit pushes a validated, complete app CPU quota to vmmd. The
+// gRPC operation updates live host cgroups without guest restart; RAM and vCPU
+// topology remain cold-boot attributes.
+func (c *VMMClient) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if _, err := c.cli.UpdateAppCPULimit(ctx, &vmmdpb.UpdateAppCPULimitRequest{
+		AppId:         appID,
+		CpuMillicores: int32(cpuMillicores),
+		Revision:      revision,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // UpdatePrivateNetwork applies the provider-verified private destination set
 // to all live instances of an app on this vmmd.
 func (c *VMMClient) UpdatePrivateNetwork(ctx context.Context, appID string, cidrs []netip.Prefix) error {
@@ -1375,6 +1396,12 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Value: e.Value,
 		})
 	}
+	mainDependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(a.MainDependsOn))
+	for _, dep := range a.MainDependsOn {
+		mainDependsOn = append(mainDependsOn, &vmmdpb.WorkloadDependency{
+			Name: dep.Name, Condition: string(dep.Condition),
+		})
+	}
 	sidecars := make([]*vmmdpb.SidecarSpec, 0, len(a.Sidecars))
 	for _, sc := range a.Sidecars {
 		sealedSidecarEnv := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedEnv))
@@ -1448,6 +1475,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		SealedEnv:       sealed,
 		ApiEnv:          apiEnv,
 		Sidecars:        sidecars,
+		MainDependsOn:   mainDependsOn,
 		EgressAllowlist: a.EgressAllowlist,
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
@@ -1455,6 +1483,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckPath:        a.HealthcheckPath,
 		HealthcheckGrpc:        a.HealthcheckGRPC,
 		HealthcheckGrpcService: a.HealthcheckGRPCService,
+		ReadinessProbeJson:     a.ReadinessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

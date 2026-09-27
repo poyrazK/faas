@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.create_deployment_overrides_env_secrets import CreateDeploymentOverridesEnvSecrets
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_readiness_probe import DeploymentReadinessProbe
 
 
 T = TypeVar("T", bound="CreateDeploymentOverrides")
@@ -20,10 +21,9 @@ T = TypeVar("T", bound="CreateDeploymentOverrides")
 
 @_attrs_define
 class CreateDeploymentOverrides:
-    """Fargate-shaped deploy-time override object on `POST /v1/apps/{slug}/deployments`
-    (issue #460 / ADR-053). Field list is FROZEN — six fields, no more. Any extra
-    field on this object 400s the request. ADR-053 §Decision 1 documents the freeze;
-    the handler enforces it via `DisallowUnknownFields` on the JSON decoder.
+    """Deploy-time override object on `POST /v1/apps/{slug}/deployments`
+    (issue #460 / ADR-053). Unknown fields 400 the request; each supported
+    field has an explicit persistence and runtime contract.
 
     - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
     - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
@@ -35,8 +35,9 @@ class CreateDeploymentOverrides:
     - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
       mixing the two surfaces.
     - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
-    - `healthcheck` is the readiness-probe shape; the actual HTTP probe ships
-      in a follow-up ADR.
+    - `healthcheck` configures startup readiness admission.
+    - `readiness_probe` is an optional recurring traffic gate, independent of
+      the one-shot startup check and VM liveness policy.
 
     """
 
@@ -52,7 +53,10 @@ class CreateDeploymentOverrides:
     port: int | Unset = UNSET
     """Listen port; 0 = absent / fall back to image default (today 8080)."""
     healthcheck: DeploymentHealthcheck | None | Unset = UNSET
-    """Readiness-probe shape. Persisted today; the HTTP probe variant ships in a follow-up ADR."""
+    """Startup readiness-probe shape. The selected action gates instance startup before it becomes available."""
+    readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
+    """Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing;
+    successful probes restore it without restarting the VM."""
     liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
     """Liveness-probe override (issue #554 / ADR-078). The host (cmd/vmmd)
     polls the guest's vsock 1028 STREAM on every `interval_s`; after
@@ -76,6 +80,7 @@ class CreateDeploymentOverrides:
     def to_dict(self) -> dict[str, Any]:
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
 
         entrypoint: list[str] | Unset = UNSET
         if not isinstance(self.entrypoint, Unset):
@@ -102,6 +107,14 @@ class CreateDeploymentOverrides:
             healthcheck = self.healthcheck.to_dict()
         else:
             healthcheck = self.healthcheck
+
+        readiness_probe: dict[str, Any] | None | Unset
+        if isinstance(self.readiness_probe, Unset):
+            readiness_probe = UNSET
+        elif isinstance(self.readiness_probe, DeploymentReadinessProbe):
+            readiness_probe = self.readiness_probe.to_dict()
+        else:
+            readiness_probe = self.readiness_probe
 
         liveness_probe: dict[str, Any] | None | Unset
         if isinstance(self.liveness_probe, Unset):
@@ -132,6 +145,8 @@ class CreateDeploymentOverrides:
             field_dict["port"] = port
         if healthcheck is not UNSET:
             field_dict["healthcheck"] = healthcheck
+        if readiness_probe is not UNSET:
+            field_dict["readiness_probe"] = readiness_probe
         if liveness_probe is not UNSET:
             field_dict["liveness_probe"] = liveness_probe
         if scope is not UNSET:
@@ -145,6 +160,7 @@ class CreateDeploymentOverrides:
         from ..models.create_deployment_overrides_env_secrets import CreateDeploymentOverridesEnvSecrets
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint", UNSET))
@@ -184,6 +200,23 @@ class CreateDeploymentOverrides:
 
         healthcheck = _parse_healthcheck(d.pop("healthcheck", UNSET))
 
+        def _parse_readiness_probe(data: object) -> DeploymentReadinessProbe | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                readiness_probe_type_0 = DeploymentReadinessProbe.from_dict(data)
+
+                return readiness_probe_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentReadinessProbe | None | Unset, data)
+
+        readiness_probe = _parse_readiness_probe(d.pop("readiness_probe", UNSET))
+
         def _parse_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
             if data is None:
                 return data
@@ -217,6 +250,7 @@ class CreateDeploymentOverrides:
             env_secrets=env_secrets,
             port=port,
             healthcheck=healthcheck,
+            readiness_probe=readiness_probe,
             liveness_probe=liveness_probe,
             scope=scope,
         )
