@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 286 | [Managed realtime callback backlog observability](286-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
 | 285 | [Bounded parallel managed realtime callback replay](285-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
 | 284 | [Live managed realtime callback credential rotation](284-live-realtime-callback-auth-rotation.md) | accepted | Existing sockets use rotated credentials for new events while queued records retain their original tokens |
 | 283 | [Bounded managed realtime callback dead letters](283-bounded-realtime-callback-dead-letters.md) | accepted | Byte-bounded dead-letter retention, eviction metrics, alerts, and operator runbook |

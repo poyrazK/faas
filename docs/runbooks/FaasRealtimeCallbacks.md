@@ -1,4 +1,12 @@
-# Managed realtime callback dead letters
+# Managed realtime callback delivery
+
+`FaasRealtimeCallbackReplayStalled` means the node has pending callbacks older
+than five minutes and replay has delivered none for five minutes. Check
+`realtimed_callback_pending`, `realtimed_callback_oldest_pending_age_seconds`,
+and `realtimed_callback_replay_deliveries_total`, then inspect the `realtimed`
+logs for outbox or receiver errors. Confirm the node-local outbox is writable
+and has free space before restarting the daemon; pending records are replayed
+after restart.
 
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.

@@ -42,18 +42,21 @@ type CallbackOutboxConfig struct {
 	RetryInterval      time.Duration
 }
 
-// CallbackOutboxStats is a point-in-time view of pending and dead-lettered
-// callback events. The queue is intentionally node-local; aggregate these
-// counters across realtimed nodes for fleet-level metering.
+// CallbackOutboxStats is a point-in-time view of the pending callback backlog,
+// replay progress, and retained dead letters. The queue is intentionally
+// node-local; aggregate its counters across realtimed nodes for fleet-level
+// metering.
 type CallbackOutboxStats struct {
-	Pending                    int    `json:"pending"`
-	PendingBytes               int64  `json:"pending_bytes"`
-	CapacityBytes              int64  `json:"capacity_bytes"`
-	DeadLetterTotal            int64  `json:"dead_letter_total"`
-	DeadLetterBytes            int64  `json:"dead_letter_bytes"`
-	DeadLetterCapacityBytes    int64  `json:"dead_letter_capacity_bytes"`
-	DeadLetterEvictions        uint64 `json:"dead_letter_evictions"`
-	DeadLetterLastEvictionUnix int64  `json:"dead_letter_last_eviction_unix"`
+	Pending                    int     `json:"pending"`
+	PendingBytes               int64   `json:"pending_bytes"`
+	CapacityBytes              int64   `json:"capacity_bytes"`
+	ReplayDeliveries           uint64  `json:"replay_deliveries"`
+	OldestPendingAgeSeconds    float64 `json:"oldest_pending_age_seconds"`
+	DeadLetterTotal            int64   `json:"dead_letter_total"`
+	DeadLetterBytes            int64   `json:"dead_letter_bytes"`
+	DeadLetterCapacityBytes    int64   `json:"dead_letter_capacity_bytes"`
+	DeadLetterEvictions        uint64  `json:"dead_letter_evictions"`
+	DeadLetterLastEvictionUnix int64   `json:"dead_letter_last_eviction_unix"`
 }
 
 type callbackDeadLetter struct {
@@ -80,11 +83,40 @@ func (h *callbackDeadLetterHeap) Pop() any {
 	return value
 }
 
+type callbackPendingAgeHeap []*callbackOutboxItem
+
+func (h callbackPendingAgeHeap) Len() int { return len(h) }
+func (h callbackPendingAgeHeap) Less(i, j int) bool {
+	if !h[i].enqueuedAt.Equal(h[j].enqueuedAt) {
+		return h[i].enqueuedAt.Before(h[j].enqueuedAt)
+	}
+	return h[i].record.Event.ID < h[j].record.Event.ID
+}
+func (h callbackPendingAgeHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].pendingAgeIndex = i
+	h[j].pendingAgeIndex = j
+}
+func (h *callbackPendingAgeHeap) Push(value any) {
+	item := value.(*callbackOutboxItem)
+	item.pendingAgeIndex = len(*h)
+	*h = append(*h, item)
+}
+func (h *callbackPendingAgeHeap) Pop() any {
+	last := len(*h) - 1
+	value := (*h)[last]
+	(*h)[last] = nil
+	value.pendingAgeIndex = -1
+	*h = (*h)[:last]
+	return value
+}
+
 type callbackOutboxRecord struct {
 	Event             Event     `json:"event"`
 	CallbackURL       string    `json:"callback_url"`
 	CallbackPath      string    `json:"callback_path"`
 	CallbackAuthToken string    `json:"callback_auth_token,omitempty"`
+	EnqueuedAt        time.Time `json:"enqueued_at,omitempty"`
 	Attempts          int       `json:"attempts"`
 	NextAttemptAt     time.Time `json:"next_attempt_at,omitempty"`
 }
@@ -98,9 +130,11 @@ func (r callbackOutboxRecord) event() Event {
 }
 
 type callbackOutboxItem struct {
-	record callbackOutboxRecord
-	path   string
-	size   int64
+	record          callbackOutboxRecord
+	path            string
+	size            int64
+	enqueuedAt      time.Time
+	pendingAgeIndex int
 }
 
 // CallbackOutbox is a multi-producer durable spool for message and disconnect
@@ -122,10 +156,12 @@ type CallbackOutbox struct {
 	items                map[string]*callbackOutboxItem
 	inFlight             map[string]struct{}
 	bytes                int64
+	replayDeliveries     uint64
 	deadBytes            int64
 	deadEvictions        uint64
 	deadLastEvictionUnix int64
 	dead                 callbackDeadLetterHeap
+	pendingAge           callbackPendingAgeHeap
 	deadIDs              map[string]struct{}
 	callbackAuthTokens   map[string]string
 }
@@ -208,7 +244,16 @@ func (q *CallbackOutbox) load() error {
 		if err != nil {
 			return fmt.Errorf("realtime: stat callback outbox item %q: %w", id, err)
 		}
-		q.items[id] = &callbackOutboxItem{record: record, path: path, size: info.Size()}
+		enqueuedAt := record.EnqueuedAt
+		if enqueuedAt.IsZero() {
+			enqueuedAt = record.Event.At
+		}
+		if enqueuedAt.IsZero() {
+			enqueuedAt = info.ModTime().UTC()
+		}
+		item := &callbackOutboxItem{record: record, path: path, size: info.Size(), enqueuedAt: enqueuedAt}
+		q.items[id] = item
+		heap.Push(&q.pendingAge, item)
 		q.bytes += info.Size()
 	}
 	deadEntries, err := os.ReadDir(q.deadRoot)
@@ -305,6 +350,7 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 		CallbackURL:       event.CallbackURL,
 		CallbackPath:      event.CallbackPath,
 		CallbackAuthToken: event.CallbackAuthToken,
+		EnqueuedAt:        time.Now().UTC(),
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -317,7 +363,9 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	if err := writeCallbackOutboxFile(path, payload); err != nil {
 		return false, fmt.Errorf("realtime: persist callback outbox item: %w", err)
 	}
-	q.items[event.ID] = &callbackOutboxItem{record: record, path: path, size: int64(len(payload))}
+	item := &callbackOutboxItem{record: record, path: path, size: int64(len(payload)), enqueuedAt: record.EnqueuedAt}
+	q.items[event.ID] = item
+	heap.Push(&q.pendingAge, item)
 	q.bytes += int64(len(payload))
 	if q.hasPriorEvent(event) {
 		// The replay loop will deliver this after earlier events for the
@@ -445,6 +493,14 @@ func (q *CallbackOutbox) ClaimNext() (Event, bool, error) {
 
 // Ack removes a successfully delivered event from the durable spool.
 func (q *CallbackOutbox) Ack(id string) error {
+	return q.ack(id, false)
+}
+
+func (q *CallbackOutbox) ackReplay(id string) error {
+	return q.ack(id, true)
+}
+
+func (q *CallbackOutbox) ack(id string, replay bool) error {
 	if q == nil {
 		return ErrCallbackOutboxItem
 	}
@@ -460,9 +516,15 @@ func (q *CallbackOutbox) Ack(id string) error {
 	if err := os.Remove(item.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("realtime: acknowledge callback outbox item: %w", err)
 	}
+	if item.pendingAgeIndex >= 0 {
+		heap.Remove(&q.pendingAge, item.pendingAgeIndex)
+	}
 	q.bytes -= item.size
 	delete(q.items, id)
 	delete(q.inFlight, id)
+	if replay {
+		q.replayDeliveries++
+	}
 	return nil
 }
 
@@ -507,6 +569,9 @@ func (q *CallbackOutbox) Fail(id string) error {
 		q.deadBytes += int64(len(payload))
 		heap.Push(&q.dead, callbackDeadLetter{id: id, size: int64(len(payload)), modified: modified})
 		q.deadIDs[id] = struct{}{}
+		if item.pendingAgeIndex >= 0 {
+			heap.Remove(&q.pendingAge, item.pendingAgeIndex)
+		}
 		delete(q.items, id)
 		delete(q.inFlight, id)
 		if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
@@ -545,10 +610,19 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	oldestPendingAge := float64(0)
+	if q.pendingAge.Len() > 0 {
+		oldestPendingAge = time.Since(q.pendingAge[0].enqueuedAt).Seconds()
+		if oldestPendingAge < 0 {
+			oldestPendingAge = 0
+		}
+	}
 	return CallbackOutboxStats{
 		Pending:                    len(q.items),
 		PendingBytes:               q.bytes,
 		CapacityBytes:              q.maxBytes,
+		ReplayDeliveries:           q.replayDeliveries,
+		OldestPendingAgeSeconds:    oldestPendingAge,
 		DeadLetterTotal:            int64(len(q.dead)),
 		DeadLetterBytes:            q.deadBytes,
 		DeadLetterCapacityBytes:    q.deadMaxBytes,
@@ -630,7 +704,7 @@ func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.C
 		}
 		err = deliver(ctx, event)
 		if err == nil {
-			if ackErr := q.Ack(event.ID); ackErr != nil {
+			if ackErr := q.ackReplay(event.ID); ackErr != nil {
 				q.Release(event.ID)
 				return ackErr
 			}

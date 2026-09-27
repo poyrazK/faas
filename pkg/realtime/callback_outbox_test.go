@@ -4,6 +4,7 @@ package realtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -341,6 +342,60 @@ func TestCallbackOutboxRunReplaysPendingEvents(t *testing.T) {
 	}
 	if err := <-errCh; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCallbackOutboxStatsTracksOldestPendingAgeAndReplayDeliveries(t *testing.T) {
+	root := t.TempDir()
+	newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root})
+
+	now := time.Now().UTC()
+	events := []struct {
+		event      Event
+		enqueuedAt time.Time
+	}{
+		{event: testCallbackEvent(), enqueuedAt: now.Add(-3 * time.Minute)},
+		{event: testCallbackEvent(), enqueuedAt: now.Add(-time.Minute)},
+	}
+	events[0].event.ID = "evt_age_a"
+	events[0].event.ConnectionID = "connection-a"
+	events[0].event.At = now
+	events[1].event.ID = "evt_age_b"
+	events[1].event.ConnectionID = "connection-b"
+	events[1].event.At = now
+	for _, item := range events {
+		record := callbackOutboxRecord{
+			Event:             item.event,
+			CallbackURL:       item.event.CallbackURL,
+			CallbackPath:      item.event.CallbackPath,
+			CallbackAuthToken: item.event.CallbackAuthToken,
+			EnqueuedAt:        item.enqueuedAt,
+		}
+		payload, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal record %q: %v", item.event.ID, err)
+		}
+		if err := writeCallbackOutboxFile(filepath.Join(root, item.event.ID+".json"), payload); err != nil {
+			t.Fatalf("write record %q: %v", item.event.ID, err)
+		}
+	}
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root})
+	stats := queue.Stats()
+	if stats.Pending != 2 || stats.OldestPendingAgeSeconds < 170 || stats.OldestPendingAgeSeconds > 200 {
+		t.Fatalf("initial stats = %+v, want two pending and oldest age near three minutes", stats)
+	}
+
+	event, ok, err := queue.ClaimNext()
+	if err != nil || !ok || event.ID != "evt_age_a" {
+		t.Fatalf("ClaimNext = (%+v, %v, %v), want oldest event evt_age_a", event, ok, err)
+	}
+	if err := queue.ackReplay(event.ID); err != nil {
+		t.Fatalf("ackReplay: %v", err)
+	}
+	stats = queue.Stats()
+	if stats.Pending != 1 || stats.ReplayDeliveries != 1 ||
+		stats.OldestPendingAgeSeconds < 50 || stats.OldestPendingAgeSeconds > 80 {
+		t.Fatalf("stats after replay = %+v, want one pending near one minute and one replay delivery", stats)
 	}
 }
 

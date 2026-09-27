@@ -80,3 +80,38 @@ func TestStatsCollectorExposesCallbackOutboxRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsCollectorExposesCallbackReplayProgress(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	pending := testCallbackEvent()
+	pending.ID = "evt_metrics_pending"
+	pending.ConnectionID = "connection-pending"
+	if claimed, err := queue.EnqueueAndClaim(pending); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim pending = (%v, %v)", claimed, err)
+	}
+	queue.Release(pending.ID)
+
+	replayed := testCallbackEvent()
+	replayed.ID = "evt_metrics_replayed"
+	replayed.ConnectionID = "connection-replayed"
+	if claimed, err := queue.EnqueueAndClaim(replayed); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim replayed = (%v, %v)", claimed, err)
+	}
+	if err := queue.ackReplay(replayed.ID); err != nil {
+		t.Fatalf("ackReplay: %v", err)
+	}
+
+	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
+	defer func() { _ = manager.Close() }()
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(NewStatsCollector(manager))
+	recorder := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	text := recorder.Body.String()
+	if !strings.Contains(text, "realtimed_callback_replay_deliveries_total 1") {
+		t.Fatalf("replay delivery counter missing from:\n%s", text)
+	}
+	if !strings.Contains(text, "realtimed_callback_oldest_pending_age_seconds ") {
+		t.Fatalf("oldest pending age gauge missing from:\n%s", text)
+	}
+}
