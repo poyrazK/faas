@@ -25,11 +25,12 @@ var (
 )
 
 const (
-	ReasonRate           = "rate_limit"
-	ReasonConcurrency    = "concurrency_limit"
-	ReasonDailyLimit     = "daily_request_limit"
-	ReasonAppNotAttached = "app_not_attached"
-	ReasonCircuitOpen    = "circuit_breaker_open"
+	ReasonRate             = "rate_limit"
+	ReasonConcurrency      = "concurrency_limit"
+	ReasonDailyLimit       = "daily_request_limit"
+	ReasonAppNotAttached   = "app_not_attached"
+	ReasonCircuitOpen      = "circuit_breaker_open"
+	ReasonProviderCooldown = "provider_cooldown"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -256,6 +257,21 @@ type CircuitBreakerBackend interface {
 // additional provider attempt. Backends coordinate all outboundd replicas.
 type RetryBudgetBackend interface {
 	ConsumeRetryToken(context.Context, string, int) (bool, error)
+}
+
+// ProviderCooldownDecision describes the shared provider-directed gate. A
+// denied request never reaches the provider; RetryAfter is the remaining
+// cooldown, measured by the backend's clock.
+type ProviderCooldownDecision struct {
+	Allowed    bool
+	RetryAfter time.Duration
+}
+
+// ProviderCooldownBackend shares provider Retry-After state across gateway
+// replicas. Implementations should extend, never shorten, an active cooldown.
+type ProviderCooldownBackend interface {
+	AllowProviderRequest(context.Context, string, int64) (ProviderCooldownDecision, error)
+	RecordProviderCooldown(context.Context, string, int64, time.Duration) error
 }
 
 // StaticResolver is useful for a dedicated gateway process configured at
