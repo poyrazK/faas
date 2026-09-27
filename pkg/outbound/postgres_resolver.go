@@ -41,19 +41,19 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var tokenHash []byte
 	var rate float64
 	var dailyRequestLimitValue int64
-	var burst, maxInFlight, timeoutMS int
+	var burst, maxInFlight, timeoutMS, maxRetries int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
-		       integration.request_timeout_ms, integration.enabled, integration.provider_auth_mode,
+	       integration.request_timeout_ms, integration.max_retries, integration.enabled, integration.provider_auth_mode,
 		       integration.credential_source, integration.allowed_methods,
 		       integration.allowed_path_prefixes, integration.owner_kind,
 		       COALESCE(integration.daily_request_limit, 0)
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
-		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
+		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -85,12 +85,12 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	if ownerKind == IntegrationOwnerCustomer {
 		policy, ok := api.EffectiveOutboundRequestPolicyForPlan(api.Plan(plan), api.OutboundRequestPolicy{
-			RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight, RequestTimeoutMS: timeoutMS,
+			RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight, RequestTimeoutMS: timeoutMS, MaxRetries: maxRetries,
 		})
 		if !ok {
 			return Integration{}, fmt.Errorf("%w: customer outbound request policy is invalid", ErrInvalidIntegration)
 		}
-		rate, burst, maxInFlight, timeoutMS = policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS
+		rate, burst, maxInFlight, timeoutMS, maxRetries = policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS, policy.MaxRetries
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint
@@ -150,6 +150,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		DailyRequestLimit:         dailyRequestLimit,
 		BindingDailyRequestLimits: bindingDailyRequestLimits,
 		RequestTimeout:            time.Duration(timeoutMS) * time.Millisecond,
+		MaxRetries:                maxRetries,
 		ProviderAuthMode:          providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {

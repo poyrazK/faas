@@ -20772,9 +20772,15 @@ components:
         burst: { type: integer, minimum: 1, maximum: 2000 }
         max_in_flight: { type: integer, minimum: 1, maximum: 1000 }
         request_timeout_ms: { type: integer, minimum: 1, maximum: 300000 }
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 2
+          default: 0
+          description: Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
     PutOutboundRequestPolicyRequest:
       type: object
-      description: Replace all admission policy values for a customer-owned integration.
+      description: Replace admission policy values for a customer-owned integration.
       required: [request_policy]
       properties:
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }

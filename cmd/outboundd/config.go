@@ -75,6 +75,7 @@ type IntegrationConfig struct {
 	MaxInFlight              int           `toml:"max_in_flight"`
 	DailyRequestLimit        int64         `toml:"daily_request_limit"`
 	RequestTimeout           time.Duration `toml:"request_timeout"`
+	MaxRetries               int           `toml:"max_retries"`
 	Enabled                  *bool         `toml:"enabled"`
 }
 
@@ -187,6 +188,7 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			policy.ProviderAuthMode = outbound.ProviderAuthManaged
 		}
 		policy.CredentialSource = credentialSource
+		policy.MaxRetries = raw.MaxRetries
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit

@@ -294,11 +294,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	resp, err := h.Client.Do(upstreamReq)
+	resp, attempts, err := h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
-		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -311,7 +311,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
-	h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
 	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))

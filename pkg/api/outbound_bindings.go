@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// MaxOutboundRetries is the platform ceiling for extra upstream attempts
+// within one admitted outbound request.
+const MaxOutboundRetries = 2
+
 // OutboundIntegrationOffer is an account-visible managed integration. It
 // intentionally contains no provider credential or gateway admission token;
 // its request limits are effective for customer integrations after applying
@@ -30,6 +34,10 @@ type OutboundRequestPolicy struct {
 	Burst            int     `json:"burst"`
 	MaxInFlight      int     `json:"max_in_flight"`
 	RequestTimeoutMS int     `json:"request_timeout_ms"`
+	// MaxRetries is the maximum number of extra upstream attempts for safe,
+	// bodyless GET/HEAD requests. Zero preserves the original single-attempt
+	// behavior. The gateway applies retries within RequestTimeoutMS.
+	MaxRetries int `json:"max_retries"`
 }
 
 // DefaultOutboundRequestPolicy preserves the original customer-integration
@@ -41,6 +49,7 @@ func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 		Burst:            limits.OutboundBurstMax,
 		MaxInFlight:      limits.OutboundMaxInFlightMax,
 		RequestTimeoutMS: limits.OutboundRequestTimeoutMSMax,
+		MaxRetries:       0,
 	}
 }
 
@@ -50,9 +59,9 @@ func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPolicy) (OutboundRequestPolicy, bool) {
 	limits, ok := LimitsFor(plan)
 	if !ok || limits.OutboundRatePerSecondMax <= 0 || limits.OutboundBurstMax < 1 ||
-		limits.OutboundMaxInFlightMax < 1 || limits.OutboundRequestTimeoutMSMax < 1 ||
+		limits.OutboundMaxInFlightMax < 1 || limits.OutboundRequestTimeoutMSMax < 1 || limits.OutboundMaxRetriesMax < 0 ||
 		policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
-		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 {
+		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 || policy.MaxRetries < 0 {
 		return OutboundRequestPolicy{}, false
 	}
 	if policy.RatePerSecond > limits.OutboundRatePerSecondMax {
@@ -66,6 +75,9 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 	}
 	if policy.RequestTimeoutMS > limits.OutboundRequestTimeoutMSMax {
 		policy.RequestTimeoutMS = limits.OutboundRequestTimeoutMSMax
+	}
+	if policy.MaxRetries > limits.OutboundMaxRetriesMax {
+		policy.MaxRetries = limits.OutboundMaxRetriesMax
 	}
 	return policy, true
 }
@@ -88,7 +100,8 @@ type CreateOutboundIntegrationRequest struct {
 	RequestPolicy       *OutboundRequestPolicy `json:"request_policy,omitempty"`
 }
 
-// PutOutboundRequestPolicyRequest replaces all four admission policy values.
+// PutOutboundRequestPolicyRequest replaces the complete admission policy.
+// Omitting max_retries preserves the zero-retry behavior for older clients.
 type PutOutboundRequestPolicyRequest struct {
 	RequestPolicy OutboundRequestPolicy `json:"request_policy"`
 }

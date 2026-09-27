@@ -15,7 +15,7 @@ T = TypeVar("T", bound="PutOutboundRequestPolicyRequest")
 
 @_attrs_define
 class PutOutboundRequestPolicyRequest:
-    """Replace all admission policy values for a customer-owned integration."""
+    """Replace admission policy values for a customer-owned integration."""
 
     request_policy: OutboundRequestPolicy
     """Effective customer-selected per-integration policy, bounded by the account plan."""

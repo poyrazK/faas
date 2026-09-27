@@ -88,8 +88,8 @@ def sync_detailed(
 
     Args:
         integration (UUID):
-        body (PutOutboundRequestPolicyRequest): Replace all admission policy values for a
-            customer-owned integration.
+        body (PutOutboundRequestPolicyRequest): Replace admission policy values for a customer-
+            owned integration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,8 +125,8 @@ def sync(
 
     Args:
         integration (UUID):
-        body (PutOutboundRequestPolicyRequest): Replace all admission policy values for a
-            customer-owned integration.
+        body (PutOutboundRequestPolicyRequest): Replace admission policy values for a customer-
+            owned integration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,8 +157,8 @@ async def asyncio_detailed(
 
     Args:
         integration (UUID):
-        body (PutOutboundRequestPolicyRequest): Replace all admission policy values for a
-            customer-owned integration.
+        body (PutOutboundRequestPolicyRequest): Replace admission policy values for a customer-
+            owned integration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,8 +192,8 @@ async def asyncio(
 
     Args:
         integration (UUID):
-        body (PutOutboundRequestPolicyRequest): Replace all admission policy values for a
-            customer-owned integration.
+        body (PutOutboundRequestPolicyRequest): Replace admission policy values for a customer-
+            owned integration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -200,12 +200,12 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 	if err != nil || before.RatePerSecond != defaultPolicy.RatePerSecond || before.Burst != defaultPolicy.Burst {
 		t.Fatalf("initial resolved policy = %+v, %v", before, err)
 	}
-	updatedPolicy := api.OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500}
+	updatedPolicy := api.OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500, MaxRetries: 2}
 	if err := store.SetOutboundRequestPolicy(ctx, account.ID, offer.ID, updatedPolicy); err != nil {
 		t.Fatalf("update customer policy: %v", err)
 	}
 	after, err := resolver.Integration(ctx, offer.ID)
-	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond {
+	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond || after.MaxRetries != 2 {
 		t.Fatalf("resolved updated policy = %+v, %v", after, err)
 	}
 

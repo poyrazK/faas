@@ -10,5 +10,9 @@ export type OutboundRequestPolicy = {
   burst: number;
   max_in_flight: number;
   request_timeout_ms: number;
+  /**
+   * Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
+   */
+  max_retries?: number;
 };
 
