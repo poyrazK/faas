@@ -576,3 +576,46 @@ func TestOrgRemoval_EndsTheMembersAccess(t *testing.T) {
 		}
 	}
 }
+
+// TestDeleteAccount_RefusedWhileOwningASharedOrgWithMembers — memberships
+// cascade with the account, so purging the only owner of a shared org left
+// its members with an ownerless org nobody could transfer, delete or
+// manage. Self-service deletion now asks for the org to be handed over or
+// deleted first; an org with no other member does not block.
+func TestDeleteAccount_RefusedWhileOwningASharedOrgWithMembers(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanPro, "")
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := call("POST", "/v1/orgs", `{"slug":"owned-team","name":"Owned"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", rec.Code, rec.Body)
+	}
+	org, err := env.store.OrgBySlug(t.Context(), "owned-team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	carol, err := env.store.CreateAccount(t.Context(), "carol@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.AddOrgMember(t.Context(), org.ID, carol.ID, state.OrgRoleAdmin, &env.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := call("DELETE", "/v1/account", ""); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "owned-team") {
+		t.Fatalf("delete while owning a shared org with members = %d %s, want 409 naming the org", rec.Code, rec.Body)
+	}
+	if got, _ := env.store.AccountByID(t.Context(), env.acct.ID); got.Status != state.AccountActive {
+		t.Fatalf("status after refused delete = %s", got.Status)
+	}
+	if err := env.store.RemoveOrgMember(t.Context(), org.ID, carol.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := call("DELETE", "/v1/account", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete once the org has no other member = %d %s, want 200", rec.Code, rec.Body)
+	}
+}

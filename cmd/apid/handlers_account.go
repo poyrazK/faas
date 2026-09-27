@@ -220,6 +220,9 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if acct.Status != state.AccountActive {
 			return acct, accountDeletionBlocked()
 		}
+		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
+			return acct, prob
+		}
 		if err := s.store.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				return acct, accountDeletionBlocked()
@@ -375,6 +378,37 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 		"via": via,
 	})
 	return fresh, nil
+}
+
+// sharedOrgOwnershipBlocksDeletion refuses a self-service deletion while
+// the account owns a shared organization other people still belong to.
+// Memberships cascade with the account, so the purge left that org with
+// members and no owner — and only an owner can transfer ownership, delete
+// the org, or manage it — until an operator stepped in.
+func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID string) *api.Problem {
+	orgs, err := s.store.ListOrgsForAccount(ctx, accountID)
+	if err != nil {
+		return api.ErrCapacity("could not check organization ownership")
+	}
+	for _, org := range orgs {
+		if org.Personal {
+			continue
+		}
+		mem, err := s.store.OrgMemberByAccount(ctx, org.ID, accountID)
+		if err != nil || mem.RemovedAt != nil || mem.Role != state.OrgRoleOwner {
+			continue
+		}
+		members, err := s.store.CountActiveOrgMembers(ctx, org.ID)
+		if err != nil {
+			return api.ErrCapacity("could not check organization membership")
+		}
+		if members > 1 {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Account owns a shared organization",
+				fmt.Sprintf("transfer ownership of %q or delete it before deleting your account", org.Slug))
+		}
+	}
+	return nil
 }
 
 func accountDeletionBlocked() *api.Problem {
