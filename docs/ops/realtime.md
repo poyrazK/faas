@@ -250,7 +250,8 @@ delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
 and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
 the pending count and bytes, retained dead-letter count and bytes, retention
 capacity, eviction count, and last eviction time. The
-`FaasRealtimeCallbackDeadLettersNearCapacity` and
+`FaasRealtimeCallbackDeadLettersPresent`,
+`FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 

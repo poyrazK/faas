@@ -23,6 +23,18 @@ groups:
   - name: faas_realtime_callbacks
     interval: 30s
     rules:
+      - alert: FaasRealtimeCallbackDeadLettersPresent
+        expr: realtimed_callback_dead_letters > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead letters need review"
+          description: "The node retains {{ $value }} callback dead-letter file(s). Inspect the callback failure and preserve records needed for investigation or replay."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
       - alert: FaasRealtimeCallbackDeadLettersNearCapacity
         expr: realtimed_callback_dead_letter_bytes / realtimed_callback_dead_letter_capacity_bytes > 0.8
         for: 5m

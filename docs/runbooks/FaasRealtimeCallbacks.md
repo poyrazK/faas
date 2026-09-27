@@ -2,6 +2,8 @@
 
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.
+`FaasRealtimeCallbackDeadLettersPresent` means the node has retained one or
+more dead letters that need operator review.
 `FaasRealtimeCallbackDeadLettersEvicted` means at least one dead letter was
 removed in the past hour, including during daemon startup.
 
