@@ -215,6 +215,17 @@ func renderManCommand(w io.Writer, c cliCommand) {
 			}
 		})
 	}
+	if len(c.Examples) > 0 {
+		manSection(w, "EXAMPLES", func(w io.Writer) {
+			_, _ = fmt.Fprintln(w, ".RS 4")
+			_, _ = fmt.Fprintln(w, ".nf")
+			for _, example := range c.Examples {
+				_, _ = fmt.Fprintln(w, escapeRoff(example))
+			}
+			_, _ = fmt.Fprintln(w, ".fi")
+			_, _ = fmt.Fprintln(w, ".RE")
+		})
+	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
 		_, _ = fmt.Fprintf(w, ".UR %s\n", cliDocsURL)
 		_, _ = fmt.Fprintf(w, "gregale %s (docs)\n", c.Name)

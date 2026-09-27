@@ -368,6 +368,13 @@ List your apps
 |---|---|---|
 | `--quiet` | delete one app without prompting (short form: -q) |  |
 
+Examples:
+
+```sh
+gregale apps
+gregale apps --json
+```
+
 ### apps ls
 
 Alias for the default list action
@@ -976,6 +983,13 @@ Preflight local source or OCI image metadata; runtime checks are skipped
 | `--strict` | exit 1 on warn (default: exit 0 on warn) |  |
 | `--json` | machine output (default: human prose) |  |
 
+Examples:
+
+```sh
+gregale doctor
+gregale doctor --strict
+```
+
 
 ## delayed-task
 
@@ -1228,6 +1242,14 @@ Deploy an app, function, or project
 | `--doctor-strict` | run doctor before deploy and abort on errors |  |
 | `--no-doctor` | skip the automatic local doctor preflight |  |
 
+Examples:
+
+```sh
+gregale deploy --plan
+gregale deploy --source=head --name my-api
+gregale deploy --path packages/api --source=worktree
+```
+
 
 ## domains
 
@@ -1284,6 +1306,13 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+
+Examples:
+
+```sh
+gregale dev --once
+gregale dev --path ./api --once
+```
 
 ### dev status
 
@@ -1636,6 +1665,13 @@ Scaffold a project from a built-in template
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment (requires --deploy) |  |
 | `--list` | list available templates |  |
 
+Examples:
+
+```sh
+gregale init --list
+gregale init --template hello-node --path ./my-api
+```
+
 
 ## inspect
 
@@ -1648,6 +1684,13 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 | `--upstreams` | List data upstreams captured for this app |  |
 | `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
 | `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
+
+Examples:
+
+```sh
+gregale inspect my-api
+gregale inspect my-api --upstreams
+```
 
 
 ## invoke
@@ -1846,6 +1889,13 @@ Authenticate this machine
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
 
+Examples:
+
+```sh
+gregale login
+printf '%s' "$GREGALE_TOKEN" | gregale login --token-stdin
+```
+
 
 ## link
 
@@ -1918,6 +1968,13 @@ Query runtime logs and HTTP request events
 | `--archive` | read durable logs for one instance and UTC day |  |
 | `--instance <ID>` | instance id for --archive |  |
 | `--date <YYYY-MM-DD>` | UTC day for --archive |  |
+
+Examples:
+
+```sh
+gregale logs my-api --follow
+gregale logs my-api --since 1h --level error
+```
 
 
 ## metrics

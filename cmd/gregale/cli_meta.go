@@ -58,6 +58,9 @@ type cliCommand struct {
 	// per-shell completion script's description list. Should fit on
 	// one terminal line (~80 chars).
 	Short string
+	// Examples are runnable command lines shown by local help, man pages,
+	// and the generated Markdown reference for common customer tasks.
+	Examples []string
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
@@ -450,9 +453,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    dispatchApps,
-		DocSlug: "apps",
-		Short:   "List your apps",
+		Name:     dispatchApps,
+		DocSlug:  "apps",
+		Short:    "List your apps",
+		Examples: []string{"gregale apps", "gregale apps --json"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "restore", Short: "Restore an app during its deletion grace window"},
@@ -781,9 +785,10 @@ var cliCommands = []cliCommand{
 		// customer preflight that scans the cwd for the 8 source-side
 		// failure modes the cluster's runtime detectors catch
 		// post-deploy. Auth not required (local source only).
-		Name:    dispatchDoctor,
-		DocSlug: "doctor",
-		Short:   "Preflight local source or OCI image metadata; runtime checks are skipped",
+		Name:     dispatchDoctor,
+		DocSlug:  "doctor",
+		Short:    "Preflight local source or OCI image metadata; runtime checks are skipped",
+		Examples: []string{"gregale doctor", "gregale doctor --strict"},
 		Flags: []cliFlag{
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
@@ -906,9 +911,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "deploy",
-		DocSlug: "deploy",
-		Short:   "Deploy an app, function, or project",
+		Name:     "deploy",
+		DocSlug:  "deploy",
+		Short:    "Deploy an app, function, or project",
+		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
@@ -1029,9 +1035,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "dev",
-		DocSlug: "dev",
-		Short:   "Sync local changes to a developer environment",
+		Name:     "dev",
+		DocSlug:  "dev",
+		Short:    "Sync local changes to a developer environment",
+		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once"},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -1251,9 +1258,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "init",
-		DocSlug: "init",
-		Short:   "Scaffold a project from a built-in template",
+		Name:     "init",
+		DocSlug:  "init",
+		Short:    "Scaffold a project from a built-in template",
+		Examples: []string{"gregale init --list", "gregale init --template hello-node --path ./my-api"},
 		Flags: []cliFlag{
 			{Name: "template", Short: "template name", Req: true, Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
@@ -1267,6 +1275,7 @@ var cliCommands = []cliCommand{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
 		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)",
+		Examples:    []string{"gregale inspect my-api", "gregale inspect my-api --upstreams"},
 		Positionals: []string{"[<slug>]"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
@@ -1396,9 +1405,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "login",
-		DocSlug: "auth",
-		Short:   "Authenticate this machine",
+		Name:     "login",
+		DocSlug:  "auth",
+		Short:    "Authenticate this machine",
+		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
 		Flags: []cliFlag{
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
@@ -1443,6 +1453,7 @@ var cliCommands = []cliCommand{
 		Name:        "logs",
 		DocSlug:     "logs",
 		Short:       "Query runtime logs and HTTP request events",
+		Examples:    []string{"gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},

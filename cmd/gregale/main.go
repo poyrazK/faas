@@ -146,7 +146,13 @@ func run(args []string) (status int) {
 				return 0
 			}
 		}
-		PrintUsage(os.Stderr, "unknown help topic: "+strings.Join(args[1:], " "), "cli")
+		message := "unknown help topic: " + strings.Join(args[1:], " ")
+		if len(args) == 2 {
+			if suggestion, ok := suggestCommand(args[1]); ok {
+				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
+			}
+		}
+		PrintUsage(os.Stderr, message, "cli")
 		return 1
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
@@ -573,6 +579,9 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
+		if suggestion, ok := suggestCommand(args[0]); ok {
+			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", args[0], suggestion))
+		}
 		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
 	}
 }
@@ -674,7 +683,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	if command.Name == "deploy" {
 		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD when origin exists; otherwise it uses local files.")
 		_, _ = fmt.Fprintln(w, "Use --source=head to require a commit, --source=worktree to include local changes, or --path DIR for a subtree.")
-		_, _ = fmt.Fprintln(w, "\nExamples:\n  gregale deploy --plan\n  gregale deploy --source=head\n  gregale deploy --path packages/api --source=worktree")
+	}
+	if len(command.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		for _, example := range command.Examples {
+			_, _ = fmt.Fprintf(w, "  %s\n", example)
+		}
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
