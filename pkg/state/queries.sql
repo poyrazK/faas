@@ -361,18 +361,18 @@ update deployments set status = 'live' where id = $1;
 -- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at;
+returning domain, app_id, challenge_token, verified_at, environment_id;
 
 -- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1;
 
 -- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain;
 
 -- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain;
 
@@ -1282,6 +1282,13 @@ INSERT INTO app_error_requests (
 -- types — without them sqlc infers the timestamps as timestamptz
 -- from the leading (count, last_seen_at) references and breaks
 -- pagination.
+--
+-- cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+-- (count is always >= 1). The predicate used to test IS NULL, which
+-- never held: the first page matched no rows and the summary was
+-- always empty. fingerprint sorts DESC to agree with the row-value
+-- comparison; ASC made pages repeat or skip groups that tie on
+-- (count, last_seen_at).
 SELECT
     id, fingerprint, error_class, route, http_status,
     count, request_count, first_seen_at, last_seen_at,
@@ -1293,11 +1300,11 @@ WHERE account_id = sqlc.arg('account_id')
   AND app_id     = sqlc.arg('app_id')
   AND last_seen_at >= sqlc.arg('since')
   AND last_seen_at <= sqlc.arg('until')
-  AND (sqlc.arg('cursor_count')::bigint IS NULL
+  AND (sqlc.arg('cursor_count')::bigint = 0
        OR count < sqlc.arg('cursor_count')
        OR (count = sqlc.arg('cursor_count')
            AND (last_seen_at, fingerprint) < (sqlc.arg('cursor_last_seen'), sqlc.arg('cursor_fingerprint')::text)))
-ORDER BY count DESC, last_seen_at DESC, fingerprint ASC
+ORDER BY count DESC, last_seen_at DESC, fingerprint DESC
 LIMIT sqlc.arg('limit');
 
 -- name: ListAppErrorRequests :many
@@ -1975,19 +1982,30 @@ ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryDependencySpans :many
--- Bounded read path for the historical debugger dependency view. The
+-- Bounded read path for route-scoped dependency analytics. The
 -- account_id predicate is defense in depth for callers that accidentally
 -- pass an app id from another tenant; the app lookup remains the primary
--- IDOR boundary. The newest rows are preferred because spans_summary is
--- sampled evidence, not a complete request trace archive.
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+-- IDOR boundary. Evidence is newest-first within each route/deployment
+-- partition, then interleaved so one high-volume revision cannot crowd all
+-- prior deployments out of the bounded comparison window.
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5;
 
 -- name: RequestTelemetryCoverage :one
@@ -2904,10 +2922,11 @@ WHERE received_at > now() - $1::interval;
 -- in-process (pkg/gateway/spans_accumulator.go) and flushes the
 -- accumulated summary every FAAS_OTEL_FLUSH_INTERVAL (default 30s).
 -- UPDATE (not INSERT) because the row already exists — the recorder
--- wrote it from the gateway edge
--- (pkg/gateway/request_telemetry_publisher.go). Last-writer-wins on
--- concurrent UPDATEs is acceptable; the 24h window bounds the index
--- seek to the partial index request_telemetry_trace_idx selectivity.
+-- wrote it from the gateway edge (pkg/gateway/request_telemetry_publisher.go).
+-- Multiple trusted producers can contribute to one trace (for example,
+-- gatewayd-internal service bindings and outboundd provider calls), so merge
+-- by span identity instead of allowing a later writer to erase earlier spans.
+-- Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
 -- $N::jsonb cast is load-bearing — without it sqlc binds as text and
 -- Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 --
@@ -2923,11 +2942,38 @@ WHERE received_at > now() - $1::interval;
 -- lookup still hits request_telemetry_trace_idx for the trace_id
 -- selectivity; the residual account_id check is a post-fetch
 -- row-level filter (one row, microseconds).
-update request_telemetry
-   set spans_summary = $2::jsonb
- where trace_id = $1
-   and account_id = $3::uuid
-   and received_at >= now() - interval '24 hours';
+update request_telemetry as target
+   set spans_summary = (
+       select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
+         from (
+           select span, duration_nanos, span_id
+             from (
+               select distinct on (span_id, end_time_unix_nano)
+                      span, duration_nanos, span_id
+                 from (
+                   select item as span,
+                          coalesce(item->>'span_id', '') as span_id,
+                          coalesce(item->>'end_time_unix_nano', '') as end_time_unix_nano,
+                          case when coalesce(item->>'duration_nanos', '') ~ '^[0-9]{1,20}$'
+                               then (item->>'duration_nanos')::numeric
+                               else 0::numeric end as duration_nanos
+                     from jsonb_array_elements(
+                       (case when jsonb_typeof(target.spans_summary) = 'array'
+                             then target.spans_summary else '[]'::jsonb end)
+                       ||
+                       (case when jsonb_typeof($2::jsonb) = 'array'
+                             then $2::jsonb else '[]'::jsonb end)
+                     ) as source(item)
+                 ) normalized
+                order by span_id, end_time_unix_nano, duration_nanos desc
+             ) deduplicated
+            order by duration_nanos desc, span_id
+            limit 1000
+         ) bounded
+   )
+ where target.trace_id = $1
+   and target.account_id = $3::uuid
+   and target.received_at >= now() - interval '24 hours';
 
 -- ---------------------------------------------------------------------------
 -- Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
@@ -4247,7 +4293,7 @@ SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
        at,
        id
 FROM events
-WHERE kind = 'wake.sidecar_health'
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
@@ -4279,3 +4325,23 @@ SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
      OR (rs.created_at, rs.id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::uuid))
  ORDER BY rs.created_at DESC, rs.id DESC
  LIMIT sqlc.arg(page_limit);
+-- name: LatestInstanceReadinessBySource :many
+-- Gateway hydration keeps each required readiness source independent so one
+-- recovered probe cannot override another probe that is still unready.
+SELECT DISTINCT ON (
+           CAST(data->>'instance_id' AS text),
+           CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+                ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text)
+       )
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text) AS source,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
+  AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
+ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;

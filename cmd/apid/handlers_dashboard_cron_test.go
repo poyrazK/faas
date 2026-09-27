@@ -128,7 +128,6 @@ func seedCronFixture(t *testing.T) (
 }
 
 func TestDashboard_AppDetail_CronSection_RendersRuns(t *testing.T) {
-	t.Skip("pre-existing template drift on .Data.App.ID — PR-E does not regress; tracked separately")
 	h, cookie, _, _, slug, _, _, _, _ := seedCronFixture(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/"+slug, nil)
@@ -160,7 +159,6 @@ func TestDashboard_AppDetail_CronSection_RendersRuns(t *testing.T) {
 // worse than useless — it would make a freshly-deployed cron
 // indistinguishable from a broken one.
 func TestDashboard_AppDetail_CronSection_EmptyRuns(t *testing.T) {
-	t.Skip("pre-existing template drift on .Data.App.ID — PR-E does not regress; tracked separately")
 	h, cookie, store, _ := newAuthedDashboardServerFullFull(t, "free", "alice@example.com")
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
@@ -245,7 +243,6 @@ func TestDashboard_FireCronNow_CrossAccount(t *testing.T) {
 // TestDashboard_AppDetail_FlashBanner_OK checks the
 // post-redirect banner is rendered on ?fired=1.
 func TestDashboard_AppDetail_FlashBanner_OK(t *testing.T) {
-	t.Skip("pre-existing template drift on .Data.App.ID — PR-E does not regress; tracked separately")
 	h, cookie, _, _, slug, _, _, _, _ := seedCronFixture(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/"+slug+"?fired=1", nil)
@@ -262,7 +259,6 @@ func TestDashboard_AppDetail_FlashBanner_OK(t *testing.T) {
 // TestDashboard_AppDetail_FlashBanner_Error checks the
 // post-redirect error banner on ?fired=error.
 func TestDashboard_AppDetail_FlashBanner_Error(t *testing.T) {
-	t.Skip("pre-existing template drift on .Data.App.ID — PR-E does not regress; tracked separately")
 	h, cookie, _, _, slug, _, _, _, _ := seedCronFixture(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/"+slug+"?fired=error", nil)

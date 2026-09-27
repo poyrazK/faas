@@ -271,7 +271,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_target_invalid", "Outbound integration target is invalid", "")
 		return
 	}
-	dependencyCtx, dependencySpan := trace.StartSpan(ctx, "gregale.outbound.integration", dependencySpanAttributes(integration, appID)...)
+	dependencyCtx, dependencySpan := trace.StartSpan(ctx, dependencySpanName(integration), dependencySpanAttributes(integration, appID)...)
 	defer dependencySpan.End()
 	upstreamReq, err := http.NewRequestWithContext(dependencyCtx, r.Method, upstreamURL, r.Body)
 	if err != nil {

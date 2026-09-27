@@ -1,7 +1,7 @@
 package realtime
 
-// adr: 293
-// adr: 294
+// adr: 296
+// adr: 297
 
 import (
 	"context"
@@ -108,6 +108,12 @@ func TestCallbackRetryAfterParsesOnlyBoundedRetryableResponses(t *testing.T) {
 	}
 	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "999999999", now); got != MaxCallbackOutboxMaxRetryInterval {
 		t.Errorf("oversized Retry-After = %s, want cap %s", got, MaxCallbackOutboxMaxRetryInterval)
+	}
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "18446744073709551615", now); got != MaxCallbackOutboxMaxRetryInterval {
+		t.Errorf("Retry-After above int64 range = %s, want cap %s", got, MaxCallbackOutboxMaxRetryInterval)
+	}
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "-999999999", now); got != 0 {
+		t.Errorf("negative Retry-After = %s, want 0", got)
 	}
 	if got := parseCallbackRetryAfter(http.StatusBadGateway, "12", now); got != 0 {
 		t.Errorf("Retry-After on 502 = %s, want ignored", got)
