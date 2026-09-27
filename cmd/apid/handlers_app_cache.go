@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path"
@@ -10,10 +11,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// purgeAppCache requests an in-process response-cache purge on every gateway.
-// The purge is intentionally notification-backed: apid does not own gateway
-// memory and a successful response means the request was accepted, not that
-// every edge process has already consumed it.
+// purgeAppCache records a durable response-cache purge for every gateway. The
+// database notification is the low-latency path; each gateway's replay cursor
+// repairs missed notifications and reports actual invalidation in policy status.
 func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -54,6 +54,16 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 			api.WriteProblem(w, api.ErrValidation("invalid cache path glob"))
 			return
 		}
+	}
+	if purger, ok := s.store.(interface {
+		CreateResponseCachePurge(context.Context, string, string, string) (int64, error)
+	}); ok {
+		if _, err := purger.CreateResponseCachePurge(r.Context(), app.ID, pathGlob, tag); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not request cache purge"))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	payload, err := json.Marshal(struct {
 		AppID    string `json:"app_id"`

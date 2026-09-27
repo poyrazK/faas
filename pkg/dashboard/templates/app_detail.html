@@ -691,7 +691,7 @@
                       <td>{{if .GuestExecutionAvailable}}{{.GuestExecutionP50MS}} / {{.GuestExecutionP95MS}} ms{{else}}—{{end}}</td>
                       <td>{{if .GuestResourceUsageAvailable}}{{.GuestCPUAvgMS}} / {{.GuestCPUP95MS}} ms{{else}}—{{end}}</td>
                       <td>{{if .GuestResourceUsageAvailable}}{{.GuestPeakRSSMaxMB}} MiB (bucketed){{else}}—{{end}}</td>
-                      <td>{{if .Dependencies}}{{range .Dependencies}}{{if .Kind}}{{.Kind}}{{else}}{{.Type}}{{end}} / {{.Name}}: exclusive p95 {{.ExclusiveP95MS}} ms (p95 {{.P95MS}} ms, {{.Samples}} samples)<br>{{end}}{{else}}—{{end}}</td>
+                      <td>{{if .Dependencies}}{{range .Dependencies}}{{if .Kind}}{{.Kind}}{{else}}{{.Type}}{{end}} / {{.Name}}: exclusive p95 {{.ExclusiveP95MS}} ms (p50/p95/p99 {{.P50MS}}/{{.P95MS}}/{{.P99MS}} ms, errors {{printf "%.1f" .ErrorRatePct}}%, {{.Samples}} samples){{if .DeploymentObservations}}<small><br>Revisions: {{range .DeploymentObservations}}{{if .DeploymentTag}}{{.DeploymentTag}}{{else if .CommitSHA}}{{printf "%.8s" .CommitSHA}}{{else}}{{.DeploymentID}}{{end}} p50/p95/p99 {{.P50MS}}/{{.P95MS}}/{{.P99MS}} ms / errors {{printf "%.1f" .ErrorRatePct}}%{{if .Regression}} — regression vs {{.ComparedTo}}{{else if .ComparedTo}} vs {{.ComparedTo}}{{end}}<br>{{end}}</small>{{end}}<br>{{end}}{{else}}—{{end}}</td>
                       <td>{{if .TrendURL}}<a href="{{.TrendURL}}">View</a>{{else}}—{{end}}</td>
                       <td>{{if .DebugURL}}<a href="{{.DebugURL}}">Inspect requests</a>{{else}}—{{end}}</td>
                     </tr>

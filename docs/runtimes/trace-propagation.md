@@ -172,13 +172,17 @@ propagator in the parent image doesn't silently drop the join.
 
 Requests sent through Gregale's configured outbound integrations
 (`/i/{integration_id}/...`) are instrumented by `outboundd` without any
-application SDK setup. The platform emits a binding span named
-`gregale.outbound.integration` and a child HTTP client span with the method,
+application SDK setup. The platform emits a bounded integration span named
+`outbound.<integration-name>` (or `outbound.integration` when the configured
+name is not a safe label), plus a child HTTP client span with the method,
 destination host, response status, network lifecycle events, duration, and
-error state. W3C trace context is injected into the provider request, so a
-caller that already has an active OTel context remains connected to the
-provider span. The platform outbound client also injects that context
-automatically.
+error state. A classified integration span is retained with its trusted tenant
+identity only long enough to route it through apid's spans-writer; the identity
+is stripped before persistence. Route analytics can therefore show the
+outbound provider wait alongside other platform-owned dependencies. W3C trace
+context is injected into the provider request, so a caller that already has an
+active OTel context remains connected to the provider span. The platform
+outbound client also injects that context automatically.
 
 Integration ID, attached app ID, origin host, and origin scheme are bounded
 attributes. Request paths, query strings, bodies, credentials, and provider

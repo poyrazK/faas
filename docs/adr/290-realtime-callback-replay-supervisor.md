@@ -1,4 +1,4 @@
-# ADR-287 · Managed realtime callback replay supervision
+# ADR-290 · Managed realtime callback replay supervision
 
 - **Status:** accepted
 - **Date:** 2026-09-27
