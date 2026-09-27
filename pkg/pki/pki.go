@@ -250,6 +250,7 @@ func Roles() []Role {
 		{CommonName: "builderd.faas", Kind: KindClient, Directory: "builderd", Filename: "vmmd-client", AltNames: ProductionSANs("builderd.faas")},
 		{CommonName: "schedd.faas", Kind: KindClient, Directory: "schedd", Filename: "vmmd-client", AltNames: ProductionSANs("schedd.faas")},
 		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "vmmd-client", AltNames: ProductionSANs("imaged.faas")},
+		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "githubd-client", AltNames: ProductionSANs("imaged.faas")},
 		{CommonName: "gatewayd-internal-public.faas", Kind: KindClient, Directory: "gatewayd-internal-public", Filename: "leader-client", AltNames: MergeProductionSANs("gatewayd-internal-public.faas", "gatewayd-public.faas")},
 	}
 
@@ -355,9 +356,9 @@ func rolesForControlPlane() []Role {
 //     builderd/), gatewayd → schedd, gatewayd → vmmd (both live
 //     under gatewayd/)
 //
-// imaged's server and vmmd-client leaves (Directory="imaged") are part
-// of the vmmd ↔ imaged parent-mount hop (ADR-053 slice-3); they live on
-// fsn-2.
+// imaged's server, vmmd-client, and githubd-client leaves (Directory="imaged")
+// are part of the vmmd ↔ imaged parent-mount hop (ADR-053 slice-3) and the
+// source-ref freshness RPC; they live on fsn-2.
 func rolesForComputeOnly() []Role {
 	keep := map[string]bool{
 		// M9 runs a node-local scheduler beside vmmd. The same
@@ -367,7 +368,7 @@ func rolesForComputeOnly() []Role {
 		// server + client dirs that live on fsn-2:
 		"vmmd":                     true, // vmmd/server + vmmd/{schedd-client,apid-client}
 		"builderd":                 true, // builderd/server + builderd/vmmd-client
-		"imaged":                   true, // imaged/server (vmmd↔imaged parent-mount)
+		"imaged":                   true, // imaged/{server,vmmd-client,githubd-client}
 		"gatewayd":                 true, // gatewayd-internal's listener + dialer leaves
 		"egress":                   true, // egress/egress server (gatewayd-internal listener)
 		"gatewayd-internal-public": true, // fsn-2's standby dialer (ADR-084)

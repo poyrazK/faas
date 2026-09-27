@@ -170,8 +170,12 @@ type EnqueueParams struct {
 	DockerfilePath string
 	SourceURL      string
 	CommitSHA      string
-	Scope          string
-	Handler        string
+	// GitHubSourceRef is populated only when a source-ref deploy was
+	// resolved as a branch. Imaged rechecks it immediately before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
+	Scope                string
+	Handler              string
 	// FunctionRuntime carries the app's explicit runtime for markerless
 	// function sources. It is used only when static profiling finds no
 	// framework marker; the runtime remains authoritative in builderd.
@@ -451,18 +455,20 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
-		ID:           deploymentID,
-		AppID:        p.AppID,
-		Kind:         p.Kind,
-		SourcePath:   p.SourcePath,
-		SourceBytes:  p.SourceBytes,
-		SourceRoot:   p.SourceRoot,
-		SourceSHA256: sourceSHA256,
-		SourceURL:    p.SourceURL,
-		CommitSHA:    p.CommitSHA,
-		Scope:        p.Scope,
-		Handler:      p.Handler,
-		Status:       state.DeployPending,
+		ID:                   deploymentID,
+		AppID:                p.AppID,
+		Kind:                 p.Kind,
+		SourcePath:           p.SourcePath,
+		SourceBytes:          p.SourceBytes,
+		SourceRoot:           p.SourceRoot,
+		SourceSHA256:         sourceSHA256,
+		SourceURL:            p.SourceURL,
+		CommitSHA:            p.CommitSHA,
+		GitHubSourceRef:      p.GitHubSourceRef,
+		GitHubInstallationID: p.GitHubInstallationID,
+		Scope:                p.Scope,
+		Handler:              p.Handler,
+		Status:               state.DeployPending,
 		// Issue #606 / SAFE-RELEASES-E.1: actor columns propagated
 		// onto the deployment row at INSERT time. The pgstore
 		// nullString helper collapses "" → NULL for the nullable
