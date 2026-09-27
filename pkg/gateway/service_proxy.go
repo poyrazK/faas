@@ -596,7 +596,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
 		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
-		boundedCtx, cancel, _ := reqbudget.WithRemaining(r.Context(), callTimeout, callTimeout, "service_proxy", target.AppID)
+		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
 		defer cancel()
 		dependencyCtx = boundedCtx
 		r = r.WithContext(boundedCtx)
