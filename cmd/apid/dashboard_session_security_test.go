@@ -47,7 +47,7 @@ func TestDashboard_MFAPendingSessionIsConfinedToTheChallenge(t *testing.T) {
 
 	for _, path := range []string{"/dashboard/", "/dashboard/apps", "/dashboard/account/export"} {
 		rec := dashboardGet(e.h, path, pending)
-		if rec.Code != http.StatusFound || rec.Header().Get("Location") != dashboardMFAPath {
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != dashboardMFAPath+"?next="+url.QueryEscape(path) {
 			t.Fatalf("mfa_pending GET %s = %d Location=%q, want 302 %s", path, rec.Code, rec.Header().Get("Location"), dashboardMFAPath)
 		}
 	}
@@ -230,5 +230,46 @@ func TestSetPassword_ChangeSignsOutOtherSessions(t *testing.T) {
 	}
 	if got := dashboardGet(h, "/dashboard/account", current); got.Code != http.StatusOK {
 		t.Fatalf("the session that changed the password = %d, want 200", got.Code)
+	}
+}
+
+// TestCLIAuthApproval_RequiresCompletedMFA — the CLI device-login approval
+// page sits behind sessionAuth. While that ignored mfa_pending, a password
+// alone could approve a CLI login and receive an API key, and API keys
+// never face MFA: a permanent bypass.
+func TestCLIAuthApproval_RequiresCompletedMFA(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	e.generateEnrolledAccount(t)
+	pending := e.mfaIssueWithPending(t, true)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, cliAuthPath+"?code=ABCD-EFGH", strings.NewReader("code=ABCD-EFGH"))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(pending)
+		e.h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), dashboardMFAPath) {
+			t.Fatalf("mfa_pending %s %s = %d Location=%q, want 302 %s", method, cliAuthPath, rec.Code, rec.Header().Get("Location"), dashboardMFAPath)
+		}
+	}
+}
+
+func TestDashboardMFANext_OnlySameOriginDashboardPaths(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{
+		"":                             "/dashboard/",
+		"/dashboard/apps?x=1":          "/dashboard/apps?x=1",
+		cliAuthPath + "?code=AB-CD":    cliAuthPath + "?code=AB-CD",
+		"/dashboard":                   "/dashboard",
+		"//evil.example/dashboard/":    "/dashboard/",
+		"https://evil.example/":        "/dashboard/",
+		"/\\evil.example":              "/dashboard/",
+		"/v1/account/export":           "/dashboard/",
+		dashboardMFAPath + "?next=/x":  "/dashboard/",
+		"/dashboard/%0d%0aSet-Cookie:": "/dashboard/%0d%0aSet-Cookie:",
+		"dashboard/apps":               "/dashboard/",
+	} {
+		if got := dashboardMFANext(raw); got != want {
+			t.Errorf("dashboardMFANext(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

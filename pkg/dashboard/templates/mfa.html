@@ -25,6 +25,7 @@
     {{if .Failed}}<p class="error" role="alert">That code did not match. Try the current code.</p>{{end}}
     <form method="POST" action="/dashboard/mfa">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="next" value="{{.Next}}">
       <label for="code">Authentication code</label>
       <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
       <button type="submit">Verify</button>

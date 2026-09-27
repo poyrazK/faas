@@ -34,7 +34,7 @@ func (s *server) dashboardMFA(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/", http.StatusFound)
 		return
 	}
-	s.renderDashboardMFA(w, r, acct, http.StatusOK, false)
+	s.renderDashboardMFA(w, r, acct, http.StatusOK, false, dashboardMFANext(r.URL.Query().Get("next")))
 }
 
 func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 	if !auth.VerifyCode(secret, strings.TrimSpace(r.PostFormValue("code"))) {
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch", "via": "dashboard"})
 		// 401 so the dashboard auth limiter counts the guess.
-		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, true)
+		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, true, dashboardMFANext(r.PostFormValue("next")))
 		return
 	}
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
@@ -71,10 +71,10 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
 		"path": r.URL.Path, "method": r.Method, "ttl_sec": 300,
 	})
-	http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
+	http.Redirect(w, r, dashboardMFANext(r.PostFormValue("next")), http.StatusSeeOther)
 }
 
-func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct state.Account, status int, failed bool) {
+func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct state.Account, status int, failed bool, next string) {
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie)
 	if err != nil {
 		s.log.Error("dashboard.mfa.csrf_issue", "err", err.Error())
@@ -94,7 +94,7 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 		Title:   "Two-factor authentication",
 		Account: acctViewFrom(acct),
 		Body:    "mfa",
-		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failed, Enrolled: acct.MFAEnrolled()},
+		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failed, Enrolled: acct.MFAEnrolled(), Next: next},
 	}
 	// Render sets these too, but only before the first write; a non-200
 	// status has to be written first.

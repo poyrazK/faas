@@ -268,7 +268,11 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		// passed, only the challenge itself is reachable.
 		mfaPending := session.IsMFAPending(env)
 		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
-			http.Redirect(w, r, dashboardMFAPath, http.StatusFound)
+			target := dashboardMFAPath
+			if r.Method == http.MethodGet {
+				target += "?next=" + url.QueryEscape(r.URL.RequestURI())
+			}
+			http.Redirect(w, r, target, http.StatusFound)
 			return
 		}
 		if !acct.Active() && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
@@ -496,6 +500,26 @@ func (c *headerCaptureWriter) Write(b []byte) (int, error) { return len(b), nil 
 func (c *headerCaptureWriter) WriteHeader(int)             {}
 
 const dashboardMFAPath = "/dashboard/mfa"
+
+// dashboardMFANext returns where a passed MFA challenge continues: a
+// same-origin dashboard or CLI-approval path, else the dashboard index.
+func dashboardMFANext(raw string) string {
+	const fallback = "/dashboard/"
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n") {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return fallback
+	}
+	if u.Path != cliAuthPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
+		return fallback
+	}
+	if u.Path == dashboardMFAPath {
+		return fallback
+	}
+	return u.RequestURI()
+}
 
 // dashboardMFARoute is what an mfa_pending session may reach: the TOTP
 // challenge and its form post.

@@ -102,6 +102,9 @@ type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
 	Enrolled  bool
+	// Next is where a passed challenge continues (already validated as a
+	// same-origin dashboard or CLI-approval path).
+	Next string
 }
 
 // IndexData is the /dashboard/ overview payload.
