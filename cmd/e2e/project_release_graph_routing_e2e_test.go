@@ -144,7 +144,9 @@ func projectReleaseIngress(t *testing.T, f *normalPathFixture, host, releaseID s
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("ingress host=%q release=%q: status=%d body=%q, want status=%d body containing %q", host, releaseID, status, body, wantStatus, wantBody)
+	lastVMMDRequest := f.vmmd.LastRequest()
+	t.Fatalf("ingress host=%q release=%q: status=%d headers=%v body=%q, want status=%d body containing %q (vmmd forwards=%d last request=%v)",
+		host, releaseID, status, headers, body, wantStatus, wantBody, f.vmmd.ForwardCount(), lastVMMDRequest)
 	return nil, nil
 }
 
@@ -190,6 +192,11 @@ func TestE2E_ProjectReleaseGraphPinsClientAndServiceCallsAcrossCutoverAndExpiry(
 	})
 	if err != nil {
 		t.Fatalf("publish initial release graph: %v", err)
+	}
+	resolvedReleaseID, resolvedDeploymentID, err := f.store.ResolveProjectRelease(ctx, apiApp.ID, "production", "")
+	if err != nil || resolvedReleaseID != graphA.ID || resolvedDeploymentID != apiV1.ID {
+		t.Fatalf("initial API release resolution = (%q, %q, %v), want (%q, %q, nil)",
+			resolvedReleaseID, resolvedDeploymentID, err, graphA.ID, apiV1.ID)
 	}
 
 	initialHeaders, initialBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", "", http.StatusOK, "api-v1")
