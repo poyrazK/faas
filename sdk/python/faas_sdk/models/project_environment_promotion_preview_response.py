@@ -32,6 +32,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
     changes: list[ProjectEnvironmentPromotionChange]
     promotion_hash: str
     promotion_token: str
+    sync_config: bool | Unset = UNSET
+    """Whether this exact promotion will copy the source's non-secret configuration to the target."""
     blocking_reasons: list[str] | Unset = UNSET
     from_release_set: ProjectReleaseSetResponse | Unset = UNSET
     """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
@@ -65,6 +67,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         promotion_token = self.promotion_token
 
+        sync_config = self.sync_config
+
         blocking_reasons: list[str] | Unset = UNSET
         if not isinstance(self.blocking_reasons, Unset):
             blocking_reasons = self.blocking_reasons
@@ -93,6 +97,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
                 "promotion_token": promotion_token,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
         if blocking_reasons is not UNSET:
             field_dict["blocking_reasons"] = blocking_reasons
         if from_release_set is not UNSET:
@@ -134,6 +140,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         promotion_token = d.pop("promotion_token")
 
+        sync_config = d.pop("sync_config", UNSET)
+
         blocking_reasons = cast(list[str], d.pop("blocking_reasons", UNSET))
 
         _from_release_set = d.pop("from_release_set", UNSET)
@@ -161,6 +169,7 @@ class ProjectEnvironmentPromotionPreviewResponse:
             changes=changes,
             promotion_hash=promotion_hash,
             promotion_token=promotion_token,
+            sync_config=sync_config,
             blocking_reasons=blocking_reasons,
             from_release_set=from_release_set,
             to_release_set=to_release_set,

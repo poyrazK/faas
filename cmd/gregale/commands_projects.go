@@ -138,9 +138,13 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(history))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CREATED")
+	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %-10s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CONFIG", "CREATED")
 	for _, promotion := range history.Items {
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, promotion.CreatedAt)
+		configSync := "target"
+		if promotion.SyncConfig {
+			configSync = "synced"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %-10s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, configSync, promotion.CreatedAt)
 	}
 	if history.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "next_before: %s\n", history.NextBefore)
@@ -473,7 +477,7 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress")
+	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress", "sync-config")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
@@ -481,9 +485,10 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this promotion")
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
+	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1
 	}
 	if *progress && !*wait {
@@ -499,9 +504,12 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
+	}
+	if !jsonOutput && preview.SyncConfig {
+		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
 	}
 	if !preview.CanPromote {
 		if jsonOutput {
@@ -517,7 +525,11 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 			return printErr("Confirmation required", errors.New("project environment promotion requires --yes in JSON mode"))
 		}
 		if stdoutIsTTY() && stdinIsTTY() {
-			_, _ = fmt.Fprintf(osStdout, "Promote %s: %s -> %s (%d workload changes)? [y/N] ", preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, promotionChangeCount(preview))
+			prompt := fmt.Sprintf("Promote %s: %s -> %s (%d workload changes)", preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, promotionChangeCount(preview))
+			if preview.SyncConfig {
+				prompt += fmt.Sprintf(" and sync %d non-secret config changes", len(preview.ConfigDiff.Changes))
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s? [y/N] ", prompt)
 			line, readErr := readConfirmationLine(osStdin)
 			if readErr != nil || (strings.ToLower(strings.TrimSpace(line)) != "y" && strings.ToLower(strings.TrimSpace(line)) != "yes") {
 				return printErr("Aborted by user", errors.New("promotion was not confirmed"))
@@ -552,7 +564,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		initial := api.ProjectEnvironmentPromotionStatusResponse{
 			PromotionID: promoted.PromotionID, ProjectSlug: promoted.ProjectSlug,
 			FromEnvironment: promoted.FromEnvironment, ToEnvironment: promoted.ToEnvironment,
-			PromotionHash: promoted.PromotionHash, Status: "running",
+			SyncConfig: promoted.SyncConfig, PromotionHash: promoted.PromotionHash, Status: "running",
 		}
 		if !jsonOutput {
 			PrintProgress(osStdout, "Waiting for promotion %s to finish...", promoted.PromotionID)
@@ -584,6 +596,9 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
 	for _, workload := range promoted.Workloads {
 		_, _ = fmt.Fprintf(osStdout, "  %-20s %s\n", workload.WorkloadSlug, workload.Status)
+	}
+	if promoted.SyncConfig {
+		_, _ = fmt.Fprintln(osStdout, "  non-secret configuration: synced")
 	}
 	return 0
 }
@@ -663,12 +678,13 @@ func promotionChangeCount(preview api.ProjectEnvironmentPromotionPreviewResponse
 }
 
 func cmdProjectsEnvironmentPromotionPreview(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "sync-config")
 	fs := newFlagSet("projects-environments-preview", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
+	syncConfig := fs.Bool("sync-config", false, "preview copying source non-secret configuration to the target")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment> [--sync-config]", "projects environments")
 		return 1
 	}
 	if *from == *to {
@@ -678,16 +694,16 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  promotion hash: %s\n",
+	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  sync config: %t\n  promotion hash: %s\n",
 		preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, preview.CanPromote,
-		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.PromotionHash)
+		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.SyncConfig, preview.PromotionHash)
 	for _, reason := range preview.BlockingReasons {
 		_, _ = fmt.Fprintf(osStdout, "  blocked: %s\n", reason)
 	}
@@ -696,7 +712,28 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	for _, change := range preview.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
 	}
+	if preview.SyncConfig {
+		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
+	}
 	return 0
+}
+
+func renderPromotionConfigChanges(changes []api.ProjectEnvironmentConfigChange) {
+	_, _ = fmt.Fprintln(osStdout, "Non-secret configuration to copy:")
+	if len(changes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  no changes")
+		return
+	}
+	for _, change := range changes {
+		before, after := string(change.Before), string(change.After)
+		if before == "" {
+			before = "<missing>"
+		}
+		if after == "" {
+			after = "<missing>"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, before, after)
+	}
 }
 
 func printPromotionReleaseSet(label string, release *api.ProjectReleaseSetResponse) {

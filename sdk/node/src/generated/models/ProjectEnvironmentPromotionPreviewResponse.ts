@@ -12,6 +12,10 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Whether this exact promotion will copy the source's non-secret configuration to the target.
+   */
+  sync_config?: boolean;
   to_environment_protected: boolean;
   approval_required: boolean;
   can_promote: boolean;

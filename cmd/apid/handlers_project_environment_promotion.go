@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type projectEnvironmentPromotionTokenWire struct {
 	ToConfigHash     string `json:"to_config_hash"`
 	FromReleaseSetID string `json:"from_release_set_id,omitempty"`
 	ToReleaseSetID   string `json:"to_release_set_id,omitempty"`
+	SyncConfig       bool   `json:"sync_config,omitempty"`
 	PromotionHash    string `json:"promotion_hash"`
 	IssuedAt         int64  `json:"issued_at"`
 }
@@ -44,13 +46,22 @@ type projectEnvironmentPromotionPlan struct {
 	Targets        map[string]state.Deployment
 	FromReleaseSet *state.ProjectReleaseSet
 	ToReleaseSet   *state.ProjectReleaseSet
+	SyncConfig     bool
+	SourceConfig   state.ProjectEnvironmentConfig
+	TargetConfig   state.ProjectEnvironmentConfig
 }
 
 func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	projectSlug := r.PathValue("slug")
 	fromEnvironment := strings.TrimSpace(r.URL.Query().Get("from"))
 	toEnvironment := strings.TrimSpace(r.PathValue("environment"))
-	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+	syncConfig, err := parseProjectEnvironmentPromotionSyncConfig(r.URL.Query().Get("sync_config"))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid config sync option", "sync_config must be true or false"))
+		return
+	}
+	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, syncConfig)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -58,11 +69,19 @@ func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, plan.Preview)
 }
 
-func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct state.Account, projectSlug, fromEnvironment, toEnvironment string) (projectEnvironmentPromotionPlan, *api.Problem) {
+func parseProjectEnvironmentPromotionSyncConfig(raw string) (bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(strings.TrimSpace(raw))
+}
+
+func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct state.Account, projectSlug, fromEnvironment, toEnvironment string, syncConfig bool) (projectEnvironmentPromotionPlan, *api.Problem) {
 	plan := projectEnvironmentPromotionPlan{
-		Apps:    make(map[string]state.App),
-		Sources: make(map[string]state.Deployment),
-		Targets: make(map[string]state.Deployment),
+		Apps:       make(map[string]state.App),
+		Sources:    make(map[string]state.Deployment),
+		Targets:    make(map[string]state.Deployment),
+		SyncConfig: syncConfig,
 	}
 	if fromEnvironment == "" {
 		return plan, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -86,6 +105,7 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	if problem != nil {
 		return plan, problem
 	}
+	plan.SourceConfig, plan.TargetConfig = fromConfig, toConfig
 	configChanges, err := projectEnvironmentConfigDiff(fromConfig.Values, toConfig.Values)
 	if err != nil {
 		return plan, api.ErrInternal("could not compare environment configurations")
@@ -118,6 +138,9 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	}
 	if toReleaseSet.ID != "" {
 		plan.ToReleaseSet = &toReleaseSet
+	}
+	if syncConfig && toReleaseSet.ID == "" {
+		blockingReasons = append(blockingReasons, "configuration sync requires an active target release graph so config and workload cutover can commit atomically")
 	}
 	// A target release graph provides the stable routing pointer needed to
 	// prepare workload deployments without exposing a partial project rollout.
@@ -201,19 +224,20 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		changes = append(changes, change)
 	}
 
-	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff,
+	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff, syncConfig,
 		fromReleaseSet.ID, toReleaseSet.ID, changes)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion identity")
 	}
 	promotionToken, err := projectEnvironmentPromotionToken(acct.ID, project.ID, project.Slug,
 		from.Slug, to.Slug, configDiff.FromHash, configDiff.ToHash,
-		fromReleaseSet.ID, toReleaseSet.ID, promotionHash)
+		fromReleaseSet.ID, toReleaseSet.ID, syncConfig, promotionHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion token")
 	}
 	plan.Preview = api.ProjectEnvironmentPromotionPreviewResponse{
 		ProjectSlug: project.Slug, FromEnvironment: from.Slug, ToEnvironment: to.Slug,
+		SyncConfig:             syncConfig,
 		ToEnvironmentProtected: to.Protected, ApprovalRequired: to.Protected,
 		CanPromote: len(blockingReasons) == 0, BlockingReasons: blockingReasons,
 		ConfigDiff: configDiff, Changes: changes,
@@ -277,6 +301,13 @@ func projectEnvironmentPromotionReleaseSetResponse(release *state.ProjectRelease
 	return &response
 }
 
+func projectEnvironmentConfigSnapshot(config state.ProjectEnvironmentConfig) json.RawMessage {
+	if len(config.Values) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return append(json.RawMessage(nil), config.Values...)
+}
+
 func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	projectSlug := r.PathValue("slug")
 	toEnvironment := strings.TrimSpace(r.PathValue("environment"))
@@ -319,7 +350,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(existing, existingWorkloads))
 			return
 		}
-		plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+		plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig)
 		if problem == nil {
 			problem = validateProjectEnvironmentPromotionResume(wire, existing, existingWorkloads, plan)
 		}
@@ -335,12 +366,12 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
+	if wire.ProjectID != plan.ProjectID || wire.SyncConfig != plan.SyncConfig || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
 		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
 		wire.FromReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet) ||
 		wire.ToReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) ||
@@ -384,14 +415,22 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), state.ProjectEnvironmentPromotion{
+	promotionRecord := state.ProjectEnvironmentPromotion{
 		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		PromotionHash: plan.Preview.PromotionHash, IdempotencyKey: idempotencyKey, Status: "running",
 		VerificationStatus:         "pending",
 		SourceReleaseSetID:         projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet),
 		PreviousTargetReleaseSetID: projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet),
-	}, projectEnvironmentPromotionWorkloads(plan))
+		SyncConfig:                 plan.SyncConfig,
+	}
+	if plan.SyncConfig {
+		promotionRecord.SourceConfigHash = plan.Preview.ConfigDiff.FromHash
+		promotionRecord.PreviousTargetConfigHash = plan.Preview.ConfigDiff.ToHash
+		promotionRecord.SourceConfigSnapshot = projectEnvironmentConfigSnapshot(plan.SourceConfig)
+		promotionRecord.PreviousTargetConfigSnapshot = projectEnvironmentConfigSnapshot(plan.TargetConfig)
+	}
+	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), promotionRecord, projectEnvironmentPromotionWorkloads(plan))
 	if err != nil {
 		if !errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrCapacity("could not create environment promotion"))
@@ -412,7 +451,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(promotion, workloads))
 			return
 		}
-		plan, problem = s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment)
+		plan, problem = s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig)
 		if problem == nil {
 			problem = validateProjectEnvironmentPromotionResume(wire, promotion, workloads, plan)
 		}
@@ -704,8 +743,14 @@ func projectEnvironmentPromotionWorkloads(plan projectEnvironmentPromotionPlan) 
 }
 
 func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionTokenWire, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) *api.Problem {
-	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
-		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
+	configMatches := wire.ToConfigHash == plan.Preview.ConfigDiff.ToHash
+	if promotion.SyncConfig && promotion.TargetConfigVersion != 0 {
+		configMatches = wire.ToConfigHash == promotion.PreviousTargetConfigHash &&
+			plan.Preview.ConfigDiff.ToHash == promotion.SourceConfigHash &&
+			plan.TargetConfig.Version == promotion.TargetConfigVersion
+	}
+	if wire.ProjectID != plan.ProjectID || wire.SyncConfig != promotion.SyncConfig || wire.SyncConfig != plan.SyncConfig ||
+		wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash || !configMatches ||
 		wire.FromReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet) ||
 		wire.FromReleaseSetID != promotion.SourceReleaseSetID {
 		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
@@ -1046,6 +1091,7 @@ func projectEnvironmentPromotionResponse(promotion state.ProjectEnvironmentPromo
 	return api.ProjectEnvironmentPromotionResponse{
 		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
 		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
+		SyncConfig:    promotion.SyncConfig,
 		PromotionHash: promotion.PromotionHash, Workloads: results,
 	}
 }
@@ -1066,6 +1112,7 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 	return api.ProjectEnvironmentPromotionStatusResponse{
 		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
 		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
+		SyncConfig:    promotion.SyncConfig,
 		PromotionHash: promotion.PromotionHash, Status: promotion.Status, Error: promotion.Error,
 		RollbackStatus: promotion.RollbackStatus, RollbackError: promotion.RollbackError,
 		RollbackStartedAt:   formatOptionalTime(promotion.RollbackStartedAt),
@@ -1115,7 +1162,7 @@ func projectEnvironmentPromotionExecutionProblem(plan projectEnvironmentPromotio
 }
 
 func (s *server) revalidateProjectEnvironmentPromotionPlan(ctx context.Context, acct state.Account, projectSlug, fromEnvironment, toEnvironment string, plan projectEnvironmentPromotionPlan) *api.Problem {
-	current, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, fromEnvironment, toEnvironment)
+	current, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, fromEnvironment, toEnvironment, plan.SyncConfig)
 	if problem != nil {
 		return problem
 	}
@@ -1248,6 +1295,7 @@ func deploymentRevision(deployment state.Deployment) (kind, value string) {
 func projectEnvironmentPromotionHash(
 	projectSlug, fromEnvironment, toEnvironment string,
 	configDiff api.ProjectEnvironmentConfigDiffResponse,
+	syncConfig bool,
 	fromReleaseSetID, toReleaseSetID string,
 	changes []api.ProjectEnvironmentPromotionChange,
 ) (string, error) {
@@ -1257,12 +1305,13 @@ func projectEnvironmentPromotionHash(
 		ToEnvironment    string                                  `json:"to_environment"`
 		FromConfigHash   string                                  `json:"from_config_hash"`
 		ToConfigHash     string                                  `json:"to_config_hash"`
+		SyncConfig       bool                                    `json:"sync_config,omitempty"`
 		FromReleaseSetID string                                  `json:"from_release_set_id,omitempty"`
 		ToReleaseSetID   string                                  `json:"to_release_set_id,omitempty"`
 		Changes          []api.ProjectEnvironmentPromotionChange `json:"changes"`
 	}{
 		ProjectSlug: projectSlug, FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
-		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash,
+		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash, SyncConfig: syncConfig,
 		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID, Changes: changes,
 	}
 	raw, err := json.Marshal(identity)
@@ -1273,12 +1322,13 @@ func projectEnvironmentPromotionHash(
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func projectEnvironmentPromotionToken(accountID, projectID, projectSlug, fromEnvironment, toEnvironment, fromConfigHash, toConfigHash, fromReleaseSetID, toReleaseSetID, promotionHash string) (string, error) {
+func projectEnvironmentPromotionToken(accountID, projectID, projectSlug, fromEnvironment, toEnvironment, fromConfigHash, toConfigHash, fromReleaseSetID, toReleaseSetID string, syncConfig bool, promotionHash string) (string, error) {
 	wire := projectEnvironmentPromotionTokenWire{
 		Version: 1, AccountID: accountID, ProjectID: projectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		FromConfigHash: fromConfigHash, ToConfigHash: toConfigHash,
 		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID,
+		SyncConfig:    syncConfig,
 		PromotionHash: promotionHash, IssuedAt: timeNow().UTC().Unix(),
 	}
 	raw, err := json.Marshal(wire)

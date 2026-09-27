@@ -261,6 +261,8 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionWorkload(_ context.Context, 
 }
 
 func cloneProjectEnvironmentPromotion(promotion ProjectEnvironmentPromotion) ProjectEnvironmentPromotion {
+	promotion.SourceConfigSnapshot = append([]byte(nil), promotion.SourceConfigSnapshot...)
+	promotion.PreviousTargetConfigSnapshot = append([]byte(nil), promotion.PreviousTargetConfigSnapshot...)
 	if promotion.CompletedAt != nil {
 		stamp := *promotion.CompletedAt
 		promotion.CompletedAt = &stamp

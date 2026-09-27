@@ -43,6 +43,8 @@ class ProjectEnvironmentPromotionStatusResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     workloads: list[ProjectEnvironmentPromotionStatusWorkloadResponse]
+    sync_config: bool | Unset = UNSET
+    """Config sync was enabled for this promotion."""
     error: str | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     rollback_status: ProjectEnvironmentPromotionStatusResponseRollbackStatus | Unset = UNSET
@@ -76,6 +78,8 @@ class ProjectEnvironmentPromotionStatusResponse:
         for workloads_item_data in self.workloads:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
+
+        sync_config = self.sync_config
 
         error = self.error
 
@@ -126,6 +130,8 @@ class ProjectEnvironmentPromotionStatusResponse:
                 "workloads": workloads,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
         if error is not UNSET:
             field_dict["error"] = error
         if completed_at is not UNSET:
@@ -178,6 +184,8 @@ class ProjectEnvironmentPromotionStatusResponse:
             workloads_item = ProjectEnvironmentPromotionStatusWorkloadResponse.from_dict(workloads_item_data)
 
             workloads.append(workloads_item)
+
+        sync_config = d.pop("sync_config", UNSET)
 
         error = d.pop("error", UNSET)
 
@@ -246,6 +254,7 @@ class ProjectEnvironmentPromotionStatusResponse:
             created_at=created_at,
             updated_at=updated_at,
             workloads=workloads,
+            sync_config=sync_config,
             error=error,
             completed_at=completed_at,
             rollback_status=rollback_status,

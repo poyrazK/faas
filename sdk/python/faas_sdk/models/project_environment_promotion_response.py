@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 
@@ -23,6 +25,8 @@ class ProjectEnvironmentPromotionResponse:
     to_environment: str
     promotion_hash: str
     workloads: list[ProjectEnvironmentPromotionWorkloadResponse]
+    sync_config: bool | Unset = UNSET
+    """Whether this promotion copied the source's non-secret configuration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +45,8 @@ class ProjectEnvironmentPromotionResponse:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        sync_config = self.sync_config
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +59,8 @@ class ProjectEnvironmentPromotionResponse:
                 "workloads": workloads,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
 
         return field_dict
 
@@ -78,6 +86,8 @@ class ProjectEnvironmentPromotionResponse:
 
             workloads.append(workloads_item)
 
+        sync_config = d.pop("sync_config", UNSET)
+
         project_environment_promotion_response = cls(
             promotion_id=promotion_id,
             project_slug=project_slug,
@@ -85,6 +95,7 @@ class ProjectEnvironmentPromotionResponse:
             to_environment=to_environment,
             promotion_hash=promotion_hash,
             workloads=workloads,
+            sync_config=sync_config,
         )
 
         project_environment_promotion_response.additional_properties = d
