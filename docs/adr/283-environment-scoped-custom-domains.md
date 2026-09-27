@@ -1,4 +1,4 @@
-# ADR-280: Environment-scoped custom domains
+# ADR-283: Environment-scoped custom domains
 
 - **Status:** accepted
 - **Date:** 2026-09-27

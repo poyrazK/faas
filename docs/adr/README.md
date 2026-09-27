@@ -54,11 +54,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
-| 280 | [Environment-scoped custom domains](280-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |
 | 277 | [Pinned service-binding handler smoke test](277-pinned-service-binding-smoke-test.md) | accepted | Invoke one explicit service path on an exact live target deployment from the caller over verified HTTPS |
 | 276 | [HTTPS-first service-binding transport](276-https-first-service-binding-transport.md) | accepted | Opt-in canonical HTTPS binding URLs with gateway-enforced no-downgrade behavior while preserving the legacy HTTP default |
