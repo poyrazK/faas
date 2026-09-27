@@ -1,3 +1,5 @@
+-- filename: 20260927213824754_safe_release_worker_lease.sql
+
 -- +goose Up
 -- meterd renews this lease only while both canary progression and rollout
 -- recovery ticks are succeeding. A stale or absent row blocks new canaries.
