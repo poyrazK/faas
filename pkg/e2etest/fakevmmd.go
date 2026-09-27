@@ -10,9 +10,10 @@
 // one e2e family could use it. Everything below is a move plus the renames the
 // package boundary forces; behaviour is unchanged.
 //
-// Coverage note: this fake implements 11 of vmmd's 36 RPCs — Ping, Heartbeat,
+// Coverage note: this fake implements 15 of vmmd's 36 RPCs — Ping, Heartbeat,
 // CreateColdBoot, CreateFromSnapshot, PauseAndSnapshot, Destroy, StopInstance,
-// Stats, FrameworkReady, UpdateEgressAllowlist, ForwardHTTPStream. The rest fall through to
+// Stats, FrameworkReady, UpdateEgressAllowlist, ForwardHTTPStream, and the four
+// live-migration steps (Prepare/Adopt/Acknowledge/Cancel). The rest fall through to
 // UnimplementedVmmdServer, so any daemon path that needs one is silently
 // unreachable from CI. Grow this deliberately rather than assuming a green e2e
 // run covered a boundary it never called.
@@ -137,6 +138,14 @@ type FakeVMMD struct {
 	instanceStats  map[string]*vmmdpb.InstanceStats
 	frameworkReady []*vmmdpb.FrameworkReadyRequest
 	egressUpdates  []*vmmdpb.UpdateEgressAllowlistRequest
+
+	// migrationCalls records the live-migration protocol in the order it was
+	// driven. Order is the contract: adopting before preparing would hand a
+	// target instance state the source has not stopped writing, and
+	// acknowledging before adopting would release the source while the target
+	// may still fail.
+	migrationCalls []string
+	migrationLease string
 
 	// unreachable makes the liveness RPCs fail, which is how a node that has
 	// died looks to schedd. Backdating last_heartbeat_at is not enough on its
@@ -610,6 +619,60 @@ func (s *FakeVMMD) UpdateEgressAllowlist(_ context.Context, req *vmmdpb.UpdateEg
 	s.egressUpdates = append(s.egressUpdates, proto.Clone(req).(*vmmdpb.UpdateEgressAllowlistRequest))
 	s.mu.Unlock()
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
+}
+
+// PrepareLiveMigration is step 1: the source node freezes the instance and
+// hands back the artifact keys plus a lease token that authorises the move.
+func (s *FakeVMMD) PrepareLiveMigration(_ context.Context, req *vmmdpb.PrepareLiveMigrationRequest) (*vmmdpb.PrepareLiveMigrationResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationCalls = append(s.migrationCalls, "prepare")
+	s.migrationLease = "lease-" + req.GetInstanceId()
+	return &vmmdpb.PrepareLiveMigrationResponse{
+		MemStorageKey:     "migrate/" + req.GetInstanceId() + "/mem",
+		VmstateStorageKey: "migrate/" + req.GetInstanceId() + "/vmstate",
+		LeaseToken:        s.migrationLease,
+		FcVersion:         FakeFCVersion,
+	}, nil
+}
+
+// AdoptMigratedInstance is step 2: the target node restores the instance from
+// the artifacts the source produced and becomes its owner.
+func (s *FakeVMMD) AdoptMigratedInstance(_ context.Context, req *vmmdpb.AdoptMigratedInstanceRequest) (*vmmdpb.AdoptMigratedInstanceResponse, error) {
+	s.mu.Lock()
+	s.migrationCalls = append(s.migrationCalls, "adopt")
+	s.trackLiveLocked(req.GetInstanceId())
+	s.mu.Unlock()
+	return &vmmdpb.AdoptMigratedInstanceResponse{
+		HostIp:   "127.0.0.1",
+		Netns:    "fake-" + req.GetInstanceId(),
+		GuestUid: 20002,
+	}, nil
+}
+
+// AcknowledgeMigration is step 3: the source is told the target has it and may
+// release the original VM.
+func (s *FakeVMMD) AcknowledgeMigration(_ context.Context, req *vmmdpb.AcknowledgeMigrationRequest) (*vmmdpb.AcknowledgeMigrationResponse, error) {
+	s.mu.Lock()
+	s.migrationCalls = append(s.migrationCalls, "acknowledge")
+	s.mu.Unlock()
+	return &vmmdpb.AcknowledgeMigrationResponse{}, nil
+}
+
+// CancelLiveMigration is the rollback: the source keeps the instance and the
+// lease is released.
+func (s *FakeVMMD) CancelLiveMigration(_ context.Context, req *vmmdpb.CancelLiveMigrationRequest) (*vmmdpb.CancelLiveMigrationResponse, error) {
+	s.mu.Lock()
+	s.migrationCalls = append(s.migrationCalls, "cancel")
+	s.mu.Unlock()
+	return &vmmdpb.CancelLiveMigrationResponse{}, nil
+}
+
+// MigrationCalls returns the protocol steps in the order they were driven.
+func (s *FakeVMMD) MigrationCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.migrationCalls...)
 }
 
 // EgressUpdates returns the allowlist pushes the fake received, in order.
