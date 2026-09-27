@@ -1739,7 +1739,7 @@ type CreateDeploymentRequest struct {
 	// digest-pinned image with a different entrypoint/cmd/env/port
 	// without rebuilding the image. The field list is frozen by
 	// ADR-053 §Decision 1 — any new override field requires a new
-		// ADR; ADR-282 adds primary-workload startup dependencies.
+	// ADR; ADR-282 adds primary-workload startup dependencies.
 	// Nil/omitted means "no overrides; deploy the image as-is".
 	Overrides *CreateDeploymentOverrides `json:"overrides,omitempty"`
 	// RequireSigned (issue #472 / ADR-054) is the per-deploy opt-in
