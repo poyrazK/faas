@@ -133,7 +133,10 @@ func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcom
 	return CircuitOutcomeSuccess
 }
 
-func (h *Handler) doWithRetries(ctx context.Context, req *http.Request, integrationID string, maxRetries int) (*http.Response, int, error) {
+func (h *Handler) doWithRetries(
+	ctx context.Context, req *http.Request, integrationID, metricIntegrationID string,
+	maxRetries, retryBudgetPerMinute int,
+) (*http.Response, int, error) {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
@@ -151,33 +154,66 @@ func (h *Handler) doWithRetries(ctx context.Context, req *http.Request, integrat
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			h.Metrics.ObserveUpstreamError(integrationID, time.Since(started))
+			h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(started))
 			if !canRetry || retries >= maxRetries || !retryableUpstreamError(err) {
 				return nil, attempts, err
 			}
-			if err := waitForOutboundRetry(ctx, outboundRetryDelay("", retries, time.Now())); err != nil {
+			if waitErr := waitForOutboundRetry(ctx, outboundRetryDelay("", retries, time.Now())); waitErr != nil {
+				return nil, attempts, waitErr
+			}
+			if !h.consumeRetryBudget(ctx, integrationID, metricIntegrationID, retryBudgetPerMinute) {
 				return nil, attempts, err
 			}
 		} else {
 			if resp == nil {
 				err = errors.New("outbound transport returned an empty response")
-				h.Metrics.ObserveUpstreamError(integrationID, time.Since(started))
+				h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(started))
 				return nil, attempts, err
 			}
-			h.Metrics.ObserveUpstream(integrationID, resp.StatusCode, time.Since(started))
+			h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(started))
 			if !canRetry || retries >= maxRetries || !retryableStatus(resp.StatusCode) {
 				return resp, attempts, nil
 			}
 			delay := outboundRetryDelay(resp.Header.Get("Retry-After"), retries, time.Now())
+			if waitErr := waitForOutboundRetry(ctx, delay); waitErr != nil {
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, attempts, waitErr
+			}
+			if !h.consumeRetryBudget(ctx, integrationID, metricIntegrationID, retryBudgetPerMinute) {
+				return resp, attempts, nil
+			}
 			if resp.Body != nil {
 				_ = resp.Body.Close()
-			}
-			if err := waitForOutboundRetry(ctx, delay); err != nil {
-				return nil, attempts, err
 			}
 		}
 		retries++
 		req = req.Clone(ctx)
 		req.Body = http.NoBody
 	}
+}
+
+func (h *Handler) consumeRetryBudget(
+	ctx context.Context, integrationID, metricIntegrationID string, retryBudgetPerMinute int,
+) bool {
+	if retryBudgetPerMinute == 0 {
+		return true
+	}
+	backend, ok := h.Backend.(RetryBudgetBackend)
+	if !ok {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "unavailable")
+		return false
+	}
+	allowed, err := backend.ConsumeRetryToken(ctx, integrationID, retryBudgetPerMinute)
+	if err != nil {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "state_error")
+		return false
+	}
+	if !allowed {
+		h.Metrics.ObserveRetryBudget(metricIntegrationID, "exhausted")
+		return false
+	}
+	h.Metrics.ObserveRetryBudget(metricIntegrationID, "consumed")
+	return true
 }

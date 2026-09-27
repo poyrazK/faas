@@ -22,7 +22,8 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&offer.Enabled, &offer.CredentialSource, &offer.CredentialConfigured, &offer.OwnerKind, &dailyRequestLimit, &accountPlan,
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
-		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds); err != nil {
+		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
+		&requestPolicy.RetryBudgetPerMinute); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
 	offer.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
@@ -51,7 +52,8 @@ func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 		&binding.RouteMethods, &binding.RoutePathPrefixes, &binding.OwnerKind, &dailyRequestLimit, &bindingDailyRequestLimit, &accountPlan,
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
-		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds); err != nil {
+		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
+		&requestPolicy.RetryBudgetPerMinute); err != nil {
 		return OutboundAppBinding{}, mapErr(err)
 	}
 	binding.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
@@ -94,7 +96,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.owner_kind, integration.daily_request_limit, account.plan,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
-		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds
+		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
+		       integration.retry_budget_per_minute
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential
@@ -129,7 +132,8 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
-		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds
+		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
+		       integration.retry_budget_per_minute
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id
@@ -195,14 +199,14 @@ func (s *PgStore) CreateOutboundIntegration(ctx context.Context, offer OutboundI
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst, max_in_flight,
 		     request_timeout_ms, max_retries, response_cache_ttl_seconds, circuit_breaker_failure_threshold,
-		     circuit_breaker_open_seconds, enabled, provider_auth_mode, allowed_methods,
+		     circuit_breaker_open_seconds, retry_budget_per_minute, enabled, provider_auth_mode, allowed_methods,
 		     allowed_path_prefixes, credential_source, owner_kind, daily_request_limit)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,'managed',$14,$15,'customer_sealed','customer',$16)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,'managed',$15,$16,'customer_sealed','customer',$17)`,
 		integrationID, accountID, offer.Name, offer.Origin, zeroTokenHash,
 		offer.RequestPolicy.RatePerSecond, offer.RequestPolicy.Burst, offer.RequestPolicy.MaxInFlight,
 		offer.RequestPolicy.RequestTimeoutMS, offer.RequestPolicy.MaxRetries, offer.RequestPolicy.ResponseCacheTTLSeconds,
 		offer.RequestPolicy.CircuitBreakerFailureThreshold, offer.RequestPolicy.CircuitBreakerOpenSeconds,
-		offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit)
+		offer.RequestPolicy.RetryBudgetPerMinute, offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit)
 	if err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
@@ -276,12 +280,13 @@ func (s *PgStore) SetOutboundRequestPolicy(ctx context.Context, accountID, integ
 		UPDATE outbound_integrations
 		   SET rate_per_second = $3, burst = $4, max_in_flight = $5,
 		       request_timeout_ms = $6, max_retries = $7, response_cache_ttl_seconds = $8,
-		       circuit_breaker_failure_threshold = $9, circuit_breaker_open_seconds = $10, updated_at = now()
+		       circuit_breaker_failure_threshold = $9, circuit_breaker_open_seconds = $10,
+		       retry_budget_per_minute = $11, updated_at = now()
 		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer'
 		   AND provider_auth_mode = 'managed' AND enabled`,
 		account, integration, policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS,
 		policy.MaxRetries, policy.ResponseCacheTTLSeconds,
-		policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds)
+		policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds, policy.RetryBudgetPerMinute)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -344,7 +349,8 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
-		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds
+		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
+		       integration.retry_budget_per_minute
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id

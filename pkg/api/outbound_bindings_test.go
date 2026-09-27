@@ -10,10 +10,10 @@ func TestOutboundRequestPolicyPlanCeilings(t *testing.T) {
 		plan Plan
 		max  OutboundRequestPolicy
 	}{
-		{PlanFree, OutboundRequestPolicy{RatePerSecond: 10, Burst: 20, MaxInFlight: 10, RequestTimeoutMS: 30_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds}},
-		{PlanHobby, OutboundRequestPolicy{RatePerSecond: 20, Burst: 100, MaxInFlight: 50, RequestTimeoutMS: 60_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds}},
-		{PlanPro, OutboundRequestPolicy{RatePerSecond: 100, Burst: 500, MaxInFlight: 250, RequestTimeoutMS: 120_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds}},
-		{PlanScale, OutboundRequestPolicy{RatePerSecond: 500, Burst: 2000, MaxInFlight: 1000, RequestTimeoutMS: 300_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds}},
+		{PlanFree, OutboundRequestPolicy{RatePerSecond: 10, Burst: 20, MaxInFlight: 10, RequestTimeoutMS: 30_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds, RetryBudgetPerMinute: 60}},
+		{PlanHobby, OutboundRequestPolicy{RatePerSecond: 20, Burst: 100, MaxInFlight: 50, RequestTimeoutMS: 60_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds, RetryBudgetPerMinute: 120}},
+		{PlanPro, OutboundRequestPolicy{RatePerSecond: 100, Burst: 500, MaxInFlight: 250, RequestTimeoutMS: 120_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds, RetryBudgetPerMinute: 600}},
+		{PlanScale, OutboundRequestPolicy{RatePerSecond: 500, Burst: 2000, MaxInFlight: 1000, RequestTimeoutMS: 300_000, MaxRetries: 2, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds, RetryBudgetPerMinute: 3000}},
 	}
 	defaults := DefaultOutboundRequestPolicy()
 	if defaults != (OutboundRequestPolicy{RatePerSecond: 10, Burst: 20, MaxInFlight: 10, RequestTimeoutMS: 30_000}) {
@@ -29,7 +29,7 @@ func TestOutboundRequestPolicyPlanCeilings(t *testing.T) {
 			}
 			effective, ok := EffectiveOutboundRequestPolicyForPlan(tc.plan, OutboundRequestPolicy{
 				RatePerSecond: 1000, Burst: 10_000, MaxInFlight: 10_000, RequestTimeoutMS: 600_000,
-				MaxRetries: 20, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds * 2,
+				MaxRetries: 20, ResponseCacheTTLSeconds: MaxOutboundResponseCacheTTLSeconds * 2, RetryBudgetPerMinute: MaxOutboundRetryBudgetPerMinute,
 			})
 			if !ok || effective != tc.max {
 				t.Fatalf("effective policy = %+v, %v; want %+v", effective, ok, tc.max)
@@ -48,6 +48,11 @@ func TestOutboundRequestPolicyPlanCeilings(t *testing.T) {
 			invalid.ResponseCacheTTLSeconds++
 			if OutboundRequestPolicyAllowedForPlan(tc.plan, invalid) {
 				t.Fatalf("over-ceiling response-cache policy %+v accepted", invalid)
+			}
+			invalid = tc.max
+			invalid.RetryBudgetPerMinute++
+			if OutboundRequestPolicyAllowedForPlan(tc.plan, invalid) {
+				t.Fatalf("over-ceiling retry-budget policy %+v accepted", invalid)
 			}
 		})
 	}

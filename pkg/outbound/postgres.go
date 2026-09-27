@@ -47,6 +47,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
 	}
+	if spec.RetryBudgetPerMinute < 0 || spec.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return Decision{}, fmt.Errorf("%w: retry-budget policy is invalid", ErrInvalidIntegration)
+	}
 	integrationID, err := uuid.Parse(spec.IntegrationID)
 	if err != nil {
 		return Decision{}, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
@@ -120,14 +123,14 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
 		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
-	       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, owner_kind
+		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID).
 		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
 			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
 			&requestPolicy.ResponseCacheTTLSeconds, &requestPolicy.CircuitBreakerFailureThreshold,
-			&requestPolicy.CircuitBreakerOpenSeconds, &ownerKind)
+			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -155,6 +158,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		spec.MaxInFlight = requestPolicy.MaxInFlight
 		spec.CircuitBreakerFailureThreshold = requestPolicy.CircuitBreakerFailureThreshold
 		spec.CircuitBreakerOpenSeconds = requestPolicy.CircuitBreakerOpenSeconds
+		spec.RetryBudgetPerMinute = requestPolicy.RetryBudgetPerMinute
 		ttl = time.Duration(requestPolicy.RequestTimeoutMS) * time.Millisecond
 	}
 	// The state row is created lazily. The lock below serializes all admissions
@@ -172,15 +176,20 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	var circuitOpenUntil pgtype.Timestamptz
 	var circuitProbeLeaseID pgtype.UUID
 	var circuitPolicyThreshold, circuitPolicyOpenSeconds int
+	var retryBudgetTokens float64
+	var retryBudgetRefilledAt time.Time
+	var retryBudgetPolicyPerMinute int
 	if err := tx.QueryRow(ctx, `
 		SELECT tokens, last_refill, daily_usage_date, daily_request_count,
 		       circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
-		       circuit_policy_failure_threshold, circuit_policy_open_seconds
+		       circuit_policy_failure_threshold, circuit_policy_open_seconds,
+		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute
 		FROM outbound_admission_state
 		WHERE integration_id = $1
 		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill, &usageDate, &dailyRequestCount,
 		&circuitFailureCount, &circuitOpenUntil, &circuitProbeLeaseID,
-		&circuitPolicyThreshold, &circuitPolicyOpenSeconds); err != nil {
+		&circuitPolicyThreshold, &circuitPolicyOpenSeconds,
+		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute); err != nil {
 		return Decision{}, err
 	}
 	if circuitPolicyThreshold != spec.CircuitBreakerFailureThreshold || circuitPolicyOpenSeconds != spec.CircuitBreakerOpenSeconds {
@@ -189,6 +198,17 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		circuitProbeLeaseID = pgtype.UUID{}
 		circuitPolicyThreshold = spec.CircuitBreakerFailureThreshold
 		circuitPolicyOpenSeconds = spec.CircuitBreakerOpenSeconds
+	}
+	if retryBudgetPolicyPerMinute != spec.RetryBudgetPerMinute {
+		retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
+		retryBudgetRefilledAt = now
+		retryBudgetPolicyPerMinute = spec.RetryBudgetPerMinute
+	} else if elapsed := now.Sub(retryBudgetRefilledAt).Seconds(); elapsed > 0 {
+		retryBudgetTokens += elapsed * float64(spec.RetryBudgetPerMinute) / 60
+		retryBudgetRefilledAt = now
+	}
+	if retryBudgetTokens > float64(spec.RetryBudgetPerMinute) {
+		retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
 	}
 	utcNow := now.UTC()
 	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
@@ -237,9 +257,11 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
 		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5,
 		    circuit_failure_count = $6, circuit_open_until = $7, circuit_probe_lease_id = $8,
-		    circuit_policy_failure_threshold = $9, circuit_policy_open_seconds = $10
+		    circuit_policy_failure_threshold = $9, circuit_policy_open_seconds = $10,
+		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13
 		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount,
-		circuitFailureCount, circuitOpenUntil, circuitProbeLeaseID, circuitPolicyThreshold, circuitPolicyOpenSeconds); err != nil {
+		circuitFailureCount, circuitOpenUntil, circuitProbeLeaseID, circuitPolicyThreshold, circuitPolicyOpenSeconds,
+		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute); err != nil {
 		return Decision{}, err
 	}
 	var inFlight int
@@ -321,7 +343,70 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		Granted: true, LeaseID: leaseID.String(), RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
 	}, nil
+}
+
+func (b *PostgresBackend) ConsumeRetryToken(ctx context.Context, integrationID string, retryBudgetPerMinute int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if retryBudgetPerMinute < 1 || retryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return false, fmt.Errorf("%w: invalid retry-budget request", ErrInvalidIntegration)
+	}
+	integrationUUID, err := uuid.Parse(integrationID)
+	if err != nil {
+		return false, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
+	}
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+		return false, err
+	}
+	var tokens float64
+	var refilledAt time.Time
+	var policyPerMinute int
+	err = tx.QueryRow(ctx, `
+		SELECT retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute
+		  FROM outbound_admission_state
+		 WHERE integration_id = $1
+		 FOR UPDATE`, integrationUUID).Scan(&tokens, &refilledAt, &policyPerMinute)
+	if err != nil {
+		return false, err
+	}
+	// The current admission may have captured an older policy. Never let it
+	// spend from a bucket after a concurrent policy update resets that bucket.
+	if policyPerMinute != retryBudgetPerMinute {
+		if err := tx.Commit(ctx); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if elapsed := now.Sub(refilledAt).Seconds(); elapsed > 0 {
+		tokens += elapsed * float64(retryBudgetPerMinute) / 60
+		refilledAt = now
+	}
+	if tokens > float64(retryBudgetPerMinute) {
+		tokens = float64(retryBudgetPerMinute)
+	}
+	allowed := tokens >= 1
+	if allowed {
+		tokens--
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbound_admission_state
+		   SET retry_budget_tokens = $2, retry_budget_refilled_at = $3
+		 WHERE integration_id = $1`, integrationUUID, tokens, refilledAt); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return allowed, nil
 }
 
 func (b *PostgresBackend) AllowCircuit(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int) (CircuitBreakerDecision, error) {

@@ -14,18 +14,21 @@ import (
 type memoryLease struct{ expiresAt time.Time }
 
 type memoryState struct {
-	tokens             float64
-	last               time.Time
-	leases             map[string]memoryLease
-	dailyUsageDate     string
-	dailyRequestCount  int64
-	bindingDailyCounts map[string]int64
-	circuitFailures    int
-	circuitOpenUntil   time.Time
-	circuitProbeLease  string
-	circuitThreshold   int
-	circuitOpenSeconds int
-	initialized        bool
+	tokens               float64
+	last                 time.Time
+	leases               map[string]memoryLease
+	dailyUsageDate       string
+	dailyRequestCount    int64
+	bindingDailyCounts   map[string]int64
+	circuitFailures      int
+	circuitOpenUntil     time.Time
+	circuitProbeLease    string
+	circuitThreshold     int
+	circuitOpenSeconds   int
+	retryBudgetTokens    float64
+	retryBudgetRefill    time.Time
+	retryBudgetPerMinute int
+	initialized          bool
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -63,6 +66,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
 	}
+	if spec.RetryBudgetPerMinute < 0 || spec.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return Decision{}, fmt.Errorf("%w: retry-budget policy is invalid", ErrInvalidIntegration)
+	}
 	ttl := spec.LeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -95,6 +101,11 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		state.circuitProbeLease = ""
 		state.circuitThreshold = spec.CircuitBreakerFailureThreshold
 		state.circuitOpenSeconds = spec.CircuitBreakerOpenSeconds
+	}
+	if state.retryBudgetPerMinute != spec.RetryBudgetPerMinute {
+		state.retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
+		state.retryBudgetRefill = now
+		state.retryBudgetPerMinute = spec.RetryBudgetPerMinute
 	}
 	for id, lease := range state.leases {
 		if !lease.expiresAt.After(now) {
@@ -155,7 +166,36 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
 	}, nil
+}
+
+func (b *MemoryBackend) ConsumeRetryToken(ctx context.Context, integrationID string, retryBudgetPerMinute int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if integrationID == "" || retryBudgetPerMinute < 1 || retryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return false, fmt.Errorf("%w: invalid retry-budget request", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.retryBudgetPerMinute != retryBudgetPerMinute {
+		return false, nil
+	}
+	now := b.now()
+	if elapsed := now.Sub(state.retryBudgetRefill).Seconds(); elapsed > 0 {
+		state.retryBudgetTokens += elapsed * float64(retryBudgetPerMinute) / 60
+		state.retryBudgetRefill = now
+	}
+	if state.retryBudgetTokens > float64(retryBudgetPerMinute) {
+		state.retryBudgetTokens = float64(retryBudgetPerMinute)
+	}
+	if state.retryBudgetTokens < 1 {
+		return false, nil
+	}
+	state.retryBudgetTokens--
+	return true, nil
 }
 
 func (b *MemoryBackend) AllowCircuit(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int) (CircuitBreakerDecision, error) {
@@ -271,3 +311,4 @@ func validUUID(value string) bool {
 }
 
 var _ CircuitBreakerBackend = (*MemoryBackend)(nil)
+var _ RetryBudgetBackend = (*MemoryBackend)(nil)

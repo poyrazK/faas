@@ -224,6 +224,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      integration.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 	})
 	if err != nil {
@@ -352,7 +353,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
 			}
 		}
-		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, integration.ID, metricIntegrationID,
+			integration.MaxRetries, decision.RetryBudgetPerMinute)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {

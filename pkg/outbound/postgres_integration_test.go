@@ -57,7 +57,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		providerCalls.Add(1)
 		entered <- struct{}{}
 		<-finish
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer provider.Close()
 
@@ -67,6 +67,8 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new integration: %v", err)
 	}
+	integration.MaxRetries = 1
+	integration.RetryBudgetPerMinute = 1
 	integration.ProviderAuthMode = outbound.ProviderAuthManaged
 	integration.AllowedMethods = []string{http.MethodGet}
 	integration.AllowedPathPrefixes = []string{"/v1/items"}
@@ -142,7 +144,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	var granted, rejected int
 	for status := range responses {
 		switch status {
-		case http.StatusNoContent:
+		case http.StatusServiceUnavailable:
 			granted++
 		case http.StatusTooManyRequests:
 			rejected++
@@ -150,8 +152,8 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 			t.Errorf("unexpected handler status %d", status)
 		}
 	}
-	if providerCalls.Load() != 5 || granted != 5 || rejected != 15 {
-		t.Fatalf("shared postgres budget: provider_calls=%d granted=%d rejected=%d; want 5/5/15", providerCalls.Load(), granted, rejected)
+	if providerCalls.Load() != 6 || granted != 5 || rejected != 15 {
+		t.Fatalf("shared postgres budgets: provider_calls=%d granted=%d rejected=%d; want 6/5/15 (five first attempts plus one fleet-wide retry)", providerCalls.Load(), granted, rejected)
 	}
 }
 
@@ -196,12 +198,13 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 		RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500,
 		MaxRetries: 2, ResponseCacheTTLSeconds: 60,
 		CircuitBreakerFailureThreshold: 3, CircuitBreakerOpenSeconds: 30,
+		RetryBudgetPerMinute: 7,
 	}
 	if err := store.SetOutboundRequestPolicy(ctx, account.ID, offer.ID, updatedPolicy); err != nil {
 		t.Fatalf("update customer policy: %v", err)
 	}
 	after, err := resolver.Integration(ctx, offer.ID)
-	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond || after.MaxRetries != 2 || after.ResponseCacheTTLSeconds != 60 || after.CircuitBreakerFailureThreshold != 3 || after.CircuitBreakerOpenSeconds != 30 {
+	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond || after.MaxRetries != 2 || after.ResponseCacheTTLSeconds != 60 || after.CircuitBreakerFailureThreshold != 3 || after.CircuitBreakerOpenSeconds != 30 || after.RetryBudgetPerMinute != 7 {
 		t.Fatalf("resolved updated policy = %+v, %v", after, err)
 	}
 
@@ -216,7 +219,7 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 		LeaseTTL:     time.Duration(defaultPolicy.RequestTimeoutMS) * time.Millisecond,
 	}
 	first, err := backend.Admit(ctx, staleResolverSnapshot)
-	if err != nil || !first.Granted || first.RequestTimeout != 1500*time.Millisecond {
+	if err != nil || !first.Granted || first.RequestTimeout != 1500*time.Millisecond || first.RetryBudgetPerMinute != 7 {
 		t.Fatalf("admission after policy update = %+v, %v", first, err)
 	}
 	second, err := backend.Admit(ctx, staleResolverSnapshot)
@@ -229,6 +232,83 @@ func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
 	third, err := backend.Admit(ctx, staleResolverSnapshot)
 	if err != nil || third.Granted || third.Reason != outbound.ReasonRate {
 		t.Fatalf("stale snapshot bypassed rate update: %+v, %v", third, err)
+	}
+}
+
+func TestPostgresRetryBudgetCoordinatesGatewayInstances(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-retry-budget-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-retry-budget-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	policy := api.DefaultOutboundRequestPolicy()
+	policy.RetryBudgetPerMinute = 1
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "retry-budget",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("create customer integration: %v", err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+		t.Fatalf("bind integration: %v", err)
+	}
+	backendA, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendB, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: 100, Burst: 20, MaxInFlight: 20,
+		BindingAppID: app.ID, RetryBudgetPerMinute: policy.RetryBudgetPerMinute,
+		LeaseTTL: time.Minute,
+	}
+	decision, err := backendA.Admit(ctx, spec)
+	if err != nil || !decision.Granted || decision.RetryBudgetPerMinute != 1 {
+		t.Fatalf("admission = %+v, %v", decision, err)
+	}
+	type result struct {
+		allowed bool
+		err     error
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, backend := range []*outbound.PostgresBackend{backendA, backendB} {
+		wg.Add(1)
+		go func(backend *outbound.PostgresBackend) {
+			defer wg.Done()
+			allowed, err := backend.ConsumeRetryToken(ctx, offer.ID, policy.RetryBudgetPerMinute)
+			results <- result{allowed: allowed, err: err}
+		}(backend)
+	}
+	wg.Wait()
+	close(results)
+	var consumed int
+	for got := range results {
+		if got.err != nil {
+			t.Errorf("consume retry token: %v", got.err)
+		}
+		if got.allowed {
+			consumed++
+		}
+	}
+	if consumed != 1 {
+		t.Fatalf("independent gateway backends consumed %d retry tokens, want exactly 1", consumed)
 	}
 }
 

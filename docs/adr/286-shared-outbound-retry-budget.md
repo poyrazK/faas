@@ -1,0 +1,8 @@
+# ADR-286 · Shared outbound retry budget
+
+- **Status:** proposed
+- **Date:** 2026-09-27
+- **Decision:** Add an optional token bucket per outbound integration that caps extra safe-method provider attempts per minute. Persist its state in Postgres so all `outboundd` replicas share one budget; keep the first attempt outside the bucket. Bound customer values by account plan and the global policy ceiling. If retry state is unavailable or exhausted, stop retrying while preserving the last provider response or original transport error.
+- **Why:** A per-request retry limit alone allows a burst of callers or gateway replicas to multiply traffic to an unhealthy or rate-limiting provider. The existing integration-level admission boundary is the natural place to coordinate retries without making application code own a second wrapper.
+- **Consequences:** Retries remain limited to the existing bodyless `GET`/`HEAD` and transient-outcome rules. A configured bucket starts with capacity equal to its per-minute rate and refills continuously; only additional attempts consume tokens. Policy changes reset the shared bucket when the next request is admitted. The customer plan ceilings are 60, 120, 600, and 3,000 extra attempts/minute for Free, Hobby, Pro, and Scale. Zero disables the aggregate cap and preserves the existing per-request retry setting. A bounded metric reports retry-budget events without exposing customer integration IDs.
+- **Rejected alternatives:** Keep only `max_retries`, which does not bound aggregate provider load; use process-local buckets, which multiply across replicas; reject the logical request when the retry budget is exhausted, which would discard a usable last provider response.

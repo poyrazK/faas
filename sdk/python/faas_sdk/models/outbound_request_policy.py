@@ -31,6 +31,9 @@ class OutboundRequestPolicy:
     circuit_breaker_open_seconds: int | Unset = 0
     """Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is
     allowed. Must be set with a nonzero failure threshold."""
+    retry_budget_per_minute: int | Unset = 0
+    """Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity
+    equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +53,8 @@ class OutboundRequestPolicy:
 
         circuit_breaker_open_seconds = self.circuit_breaker_open_seconds
 
+        retry_budget_per_minute = self.retry_budget_per_minute
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -68,6 +73,8 @@ class OutboundRequestPolicy:
             field_dict["circuit_breaker_failure_threshold"] = circuit_breaker_failure_threshold
         if circuit_breaker_open_seconds is not UNSET:
             field_dict["circuit_breaker_open_seconds"] = circuit_breaker_open_seconds
+        if retry_budget_per_minute is not UNSET:
+            field_dict["retry_budget_per_minute"] = retry_budget_per_minute
 
         return field_dict
 
@@ -90,6 +97,8 @@ class OutboundRequestPolicy:
 
         circuit_breaker_open_seconds = d.pop("circuit_breaker_open_seconds", UNSET)
 
+        retry_budget_per_minute = d.pop("retry_budget_per_minute", UNSET)
+
         outbound_request_policy = cls(
             rate_per_second=rate_per_second,
             burst=burst,
@@ -99,6 +108,7 @@ class OutboundRequestPolicy:
             response_cache_ttl_seconds=response_cache_ttl_seconds,
             circuit_breaker_failure_threshold=circuit_breaker_failure_threshold,
             circuit_breaker_open_seconds=circuit_breaker_open_seconds,
+            retry_budget_per_minute=retry_budget_per_minute,
         )
 
         outbound_request_policy.additional_properties = d

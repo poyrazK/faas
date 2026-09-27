@@ -79,6 +79,7 @@ type IntegrationConfig struct {
 	ResponseCacheTTLSeconds        int           `toml:"response_cache_ttl_seconds"`
 	CircuitBreakerFailureThreshold int           `toml:"circuit_breaker_failure_threshold"`
 	CircuitBreakerOpenSeconds      int           `toml:"circuit_breaker_open_seconds"`
+	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
 	Enabled                        *bool         `toml:"enabled"`
 }
 
@@ -195,6 +196,7 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		policy.ResponseCacheTTLSeconds = raw.ResponseCacheTTLSeconds
 		policy.CircuitBreakerFailureThreshold = raw.CircuitBreakerFailureThreshold
 		policy.CircuitBreakerOpenSeconds = raw.CircuitBreakerOpenSeconds
+		policy.RetryBudgetPerMinute = raw.RetryBudgetPerMinute
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit
