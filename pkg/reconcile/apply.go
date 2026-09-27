@@ -311,6 +311,7 @@ func (s *Service) applyUpdate(
 	transport := serviceBindingTransportForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingTransport)
 	manifest.Env = serviceEnvForWorkloadWithTransport(manifest.Env, a.Workload, serviceNames, transport)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
+	manifest.ServiceReliability = serviceReliabilityForWorkload(a.Workload, serviceNames, a.App.Manifest.ServiceReliability)
 	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
 	manifest.ServiceBindingTransport = transport
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
@@ -381,8 +382,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Manifest: state.AppManifest{
-			Env:             serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
-			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+			Env:                serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
+			ServiceBindings:    serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+			ServiceReliability: serviceReliabilityForWorkload(w, serviceNames, nil),
 
 			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
 			ServiceBindingTransport:   transport,
@@ -409,6 +411,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
 	app.Manifest.Env = serviceEnvForWorkloadWithTransport(app.Manifest.Env, w, available, transport)
 	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
+	app.Manifest.ServiceReliability = serviceReliabilityForWorkload(w, available, app.Manifest.ServiceReliability)
 	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
 	app.Manifest.ServiceBindingTransport = transport
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)

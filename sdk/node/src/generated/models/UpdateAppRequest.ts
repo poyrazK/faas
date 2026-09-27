@@ -8,6 +8,7 @@ import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
@@ -30,6 +31,10 @@ export type UpdateAppRequest = {
    * Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
    */
   service_binding_targets?: any[] | null;
+  /**
+   * Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears. Project-managed and preview apps reject this PATCH.
+   */
+  service_reliability?: (ServiceReliabilityPolicies | null);
   /**
    * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    */

@@ -7123,6 +7123,9 @@ const (
 	// ServiceBindingTargetsMax bounds a standalone caller's declared targets.
 	// The account app cap is 100, so additional names cannot add live targets.
 	ServiceBindingTargetsMax = 100
+	// MaxServiceReliabilityTimeoutMS bounds a declared dependency's complete
+	// call, including a cold wake and all retries. The default remains unset.
+	MaxServiceReliabilityTimeoutMS = 300_000
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

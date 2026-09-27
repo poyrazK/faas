@@ -183,6 +183,18 @@ type PrewarmIntentResponse struct {
 	LastError     string     `json:"last_error,omitempty"`
 }
 
+// ServiceReliabilityPolicy controls one declared outbound dependency.
+// Zero values retain platform defaults; MaxAttempts=1 disables replay.
+// The timeout covers post-authorization routing, wake, forwarding and replay.
+// An earlier caller deadline wins, and established Upgrade sessions detach.
+type ServiceReliabilityPolicy struct {
+	TimeoutMS          int  `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	MaxAttempts        int  `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	MinRemainingMS     int  `json:"min_remaining_ms,omitempty" yaml:"min_remaining_ms,omitempty"`
+	RetryBudgetPercent int  `json:"retry_budget_percent,omitempty" yaml:"retry_budget_percent,omitempty"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty" yaml:"allow_non_idempotent,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
@@ -198,6 +210,9 @@ type CreateAppRequest struct {
 	// ServiceBindingTargets declares outbound same-account services for a
 	// standalone app. The platform derives binding keys and internal URLs.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability configures timeout and retry behavior per declared
+	// outbound service. Omitted retains the platform defaults.
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy defaults to account for standalone apps; declared
 	// opts into gateway enforcement of ServiceBindingTargets.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
@@ -491,6 +506,9 @@ type UpdateAppRequest struct {
 	// ServiceBindingTargets replaces the standalone outbound target list.
 	// Omitted/null leaves it unchanged; [] clears every binding.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability is a full replacement. Omitted leaves it unchanged;
+	// null or {} clears all dependency-specific overrides.
+	ServiceReliability json.RawMessage `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
 	// leaves it unchanged; set account to restore legacy same-account access.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
@@ -1322,7 +1340,8 @@ type AppResponse struct {
 	// dependencies currently injected into this workload. They are a read-only
 	// discovery projection; authorization applies them only when
 	// ServiceBindingPolicy is "declared".
-	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
@@ -6050,10 +6069,11 @@ type PlanWorkload struct {
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
 	// canonical URL contract. Omitted keeps the established transport.
-	ServiceBindingTransport   ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
-	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
-	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
-	AllowedServiceCallScopes  *ServiceCallerScopes      `json:"allowed_service_call_scopes,omitempty"`
+	ServiceBindingTransport   ServiceBindingTransport             `json:"service_binding_transport,omitempty"`
+	ServiceReliability        map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy           `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`

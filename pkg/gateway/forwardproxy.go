@@ -844,6 +844,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
+				markStaleTarget(r.Context())
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -851,6 +852,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				wsOutcome = WSOutcomeUpstreamUnavailable
+				markStaleTarget(r.Context())
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
@@ -899,6 +901,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// was already written above; the body is the
 			// last write before the receiver loop exits.
 			if init.Error != "" {
+				markStaleTarget(r.Context())
 				// Bridge dial failure is an upstream-
 				// availability issue — the bridge wrote
 				// the synthetic 502 from inside the
@@ -1147,6 +1150,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 			ctx := contextWithProxyStart(r.Context(), time.Now())
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
+				markStaleTarget(r.Context())
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}

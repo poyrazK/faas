@@ -2,9 +2,12 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 func TestRetryBudgetCapsAggregateAmplificationAndResets(t *testing.T) {
@@ -26,6 +29,33 @@ func TestRetryBudgetCapsAggregateAmplificationAndResets(t *testing.T) {
 	budget.ObserveOriginal("app-1")
 	if !budget.AllowRetry("app-1", 10, 1) {
 		t.Fatal("minimum retry allowance was not restored in the next window")
+	}
+}
+
+func TestRedisRetryBudgetSharesAllowanceAcrossGateways(t *testing.T) {
+	server := miniredis.RunT(t)
+	url := "redis://" + server.Addr()
+	first, err := NewRedisRetryBudget(context.Background(), url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	second, err := NewRedisRetryBudget(context.Background(), url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	first.ObserveOriginal("app-1")
+	second.ObserveOriginal("app-1")
+	if !first.AllowRetry("app-1", 10, 1) {
+		t.Fatal("shared minimum retry should admit one replay")
+	}
+	if second.AllowRetry("app-1", 10, 1) {
+		t.Fatal("a second gateway received its own minimum allowance")
+	}
+	server.Close()
+	if first.AllowRetry("app-1", 100, 32) {
+		t.Fatal("shared-backend outage must fail closed for retries")
 	}
 }
 

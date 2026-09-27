@@ -180,6 +180,33 @@ func TestServiceProxyDependencyHealthCountsFinalOutcomeByTrustedDeployment(t *te
 	}
 }
 
+func TestServiceProxyEmitsUnsampledCallerTargetEdge(t *testing.T) {
+	callerID, targetID := uuid.NewString(), uuid.NewString()
+	m := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "target", NodeID: "n", Port: 8080}}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: targetID}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: callerID}, nil
+		},
+		Metrics: m,
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) })
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, callerID)
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+	if got := testutil.ToFloat64(m.serviceDependencyEdges.WithLabelValues(callerID, targetID, "error")); got != 1 {
+		t.Fatalf("caller-target error count = %g, want 1", got)
+	}
+	if got := testutil.CollectAndCount(m.serviceDependencyDuration); got != 1 {
+		t.Fatalf("caller-target latency series = %d, want 1", got)
+	}
+}
+
 func TestServiceProxyDependencyHealthCountsManagedRoutingFailures(t *testing.T) {
 	appID, deploymentID := uuid.NewString(), uuid.NewString()
 	m := NewMetrics()

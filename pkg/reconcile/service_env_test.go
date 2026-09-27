@@ -41,6 +41,21 @@ func TestServiceEnvSkipsManagedDependencies(t *testing.T) {
 	}
 }
 
+func TestServiceReliabilityFollowsAvailableBindingsAndPreservesOmittedSource(t *testing.T) {
+	existing := map[string]api.ServiceReliabilityPolicy{"billing": {TimeoutMS: 1200}, "old": {TimeoutMS: 500}}
+	w := reposcan.Workload{Name: "api", DependsOn: []string{"billing", "managed"}}
+	available := map[string]struct{}{"billing": {}}
+	got := serviceReliabilityForWorkload(w, available, existing)
+	if !reflect.DeepEqual(got, map[string]api.ServiceReliabilityPolicy{"billing": {TimeoutMS: 1200}}) {
+		t.Fatalf("omitted source policy = %#v", got)
+	}
+	w.ServiceReliability = map[string]api.ServiceReliabilityPolicy{"billing": {MaxAttempts: 1}, "managed": {TimeoutMS: 900}}
+	got = serviceReliabilityForWorkload(w, available, existing)
+	if !reflect.DeepEqual(got, map[string]api.ServiceReliabilityPolicy{"billing": {MaxAttempts: 1}}) {
+		t.Fatalf("explicit source policy = %#v", got)
+	}
+}
+
 func TestServiceEnvHTTPSFirstUsesInternalAliasForCanonicalURL(t *testing.T) {
 	got := serviceEnvForWorkloadWithAvailable(nil,
 		reposcan.Workload{

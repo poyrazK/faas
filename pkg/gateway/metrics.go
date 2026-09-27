@@ -694,6 +694,9 @@ type Metrics struct {
 	// the node-local instance resolver are admitted; service names and paths
 	// are intentionally not labels.
 	serviceDependencyCalls *prometheus.CounterVec
+	// Unsampled caller-to-target outcome and latency, labelled only by UUIDs.
+	serviceDependencyEdges    *prometheus.CounterVec
+	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
 	// speculative wake-ahead along depends_on edges "until measured evidence";
@@ -1462,6 +1465,19 @@ func NewMetrics() *Metrics {
 			},
 			[]string{"app", "deployment", "outcome"},
 		),
+		serviceDependencyEdges: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_dependency_edge_calls_total",
+				Help: "Unsampled service calls by trusted caller and target app UUID and final outcome; excludes identity and authorization failures.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
+		serviceDependencyDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "gateway_service_dependency_duration_seconds",
+				Help:    "Complete internal HTTP call duration, including routing, wake, forwarding, and retries, by trusted caller and target app UUID.",
+				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300},
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
 		// Buckets span 10 ms (a warm in-rack hop) to 30 s (the wake gate's
 		// lifecycle TTL). The middle of the range is where the platform wake
 		// budget lives (§6.3, p95 < 350 ms on the reference node), so the
@@ -1825,6 +1841,7 @@ func NewMetrics() *Metrics {
 	}
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
+	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -3371,6 +3388,30 @@ func (m *Metrics) ObserveServiceDependencyCall(appID, deploymentID string, faile
 	m.serviceDependencyCalls.WithLabelValues(appUUID.String(), deploymentUUID.String(), outcome).Inc()
 }
 
+// ObserveServiceDependencyEdge records one final, unsampled managed HTTP call.
+// Both identities come from the authorizer and resolver, never from a guest
+// header. Invalid identities are excluded to keep metric labels bounded.
+func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, failed bool, duration time.Duration) {
+	if m == nil || m.serviceDependencyEdges == nil || m.serviceDependencyDuration == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	labels := []string{caller.String(), target.String(), outcome}
+	m.serviceDependencyEdges.WithLabelValues(labels...).Inc()
+	m.serviceDependencyDuration.WithLabelValues(labels...).Observe(duration.Seconds())
+}
+
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
@@ -3534,6 +3575,15 @@ func (m *Metrics) SetCircuitOpenTargets(appID string, count float64) {
 		return
 	}
 	m.circuitOpenTargets.WithLabelValues(appID).Set(count)
+}
+
+// DeleteCircuitOpenTargets removes a retired app's series after its breaker
+// keys have aged out, so deleted apps do not retain gauge labels forever.
+func (m *Metrics) DeleteCircuitOpenTargets(appID string) {
+	if m == nil || m.circuitOpenTargets == nil {
+		return
+	}
+	m.circuitOpenTargets.DeleteLabelValues(appID)
 }
 
 // PreInstantiateTrafficResilience surfaces the ADR-201 closed-set series at

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -132,6 +133,41 @@ func TestServiceProxyHonorsAggregateRetryBudget(t *testing.T) {
 	}
 	if got := labelledCounterValue(t, metrics.Registry(), "gateway_retry_exhausted_total", "reason", RetrySkipAggregate); got != 1 {
 		t.Fatalf("aggregate budget exhaustions = %v, want 1", got)
+	}
+}
+
+func TestServiceProxyAppliesCallerDependencyPolicy(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{
+		{InstanceID: "instance-a", NodeID: "node-a", Port: 8080},
+		{InstanceID: "instance-b", NodeID: "node-b", Port: 8081},
+	}}}
+	var calls atomic.Int32
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-client", Reliability: &api.ServiceReliabilityPolicy{TimeoutMS: 1000, MaxAttempts: 1}}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				deadline, ok := r.Context().Deadline()
+				if !ok || time.Until(deadline) > time.Second || time.Until(deadline) < 500*time.Millisecond {
+					t.Errorf("dependency deadline = %v, want within one second", deadline)
+				}
+				markStaleTarget(r.Context())
+				http.Error(w, "stale", http.StatusServiceUnavailable)
+			})
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || calls.Load() != 1 {
+		t.Fatalf("status %d, forward calls %d, want one failed attempt", rec.Code, calls.Load())
 	}
 }
 
