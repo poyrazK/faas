@@ -11,8 +11,8 @@ import (
 // forward only moves forward — across gaps and repeated hours in any zone.
 func FuzzParseNextIsStrictlyIncreasing(f *testing.F) {
 	zones := []string{"UTC", "Europe/Berlin", "America/New_York", "Australia/Lord_Howe", "America/Sao_Paulo", "Asia/Kolkata", "Pacific/Chatham"}
-	f.Add("30 2 * * *", uint8(1), int64(1774656000))  // 2026-03-28, before Berlin spring forward
-	f.Add("0 2 * * 0", uint8(2), int64(1772928000))   // New York DST week
+	f.Add("30 2 * * *", uint8(1), int64(1774656000)) // 2026-03-28, before Berlin spring forward
+	f.Add("0 2 * * 0", uint8(2), int64(1772928000))  // New York DST week
 	f.Add("*/15 1-3 * * *", uint8(1), int64(1793000000))
 	f.Add("45 1 * 10 *", uint8(3), int64(1790000000))
 	f.Fuzz(func(t *testing.T, expr string, zone uint8, unix int64) {
