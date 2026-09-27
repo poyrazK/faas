@@ -277,6 +277,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", acct.ID, acct.Status)
 	}
+	if !acct.EmailVerified() {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"EnqueueBuild: account %s has not verified its email; deploys are blocked until it does", acct.ID)
+	}
 	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)

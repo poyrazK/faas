@@ -68,6 +68,12 @@ func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrDeploysBlocked())
 		return false
 	}
+	// Every deploy route also wraps requireVerifiedEmail; this keeps
+	// the rule for paths that reach admission another way (retries).
+	if !acct.EmailVerified() {
+		api.WriteProblem(w, api.ErrEmailVerificationRequired())
+		return false
+	}
 	now := timeNow().UTC()
 	snapshot, err := s.consumeAccountDeployRate(r.Context(), acct, now)
 	if err != nil {

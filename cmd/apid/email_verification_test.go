@@ -101,6 +101,15 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 			{http.MethodGet, "/v1/billing/portal", ""},
 			{http.MethodPost, "/v1/billing/retry", ""},
 			{http.MethodPost, "/v1/billing/cancel", ""},
+			// Project apply created an app and a building deployment for
+			// an unverified account; the project and GitHub routes that
+			// create or publish deployments carry the same gate.
+			{http.MethodPost, "/v1/projects", ""},
+			{http.MethodPost, "/v1/projects/blocked/environments", `{}`},
+			{http.MethodPost, "/v1/projects/blocked/environments/prod/release-sets", `{}`},
+			{http.MethodPost, "/v1/projects/blocked/environments/prod/promote", `{}`},
+			{http.MethodPost, "/v1/apps/blocked-app/github/bind", `{}`},
+			{http.MethodPost, "/v1/apps/blocked-app/github/sync", `{}`},
 		}
 		for _, tc := range cases {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))

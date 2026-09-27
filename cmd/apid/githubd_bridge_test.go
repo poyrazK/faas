@@ -89,6 +89,7 @@ type bridgeStubStore struct {
 
 	updateStatusCalls []state.DeploymentStatus
 	account           state.Account
+	accountUnverified bool
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
 }
@@ -103,9 +104,14 @@ func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Accou
 		if acct.Status == "" {
 			acct.Status = state.AccountActive
 		}
+		if acct.EmailVerifiedAt == nil && !s.accountUnverified {
+			verified := time.Unix(0, 0).UTC()
+			acct.EmailVerifiedAt = &verified
+		}
 		return acct, nil
 	}
-	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive}, nil
+	verified := time.Unix(0, 0).UTC()
+	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive, EmailVerifiedAt: &verified}, nil
 }
 
 func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
@@ -974,5 +980,27 @@ func TestEnqueueBuild_RefusesAccountThatMayNotDeploy(t *testing.T) {
 				t.Fatalf("a refused push touched deployment status: %v", store.updateStatusCalls)
 			}
 		})
+	}
+}
+
+// TestEnqueueBuild_RefusesUnverifiedAccount — every HTTP deploy route
+// requires a verified email; the push path did not check it.
+func TestEnqueueBuild_RefusesUnverifiedAccount(t *testing.T) {
+	accountID, appID := "acct-1", "app-1"
+	stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, "abc123"), []byte("tiny-tar"))
+	store := &bridgeStubStore{
+		app:               state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
+		account:           state.Account{ID: accountID, Plan: api.PlanHobby, Status: state.AccountActive},
+		accountUnverified: true,
+	}
+	g := &githubdBridge{store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: accountID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+		SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("EnqueueBuild for an unverified account: err = %v, want FailedPrecondition", err)
 	}
 }
