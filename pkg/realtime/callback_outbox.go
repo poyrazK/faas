@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,16 +18,18 @@ import (
 const (
 	// DefaultCallbackOutboxRoot is node-local persistent storage. The runtime
 	// directory is retained only as a migration source for older installs.
-	DefaultCallbackOutboxRoot                = "/var/lib/faas/realtime-callbacks"
-	LegacyCallbackOutboxRoot                 = "/run/faas/realtime-callbacks"
-	DefaultCallbackOutboxMaxBytes      int64 = 64 << 20
-	DefaultCallbackDeadLetterMaxBytes  int64 = 64 << 20
-	DefaultCallbackOutboxMaxAttempts         = 10
-	DefaultCallbackOutboxReplayWorkers       = 8
-	MaxCallbackOutboxReplayWorkers           = 32
-	DefaultCallbackDeadLetterPageSize        = 100
-	MaxCallbackDeadLetterPageSize            = 100
-	DefaultCallbackOutboxRetryInterval       = time.Second
+	DefaultCallbackOutboxRoot                   = "/var/lib/faas/realtime-callbacks"
+	LegacyCallbackOutboxRoot                    = "/run/faas/realtime-callbacks"
+	DefaultCallbackOutboxMaxBytes         int64 = 64 << 20
+	DefaultCallbackDeadLetterMaxBytes     int64 = 64 << 20
+	DefaultCallbackOutboxMaxAttempts            = 10
+	DefaultCallbackOutboxReplayWorkers          = 8
+	MaxCallbackOutboxReplayWorkers              = 32
+	DefaultCallbackOutboxMaxRetryInterval       = time.Minute
+	MaxCallbackOutboxMaxRetryInterval           = time.Hour
+	DefaultCallbackDeadLetterPageSize           = 100
+	MaxCallbackDeadLetterPageSize               = 100
+	DefaultCallbackOutboxRetryInterval          = time.Second
 )
 
 var (
@@ -46,7 +49,11 @@ type CallbackOutboxConfig struct {
 	DeadLetterMaxBytes int64
 	MaxAttempts        int
 	ReplayWorkers      int
-	RetryInterval      time.Duration
+	// RetryInterval is both the replay poll interval and the base delay for a
+	// failed callback. Consecutive failures use capped exponential backoff.
+	RetryInterval time.Duration
+	// MaxRetryInterval caps persisted callback retry delays and Retry-After hints.
+	MaxRetryInterval time.Duration
 }
 
 // CallbackOutboxStats is a point-in-time view of the pending callback backlog,
@@ -183,6 +190,7 @@ type CallbackOutbox struct {
 	maxAttempts          int
 	replayWorkers        int
 	retryInterval        time.Duration
+	maxRetryInterval     time.Duration
 	items                map[string]*callbackOutboxItem
 	inFlight             map[string]struct{}
 	bytes                int64
@@ -219,6 +227,18 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	if cfg.RetryInterval <= 0 {
 		cfg.RetryInterval = DefaultCallbackOutboxRetryInterval
 	}
+	if cfg.RetryInterval > MaxCallbackOutboxMaxRetryInterval {
+		cfg.RetryInterval = MaxCallbackOutboxMaxRetryInterval
+	}
+	if cfg.MaxRetryInterval <= 0 {
+		cfg.MaxRetryInterval = DefaultCallbackOutboxMaxRetryInterval
+	}
+	if cfg.MaxRetryInterval > MaxCallbackOutboxMaxRetryInterval {
+		cfg.MaxRetryInterval = MaxCallbackOutboxMaxRetryInterval
+	}
+	if cfg.MaxRetryInterval < cfg.RetryInterval {
+		cfg.MaxRetryInterval = cfg.RetryInterval
+	}
 	deadRoot := filepath.Join(cfg.Root, "dead")
 	if err := os.MkdirAll(deadRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("realtime: create callback outbox: %w", err)
@@ -231,6 +251,7 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		maxAttempts:        cfg.MaxAttempts,
 		replayWorkers:      cfg.ReplayWorkers,
 		retryInterval:      cfg.RetryInterval,
+		maxRetryInterval:   cfg.MaxRetryInterval,
 		items:              make(map[string]*callbackOutboxItem),
 		inFlight:           make(map[string]struct{}),
 		deadIDs:            make(map[string]struct{}),
@@ -558,10 +579,16 @@ func (q *CallbackOutbox) ack(id string, replay bool) error {
 	return nil
 }
 
-// Fail records a failed delivery. After the bounded retry budget it moves the
-// event to the dead-letter directory, preserving it for operator inspection
-// without allowing a poison callback to consume the active outbox forever.
+// Fail records a failed delivery using exponential backoff without a
+// Retry-After hint. After the bounded retry budget it moves the event to the
+// dead-letter directory.
 func (q *CallbackOutbox) Fail(id string) error {
+	return q.FailWithRetryAfter(id, 0)
+}
+
+// FailWithRetryAfter records a failed delivery. A positive retryAfter is used
+// as the minimum delay before the next attempt, up to the configured cap.
+func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration) error {
 	if q == nil {
 		return ErrCallbackOutboxItem
 	}
@@ -575,7 +602,8 @@ func (q *CallbackOutbox) Fail(id string) error {
 		return ErrCallbackOutboxItem
 	}
 	item.record.Attempts++
-	item.record.NextAttemptAt = time.Now().UTC().Add(q.retryInterval)
+	delay := callbackOutboxRetryDelay(q.retryInterval, q.maxRetryInterval, item.record.Attempts, retryAfter)
+	item.record.NextAttemptAt = time.Now().UTC().Add(delay)
 	payload, err := json.Marshal(item.record)
 	if err != nil {
 		delete(q.inFlight, id)
@@ -620,6 +648,41 @@ func (q *CallbackOutbox) Fail(id string) error {
 	item.size = int64(len(payload))
 	delete(q.inFlight, id)
 	return nil
+}
+
+func callbackOutboxRetryDelay(base, maximum time.Duration, attempt int, retryAfter time.Duration) time.Duration {
+	if base <= 0 {
+		base = DefaultCallbackOutboxRetryInterval
+	}
+	if maximum < base {
+		maximum = base
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := base
+	for i := 1; i < attempt && delay < maximum; i++ {
+		if delay > maximum/2 {
+			delay = maximum
+			break
+		}
+		delay *= 2
+	}
+	if delay > maximum {
+		delay = maximum
+	}
+	if retryAfter <= 0 && delay > 1 {
+		// Full jitter between half and all of the exponential delay spreads
+		// simultaneous failures across the same callback receiver.
+		delay -= time.Duration(rand.Int63n(int64(delay / 2)))
+	}
+	if retryAfter > delay {
+		delay = retryAfter
+	}
+	if delay > maximum {
+		delay = maximum
+	}
+	return delay
 }
 
 // ListDeadLetters returns retained callback metadata in event-ID order. The
@@ -927,7 +990,7 @@ func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.C
 			q.Release(event.ID)
 			return ctx.Err()
 		}
-		if failErr := q.Fail(event.ID); failErr != nil {
+		if failErr := q.FailWithRetryAfter(event.ID, callbackRetryAfter(err)); failErr != nil {
 			return failErr
 		}
 	}

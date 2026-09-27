@@ -2,6 +2,7 @@ package realtime
 
 // adr: 281
 // adr: 293
+// adr: 294
 
 import (
 	"context"
@@ -200,6 +201,71 @@ func TestCallbackOutboxDeadLettersAfterBoundedFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "dead", event.ID+".json")); err != nil {
 		t.Fatalf("dead letter stat: %v", err)
+	}
+}
+
+func TestCallbackOutboxRetryDelayUsesCappedExponentialBackoff(t *testing.T) {
+	base := time.Second
+	maximum := 5 * time.Second
+	cases := []struct {
+		attempt int
+		minimum time.Duration
+		maximum time.Duration
+	}{
+		{attempt: 1, minimum: 500 * time.Millisecond, maximum: time.Second},
+		{attempt: 2, minimum: time.Second, maximum: 2 * time.Second},
+		{attempt: 3, minimum: 2 * time.Second, maximum: 4 * time.Second},
+		{attempt: 4, minimum: 2500 * time.Millisecond, maximum: 5 * time.Second},
+		{attempt: 10, minimum: 2500 * time.Millisecond, maximum: 5 * time.Second},
+	}
+	for _, test := range cases {
+		delay := callbackOutboxRetryDelay(base, maximum, test.attempt, 0)
+		if delay < test.minimum || delay > test.maximum {
+			t.Errorf("retry delay for attempt %d = %s, want [%s, %s]", test.attempt, delay, test.minimum, test.maximum)
+		}
+	}
+	if delay := callbackOutboxRetryDelay(base, maximum, 1, 3*time.Second); delay != 3*time.Second {
+		t.Errorf("Retry-After delay = %s, want 3s", delay)
+	}
+	if delay := callbackOutboxRetryDelay(base, maximum, 1, 8*time.Second); delay != maximum {
+		t.Errorf("Retry-After above maximum = %s, want cap %s", delay, maximum)
+	}
+}
+
+func TestCallbackOutboxPersistsRetryAfterScheduleAcrossRestart(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{
+		Root: root, RetryInterval: 5 * time.Millisecond, MaxRetryInterval: 50 * time.Millisecond,
+	})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	started := time.Now()
+	if err := queue.FailWithRetryAfter(event.ID, time.Second); err != nil {
+		t.Fatalf("FailWithRetryAfter: %v", err)
+	}
+	payload, err := os.ReadFile(filepath.Join(root, event.ID+".json"))
+	if err != nil {
+		t.Fatalf("read retry record: %v", err)
+	}
+	var record callbackOutboxRecord
+	if err := json.Unmarshal(payload, &record); err != nil {
+		t.Fatalf("decode retry record: %v", err)
+	}
+	remaining := record.NextAttemptAt.Sub(started)
+	if record.Attempts != 1 || remaining < 50*time.Millisecond || remaining > 60*time.Millisecond {
+		t.Fatalf("retry record = attempts %d, remaining %s, want one attempt and configured 50ms cap", record.Attempts, remaining)
+	}
+
+	restarted := newTestCallbackOutbox(t, CallbackOutboxConfig{
+		Root: root, RetryInterval: 5 * time.Millisecond, MaxRetryInterval: 50 * time.Millisecond,
+	})
+	restarted.mu.Lock()
+	restored := restarted.items[event.ID].record.NextAttemptAt
+	restarted.mu.Unlock()
+	if !restored.Equal(record.NextAttemptAt) {
+		t.Fatalf("restart retry timestamp = %s, want persisted %s", restored, record.NextAttemptAt)
 	}
 }
 

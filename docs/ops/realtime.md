@@ -246,6 +246,11 @@ node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
 (default 64 MiB). The oldest dead letters are evicted first when the cap is
 exceeded, including on startup if an existing spool is over the limit. Copy
 records needed for investigation or manual replay before lowering the cap.
+Failed durable callbacks retry with jittered exponential backoff from one
+second, capped at one minute by default. `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL`
+can raise that cap up to one hour. HTTP 429 and 503 `Retry-After` hints set a
+minimum delay, subject to the configured cap; the scheduled time is persisted
+with the callback so restarts do not reset the backoff.
 The default directory is provisioned as `faas:faas` with mode `0700` and is writable
 through the realtimed systemd unit. On the first start after upgrading, realtimed
 moves pending events and dead letters from the former `/run/faas/realtime-callbacks`

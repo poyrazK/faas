@@ -98,3 +98,10 @@ Pending callback recovery uses eight workers by default. Set
 above 32 are capped. Events from one connection remain ordered, while callbacks
 from different connections can run at the same time. Account for this
 concurrency when sizing callback receivers across the fleet.
+
+Failed durable callbacks use persisted, jittered exponential backoff starting
+at one second and capped at one minute by default. Set
+`FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` to raise the cap, up to one hour.
+The daemon honors valid `Retry-After` hints on HTTP 429 and 503 responses, but
+never waits beyond the configured cap. The default retry budget is ten failed
+delivery passes before an event is dead-lettered.
