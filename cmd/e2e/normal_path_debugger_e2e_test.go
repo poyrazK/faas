@@ -4,8 +4,9 @@
 // into PgStore. This test keeps the real process boundary in the loop:
 // gatewayd-internal records a customer request, publishes it to apid over
 // the request-telemetry Unix socket, and the customer debugger reads the
-// resulting row back through the HTTP API. It also exercises the metadata-
-// only replay through schedd and the real gatewayd-internal bridge.
+// resulting row back through the HTTP API and route analytics. It also
+// exercises the metadata-only replay through schedd and the real
+// gatewayd-internal bridge.
 
 //go:build !no_pg
 
@@ -14,6 +15,7 @@ package e2e_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,12 +58,13 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	return f
 }
 
-// TestE2E_NormalPath_DebuggerTelemetryAndReplay pins the missing cross-
+// TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay pins the missing cross-
 // process contract between gatewayd-internal's hot path and the debugger's
 // customer-facing API. A successful request must survive the telemetry gRPC
-// socket and Postgres boundary, expose safe metadata on every read surface,
-// and support one idempotent mirror-only replay without waking the source.
-func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
+// socket and Postgres boundary, appear in customer-facing route analytics,
+// expose safe metadata on every read surface, and support one idempotent
+// mirror-only replay without waking the source.
+func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	f := newNormalPathDebuggerFixture(t, "normal-debugger")
 	if f == nil {
 		return
@@ -144,6 +147,54 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 	}
 	if strings.Contains(export, secret) {
 		t.Fatalf("debugger export leaked customer header value %q", secret)
+	}
+
+	// The same gateway-recorded row that powers the debugger must feed the
+	// route-centric analytics API after crossing the telemetry socket and
+	// Postgres. This catches regressions that helper-only aggregation tests
+	// cannot see (for example, a missing route query or plan gate).
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/apps/normal-debugger/analytics?since=24h", nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("request analytics: status=%d body=%s", statusCode, body)
+	}
+	var analytics api.RequestAnalyticsResponse
+	if err := json.Unmarshal(body, &analytics); err != nil {
+		t.Fatalf("decode request analytics: %v body=%s", err, body)
+	}
+	if analytics.Requests < 1 {
+		t.Fatalf("request analytics = %+v, want at least one persisted request", analytics)
+	}
+	var analyticsRoute *api.RequestAnalyticsRoute
+	for i := range analytics.Routes {
+		if analytics.Routes[i].Route == request.Route && analytics.Routes[i].Method == request.Method {
+			analyticsRoute = &analytics.Routes[i]
+			break
+		}
+	}
+	if analyticsRoute == nil {
+		t.Fatalf("route analytics = %+v, want %s %s with at least one request", analytics.Routes, request.Method, request.Route)
+	}
+	if analyticsRoute.Requests < 1 || analyticsRoute.ErrorRequests != 0 || analyticsRoute.P95MS < analyticsRoute.P50MS || analyticsRoute.P99MS < analyticsRoute.P95MS {
+		t.Fatalf("route analytics = %+v, want successful requests and ordered latency percentiles", *analyticsRoute)
+	}
+
+	timeseriesPath := "/v1/apps/normal-debugger/analytics/timeseries?since=24h&route=" +
+		url.QueryEscape(request.Route) + "&method=" + url.QueryEscape(request.Method)
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet, timeseriesPath, nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("route analytics timeseries: status=%d body=%s", statusCode, body)
+	}
+	var timeseries api.RequestAnalyticsTimeseriesResponse
+	if err := json.Unmarshal(body, &timeseries); err != nil {
+		t.Fatalf("decode route analytics timeseries: %v body=%s", err, body)
+	}
+	var timeseriesRequests int64
+	for _, point := range timeseries.Points {
+		timeseriesRequests += point.Requests
+	}
+	if timeseries.Route != request.Route || timeseries.Method != request.Method || timeseriesRequests < 1 {
+		t.Fatalf("route analytics timeseries = %+v, want requests for %s %s", timeseries, request.Method, request.Route)
 	}
 
 	mirrorDeployment, err := f.store.CreateDeployment(f.ctx, state.Deployment{
