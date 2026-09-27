@@ -7890,6 +7890,14 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 }
 
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error) {
+	return m.markDeploymentLive(ctx, id, false)
+}
+
+func (m *MemStore) MarkGitHubDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return m.markDeploymentLive(ctx, id, true)
+}
+
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -7911,6 +7919,27 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if fenceGitHub {
+		if d.Kind != DeploymentKindGitHub || d.Revision <= 0 {
+			return ErrInvalidStateTransition
+		}
+		if d.Status == DeploySuperseded {
+			return ErrDeploymentSuperseded
+		}
+		if d.Status == DeployFailed {
+			return ErrInvalidStateTransition
+		}
+		if d.Status != DeployLive {
+			for _, other := range m.deployments {
+				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+					d.Status = DeploySuperseded
+					d.TrafficPercent = 0
+					m.deployments[id] = d
+					return ErrDeploymentSuperseded
+				}
+			}
+		}
 	}
 
 	// Build the post-transition rows locally first. The callback can fail

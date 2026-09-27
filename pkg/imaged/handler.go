@@ -3259,8 +3259,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
-	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
-		return fmt.Errorf("imaged: mark live: %w", err)
+	var promoteErr error
+	if dep.Kind == state.DeploymentKindGitHub {
+		promoteErr = h.store.MarkGitHubDeploymentLiveIfLatest(ctx, dep.ID)
+	} else {
+		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
+	}
+	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
+		return nil
+	}
+	if promoteErr != nil {
+		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {

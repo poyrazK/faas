@@ -165,6 +165,7 @@ type Service struct {
 	Reconcile                        *reconcile.Service
 	Enqueuer                         BuildEnqueuer
 	ChangedFiles                     ChangedFilesClient
+	BranchHeads                      BranchHeadClient
 	WriteCheck                       WriteCheck
 	WriteAppCheck                    WriteAppCheckFunc
 	WriteScopedAppCheck              WriteScopedAppCheckFunc
@@ -477,6 +478,17 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, ErrIgnored
 		}
 		return reconcile.Result{}, err
+	}
+	if !isTag && s.BranchHeads != nil {
+		currentSHA, headErr := s.BranchHeads.BranchHead(ctx, install.InstallationID, ev.Repository.FullName, branch)
+		if headErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
+		}
+		if !strings.EqualFold(currentSHA, ev.After) {
+			s.Log.Info("githubd: ignore superseded push", "repo", ev.Repository.FullName,
+				"branch", branch, "event_sha", ev.After, "head_sha", currentSHA)
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
 	}
 
 	// 4. Fetch the source tree. The fetcher unseals the install

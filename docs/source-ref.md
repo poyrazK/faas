@@ -54,6 +54,15 @@ before the codeload fetch starts, so a `main` ref that moves
 between CI runs still produces an immutable SHA-pinned build
 row.
 
+For App-driven push deployments, Gregale checks that the webhook's commit is
+still the branch head before it fetches source. If the branch has advanced,
+the older delivery is ignored. Once a GitHub deployment is accepted, its
+per-app revision also prevents an older in-flight GitHub build from becoming
+live after a newer deployment was accepted for the same environment. A manual
+`--repo --ref` request is an explicit deployment choice, including an older
+SHA for rollback; its accepted revision takes part in the same promotion
+order. See [ADR-285](adr/285-github-push-freshness-and-promotion-fence.md).
+
 To queue the deployment without waiting for the build, pass
 `--no-wait`. This returns the deployment id and URL as soon as the
 control plane accepts the request; omit it (the default) when the

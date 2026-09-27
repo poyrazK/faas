@@ -8613,6 +8613,14 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 }
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
+	return s.markDeploymentLive(ctx, id, false)
+}
+
+func (s *PgStore) MarkGitHubDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return s.markDeploymentLive(ctx, id, true)
+}
+
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
@@ -8648,6 +8656,34 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if fenceGitHub {
+		if dep.Kind != DeploymentKindGitHub || dep.Revision <= 0 {
+			return ErrInvalidStateTransition
+		}
+		if dep.Status == DeploySuperseded {
+			return ErrDeploymentSuperseded
+		}
+		if dep.Status == DeployFailed {
+			return ErrInvalidStateTransition
+		}
+		if dep.Status != DeployLive {
+			var newer bool
+			if err := tx.QueryRow(ctx, `select exists (
+				select 1 from deployments where app_id = $1 and scope = $2 and revision > $3
+			)`, dep.AppID, normalizedDeploymentScope(dep.Scope), dep.Revision).Scan(&newer); err != nil {
+				return fmt.Errorf("state: check newer deployment revision: %w", err)
+			}
+			if newer {
+				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+					return fmt.Errorf("state: supersede stale GitHub deployment: %w", err)
+				}
+				if err := tx.Commit(ctx); err != nil {
+					return fmt.Errorf("state: commit stale GitHub deployment: %w", err)
+				}
+				return ErrDeploymentSuperseded
+			}
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		update crons
