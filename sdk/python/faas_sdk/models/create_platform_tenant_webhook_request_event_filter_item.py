@@ -4,6 +4,7 @@ CreatePlatformTenantWebhookRequestEventFilterItem = Literal[
     "platform_tenant.hostname.verified",
     "platform_tenant.statement.finalized",
     "platform_tenant.surface.certificate.changed",
+    "platform_tenant.surface.deployment.changed",
 ]
 
 CREATE_PLATFORM_TENANT_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
@@ -12,6 +13,7 @@ CREATE_PLATFORM_TENANT_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
     "platform_tenant.hostname.verified",
     "platform_tenant.statement.finalized",
     "platform_tenant.surface.certificate.changed",
+    "platform_tenant.surface.deployment.changed",
 }
 
 

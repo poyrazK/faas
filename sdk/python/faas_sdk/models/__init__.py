@@ -1123,6 +1123,12 @@ from .platform_tenant_surface_certificate_changed_webhook_payload import (
 from .platform_tenant_surface_certificate_changed_webhook_payload_cert_state import (
     PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState,
 )
+from .platform_tenant_surface_deployment_changed_webhook_payload import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayload,
+)
+from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_status import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
+)
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
@@ -2818,6 +2824,8 @@ __all__ = (
     "PlatformTenantStatementSummaryResponseStatus",
     "PlatformTenantSurfaceCertificateChangedWebhookPayload",
     "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",

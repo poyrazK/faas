@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.9.0" {
-		t.Fatalf("info.version = %v, want 1.9.0 after platform tenant certificate webhooks", got)
+	if got := info["version"]; got != "1.10.0" {
+		t.Fatalf("info.version = %v, want 1.10.0 after platform tenant deployment webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -49,6 +49,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"platformTenantStatementFinalized":        "platform_tenant.statement.finalized",
 		"platformTenantHostnameVerified":          "platform_tenant.hostname.verified",
 		"platformTenantSurfaceCertificateChanged": "platform_tenant.surface.certificate.changed",
+		"platformTenantSurfaceDeploymentChanged":  "platform_tenant.surface.deployment.changed",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -111,6 +112,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"deliverPlatformTenantStatementFinalized":        "platformTenantStatementFinalized",
 		"deliverPlatformTenantHostnameVerified":          "platformTenantHostnameVerified",
 		"deliverPlatformTenantSurfaceCertificateChanged": "platformTenantSurfaceCertificateChanged",
+		"deliverPlatformTenantSurfaceDeploymentChanged":  "platformTenantSurfaceDeploymentChanged",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
@@ -204,7 +206,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized", "PlatformTenantHostnameVerified", "PlatformTenantSurfaceCertificateChanged"} {
+	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized", "PlatformTenantHostnameVerified", "PlatformTenantSurfaceCertificateChanged", "PlatformTenantSurfaceDeploymentChanged"} {
 		message := object(t, messages, messageName)
 		if message["contentType"] != "application/cloudevents+json" {
 			t.Errorf("components.messages.%s contentType = %v, want CloudEvents structured JSON", messageName, message["contentType"])
@@ -248,7 +250,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantSurfaceCertificateChangedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantSurfaceCertificateChangedData", "PlatformTenantSurfaceDeploymentChangedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")

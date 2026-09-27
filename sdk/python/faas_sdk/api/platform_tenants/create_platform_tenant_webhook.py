@@ -94,7 +94,7 @@ def sync_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            hostname, certificate, and finalized billing events. Example: {'target_url':
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -135,7 +135,7 @@ def sync(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            hostname, certificate, and finalized billing events. Example: {'target_url':
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -171,7 +171,7 @@ async def asyncio_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            hostname, certificate, and finalized billing events. Example: {'target_url':
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -210,7 +210,7 @@ async def asyncio(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            hostname, certificate, and finalized billing events. Example: {'target_url':
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 

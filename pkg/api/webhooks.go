@@ -242,6 +242,22 @@ type PlatformTenantSurfaceCertificateChangedWebhookPayload struct {
 	ChangedAt        time.Time  `json:"changed_at"`
 }
 
+// PlatformTenantSurfaceDeploymentChangedWebhookPayload records a terminal
+// deployment outcome for a surface explicitly linked to a platform tenant.
+// It intentionally omits app/deployment IDs, source metadata, logs, and raw
+// deployment errors. A failed latest attempt does not imply that no older
+// deployment is currently serving traffic.
+type PlatformTenantSurfaceDeploymentChangedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	SurfaceID        string    `json:"surface_id"`
+	SurfaceName      string    `json:"surface_name"`
+	Revision         int       `json:"revision"`
+	DeploymentStatus string    `json:"deployment_status"`
+	StartedAt        time.Time `json:"started_at"`
+	ChangedAt        time.Time `json:"changed_at"`
+}
+
 type CreatePlatformTenantWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`
 	WebhookSecret  string   `json:"webhook_secret"`

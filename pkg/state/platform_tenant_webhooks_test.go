@@ -22,12 +22,14 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 		{name: "statement default", events: []string{state.PlatformTenantStatementFinalizedEvent}, valid: true},
 		{name: "hostname verified", events: []string{state.PlatformTenantHostnameVerifiedEvent}, valid: true},
 		{name: "certificate changed", events: []string{state.PlatformTenantSurfaceCertificateChangedEvent}, valid: true},
+		{name: "deployment changed", events: []string{state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
 		{name: "both events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: true},
 		{name: "all events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent}, valid: true},
+		{name: "all four events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
 		{name: "empty", events: []string{}, valid: false},
 		{name: "unknown", events: []string{"platform_tenant.hostname.failed"}, valid: false},
 		{name: "duplicate", events: []string{state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: false},
-		{name: "too many", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantStatementFinalizedEvent}, valid: false},
+		{name: "too many", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent, state.PlatformTenantStatementFinalizedEvent}, valid: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -41,6 +43,9 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 	}
 	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantSurfaceCertificateChangedEvent)) {
 		t.Fatal("tenant-owned certificate event must not enter the app webhook vocabulary")
+	}
+	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantSurfaceDeploymentChangedEvent)) {
+		t.Fatal("tenant-owned deployment event must not enter the app webhook vocabulary")
 	}
 }
 
@@ -252,6 +257,179 @@ func TestPgPlatformTenantSurfaceCertificateChangedWebhook(t *testing.T) {
 	for _, certState := range []string{string(state.CertStatePending), string(state.CertStateFailed), string(state.CertStateIssued)} {
 		if seenStates[certState] != 1 {
 			t.Errorf("state %q deliveries = %d, want 1", certState, seenStates[certState])
+		}
+	}
+}
+
+func TestPgPlatformTenantSurfaceDeploymentChangedWebhook(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	tenant, _, err := store.CreatePlatformTenant(ctx, accountID, "deploy-customer-"+uuid.NewString()[:8], "Deployment customer", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTenant, _, err := store.CreatePlatformTenant(ctx, accountID, "other-deploy-customer-"+uuid.NewString()[:8], "Other deployment customer", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	linkedSurface, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: accountID, AppID: appID, Name: "deployment-customer",
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantSurface(ctx, accountID, tenant.ID, linkedSurface.ID); err != nil {
+		t.Fatal(err)
+	}
+	otherSurface, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: accountID, AppID: appID, Name: "other-deployment-customer",
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantSurface(ctx, accountID, otherTenant.ID, otherSurface.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: accountID, AppID: appID, Name: "unlinked-deployment-customer",
+	}, limits); err != nil {
+		t.Fatal(err)
+	}
+
+	createHook := func(externalRef string) state.AppWebhook {
+		t.Helper()
+		hook, err := store.CreatePlatformTenantWebhookIfUnderQuota(ctx, state.AppWebhook{
+			AccountID: accountID, PlatformTenantID: externalRef, Scope: state.AppWebhookScopePlatformTenant,
+			TargetURL: "https://example.com/deployment-events/" + uuid.NewString(), SecretSealed: []byte("sealed"),
+			EventFilter: []string{state.PlatformTenantSurfaceDeploymentChangedEvent}, Enabled: true,
+		}, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hook
+	}
+	hook, otherHook := createHook(tenant.ID), createHook(otherTenant.ID)
+
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:private-image-digest",
+		CommitSHA: "0123456789abcdef0123456789abcdef01234567", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, ""); err != nil || len(got) != 0 {
+		t.Fatalf("non-terminal deployment deliveries = %d, err=%v; want none", len(got), err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeployFailed, "private build failure details"); err != nil {
+		t.Fatal(err)
+	}
+	// Repeating the same terminal status write must not duplicate the event.
+	if err := store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeployFailed, "replacement private build failure"); err != nil {
+		t.Fatal(err)
+	}
+	liveDeployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:another-private-image", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, liveDeployment.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		tenantID    string
+		hookID      string
+		surfaceID   string
+		surfaceName string
+		external    string
+	}{{tenant.ID, hook.ID, linkedSurface.ID, linkedSurface.Name, tenant.ExternalRef}, {otherTenant.ID, otherHook.ID, otherSurface.ID, otherSurface.Name, otherTenant.ExternalRef}} {
+		deliveries, next, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tc.tenantID, tc.hookID, 50, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next != "" || len(deliveries) != 2 {
+			t.Fatalf("tenant %s deliveries = %d, next=%q; want one event per terminal transition for its linked surface", tc.tenantID, len(deliveries), next)
+		}
+		seen := map[string]int{}
+		for _, delivery := range deliveries {
+			if delivery.Event != state.PlatformTenantSurfaceDeploymentChangedEvent || delivery.AppID != "" {
+				t.Fatalf("event/app id = %q/%q", delivery.Event, delivery.AppID)
+			}
+			var payload api.PlatformTenantSurfaceDeploymentChangedWebhookPayload
+			if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			wantDeployment := deployment
+			if payload.DeploymentStatus == string(state.DeployLive) {
+				wantDeployment = liveDeployment
+			}
+			if payload.PlatformTenantID != tc.tenantID || payload.ExternalRef != tc.external ||
+				payload.SurfaceID != tc.surfaceID || payload.SurfaceName != tc.surfaceName || payload.Revision != wantDeployment.Revision ||
+				payload.DeploymentStatus != string(wantDeployment.Status) || !payload.StartedAt.Equal(wantDeployment.CreatedAt) ||
+				payload.ChangedAt.IsZero() {
+				t.Fatalf("deployment event payload = %+v", payload)
+			}
+			seen[payload.DeploymentStatus]++
+			for _, forbidden := range []string{appID, deployment.ID, liveDeployment.ID, "private-image-digest", "another-private-image", "0123456789abcdef", "private build failure"} {
+				if strings.Contains(string(delivery.Payload), forbidden) {
+					t.Errorf("deployment payload leaked %q: %s", forbidden, delivery.Payload)
+				}
+			}
+		}
+		if seen[string(state.DeployFailed)] != 1 || seen[string(state.DeployLive)] != 1 {
+			t.Errorf("tenant %s terminal outcomes = %v, want one live and one failed", tc.tenantID, seen)
+		}
+	}
+
+	otherApp, err := store.CreateApp(ctx, state.App{
+		AccountID: accountID, Slug: "unlinked-" + uuid.NewString()[:8], Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlinkedDeployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: otherApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:unlinked", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, unlinkedDeployment.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ tenantID, hookID string }{{tenant.ID, hook.ID}, {otherTenant.ID, otherHook.ID}} {
+		deliveries, _, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tc.tenantID, tc.hookID, 50, "")
+		if err != nil || len(deliveries) != 2 {
+			t.Fatalf("unlinked deployment changed tenant %s delivery count to %d, err=%v", tc.tenantID, len(deliveries), err)
+		}
+	}
+
+	rolledBackDeployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:rollback", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `update deployments set status='live' where id=$1`, rolledBackDeployment.ID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ tenantID, hookID string }{{tenant.ID, hook.ID}, {otherTenant.ID, otherHook.ID}} {
+		deliveries, _, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tc.tenantID, tc.hookID, 50, "")
+		if err != nil || len(deliveries) != 2 {
+			t.Fatalf("rolled-back deployment changed tenant %s delivery count to %d, err=%v", tc.tenantID, len(deliveries), err)
 		}
 	}
 }

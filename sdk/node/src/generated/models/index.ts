@@ -580,6 +580,7 @@ export type { PlatformTenantStatementListResponse } from './PlatformTenantStatem
 export type { PlatformTenantStatementResponse } from './PlatformTenantStatementResponse.js';
 export type { PlatformTenantStatementSummaryResponse } from './PlatformTenantStatementSummaryResponse.js';
 export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
+export type { PlatformTenantSurfaceDeploymentChangedWebhookPayload } from './PlatformTenantSurfaceDeploymentChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './PlatformTenantSurfaceResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.js';
