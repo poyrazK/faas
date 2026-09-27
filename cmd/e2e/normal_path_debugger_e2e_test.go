@@ -36,6 +36,7 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(telemetryDir) })
 	telemetrySocket := filepath.Join(telemetryDir, "request-telemetry.sock")
+	spansWriterSocket := filepath.Join(telemetryDir, "otel-spans-writer.sock")
 	artifactDir, err := os.MkdirTemp("", "faas-e2e-debugger-artifacts-*")
 	if err != nil {
 		t.Fatalf("create debugger artifact dir: %v", err)
@@ -49,6 +50,8 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 		"FAAS_APP_ERRORS_ENABLED=false",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+telemetrySocket,
+		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+spansWriterSocket,
+		"FAAS_OTEL_FLUSH_INTERVAL=50ms",
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT="+artifactDir,
 	)
@@ -75,10 +78,13 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	waitForNormalPathDebuggerResponse(t, f, "normal-path:debugger-source\n", 10*time.Second)
 
 	const secret = "customer-secret-must-not-cross-debugger"
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
 		"/debugger/telemetry", nil, map[string]string{
 			"Authorization":     "Bearer " + f.key,
 			"X-Customer-Secret": secret,
+			"Traceparent":       traceparent,
 		})
 	if statusCode != http.StatusOK || string(body) != "normal-path:debugger-source\n" {
 		t.Fatalf("debugger source request: status=%d body=%q", statusCode, body)
@@ -90,6 +96,9 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	}
 	if request.InstanceID != sourceInstance.ID {
 		t.Fatalf("debugger request instance_id=%q, want source %q", request.InstanceID, sourceInstance.ID)
+	}
+	if request.TraceID == nil || *request.TraceID != traceID {
+		t.Fatalf("debugger request trace_id=%v, want propagated W3C trace %s", request.TraceID, traceID)
 	}
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
@@ -149,18 +158,57 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 		t.Fatalf("debugger export leaked customer header value %q", secret)
 	}
 
+	// Exercise a platform-owned dependency span on the same W3C trace as the
+	// persisted app request. The service-mesh call emits the span; gatewayd's
+	// retained-span accumulator flushes it over the spans-writer socket, and
+	// apid correlates it back to this request row by trace ID and account.
+	dependencyApp := createServiceApp(t, f, "analyticsdependency", nil)
+	_, dependencyInstance := createNormalPathLiveDeployment(t, f, dependencyApp.ID, "dependency-v1")
+	f.vmmd.SetVersion(dependencyInstance.ID, "dependency-v1")
+	warmStatus, _, warmBody := pollServiceCall(t, f.h, f.app.ID, "analyticsdependency", "/health", http.StatusOK, 15*time.Second)
+	if warmStatus != http.StatusOK {
+		t.Fatalf("warm dependency service call: status=%d body=%s", warmStatus, warmBody)
+	}
+	dependencyStatus, _, dependencyBody := serviceCall(t, f.h, f.app.ID, "analyticsdependency", "/health",
+		http.Header{"Traceparent": []string{traceparent}})
+	if dependencyStatus != http.StatusOK {
+		t.Fatalf("correlated dependency service call: status=%d body=%s", dependencyStatus, dependencyBody)
+	}
+
 	// The same gateway-recorded row that powers the debugger must feed the
 	// route-centric analytics API after crossing the telemetry socket and
-	// Postgres. This catches regressions that helper-only aggregation tests
-	// cannot see (for example, a missing route query or plan gate).
-	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
-		"/v1/apps/normal-debugger/analytics?since=24h", nil)
-	if statusCode != http.StatusOK {
-		t.Fatalf("request analytics: status=%d body=%s", statusCode, body)
-	}
+	// Postgres. Poll until the asynchronous retained-span writer has attached
+	// the classified dependency evidence to the request row.
 	var analytics api.RequestAnalyticsResponse
-	if err := json.Unmarshal(body, &analytics); err != nil {
-		t.Fatalf("decode request analytics: %v body=%s", err, body)
+	dependencyFound := false
+	analyticsDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(analyticsDeadline) {
+		body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
+			"/v1/apps/normal-debugger/analytics?since=24h", nil)
+		if statusCode != http.StatusOK {
+			t.Fatalf("request analytics: status=%d body=%s", statusCode, body)
+		}
+		if err := json.Unmarshal(body, &analytics); err != nil {
+			t.Fatalf("decode request analytics: %v body=%s", err, body)
+		}
+		for _, route := range analytics.Routes {
+			if route.Route != request.Route || route.Method != request.Method {
+				continue
+			}
+			for _, dependency := range route.Dependencies {
+				if dependency.Type == "managed_binding" && dependency.Kind == "service_proxy" && dependency.Name == "service.analyticsdependency" && dependency.Samples >= 1 {
+					dependencyFound = true
+					break
+				}
+			}
+		}
+		if dependencyFound {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !dependencyFound {
+		t.Fatalf("route analytics did not receive the correlated service dependency span: %+v", analytics.Routes)
 	}
 	if analytics.Requests < 1 {
 		t.Fatalf("request analytics = %+v, want at least one persisted request", analytics)
