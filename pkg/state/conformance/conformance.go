@@ -2995,7 +2995,7 @@ func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 	if newer.Revision <= older.Revision {
 		t.Fatalf("GitHub deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
 	}
-	if err := fx.Store.MarkGitHubDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
 		t.Fatalf("stale GitHub promotion = %v, want ErrDeploymentSuperseded", err)
 	}
 	stale, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
@@ -3006,7 +3006,7 @@ func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 	if err != nil || live.ID != fx.Deployment.ID || live.Status != state.DeployLive {
 		t.Fatalf("live deployment after stale promotion = %+v, %v; want existing live deployment", live, err)
 	}
-	if err := fx.Store.MarkGitHubDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
 		t.Fatalf("latest GitHub promotion: %v", err)
 	}
 	live, err = fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
