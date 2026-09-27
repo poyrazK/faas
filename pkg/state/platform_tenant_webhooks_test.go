@@ -412,7 +412,9 @@ func TestPgPlatformTenantSurfaceDeploymentChangedWebhook(t *testing.T) {
 	}
 
 	rolledBackDeployment, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:rollback", Status: state.DeployPending,
+		// Keep this row out of the default scope, which already has a live
+		// deployment above; the database permits only one live row per app/scope.
+		AppID: appID, Scope: "rollback-test", Kind: state.DeploymentKindImage, ImageDigest: "sha256:rollback", Status: state.DeployPending,
 	})
 	if err != nil {
 		t.Fatal(err)
