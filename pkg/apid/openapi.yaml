@@ -24984,6 +24984,35 @@ components:
           minimum: 1
           maximum: 2000
           description: "Required in observe/enforce mode and bounded by the app plan's request burst."
+        routes:
+          type: array
+          maxItems: 16
+          description: "Optional exact public method/path limits, evaluated in addition to the app-wide source limit. Each route rate and burst must be no greater than the app-wide values."
+          items:
+            $ref: '#/components/schemas/PreAuthRouteLimit'
+
+    PreAuthRouteLimit:
+      description: "Optional stricter per-source limit for one public method and path."
+      type: object
+      required: [method, path, requests_per_second, burst]
+      properties:
+        method:
+          type: string
+          enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: "Canonical absolute public URL path with no query, fragment, or percent encoding. Matching is exact after normalizing the decoded request path."
+          example: /login
+        requests_per_second:
+          type: integer
+          minimum: 1
+          maximum: 500
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2000
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
