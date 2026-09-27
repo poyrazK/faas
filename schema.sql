@@ -2264,7 +2264,7 @@ CREATE TABLE public.crons (
     timezone text DEFAULT 'UTC'::text NOT NULL,
     skip_if_running boolean DEFAULT false NOT NULL,
     suspended_reason text DEFAULT ''::text NOT NULL,
-    CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text])))
+    CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text])))
 );
 
 

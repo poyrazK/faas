@@ -5883,7 +5883,8 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	}
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {
-			delete(m.crons, cronID)
+			cron.SuspendedReason = CronSuspendedAppDeleted
+			m.crons[cronID] = cron
 		}
 	}
 	// Retire replica placements immediately while preserving snapshot rows for
@@ -5915,6 +5916,12 @@ func (m *MemStore) RestoreApp(_ context.Context, id string, limits api.Limits) (
 	a.DeleteGraceUntil = nil
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
+	for cronID, cron := range m.crons {
+		if cron.AppID == id && cron.SuspendedReason == CronSuspendedAppDeleted {
+			cron.SuspendedReason = ""
+			m.crons[cronID] = cron
+		}
+	}
 	return a, nil
 }
 
@@ -10945,7 +10952,7 @@ func (m *MemStore) CronByID(_ context.Context, id string) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.crons[id]
-	if !ok {
+	if !ok || c.SuspendedReason == CronSuspendedAppDeleted {
 		return Cron{}, ErrNotFound
 	}
 	return c, nil
@@ -11447,7 +11454,7 @@ func (m *MemStore) ReactivateCronsForApp(_ context.Context, appID string) (int, 
 func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 	updated := 0
 	for id, cron := range m.crons {
-		if cron.AppID != appID || cron.SuspendedReason == "" {
+		if cron.AppID != appID || cron.SuspendedReason != CronSuspendedNoLiveDeployment {
 			continue
 		}
 		cron.SuspendedReason = ""

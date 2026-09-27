@@ -4323,8 +4323,10 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	}
 	var a App
 	row := s.pool.QueryRow(ctx, `
-		with removed_crons as (
-			delete from crons where app_id = $1 returning id
+		with suspended_crons as (
+			-- Suspend, don't delete: restoring the app inside its grace
+			-- window brings its schedules back. The purge removes them.
+			update crons set suspended_reason = 'app_deleted' where app_id = $1 returning id
 		), cancelled_app_tasks as (
 			update app_tasks
 			   set status = case when status = 'queued' then 'cancelled' else status end,
@@ -4391,6 +4393,11 @@ func (s *PgStore) RestoreApp(ctx context.Context, id string, limits api.Limits) 
 			return App{}, ErrConflict
 		}
 		return App{}, mapErr(err)
+	}
+	// The crons the deletion suspended come back; the scheduler re-suspends
+	// them (no_live_deployment) if the app has nothing live to run them on.
+	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason = $2`, id, CronSuspendedAppDeleted); err != nil {
+		return App{}, fmt.Errorf("state: restore app crons: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, fmt.Errorf("state: commit restore app: %w", err)
@@ -8730,7 +8737,7 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	if _, err := tx.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason <> ''`, appID); err != nil {
+		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID); err != nil {
 		return fmt.Errorf("state: reactivate deployment crons: %w", err)
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
@@ -12447,9 +12454,11 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	return c, nil
 }
 
+// CronByID hides a soft-deleted app's crons (suspended app_deleted): they
+// did not exist for callers before deletion kept them for restore.
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where id = $1`, id)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where id = $1 and suspended_reason <> 'app_deleted'`, id)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -12604,7 +12613,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 	tag, err := s.pool.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason <> ''`, appID)
+		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID)
 	if err != nil {
 		return 0, fmt.Errorf("state: reactivate crons for app: %w", err)
 	}

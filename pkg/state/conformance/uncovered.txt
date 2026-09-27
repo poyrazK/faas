@@ -363,7 +363,6 @@ ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
 ListEnabledAppLogDrains
-ListEnabledCrons
 ListEnabledTriggers
 ListEventsBySidecar
 ListEventsByTraceID
