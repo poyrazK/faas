@@ -2778,7 +2778,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	// The notify payload above is JSON-encoded so the pg_notify channel
 	// can't be tricked into parsing an attacker-supplied structure, but
 	// the structured log line is the unencoded sink.
-	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID, "environment", req.Environment)
+	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID, "environment", logsanitize.Field(req.Environment))
 	// IAM-4 (issue #291): record the domain attachment. data.domain
 	// is the lowercased canonical form already stored on the row, so
 	// the audit row and the row stay in sync — a dashboard that
