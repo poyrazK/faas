@@ -136,6 +136,85 @@ func TestManagerConnectionLifecycleAndPublish(t *testing.T) {
 	}
 }
 
+func TestManagerUpdatesCallbackAuthForExistingConnections(t *testing.T) {
+	hooks := &testHooks{accept: true}
+	m := NewManager(Config{MaxConnectionAge: time.Second}, hooks)
+	defer m.Close()
+	endpoint := Endpoint{ID: "rotating-callback", CallbackAuthToken: "callback-old"}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	deadline := time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(m.Snapshot()) != 1 {
+		t.Fatal("connection was not registered")
+	}
+
+	hooks.mu.Lock()
+	if len(hooks.connect) != 1 || hooks.connect[0].CallbackAuthToken != "callback-old" {
+		hooks.mu.Unlock()
+		t.Fatalf("connect callback = %+v, want original token", hooks.connect)
+	}
+	hooks.mu.Unlock()
+
+	endpoint.CallbackAuthToken = "callback-new"
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("rotate callback token: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("after-rotation")); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		messages := append([]Event(nil), hooks.messages...)
+		hooks.mu.Unlock()
+		if len(messages) == 1 {
+			if messages[0].CallbackAuthToken != "callback-new" {
+				t.Fatalf("message callback token = %q, want updated token", messages[0].CallbackAuthToken)
+			}
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	hooks.mu.Lock()
+	if len(hooks.messages) != 1 {
+		hooks.mu.Unlock()
+		t.Fatal("message callback was not observed")
+	}
+	hooks.mu.Unlock()
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		disconnects := append([]Event(nil), hooks.disconnect...)
+		hooks.mu.Unlock()
+		if len(disconnects) == 1 {
+			if disconnects[0].CallbackAuthToken != "callback-new" {
+				t.Fatalf("disconnect callback token = %q, want updated token", disconnects[0].CallbackAuthToken)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("disconnect callback was not observed")
+}
+
 func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
 	hooks := &testHooks{accept: true}
 	m := NewManager(Config{MaxConnections: 1}, hooks)

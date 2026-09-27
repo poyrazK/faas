@@ -121,6 +121,7 @@ type CallbackOutbox struct {
 	deadLastEvictionUnix int64
 	dead                 callbackDeadLetterHeap
 	deadIDs              map[string]struct{}
+	callbackAuthTokens   map[string]string
 }
 
 // NewCallbackOutbox opens or creates a node-local callback spool.
@@ -145,15 +146,16 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		return nil, fmt.Errorf("realtime: create callback outbox: %w", err)
 	}
 	q := &CallbackOutbox{
-		root:          cfg.Root,
-		deadRoot:      deadRoot,
-		maxBytes:      cfg.MaxBytes,
-		deadMaxBytes:  cfg.DeadLetterMaxBytes,
-		maxAttempts:   cfg.MaxAttempts,
-		retryInterval: cfg.RetryInterval,
-		items:         make(map[string]*callbackOutboxItem),
-		inFlight:      make(map[string]struct{}),
-		deadIDs:       make(map[string]struct{}),
+		root:               cfg.Root,
+		deadRoot:           deadRoot,
+		maxBytes:           cfg.MaxBytes,
+		deadMaxBytes:       cfg.DeadLetterMaxBytes,
+		maxAttempts:        cfg.MaxAttempts,
+		retryInterval:      cfg.RetryInterval,
+		items:              make(map[string]*callbackOutboxItem),
+		inFlight:           make(map[string]struct{}),
+		deadIDs:            make(map[string]struct{}),
+		callbackAuthTokens: make(map[string]string),
 	}
 	if err := q.load(); err != nil {
 		return nil, err
@@ -267,17 +269,6 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	if event.Type != EventMessage && event.Type != EventDisconnect {
 		return false, ErrCallbackOutboxItem
 	}
-	record := callbackOutboxRecord{
-		Event:             event,
-		CallbackURL:       event.CallbackURL,
-		CallbackPath:      event.CallbackPath,
-		CallbackAuthToken: event.CallbackAuthToken,
-	}
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return false, fmt.Errorf("realtime: encode callback outbox item: %w", err)
-	}
-
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, exists := q.deadIDs[event.ID]; exists {
@@ -292,6 +283,19 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 		}
 		q.inFlight[event.ID] = struct{}{}
 		return true, nil
+	}
+	if token, known := q.callbackAuthTokens[event.EndpointID]; known {
+		event.CallbackAuthToken = token
+	}
+	record := callbackOutboxRecord{
+		Event:             event,
+		CallbackURL:       event.CallbackURL,
+		CallbackPath:      event.CallbackPath,
+		CallbackAuthToken: event.CallbackAuthToken,
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return false, fmt.Errorf("realtime: encode callback outbox item: %w", err)
 	}
 	if q.bytes+int64(len(payload)) > q.maxBytes {
 		return false, ErrCallbackOutboxFull
@@ -309,6 +313,46 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	}
 	q.inFlight[event.ID] = struct{}{}
 	return true, nil
+}
+
+func (q *CallbackOutbox) claimedEvent(id string) (Event, error) {
+	if q == nil {
+		return Event{}, ErrCallbackOutboxItem
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	item, ok := q.items[id]
+	if !ok {
+		return Event{}, ErrCallbackOutboxItem
+	}
+	if _, claimed := q.inFlight[id]; !claimed {
+		return Event{}, ErrCallbackOutboxItem
+	}
+	event := item.record.event()
+	event.Data = append([]byte(nil), event.Data...)
+	return event, nil
+}
+
+// updateCallbackAuthToken records the credential used by future enqueues.
+// Pending files keep the credential snapshot captured when they were queued,
+// so applications can accept both tokens until their old callbacks drain.
+func (q *CallbackOutbox) updateCallbackAuthToken(endpointID, token string) error {
+	if q == nil || endpointID == "" {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.callbackAuthTokens[endpointID] = token
+	return nil
+}
+
+func (q *CallbackOutbox) removeCallbackAuthToken(endpointID string) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	delete(q.callbackAuthTokens, endpointID)
+	q.mu.Unlock()
 }
 
 // callbackEventBefore orders callbacks for one connection by their WebSocket

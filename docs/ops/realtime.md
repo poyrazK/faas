@@ -149,6 +149,13 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
+Updating `callback_auth_token` with the endpoint PATCH applies the new bearer
+to future callbacks from existing connections without closing their sockets.
+Callbacks already persisted in the durable outbox keep the token captured when
+they were queued. During rotation, configure the handler to accept both tokens,
+update Gregale's endpoint, and keep accepting the old token until pending
+callbacks have drained. Review dead letters before revoking the old token if
+you may need to replay them manually.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;

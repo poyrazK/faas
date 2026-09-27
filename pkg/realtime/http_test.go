@@ -49,6 +49,28 @@ func TestHTTPHooksSendsCallbackAuthAndOmitsSecretsFromEvent(t *testing.T) {
 	}
 }
 
+func TestHTTPHooksUsesRotatedTokenForNewDurableCallback(t *testing.T) {
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	if err := queue.updateCallbackAuthToken("endpoint-1", "callback-secret-next"); err != nil {
+		t.Fatalf("update callback token: %v", err)
+	}
+	event := testCallbackEvent()
+	event.CallbackURL = server.URL
+	if err := (HTTPHooks{Client: server.Client(), DurableQueue: queue}).Message(context.Background(), event); err != nil {
+		t.Fatalf("Message callback: %v", err)
+	}
+	if authorization != "Bearer callback-secret-next" {
+		t.Fatalf("Authorization = %q, want rotated callback token", authorization)
+	}
+}
+
 func TestHTTPHooksRetriesTransientCallbackFailures(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

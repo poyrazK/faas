@@ -71,6 +71,63 @@ func TestCallbackOutboxPersistsPendingEventAndPrivateFields(t *testing.T) {
 	}
 }
 
+func TestCallbackOutboxKeepsQueuedTokenAndUsesUpdatedTokenForNewEvents(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	queued := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(queued); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim queued event = (%v, %v)", claimed, err)
+	}
+	queue.Release(queued.ID)
+	if err := queue.updateCallbackAuthToken(queued.EndpointID, "callback-secret-next"); err != nil {
+		t.Fatalf("update callback token: %v", err)
+	}
+	restarted := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: queue.root})
+	replayed, ok, err := restarted.ClaimNext()
+	if err != nil || !ok || replayed.CallbackAuthToken != "callback-secret" {
+		t.Fatalf("ClaimNext queued event = (%+v, %v, %v), want original token", replayed, ok, err)
+	}
+	if err := restarted.Ack(queued.ID); err != nil {
+		t.Fatalf("Ack queued event: %v", err)
+	}
+	if err := restarted.updateCallbackAuthToken(queued.EndpointID, "callback-secret-next"); err != nil {
+		t.Fatalf("restore callback token after restart: %v", err)
+	}
+
+	future := testCallbackEvent()
+	future.ID = "evt_after_rotation"
+	if claimed, err := restarted.EnqueueAndClaim(future); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim future event = (%v, %v)", claimed, err)
+	}
+	delivering, err := restarted.claimedEvent(future.ID)
+	if err != nil || delivering.CallbackAuthToken != "callback-secret-next" {
+		t.Fatalf("claimed future event = (%+v, %v), want updated token", delivering, err)
+	}
+}
+
+func TestManagerRegistrationUpdatesOutboxCredentialForFutureEvents(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
+	defer func() { _ = manager.Close() }()
+	if err := manager.RegisterEndpoint(Endpoint{ID: "endpoint-1", CallbackAuthToken: "callback-secret-next"}); err != nil {
+		t.Fatalf("RegisterEndpoint: %v", err)
+	}
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	delivering, err := queue.claimedEvent(event.ID)
+	if err != nil || delivering.CallbackAuthToken != "callback-secret-next" {
+		t.Fatalf("claimed event = (%+v, %v), want updated token", delivering, err)
+	}
+	manager.RemoveEndpoint(event.EndpointID)
+	queue.mu.Lock()
+	_, retained := queue.callbackAuthTokens[event.EndpointID]
+	queue.mu.Unlock()
+	if retained {
+		t.Fatal("removed endpoint callback token remained in outbox memory")
+	}
+}
+
 func TestCallbackOutboxPreservesConnectionSequence(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
 	first := testCallbackEvent()

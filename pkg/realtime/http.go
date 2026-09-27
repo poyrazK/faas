@@ -48,6 +48,19 @@ func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
 	return h.DurableQueue.Stats()
 }
 
+func (h HTTPHooks) updateCallbackAuthToken(endpointID, token string) error {
+	if h.DurableQueue == nil {
+		return nil
+	}
+	return h.DurableQueue.updateCallbackAuthToken(endpointID, token)
+}
+
+func (h HTTPHooks) removeCallbackAuthToken(endpointID string) {
+	if h.DurableQueue != nil {
+		h.DurableQueue.removeCallbackAuthToken(endpointID)
+	}
+}
+
 func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return true, nil
@@ -70,6 +83,11 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 		}
 		if !claimed {
 			return nil
+		}
+		event, err = h.DurableQueue.claimedEvent(event.ID)
+		if err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
 		}
 		err = h.deliverMessage(ctx, event)
 		if err != nil {
@@ -111,6 +129,11 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		}
 		if !claimed {
 			return nil
+		}
+		event, err = h.DurableQueue.claimedEvent(event.ID)
+		if err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
 		}
 		err = h.deliverDisconnect(ctx, event)
 		if err != nil {

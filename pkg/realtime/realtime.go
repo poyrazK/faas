@@ -262,10 +262,11 @@ type Stats struct {
 type connection struct {
 	info ConnectionInfo
 	// endpoint is retained so lifecycle callbacks can finish after revocation.
-	endpoint Endpoint
-	state    *endpointState
-	ws       *websocket.Conn
-	m        *Manager
+	endpoint     Endpoint
+	state        *endpointState
+	callbackAuth atomic.Pointer[callbackAuthSnapshot]
+	ws           *websocket.Conn
+	m            *Manager
 
 	outbound chan Message
 	done     chan struct{}
@@ -276,6 +277,10 @@ type connection struct {
 	channels    map[string]struct{}
 	closeCode   int
 	closeReason string
+}
+
+type callbackAuthSnapshot struct {
+	token string
 }
 
 type endpointState struct {
@@ -419,11 +424,37 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	}
 	m.endpointsMu.Lock()
 	defer m.endpointsMu.Unlock()
+	updater, canUpdateCallbacks := m.hooks.(interface {
+		updateCallbackAuthToken(string, string) error
+	})
 	if existing, ok := m.endpoints.Load(e.ID); ok {
 		// Reconciliation updates the immutable policy snapshot without
 		// resetting the count held by connections admitted under an older one.
-		existing.(*endpointState).config.Store(&e)
+		state := existing.(*endpointState)
+		state.gate.Lock()
+		defer state.gate.Unlock()
+		if canUpdateCallbacks {
+			if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+				return err
+			}
+		}
+		previous := state.config.Load()
+		state.config.Store(&e)
+		if previous == nil || previous.CallbackAuthToken != e.CallbackAuthToken {
+			m.mu.RLock()
+			for _, conn := range m.conns {
+				if conn.state == state {
+					conn.callbackAuth.Store(&callbackAuthSnapshot{token: e.CallbackAuthToken})
+				}
+			}
+			m.mu.RUnlock()
+		}
 		return nil
+	}
+	if canUpdateCallbacks {
+		if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+			return err
+		}
 	}
 	state := &endpointState{}
 	state.config.Store(&e)
@@ -447,6 +478,9 @@ func (m *Manager) RemoveEndpoint(id string) {
 		state.gate.Unlock()
 	}
 	m.endpointsMu.Unlock()
+	if updater, ok := m.hooks.(interface{ removeCallbackAuthToken(string) }); ok {
+		updater.removeCallbackAuthToken(id)
+	}
 	m.mu.RLock()
 	connections := make([]*connection, 0)
 	for _, c := range m.conns {
@@ -667,6 +701,9 @@ func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, princip
 		done:     make(chan struct{}),
 		channels: make(map[string]struct{}),
 	}
+	if current := state.config.Load(); current != nil {
+		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
+	}
 	m.mu.Lock()
 	m.conns[id] = conn
 	m.mu.Unlock()
@@ -691,7 +728,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	}
 	connect.CallbackURL = c.endpoint.CallbackURL
 	connect.CallbackPath = c.endpoint.ConnectPath
-	connect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	connect.CallbackAuthToken = c.currentCallbackAuthToken()
 	accepted, err := m.callConnect(ctx, connect)
 	if err != nil {
 		m.callbackErrors.Add(1)
@@ -742,7 +779,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		}
 		event.CallbackURL = c.endpoint.CallbackURL
 		event.CallbackPath = c.endpoint.MessagePath
-		event.CallbackAuthToken = c.endpoint.CallbackAuthToken
+		event.CallbackAuthToken = c.currentCallbackAuthToken()
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
@@ -800,11 +837,14 @@ func (c *connection) write(msg Message) error {
 }
 
 func (m *Manager) removeConnection(ctx context.Context, c *connection) {
+	c.state.gate.Lock()
 	m.mu.Lock()
 	if current, ok := m.conns[c.info.ID]; ok && current == c {
 		delete(m.conns, c.info.ID)
 	}
+	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
+	c.state.gate.Unlock()
 	c.closeOne.Do(func() {
 		close(c.done)
 		_ = c.ws.Close()
@@ -827,12 +867,19 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	}
 	disconnect.CallbackURL = c.endpoint.CallbackURL
 	disconnect.CallbackPath = c.endpoint.DisconnectPath
-	disconnect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
 	}
+}
+
+func (c *connection) currentCallbackAuthToken() string {
+	if current := c.callbackAuth.Load(); current != nil {
+		return current.token
+	}
+	return ""
 }
 
 func (c *connection) close(code int, reason string) error {
