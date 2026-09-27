@@ -35230,8 +35230,32 @@ components:
           type: array
           description: "Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."
           items: { $ref: '#/components/schemas/RequestAnalyticsDependency' }
+        deployment_observations:
+          type: array
+          description: "At most the five highest-request deployments for this route/method, with request-share compute estimates and measured guest CPU comparisons against the preceding comparable revision."
+          items: { $ref: '#/components/schemas/RequestAnalyticsRouteDeploymentObservation' }
+        other_deployment_requests: { type: integer, format: int64, minimum: 0, description: "Route requests from deployments outside the top-five list." }
+        other_deployment_estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "This route's estimated compute value allocated to deployments outside the top-five list by request share." }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    RequestAnalyticsRouteDeploymentObservation:
+      type: object
+      description: "One route/method's bounded request and estimated-compute share for an immutable deployment. CPU comparisons are advisory, require at least 20 measured requests on both revisions, and remain sensitive to traffic mix."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents, guest_cpu_measured_requests, guest_cpu_regression]
+      properties:
+        deployment_id: { type: string, description: "Stable UUID identifying the immutable revision that served this route." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string, description: "RFC 3339 timestamp used to order same-route CPU comparisons." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        request_share_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "This route/deployment cell's share of all observed app requests in the window." }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route/deployment cell by request share; not an invoice amount." }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, description: "Request-weighted mean measured guest CPU time for this route under this deployment; supported Linux one-shot runtimes only." }
+        guest_cpu_measured_requests: { type: integer, format: int64, minimum: 0 }
+        guest_cpu_change_pct: { type: number, format: double, description: "Change in measured mean guest CPU/request from the preceding comparable deployment for this same route/method." }
+        guest_cpu_compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID of the preceding comparable revision." }
+        guest_cpu_regression: { type: boolean, description: "True when measured guest CPU/request rose by at least 25% from the preceding comparable revision." }
 
     RequestAnalyticsDependency:
       type: object

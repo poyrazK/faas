@@ -10266,11 +10266,38 @@ type RequestAnalyticsRoute struct {
 	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
 	DependencyRequests int64                        `json:"dependency_requests,omitempty"`
 	Dependencies       []RequestAnalyticsDependency `json:"dependencies,omitempty"`
+	// DeploymentObservations is a bounded top-five split of this route's
+	// requests and estimated compute value by immutable deployment. CPU
+	// comparisons are route-local, advisory, and only populated when the
+	// supported runtime supplied enough measurements.
+	DeploymentObservations []RequestAnalyticsRouteDeploymentObservation `json:"deployment_observations,omitempty"`
+	// OtherDeploymentRequests and its estimate fold revisions outside this
+	// route's top-five deployment list into one bounded bucket.
+	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
+	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
 	// RAM-hour value to the route by its share of observed requests. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+}
+
+// RequestAnalyticsRouteDeploymentObservation is one route's request-share
+// allocation and measured guest CPU for an immutable deployment. CPU changes
+// compare only the same route/method across unambiguously ordered revisions.
+type RequestAnalyticsRouteDeploymentObservation struct {
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
 }
 
 // RequestAnalyticsDependency is a route-scoped aggregate of classified,

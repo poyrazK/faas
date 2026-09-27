@@ -2348,6 +2348,82 @@ FROM per_deployment
 ORDER BY requests DESC, deployment_id ASC
 LIMIT $5;
 
+-- name: RequestTelemetryAnalyticsByRouteDeployment :many
+-- Per-route deployment split for the customer analytics window. Routes are
+-- bounded to the same top-N surface as route analytics, and each route keeps
+-- only its top deployments by request count; the remaining revisions are
+-- folded into __other__ so the response cardinality is bounded by
+-- route_limit * (deployment_limit + 1).
+WITH filtered AS (
+    SELECT route,
+           method,
+           deployment_id::text AS deployment_id,
+           commit_sha,
+           deployment_tag,
+           deployment_created_at,
+           count::bigint AS request_count,
+           guest_resource_usage_available,
+           guest_cpu_time_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), per_route_deployment AS (
+    SELECT route,
+           method,
+           deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(request_count)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * request_count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM filtered
+    GROUP BY route, method, deployment_id
+), top_routes AS (
+    SELECT route, method
+    FROM per_route_deployment
+    GROUP BY route, method
+    ORDER BY SUM(requests) DESC, route ASC, method ASC
+    LIMIT sqlc.arg('route_limit')::int
+), ranked_deployments AS (
+    SELECT per_route_deployment.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY per_route_deployment.route, per_route_deployment.method
+               ORDER BY per_route_deployment.requests DESC, per_route_deployment.deployment_id ASC
+           ) AS deployment_rank
+    FROM per_route_deployment
+    JOIN top_routes USING (route, method)
+)
+SELECT route,
+       method,
+       CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END AS deployment_id,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(commit_sha), '') ELSE '' END AS commit_sha,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_tag), '') ELSE '' END AS deployment_tag,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_created_at), '') ELSE '' END AS deployment_created_at,
+       SUM(requests)::bigint AS requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_measured_requests), 0)::bigint END AS guest_cpu_measured_requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_avg_ms), 0)::int END AS guest_cpu_avg_ms
+FROM ranked_deployments
+GROUP BY route,
+         method,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END
+ORDER BY route ASC,
+         method ASC,
+         CASE WHEN CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END = '__other__' THEN 1 ELSE 0 END,
+         MAX(deployment_created_at) DESC,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END ASC;
+
 -- name: RequestTelemetryAnalyticsByDimension :many
 -- Top-N customer analytics grouped by one of the bounded dimensions. Rows
 -- outside the top-N are folded into __other__ so a customer cannot turn this
