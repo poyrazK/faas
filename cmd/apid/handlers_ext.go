@@ -5077,8 +5077,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// was restored, so a customer who paid stayed suspended and the
 		// dunning timer went on to schedule the account for deletion.
 		// Operator suspensions carry no past_due_at and stay in place.
+		// A dunning deletion (deleted_pending with past_due_at) is
+		// undone by paying within its grace window as well.
 		if acct.Status == state.AccountPastDue ||
-			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) {
+			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) ||
+			(acct.Status == state.AccountDeletedPending && acct.PastDueAt != nil) {
 			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 				s.log.Warn("apid: payment_succeeded restore",
 					"account", acct.ID, "err", err)

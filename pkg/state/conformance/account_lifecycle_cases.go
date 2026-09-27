@@ -66,3 +66,43 @@ func testAccountLifecycleLeavesTheDunningLadder(t *testing.T, fx *Fixture) {
 		t.Fatalf("operator suspension was lifted: status %s", got.Status)
 	}
 }
+
+// testDunningDeletionIsScheduledAndPaidBack pins the end of the dunning
+// ladder: the move to deleted_pending stamps deletion_requested_at — the
+// anchor the grace sweep purges on and the deletion email promises — and
+// the self-service restore refuses it (paying is what undoes a dunning
+// deletion). Any return to active clears both anchors.
+func testDunningDeletionIsScheduledAndPaidBack(t *testing.T, fx *Fixture) {
+	s, ctx, id := fx.Store, fx.Ctx, fx.Account.ID
+	steps := [][2]state.AccountStatus{
+		{state.AccountActive, state.AccountPastDue},
+		{state.AccountPastDue, state.AccountSuspended},
+		{state.AccountSuspended, state.AccountDeletedPending},
+	}
+	for _, step := range steps {
+		if err := s.MarkDunningStep(ctx, id, step[0], step[1]); err != nil {
+			t.Fatalf("MarkDunningStep(%s→%s): %v", step[0], step[1], err)
+		}
+	}
+	acct, err := s.AccountByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.DeletionRequestedAt == nil {
+		t.Fatal("dunning moved the account to deleted_pending without deletion_requested_at: the grace sweep would never purge it")
+	}
+	if err := s.RestoreAccount(ctx, id); err == nil {
+		t.Fatal("self-service restore undid a dunning deletion without payment")
+	}
+	if err := s.UpdateAccountStatus(ctx, id, state.AccountActive); err != nil { // payment received
+		t.Fatalf("UpdateAccountStatus(active): %v", err)
+	}
+	acct, err = s.AccountByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.Status != state.AccountActive || acct.PastDueAt != nil || acct.DeletionRequestedAt != nil {
+		t.Fatalf("after payment: status %s, past_due_at %v, deletion_requested_at %v; want active with both cleared",
+			acct.Status, acct.PastDueAt, acct.DeletionRequestedAt)
+	}
+}

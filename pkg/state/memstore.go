@@ -1736,6 +1736,9 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	if status != AccountPastDue {
 		a.PastDueAt = nil
 	}
+	if status == AccountActive {
+		a.DeletionRequestedAt = nil
+	}
 	delete(m.freeQuotaSuspended, id)
 	m.accounts[id] = a
 	m.syncPersonalOrgStatusLocked(id, status)
@@ -21597,7 +21600,7 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if a.Status != AccountDeletedPending || a.DeletionRequestedAt == nil {
+	if a.Status != AccountDeletedPending || a.DeletionRequestedAt == nil || a.PastDueAt != nil {
 		return ErrConflict
 	}
 	if time.Since(*a.DeletionRequestedAt) > DeletionGraceDuration() {
@@ -21818,6 +21821,10 @@ func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to Accoun
 	if to == AccountPastDue && a.PastDueAt == nil {
 		now := time.Now().UTC()
 		a.PastDueAt = &now
+	}
+	if to == AccountDeletedPending && a.DeletionRequestedAt == nil {
+		now := time.Now().UTC()
+		a.DeletionRequestedAt = &now
 	}
 	delete(m.freeQuotaSuspended, id)
 	m.accounts[id] = a

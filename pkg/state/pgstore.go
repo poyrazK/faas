@@ -802,6 +802,7 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 		update accounts
 		   set status = $2,
 		       past_due_at = case when $2 = 'past_due' then past_due_at else null end,
+		       deletion_requested_at = case when $2 = 'active' then null else deletion_requested_at end,
 		       suspended_reason = null
 		 where id = $1`, id, string(status))
 	if err != nil {
@@ -25748,7 +25749,9 @@ func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string) err
 
 // RestoreAccount flips status back to active and clears
 // deletion_requested_at iff the row is still inside the 30-day grace
-// window. Past grace → ErrConflict so the handler renders 409.
+// window. Past grace → ErrConflict so the handler renders 409. A deletion
+// the dunning timer scheduled (past_due_at set) is undone by paying, not
+// by this self-service restore.
 func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx,
 		`update accounts
@@ -25756,6 +25759,7 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 		       deletion_requested_at = null
 		 where id = $1
 		   and status = 'deleted_pending'
+		   and past_due_at is null
 		   and deletion_requested_at > now() - interval '30 days'`,
 		id)
 	if err != nil {
@@ -26096,6 +26100,7 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 		`update accounts
 		    set status = $2,
 		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end,
+		        deletion_requested_at = case when $2 = 'deleted_pending' then coalesce(deletion_requested_at, now()) else deletion_requested_at end,
 		        suspended_reason = null
 		  where id = $1 and status = $4`,
 		id, string(to), stamp, string(from))

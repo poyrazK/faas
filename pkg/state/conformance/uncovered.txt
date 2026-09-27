@@ -556,7 +556,6 @@ RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident
-RestoreAccount
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter

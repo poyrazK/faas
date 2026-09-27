@@ -5846,3 +5846,28 @@ func TestStripePaymentSucceeded_LiftsDunningSuspension(t *testing.T) {
 		t.Fatalf("operator suspension: status = %s, want suspended", got.Status)
 	}
 }
+
+// TestStripePaymentSucceeded_UndoesDunningDeletion — paying inside the
+// deletion grace window restores an account the dunning timer scheduled
+// for deletion, and clears the anchor the grace sweep would purge on.
+func TestStripePaymentSucceeded_UndoesDunningDeletion(t *testing.T) {
+	e, _ := stripeWebhookHarness(t, api.PlanHobby)
+	ctx := context.Background()
+	for _, step := range [][2]state.AccountStatus{
+		{state.AccountActive, state.AccountPastDue},
+		{state.AccountPastDue, state.AccountSuspended},
+		{state.AccountSuspended, state.AccountDeletedPending},
+	} {
+		if err := e.store.MarkDunningStep(ctx, e.acct.ID, step[0], step[1]); err != nil {
+			t.Fatalf("seed %s→%s: %v", step[0], step[1], err)
+		}
+	}
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	got, _ := e.store.AccountByID(ctx, e.acct.ID)
+	if got.Status != state.AccountActive || got.DeletionRequestedAt != nil {
+		t.Fatalf("after paying: status = %s, deletion_requested_at = %v; want active and unscheduled", got.Status, got.DeletionRequestedAt)
+	}
+}
