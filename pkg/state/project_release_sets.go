@@ -9,7 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ProjectReleaseSet is an immutable app->deployment graph. Active is only the
@@ -37,6 +39,17 @@ type ProjectReleaseSetStore interface {
 	ResolveServiceRelease(context.Context, string, string, string, string) (string, string, error)
 }
 
+// ProjectEnvironmentPromotionReleaseSetStore atomically moves the active
+// target graph for a graph-backed environment promotion and records the new
+// graph ID on the durable promotion. Rollback uses a new immutable graph too.
+type ProjectEnvironmentPromotionReleaseSetStore interface {
+	PublishProjectEnvironmentPromotionReleaseSet(context.Context, string, string, int, []ProjectReleaseMember) (ProjectReleaseSet, error)
+	RollbackProjectEnvironmentPromotionReleaseSet(context.Context, string, string, int, []ProjectReleaseMember) (ProjectReleaseSet, error)
+}
+
+var _ ProjectEnvironmentPromotionReleaseSetStore = (*PgStore)(nil)
+var _ ProjectEnvironmentPromotionReleaseSetStore = (*MemStore)(nil)
+
 func validReleaseTTL(seconds int) bool {
 	return seconds > 0 && seconds <= api.RevisionPinMaxTTLSeconds
 }
@@ -61,20 +74,43 @@ func releaseMemberDeployment(ctx context.Context, tx pgx.Tx, appID, deploymentID
 }
 
 func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
-		return ProjectReleaseSet{}, ErrInvalidArgument
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: publish release begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var found int
-	if err := tx.QueryRow(ctx, `select 1 from projects where id = $1 and account_id = $2 for update`, projectID, accountID).Scan(&found); err != nil {
-		return ProjectReleaseSet{}, mapErr(err)
+	release, err := s.publishProjectReleaseSetTx(ctx, tx, accountID, projectID, environment, ttlSeconds, members, nil)
+	if err != nil {
+		return ProjectReleaseSet{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	return release, nil
+}
+
+func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember, expectedActiveID *string) (ProjectReleaseSet, error) {
+	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
+		return ProjectReleaseSet{}, ErrInvalidArgument
+	}
+	if err := lockProjectForReleaseSetTx(ctx, tx, accountID, projectID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	var found int
 	if err := tx.QueryRow(ctx, `select 1 from project_environments where project_id = $1 and slug = $2`, projectID, environment).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
+	}
+	if expectedActiveID != nil {
+		var activeID string
+		err := tx.QueryRow(ctx, `select id::text from project_release_sets where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			activeID = ""
+		} else if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if activeID != *expectedActiveID {
+			return ProjectReleaseSet{}, ErrConflict
+		}
 	}
 	byApp := make(map[string]string, len(members))
 	for _, member := range members {
@@ -164,10 +200,155 @@ func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, proje
 			return ProjectReleaseSet{}, err
 		}
 	}
+	return release, nil
+}
+
+func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectReleaseSet{}, fmt.Errorf("state: begin promotion release publish: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	promotion, err := scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
+		select `+projectEnvironmentPromotionSelectColumns+`
+		  from project_environment_promotions where id = $1 and account_id = $2`, promotionID, accountID))
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	promotion, err = scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
+		select `+projectEnvironmentPromotionSelectColumns+`
+		  from project_environment_promotions where id = $1 and account_id = $2 for update`, promotionID, accountID))
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if promotion.PreviousTargetReleaseSetID == "" {
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	if promotion.TargetReleaseSetID != "" {
+		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		activeID, err := activeProjectReleaseSetIDTx(ctx, tx, promotion.ProjectID, promotion.ToEnvironment)
+		if err != nil || activeID != promotion.TargetReleaseSetID {
+			if err != nil {
+				return ProjectReleaseSet{}, err
+			}
+			return ProjectReleaseSet{}, ErrConflict
+		}
+		release, err := readProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment, promotion.TargetReleaseSetID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		return release, nil
+	}
+	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
+		ttlSeconds, members, &promotion.PreviousTargetReleaseSetID)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if _, err := tx.Exec(ctx, `update project_environment_promotions set target_release_set_id = $2, updated_at = now() where id = $1`, promotionID, release.ID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	return release, nil
+}
+
+func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectReleaseSet{}, fmt.Errorf("state: begin promotion release rollback: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	promotion, err := scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
+		select `+projectEnvironmentPromotionSelectColumns+`
+		  from project_environment_promotions where id = $1 and account_id = $2`, promotionID, accountID))
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	promotion, err = scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
+		select `+projectEnvironmentPromotionSelectColumns+`
+		  from project_environment_promotions where id = $1 and account_id = $2 for update`, promotionID, accountID))
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if promotion.PreviousTargetReleaseSetID == "" || promotion.TargetReleaseSetID == "" {
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	if promotion.RollbackReleaseSetID != "" {
+		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		activeID, err := activeProjectReleaseSetIDTx(ctx, tx, promotion.ProjectID, promotion.ToEnvironment)
+		if err != nil || activeID != promotion.RollbackReleaseSetID {
+			if err != nil {
+				return ProjectReleaseSet{}, err
+			}
+			return ProjectReleaseSet{}, ErrConflict
+		}
+		release, err := readProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment, promotion.RollbackReleaseSetID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		return release, nil
+	}
+	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
+		ttlSeconds, members, &promotion.TargetReleaseSetID)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if _, err := tx.Exec(ctx, `update project_environment_promotions set rollback_release_set_id = $2, updated_at = now() where id = $1`, promotionID, release.ID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	return release, nil
+}
+
+func lockProjectForReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID string) error {
+	var found int
+	if err := tx.QueryRow(ctx, `select 1 from projects where id = $1 and account_id = $2 for update`, projectID, accountID).Scan(&found); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
+func activeProjectReleaseSetIDTx(ctx context.Context, tx pgx.Tx, projectID, environment string) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `select id::text from project_release_sets where project_id = $1 and environment_slug = $2 and active`, projectID, environment).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func readProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment, releaseID string) (ProjectReleaseSet, error) {
+	parsed, err := uuid.Parse(releaseID)
+	if err != nil {
+		return ProjectReleaseSet{}, ErrInvalidArgument
+	}
+	data, err := sqlc.New().ReadProjectReleaseSet(ctx, tx, sqlc.ReadProjectReleaseSetParams{
+		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment,
+		ReleaseID: pgtype.UUID{Bytes: parsed, Valid: true},
+	})
+	if err != nil {
+		return ProjectReleaseSet{}, mapErr(err)
+	}
+	return decodeProjectReleaseSet(data)
 }
 
 // ResolveProjectRelease returns empty IDs only when no active release exists.
