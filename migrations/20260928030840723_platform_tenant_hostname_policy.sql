@@ -4,7 +4,7 @@
 -- +goose StatementBegin
 -- A platform owner can delegate only explicitly allowed DNS suffixes to a
 -- downstream tenant. Empty policy means self-service hostname creation is off.
-CREATE TABLE platform_tenant_hostname_policies (
+CREATE TABLE IF NOT EXISTS platform_tenant_hostname_policies (
     tenant_id uuid PRIMARY KEY,
     account_id uuid NOT NULL,
     allowed_suffixes text[] NOT NULL DEFAULT '{}',
@@ -20,5 +20,5 @@ CREATE TABLE platform_tenant_hostname_policies (
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE platform_tenant_hostname_policies;
+DROP TABLE IF EXISTS platform_tenant_hostname_policies;
 -- +goose StatementEnd
