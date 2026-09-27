@@ -15,6 +15,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -717,7 +718,8 @@ func runGregaleAgainstHarness(t *testing.T, bin string, f *normalPathFixture, ar
 	if err == nil {
 		return stdout.String(), stderr.String(), 0
 	}
-	if exitError, ok := err.(*exec.ExitError); ok {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
 		return stdout.String(), stderr.String(), exitError.ExitCode()
 	}
 	t.Fatalf("run gregale %v: %v", args, err)
