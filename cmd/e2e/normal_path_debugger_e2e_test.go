@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,10 @@ import (
 )
 
 func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture {
+	return newNormalPathDebuggerFixtureWithTelemetry(t, slug, true)
+}
+
+func newNormalPathDebuggerFixtureWithTelemetry(t *testing.T, slug string, telemetryEnabled bool) *normalPathFixture {
 	t.Helper()
 	telemetryDir, err := os.MkdirTemp("", "faas-e2e-request-telemetry-*")
 	if err != nil {
@@ -58,10 +63,14 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	if err != nil {
 		t.Fatalf("create debugger artifact store: %v", err)
 	}
+	telemetrySetting := "false"
+	if telemetryEnabled {
+		telemetrySetting = "true"
+	}
 	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro,
 		"FAAS_APP_ERRORS_ENABLED=false",
 		"FAAS_OTEL_SPANS_WRITER_ENABLED=true",
-		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
+		"FAAS_REQUEST_TELEMETRY_ENABLED="+telemetrySetting,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+telemetrySocket,
 		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+spansWriterSocket,
 		"FAAS_OTEL_FLUSH_INTERVAL=50ms",
@@ -94,7 +103,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	const secret = "customer-secret-must-not-cross-debugger"
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-	_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
+	requestHeaders, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
 		"/debugger/telemetry", nil, map[string]string{
 			"Authorization":     "Bearer " + f.key,
 			"X-Customer-Secret": secret,
@@ -103,8 +112,23 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	if statusCode != http.StatusOK || string(body) != "normal-path:debugger-source\n" {
 		t.Fatalf("debugger source request: status=%d body=%q", statusCode, body)
 	}
+	publicRequestID := requestHeaders.Get(api.RequestIDHeader)
+	responseTraceID := requestHeaders.Get(api.TraceIDHeader)
+	if publicRequestID == "" || responseTraceID == "" {
+		t.Fatalf("origin response IDs: request=%q trace=%q; both response headers are required", publicRequestID, responseTraceID)
+	}
+	if publicRequestID == responseTraceID {
+		t.Fatalf("public request ID and W3C trace ID unexpectedly share a value: %q", publicRequestID)
+	}
+	if responseTraceID != traceID {
+		t.Fatalf("origin response trace ID=%q, want propagated W3C trace %q", responseTraceID, traceID)
+	}
 
-	request := waitForNormalPathDebuggerRequest(t, f, sourceDeployment.ID, traceID, 20*time.Second)
+	request := waitForNormalPathDebuggerRequestByPublicID(t, f, publicRequestID, 20*time.Second)
+	listedRequest := waitForNormalPathDebuggerRequestByTraceID(t, f, sourceDeployment.ID, traceID, 20*time.Second)
+	if listedRequest.ID != request.ID {
+		t.Fatalf("public-ID lookup row=%q, trace-list row=%q; want the same request", request.ID, listedRequest.ID)
+	}
 	if request.Status != http.StatusOK || request.Method != http.MethodGet {
 		t.Fatalf("debugger request = %+v, want GET/200", request)
 	}
@@ -116,7 +140,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	}
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
-		"/v1/apps/normal-debugger/debug/requests/"+request.ID, nil)
+		"/v1/apps/normal-debugger/debug/requests/"+url.PathEscape(publicRequestID), nil)
 	if statusCode != http.StatusOK {
 		t.Fatalf("debugger request detail: status=%d body=%s", statusCode, body)
 	}
@@ -124,8 +148,23 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	if err := json.Unmarshal(body, &detail); err != nil {
 		t.Fatalf("decode debugger request detail: %v body=%s", err, body)
 	}
-	if detail.ID != request.ID || detail.DeploymentID != sourceDeployment.ID {
-		t.Fatalf("debugger request detail = %+v, want request %s on %s", detail, request.ID, sourceDeployment.ID)
+	if detail.ID != request.ID || detail.RequestID != publicRequestID || detail.DeploymentID != sourceDeployment.ID {
+		t.Fatalf("debugger request detail = %+v, want public request %s (row %s) on %s", detail, publicRequestID, request.ID, sourceDeployment.ID)
+	}
+	if detail.TraceID == nil || *detail.TraceID != traceID {
+		t.Fatalf("debugger request trace_id = %v, want response %s", detail.TraceID, traceID)
+	}
+
+	// The public CLI flows must consume the customer-visible request ID, not
+	// silently reinterpret it as the telemetry row UUID or W3C trace ID.
+	gregale := buildGregale(t)
+	stdout, stderr, exit := runGregaleAgainstHarness(t, gregale, f, "debug", "requests", "get", "normal-debugger", publicRequestID)
+	if exit != 0 || !strings.Contains(stdout, "Public ID:  "+publicRequestID) || !strings.Contains(stdout, "Trace ID:   "+traceID) {
+		t.Fatalf("gregale debug requests get: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+	}
+	stdout, stderr, exit = runGregaleAgainstHarness(t, gregale, f, "logs", "--source", "http", "--request", publicRequestID, "normal-debugger")
+	if exit != 0 || !strings.Contains(stdout, "request="+publicRequestID) || !strings.Contains(stdout, "trace="+traceID) || !strings.Contains(stdout, "status=200") {
+		t.Fatalf("gregale logs by public request ID: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
 	}
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
@@ -542,7 +581,99 @@ func exerciseOutboundDependencySpan(t *testing.T, f *normalPathFixture, tracepar
 	finish()
 }
 
-func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploymentID, expectedTraceID string, timeout time.Duration) api.DebugTelemetryRequestItem {
+// TestE2E_NormalPath_PublicRequestIDJournalWithoutDetailedTelemetry pins the
+// request-ID journal's independent retention path across the real gateway →
+// apid → Postgres boundary. A request without a detailed telemetry row must
+// still resolve by the ID returned by its origin response, with an explicit
+// journal-only result rather than a 404 or fabricated telemetry fields.
+func TestE2E_NormalPath_PublicRequestIDJournalWithoutDetailedTelemetry(t *testing.T) {
+	f := newNormalPathDebuggerFixtureWithTelemetry(t, "normal-request-id-only", false)
+	if f == nil {
+		return
+	}
+
+	_, sourceInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "request-id-only-source")
+	f.vmmd.SetVersion(sourceInstance.ID, "request-id-only-source")
+	waitForNormalPathDebuggerResponse(t, f, "normal-path:request-id-only-source\n", 10*time.Second)
+
+	requestHeaders, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
+		"/request-id-only", nil, map[string]string{"Authorization": "Bearer " + f.key})
+	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-only-source\n" {
+		t.Fatalf("request-ID-only origin request: status=%d body=%q", statusCode, body)
+	}
+	publicRequestID := requestHeaders.Get(api.RequestIDHeader)
+	traceID := requestHeaders.Get(api.TraceIDHeader)
+	if publicRequestID == "" || traceID == "" || publicRequestID == traceID {
+		t.Fatalf("origin response IDs: request=%q trace=%q; want distinct public and W3C IDs", publicRequestID, traceID)
+	}
+
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/apps/normal-request-id-only/debug/requests/"+url.PathEscape(publicRequestID), nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("request-ID-only debugger lookup: status=%d body=%s", statusCode, body)
+	}
+	var detail api.DebugTelemetryRequestItem
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("decode request-ID-only debugger detail: %v body=%s", err, body)
+	}
+	if detail.RequestID != publicRequestID || detail.EvidenceStatus != "request_id_only" || detail.ID != "" {
+		t.Fatalf("request-ID-only debugger detail = %+v, want exact ID and no telemetry row", detail)
+	}
+	if detail.TraceID == nil || *detail.TraceID != traceID {
+		t.Fatalf("request-ID-only trace_id = %v, want response %s", detail.TraceID, traceID)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, detail.ReceivedAt); err != nil {
+		t.Fatalf("request-ID-only received_at = %q: %v", detail.ReceivedAt, err)
+	}
+
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/apps/normal-request-id-only/debug/requests?since=24h&limit=200", nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("list with detailed telemetry disabled: status=%d body=%s", statusCode, body)
+	}
+	var page api.DebugTelemetryListResponse
+	if err := json.Unmarshal(body, &page); err != nil {
+		t.Fatalf("decode list with detailed telemetry disabled: %v body=%s", err, body)
+	}
+	if len(page.Requests) != 0 {
+		t.Fatalf("detailed telemetry list = %+v, want empty while telemetry is disabled", page.Requests)
+	}
+
+	gregale := buildGregale(t)
+	stdout, stderr, exit := runGregaleAgainstHarness(t, gregale, f, "debug", "requests", "get", "normal-request-id-only", publicRequestID)
+	if exit != 0 || !strings.Contains(stdout, "Public ID:  "+publicRequestID) ||
+		!strings.Contains(stdout, "request ID is retained, but detailed request telemetry is unavailable") ||
+		!strings.Contains(stdout, "Trace ID:   "+traceID) {
+		t.Fatalf("gregale debug get for journal-only ID: exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+	}
+}
+
+func waitForNormalPathDebuggerRequestByPublicID(t *testing.T, f *normalPathFixture, publicRequestID string, timeout time.Duration) api.DebugTelemetryRequestItem {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastBody []byte
+	var lastStatus int
+	for time.Now().Before(deadline) {
+		lastBody, lastStatus = doReq(t, f.h, f.key, http.MethodGet,
+			"/v1/apps/normal-debugger/debug/requests/"+url.PathEscape(publicRequestID), nil)
+		if lastStatus == http.StatusOK {
+			var request api.DebugTelemetryRequestItem
+			if err := json.Unmarshal(lastBody, &request); err != nil {
+				t.Fatalf("decode polled public request-ID lookup: %v body=%s", err, lastBody)
+			}
+			if request.RequestID == publicRequestID && request.ID != "" {
+				return request
+			}
+		} else if lastStatus != http.StatusNotFound {
+			t.Fatalf("poll public request-ID lookup: status=%d body=%s", lastStatus, lastBody)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("debugger request %s did not arrive within %s; last status=%d body=%s", publicRequestID, timeout, lastStatus, lastBody)
+	return api.DebugTelemetryRequestItem{}
+}
+
+func waitForNormalPathDebuggerRequestByTraceID(t *testing.T, f *normalPathFixture, deploymentID, expectedTraceID string, timeout time.Duration) api.DebugTelemetryRequestItem {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var last api.DebugTelemetryListResponse
@@ -564,6 +695,33 @@ func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploy
 	}
 	t.Fatalf("debugger request for deployment %s did not arrive within %s; last page=%+v", deploymentID, timeout, last)
 	return api.DebugTelemetryRequestItem{}
+}
+
+func runGregaleAgainstHarness(t *testing.T, bin string, f *normalPathFixture, args ...string) (string, string, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmdEnv := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "FAAS_API=") || strings.HasPrefix(entry, "FAAS_TOKEN=") {
+			continue
+		}
+		cmdEnv = append(cmdEnv, entry)
+	}
+	cmd.Env = append(cmdEnv, "FAAS_API="+f.h.APIDURL, "FAAS_TOKEN="+f.key)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), stderr.String(), 0
+	}
+	if exitError, ok := err.(*exec.ExitError); ok {
+		return stdout.String(), stderr.String(), exitError.ExitCode()
+	}
+	t.Fatalf("run gregale %v: %v", args, err)
+	return stdout.String(), stderr.String(), -1
 }
 
 func waitForNormalPathDebuggerResponse(t *testing.T, f *normalPathFixture, want string, timeout time.Duration) {
