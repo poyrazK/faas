@@ -30,8 +30,12 @@ class ProjectEnvironmentPromotionPreviewResponse:
     config_diff: ProjectEnvironmentConfigDiffResponse
     """Stable key-level diff between two project environment configuration snapshots."""
     changes: list[ProjectEnvironmentPromotionChange]
+    release_graph_mode: bool
+    """True when promotion stages deployments dark and atomically activates a project release graph."""
     promotion_hash: str
     promotion_token: str
+    sync_config: bool | Unset = UNSET
+    """Whether this exact promotion will copy the source's non-secret configuration to the target."""
     blocking_reasons: list[str] | Unset = UNSET
     from_release_set: ProjectReleaseSetResponse | Unset = UNSET
     """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
@@ -39,6 +43,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
     to_release_set: ProjectReleaseSetResponse | Unset = UNSET
     """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
     expires_at is set."""
+    release_ttl_seconds: int | Unset = UNSET
+    """Compatibility window used by the promoted release graph."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,9 +67,13 @@ class ProjectEnvironmentPromotionPreviewResponse:
             changes_item = changes_item_data.to_dict()
             changes.append(changes_item)
 
+        release_graph_mode = self.release_graph_mode
+
         promotion_hash = self.promotion_hash
 
         promotion_token = self.promotion_token
+
+        sync_config = self.sync_config
 
         blocking_reasons: list[str] | Unset = UNSET
         if not isinstance(self.blocking_reasons, Unset):
@@ -77,6 +87,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
         if not isinstance(self.to_release_set, Unset):
             to_release_set = self.to_release_set.to_dict()
 
+        release_ttl_seconds = self.release_ttl_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,16 +101,21 @@ class ProjectEnvironmentPromotionPreviewResponse:
                 "can_promote": can_promote,
                 "config_diff": config_diff,
                 "changes": changes,
+                "release_graph_mode": release_graph_mode,
                 "promotion_hash": promotion_hash,
                 "promotion_token": promotion_token,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
         if blocking_reasons is not UNSET:
             field_dict["blocking_reasons"] = blocking_reasons
         if from_release_set is not UNSET:
             field_dict["from_release_set"] = from_release_set
         if to_release_set is not UNSET:
             field_dict["to_release_set"] = to_release_set
+        if release_ttl_seconds is not UNSET:
+            field_dict["release_ttl_seconds"] = release_ttl_seconds
 
         return field_dict
 
@@ -130,9 +147,13 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
             changes.append(changes_item)
 
+        release_graph_mode = d.pop("release_graph_mode")
+
         promotion_hash = d.pop("promotion_hash")
 
         promotion_token = d.pop("promotion_token")
+
+        sync_config = d.pop("sync_config", UNSET)
 
         blocking_reasons = cast(list[str], d.pop("blocking_reasons", UNSET))
 
@@ -150,6 +171,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
         else:
             to_release_set = ProjectReleaseSetResponse.from_dict(_to_release_set)
 
+        release_ttl_seconds = d.pop("release_ttl_seconds", UNSET)
+
         project_environment_promotion_preview_response = cls(
             project_slug=project_slug,
             from_environment=from_environment,
@@ -159,11 +182,14 @@ class ProjectEnvironmentPromotionPreviewResponse:
             can_promote=can_promote,
             config_diff=config_diff,
             changes=changes,
+            release_graph_mode=release_graph_mode,
             promotion_hash=promotion_hash,
             promotion_token=promotion_token,
+            sync_config=sync_config,
             blocking_reasons=blocking_reasons,
             from_release_set=from_release_set,
             to_release_set=to_release_set,
+            release_ttl_seconds=release_ttl_seconds,
         )
 
         project_environment_promotion_preview_response.additional_properties = d

@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -376,5 +377,67 @@ func TestUsageCollectorRecordsSharedRestoreUsageOnlyAgainstSource(t *testing.T) 
 	if snapshot.ComputeUnitSeconds != 3600 || snapshot.StorageByteSeconds != bytesPerGiB*secondsPerHour ||
 		snapshot.HistoryByteSeconds != bytesPerGiB*secondsPerHour || snapshot.EgressBytes != 1<<30 || snapshot.CostMillicents != 7600 {
 		t.Fatalf("shared project usage snapshot = %+v", snapshot)
+	}
+}
+
+// TestUsageCollectorMetersEveryReadyDatabase — ListUsageDatabases returned
+// the same oldest-updated batch on every sweep (recording usage does not
+// touch updated_at), so any ready database past the first BatchSize was
+// never metered, billed, or held to its monthly caps. One sweep must now
+// reach every ready database, including across updated_at ties and a final
+// page that is exactly full.
+func TestUsageCollectorMetersEveryReadyDatabase(t *testing.T) {
+	for _, n := range []int{defaultUsageBatchSize - 1, defaultUsageBatchSize, defaultUsageBatchSize + 5, 2*defaultUsageBatchSize + 1} {
+		t.Run(fmt.Sprintf("%d databases", n), func(t *testing.T) {
+			provider := &usageTestProvider{
+				fakeProvider: &fakeProvider{capabilities: testCapabilities()},
+				readings:     []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 3600}},
+			}
+			now := time.Date(2026, 9, 6, 12, 17, 0, 0, time.UTC)
+			registry := testRegistry(t, provider, func(config *Config) {
+				config.Usage = UsageConfig{
+					Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+					StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+					MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50,
+					MaxMonthlyHistoryByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40,
+					ComputeUnitHourMillicents: 3600,
+				}
+			})
+			backend, err := registry.Default("us-east-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := NewMemoryStore()
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("db-%03d", i)
+				store.databases[id] = Database{
+					ID: id, AccountID: fmt.Sprintf("account-%03d", i), Name: "orders", Spec: testSpec(),
+					BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+					ProviderResourceID: "provider-" + id, State: StateReady,
+					// Pairs share an updated_at so the cursor's id tiebreak is exercised.
+					UpdatedAt: now.Add(-time.Duration(n-i/2) * time.Minute),
+				}
+			}
+			collector, err := NewUsageCollector(registry, store, UsageCollectorOptions{Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			summary, err := collector.Collect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.Discovered != n || summary.Recorded != n {
+				t.Fatalf("summary = %+v, want %d discovered and recorded", summary, n)
+			}
+			metered := map[string]bool{}
+			for key := range store.usage {
+				metered[key.databaseID] = true
+			}
+			for id := range store.databases {
+				if !metered[id] {
+					t.Errorf("ready database %s never metered", id)
+				}
+			}
+		})
 	}
 }

@@ -111,6 +111,67 @@ func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
 	}
 }
 
+func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	lease := Lease{Instance: "live-cpu-policy", Plan: api.PlanPro, CPUMillicores: 1000}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup cgroup scope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+		t.Fatalf("seed startup quota: %v", err)
+	}
+	tail := &startupCPUBoostTail{
+		lease:   lease,
+		profile: startupCPUProfile{ConfiguredMillicores: 1000, StartupMillicores: 1000},
+		timer:   time.NewTimer(time.Hour),
+	}
+	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+
+	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err != nil {
+		t.Fatalf("UpdateCPULimit: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read updated cpu.max: %v", err)
+	}
+	if got, want := string(body), "125000 500000\n"; got != want {
+		t.Fatalf("cpu.max = %q, want %q", got, want)
+	}
+	if _, ok := vmm.cpuBoostTails[lease.Instance]; ok {
+		t.Fatal("startup boost tail remains armed after runtime CPU policy update")
+	}
+	// A callback that had already become runnable must observe the removed
+	// generation and may not restore its stale boot-time quota.
+	vmm.finishStartupCPUBoostTail(context.Background(), tail)
+	body, err = os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max after stale callback: %v", err)
+	}
+	if got, want := string(body), "125000 500000\n"; got != want {
+		t.Fatalf("stale callback changed cpu.max to %q, want %q", got, want)
+	}
+}
+
+func TestJailerVMMUpdateCPULimitKeepsStartupTailWhenWriteFails(t *testing.T) {
+	withFakeCgroupRoot(t)
+	lease := Lease{Instance: "live-cpu-policy-write-fails", Plan: api.PlanPro, CPUMillicores: 1000}
+	tail := &startupCPUBoostTail{
+		lease:   lease,
+		profile: startupCPUProfile{ConfiguredMillicores: 1000, StartupMillicores: 1000},
+		timer:   time.NewTimer(time.Hour),
+	}
+	t.Cleanup(func() { tail.timer.Stop() })
+	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+
+	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err == nil {
+		t.Fatal("UpdateCPULimit succeeded without an existing cgroup scope")
+	}
+	if got := vmm.cpuBoostTails[lease.Instance]; got != tail {
+		t.Fatal("failed CPU write disarmed the startup tail; it must remain able to restore the prior quota")
+	}
+}
+
 // adr: 168
 func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	dir := withFakeCgroupRoot(t)

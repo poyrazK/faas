@@ -1,4 +1,4 @@
-# ADR-285 · Bounded parallel managed realtime callback replay
+# ADR-288 · Bounded parallel managed realtime callback replay
 
 - **Status:** accepted
 - **Date:** 2026-09-27

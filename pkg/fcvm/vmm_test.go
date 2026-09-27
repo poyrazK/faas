@@ -377,7 +377,11 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-func TestCopyTreePreservesDirectorySymlinks(t *testing.T) {
+// TestCopyTreeCopiesRealTreeAndDropsSymlinks — copyTree exports untrusted
+// builder output as root. Real directories and regular files keep their
+// layout and modes; a symlink is dropped rather than recreated, because a
+// recreated link hands builderd a path into the host.
+func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(filepath.Join(src, "usr", "bin"), 0o755); err != nil {
@@ -396,26 +400,12 @@ func TestCopyTreePreservesDirectorySymlinks(t *testing.T) {
 	if err := copyTree(src, dst, 0); err != nil {
 		t.Fatalf("copyTree: %v", err)
 	}
-	link, err := os.Readlink(filepath.Join(dst, "bin"))
-	if err != nil {
-		t.Fatalf("read copied symlink: %v", err)
+	info, err := os.Stat(filepath.Join(dst, "usr", "bin", "node"))
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("usr/bin/node = %v err=%v, want a 0755 regular file", info, err)
 	}
-	if link != "usr/bin" {
-		t.Fatalf("copied symlink = %q, want %q", link, "usr/bin")
-	}
-	got, err := os.ReadFile(filepath.Join(dst, "bin", "node"))
-	if err != nil {
-		t.Fatalf("read through copied symlink: %v", err)
-	}
-	if string(got) != "node" {
-		t.Fatalf("copied node = %q, want node", got)
-	}
-	mode, err := os.Stat(filepath.Join(dst, "bin", "node"))
-	if err != nil {
-		t.Fatalf("stat copied node: %v", err)
-	}
-	if mode.Mode().Perm() != 0o755 {
-		t.Fatalf("copied node mode = %o, want 755", mode.Mode().Perm())
+	if _, err := os.Lstat(filepath.Join(dst, "bin")); !os.IsNotExist(err) {
+		t.Fatalf("bin symlink recreated in the export (err=%v); want it dropped", err)
 	}
 }
 

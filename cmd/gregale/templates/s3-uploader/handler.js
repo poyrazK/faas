@@ -63,7 +63,11 @@ const port = process.env.PORT || 8080;
 // Simple text upload endpoint. For a real app, use express-fileupload
 // or busboy to handle multipart/form-data — kept minimal here so the
 // scaffold stays < 100 LOC.
-app.use(express.text({ limit: "10mb" }));
+// Keep the request bytes exactly as sent, whatever the Content-Type.
+// express.text() only parses text/plain: `curl --data` (form-encoded),
+// images and every other binary upload arrived as an empty object, and
+// PutObject failed.
+app.use(express.raw({ type: () => true, limit: "10mb" }));
 
 app.post("/upload/:filename", async (req, res) => {
   const key = req.params.filename;
@@ -72,8 +76,8 @@ app.post("/upload/:filename", async (req, res) => {
       new PutObjectCommand({
         Bucket: process.env.S3_BUCKET,
         Key: key,
-        Body: req.body,
-        ContentType: req.get("content-type") || "text/plain",
+        Body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+        ContentType: req.get("content-type") || "application/octet-stream",
       }),
     );
     res.status(201).json({ ok: true, key, bucket: process.env.S3_BUCKET });

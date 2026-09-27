@@ -203,7 +203,7 @@ type CompanionSpec struct {
 // compatibility. New manifests should use the top-level companions key.
 type ExtensionSpec = CompanionSpec
 
-// ExtensionDependency gates an extension on another workload lifecycle.
+// ExtensionDependency describes a manifest workload's startup dependency.
 type ExtensionDependency struct {
 	Name      string                          `yaml:"name" toml:"name"`
 	Condition api.WorkloadDependencyCondition `yaml:"condition,omitempty" toml:"condition,omitempty"`
@@ -305,6 +305,21 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 		out = append(out, sc)
 	}
 	return out, nil
+}
+
+// MainWorkloadDependencies converts the manifest's primary-workload gates to
+// the deployment API shape. A nil manifest or empty declaration yields nil.
+func (m *Manifest) MainWorkloadDependencies() []api.WorkloadDependency {
+	if m == nil || len(m.MainDependsOn) == 0 {
+		return nil
+	}
+	dependencies := make([]api.WorkloadDependency, 0, len(m.MainDependsOn))
+	for _, dependency := range m.MainDependsOn {
+		dependencies = append(dependencies, api.WorkloadDependency{
+			Name: dependency.Name, Condition: dependency.Condition,
+		})
+	}
+	return dependencies
 }
 
 func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
@@ -1072,9 +1087,9 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `async_routes`, `companions`, `extensions`, `workflows`,
-// `databases`, `buckets`, and the local-only `dev` profile; other keys are
-// validated strictly (yaml.Decoder.KnownFields(true))
+// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `extensions`, `workflows`, `databases`, `buckets`, and the local-only `dev`
+// profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
@@ -1101,6 +1116,9 @@ type Manifest struct {
 	// existing managed routes unchanged; an explicit empty list clears them.
 	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
 	Companions  []CompanionSpec `yaml:"companions,omitempty"`
+	// MainDependsOn gates the primary application workload on declared
+	// long-running companions. Init companions remain implicit prerequisites.
+	MainDependsOn []ExtensionDependency `yaml:"main_depends_on,omitempty"`
 	// Extensions is the legacy name for Companions.
 	Extensions []ExtensionSpec      `yaml:"extensions,omitempty"`
 	Workflows  []api.WorkflowSpec   `yaml:"workflows,omitempty"`
@@ -1469,10 +1487,11 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 type tomlManifest struct {
-	SchemaVersion int             `toml:"schema_version"`
-	Triggers      tomlTriggers    `toml:"triggers"`
-	Companions    []CompanionSpec `toml:"companions"`
-	Extensions    []ExtensionSpec `toml:"extensions"`
+	SchemaVersion int                   `toml:"schema_version"`
+	Triggers      tomlTriggers          `toml:"triggers"`
+	Companions    []CompanionSpec       `toml:"companions"`
+	MainDependsOn []ExtensionDependency `toml:"main_depends_on"`
+	Extensions    []ExtensionSpec       `toml:"extensions"`
 }
 
 type tomlTriggers struct {
@@ -1492,7 +1511,13 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
-	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event, Companions: raw.Companions, Extensions: raw.Extensions}, nil
+	return &Manifest{
+		SchemaVersion: raw.SchemaVersion,
+		EventTriggers: raw.Triggers.Event,
+		Companions:    raw.Companions,
+		MainDependsOn: raw.MainDependsOn,
+		Extensions:    raw.Extensions,
+	}, nil
 }
 
 // Validate runs schema checks against the decoded manifest. It retains the
@@ -1584,13 +1609,23 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return err
 		}
 	}
-	if len(m.Companions) > 0 || len(m.Extensions) > 0 {
-		sidecars, err := m.ToSidecars()
-		if err != nil {
-			return err
-		}
-		if prob := sidecars.Validate(api.MustLimitsFor(plan)); prob != nil {
+	sidecars, err := m.ToSidecars()
+	if err != nil {
+		return err
+	}
+	limits := api.MustLimitsFor(plan)
+	if len(sidecars) > 0 {
+		if prob := sidecars.Validate(limits); prob != nil {
 			return fmt.Errorf("companions: %s", prob.Detail)
+		}
+	}
+	if dependencies := m.MainWorkloadDependencies(); len(dependencies) > 0 {
+		overrides := &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+		if prob := overrides.Validate(limits); prob != nil {
+			return fmt.Errorf("main_depends_on: %s", prob.Detail)
+		}
+		if prob := sidecars.ValidateWithMainDependencies(dependencies, limits); prob != nil {
+			return fmt.Errorf("main_depends_on: %s", prob.Detail)
 		}
 	}
 	seenBindings := make(map[string]struct{}, len(m.QueueBindings))

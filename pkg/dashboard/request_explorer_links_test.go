@@ -41,6 +41,10 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 					Dependencies: []api.RequestAnalyticsDependency{{
 						Type: "managed_binding", Kind: "managed_postgres", Name: "db.query",
 						Samples: 3, Calls: 3, P95MS: 71, ExclusiveP95MS: 52,
+						DeploymentObservations: []api.RequestAnalyticsDependencyDeploymentObservation{{
+							DeploymentID: "deploy-v39", DeploymentTag: "v39", P50MS: 40, P95MS: 180, P99MS: 281,
+							ErrorRatePct: 12, ComparedTo: "v38", Regression: true,
+						}},
 					}},
 					EstimatedComputeCostEUR: "1.23456", RequestSharePct: 100,
 					TrendURL: "/dashboard/apps/demo?analytics_method=GET&analytics_route=%2Fcheckout",
@@ -63,7 +67,8 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 		"184 ms",
 		"18 / 35 ms",
 		"Dependency waits (sampled)",
-		"managed_postgres / db.query: exclusive p95 52 ms (p95 71 ms, 3 samples)",
+		"managed_postgres / db.query: exclusive p95 52 ms (p50/p95/p99 0/71/0 ms, errors 0.0%, 3 samples)",
+		"v39 p50/p95/p99 40/180/281 ms / errors 12.0% — regression vs v38",
 		"Dependency evidence is bounded; some rows or dependency groups were omitted from this view.",
 		"€1.23456",
 		"Estimated compute by deployment",
