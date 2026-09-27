@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1200,6 +1201,41 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 	return fn(mp)
 }
 
+// openDriveRoot opens a mounted drive as an os.Root and returns target
+// relative to it. The drive is tenant-writable — the guest writes it at
+// runtime and the customer image seeds it — while vmmd writes it as root on
+// the host. Every write therefore resolves through os.Root: a symlink that
+// leaves the mount fails the write instead of redirecting it onto a host
+// path.
+func openDriveRoot(mountRoot, target string) (*os.Root, string, error) {
+	rel, err := filepath.Rel(mountRoot, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil, "", fmt.Errorf("drive path %q is outside mount %q", target, mountRoot)
+	}
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, "", fmt.Errorf("open drive root: %w", err)
+	}
+	return root, rel, nil
+}
+
+// clearNonRegular removes a symlink or other non-regular entry at rel so the
+// write that follows creates a fresh file rather than following a link the
+// tenant planted, even one that stays inside the drive.
+func clearNonRegular(root *os.Root, rel string) error {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().IsRegular() {
+		return nil
+	}
+	return root.Remove(rel)
+}
+
 // writeDriveFile writes one file beneath a mounted drive, resolving the
 // full-rootfs marker the same way every Stage* method always has.
 func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
@@ -1207,10 +1243,18 @@ func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMo
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
 	}
-	if err := os.WriteFile(target, blob, mode); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	if err := root.WriteFile(rel, blob, mode); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 	return nil
@@ -1229,11 +1273,18 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(base, workloadName, "env.json")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, filepath.Join(base, workloadName, "env.json"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
-	if err := os.WriteFile(target, blob, 0o400); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write workload env: %w", err)
+	}
+	if err := root.WriteFile(rel, blob, 0o400); err != nil {
 		return fmt.Errorf("write workload env: %w", err)
 	}
 	return nil
@@ -1287,13 +1338,18 @@ func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir resolver directory: %w", err)
 	}
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove existing resolver file: %w", err)
 	}
-	if err := os.WriteFile(target, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
+	if err := root.WriteFile(rel, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
 		return fmt.Errorf("write resolver file: %w", err)
 	}
 	return nil
@@ -1343,6 +1399,43 @@ func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec,
 		return err
 	}
 	_ = workloads
+	return nil
+}
+
+// UpdateCPULimit changes the aggregate Firecracker cgroup ceiling for a live
+// app VM. The VMM lock serializes this write with Kill and the startup-boost
+// tail; canceling that tail prevents its captured boot-time quota from
+// overwriting a newer runtime policy after this method returns.
+func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: update CPU limit: empty instance")
+	}
+	if l.IsBuilder || !l.Plan.Valid() {
+		return fmt.Errorf("vmm: update CPU limit: invalid app lease for instance %s", l.Instance)
+	}
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
+	}
+	// Only disarm the startup tail after the live write succeeds. If the
+	// cgroup write fails, leave its callback armed so it can still restore
+	// the previous configured quota instead of leaving the temporary startup
+	// allowance in place indefinitely.
+	if tail := v.cpuBoostTails[l.Instance]; tail != nil {
+		if tail.timer != nil {
+			tail.timer.Stop()
+		}
+		delete(v.cpuBoostTails, l.Instance)
+	}
 	return nil
 }
 
@@ -2106,6 +2199,9 @@ const extensionHookDialDeadline = extension.DefaultTimeout
 
 const extensionHookMaxBodyBytes = extension.MaxEventBytes
 
+const appCPULimitHookMsgType = runtimepolicyproto.AppCPULimitMessageType
+const appCPULimitHookMaxBodyBytes = runtimepolicyproto.AppCPULimitMaxBodyBytes
+
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
 // VsockResumePort.
@@ -2406,6 +2502,92 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 		case <-timer.C:
 		}
 	}
+}
+
+// UpdateAppWorkloadCPULimit updates the main workload's guest cgroup for a
+// multi-workload app. The host parent cgroup remains the aggregate app ceiling;
+// this guest leaf update removes the old boot-time duplicate as a limiting
+// factor when the app ceiling is raised.
+func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	if v == nil || l.Instance == "" || v.chrootBase == "" {
+		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
+	}
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("vmm: update guest app CPU limit: invalid cpu_millicores %d", cpuMillicores)
+	}
+	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: cpuMillicores})
+	if err != nil {
+		return fmt.Errorf("vmm: marshal app CPU policy: %w", err)
+	}
+	if len(body) == 0 || len(body) > appCPULimitHookMaxBodyBytes {
+		return fmt.Errorf("vmm: app CPU policy body %d bytes exceeds %d", len(body), appCPULimitHookMaxBodyBytes)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, resumeHookDialDeadline)
+	defer cancel()
+	sock := v.vsockUDSSock(l.Instance)
+	var lastErr error
+	for {
+		if err := callCtx.Err(); err != nil {
+			if lastErr != nil {
+				return fmt.Errorf("vmm: app CPU policy dial vsock uds %s: %w", sock, lastErr)
+			}
+			return fmt.Errorf("vmm: app CPU policy dial vsock uds %s: %w", sock, err)
+		}
+		conn, dialErr := net.DialTimeout("unix", sock, 20*time.Millisecond)
+		if dialErr != nil {
+			lastErr = dialErr
+		} else {
+			stopClose := context.AfterFunc(callCtx, func() { _ = conn.Close() })
+			_ = conn.SetDeadline(time.Now().Add(resumeHookDialDeadline))
+			connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
+			if _, err = conn.Write([]byte(connectCmd)); err == nil {
+				var connectAck string
+				connectAck, err = readConnectAck(conn)
+				if err == nil && connectAck == "OK" {
+					msg := make([]byte, 8+len(body))
+					binary.BigEndian.PutUint32(msg[:4], appCPULimitHookMsgType)
+					binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+					copy(msg[8:], body)
+					err = writeVMMControlFrame(conn, msg)
+					if err == nil {
+						ack := []byte{0}
+						_, err = io.ReadFull(conn, ack)
+						if err == nil {
+							stopClose()
+							_ = conn.Close()
+							if ack[0] == 0 {
+								return nil
+							}
+							return fmt.Errorf("vmm: guest rejected app CPU policy (ack=%d)", ack[0])
+						}
+					}
+				}
+			}
+			lastErr = err
+			stopClose()
+			_ = conn.Close()
+		}
+		timer := time.NewTimer(resumeHookDialStep)
+		select {
+		case <-callCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func writeVMMControlFrame(w io.Writer, payload []byte) error {
+	for len(payload) > 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrUnexpectedEOF
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 // SendStatelessAdvisory is the host-side receiver for one batch
@@ -3494,26 +3676,30 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// the host block in rw journal replay while the builder queue is waiting.
 	// A plain read-only mount remains a compatibility fallback for images whose
 	// filesystem features reject noload.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro", drive1, mp).CombinedOutput(); roErr != nil {
+	//
+	// The drive was written by untrusted build code running as root in the
+	// guest, so the mount is also nodev,nosuid,noexec: a device node the
+	// build created (the host's NVMe, /dev/zero) must not become a live
+	// device when vmmd, as root, reads the export.
+	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
 	// build-done.json is the canonical manifest builderd reads.
-	srcDone := filepath.Join(mp, "upper", "etc", "faas", "build-done.json")
-	if data, err := os.ReadFile(srcDone); err == nil {
+	if data, ok := readBuildDone(mp); ok {
 		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
 			return fmt.Errorf("write build-done.json: %w", err)
 		}
-	} // else: VM died before guest-init wrote it — caller falls back to exit-code class.
+	} // else: VM died before guest-init wrote it (or it is not a bounded
+	// regular file) — caller falls back to exit-code class.
 
 	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
 	// cap enforced. A build that overruns the cap is logged as infra failure
 	// via the caller's classification (no error returned — best-effort).
-	srcOut := filepath.Join(mp, "upper", "build", "out")
-	if _, err := os.Stat(srcOut); err == nil {
+	if srcOut, ok := buildOutDir(mp); ok {
 		dstOut := filepath.Join(exportDir, "build", "out")
 		if err := os.MkdirAll(dstOut, 0o755); err != nil {
 			return fmt.Errorf("mkdir out: %w", err)
@@ -3521,6 +3707,55 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 		return copyTree(srcOut, dstOut, v.exportMax())
 	}
 	return nil
+}
+
+// maxBuildDoneBytes bounds the guest-written build-done.json manifest (exit
+// code, failure class, and a log tail).
+const maxBuildDoneBytes = 1 << 20
+
+// buildDoneRel is build-done.json's path on the mounted builder drive.
+const buildDoneRel = "upper/etc/faas/build-done.json"
+
+// readBuildDone reads the guest-written build manifest from the mounted
+// builder drive. Untrusted build code wrote the drive and vmmd reads it as
+// root, so the path resolves through os.Root and must name a bounded regular
+// file: a link to a host file, or to an endless device such as /dev/zero,
+// is never read.
+func readBuildDone(mountRoot string) ([]byte, bool) {
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(buildDoneRel)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildDoneBytes {
+		return nil, false
+	}
+	f, err := root.Open(buildDoneRel)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBuildDoneBytes+1))
+	if err != nil || len(data) > maxBuildDoneBytes {
+		return nil, false
+	}
+	return data, true
+}
+
+// buildOutDir returns the mounted drive's upper/build/out when every path
+// component is a real directory. A symlinked component would start the
+// export walk inside a host directory.
+func buildOutDir(mountRoot string) (string, bool) {
+	dir := mountRoot
+	for _, part := range []string{"upper", "build", "out"} {
+		dir = filepath.Join(dir, part)
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() {
+			return "", false
+		}
+	}
+	return dir, true
 }
 
 func handoffBuildExportOwnership(exportDir string) error {
@@ -3650,8 +3885,16 @@ const apiEnvPath = "upper/etc/faas/env.json"
 // platform builder, so a malformed value fails closed instead of silently
 // writing state to a path guest-init will never read.
 func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
-	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	info, err := os.Lstat(marker)
+	// The marker lives on the tenant-writable drive, so it resolves through
+	// os.Root like every write: a symlinked parent directory cannot point
+	// the read at a host file.
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return "", fmt.Errorf("open drive root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	marker := strings.TrimPrefix(api.FullRootfsMarkerPath, "/")
+	info, err := root.Lstat(marker)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return filepath.Join(mountRoot, optimizedPath), nil
@@ -3661,7 +3904,10 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("full-rootfs marker is not a regular file")
 	}
-	data, err := os.ReadFile(marker)
+	if info.Size() != int64(len(api.FullRootfsMarkerValue)) {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	data, err := root.ReadFile(marker)
 	if err != nil {
 		return "", fmt.Errorf("read full-rootfs marker: %w", err)
 	}
@@ -4180,12 +4426,13 @@ func copyTree(src, dst string, maxBytes int64) error {
 			}
 			return os.Chmod(target, info.Mode().Perm())
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			linkName, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(linkName, target)
+		if !d.Type().IsRegular() {
+			// Builder output is an OCI tarball plus BuildKit's local
+			// cache — directories and regular files only. Symlinks, device
+			// nodes, FIFOs and sockets the untrusted build created are
+			// dropped: recreating a link hands builderd a path into the
+			// host, and opening a device node reads it as root.
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {

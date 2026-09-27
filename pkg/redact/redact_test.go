@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestRedactor_Apply_Email covers the email pattern: positive,
@@ -371,13 +372,11 @@ func TestRedactor_ApplyHeaders(t *testing.T) {
 	if in["Authorization"] != "Bearer eyJabc.def.ghi" {
 		t.Fatalf("input mutated: %v", in)
 	}
-	// Output must have the redactions. ApplyHeaders redacts
-	// VALUES individually — for an Authorization header with
-	// value "Bearer <jwt>", the JWT regex catches the JWT and
-	// the Authorization pattern (which requires the literal
-	// "Authorization:" prefix) does not fire. This is the
-	// correct behaviour: the JWT-shaped token is redacted.
-	if out["Authorization"] != "Bearer [REDACTED:jwt]" {
+	// Output must have the redactions. ApplyHeaders matches each
+	// value with its header name in front, so the authorization
+	// rule redacts the whole credential by name — not just the
+	// JWT-shaped part of it.
+	if out["Authorization"] != "[REDACTED:authorization]" {
 		t.Fatalf("Authorization redaction missing: %q", out["Authorization"])
 	}
 	if out["X-Forwarded-For"] != "[REDACTED:ipv4]" {
@@ -386,10 +385,68 @@ func TestRedactor_ApplyHeaders(t *testing.T) {
 	if out["User-Agent"] != "curl/8.4.1" {
 		t.Fatalf("User-Agent should be untouched: %q", out["User-Agent"])
 	}
-	// Returned names: at least jwt (Authorization value is a
-	// Bearer JWT, caught by the jwt pattern) + ipv4.
-	if !contains(names, "jwt") || !contains(names, "ipv4") {
-		t.Fatalf("expected jwt + ipv4 in %v", names)
+	// Returned names: authorization (caught by header name) + ipv4.
+	if !contains(names, "authorization") || !contains(names, "ipv4") {
+		t.Fatalf("expected authorization + ipv4 in %v", names)
+	}
+}
+
+// TestRedactor_ApplyHeaders_CredentialHeadersByName — the gateway feeds
+// req.Header in as {name: value}, so a credential header must be redacted
+// by its name. Before the fix only JWT-shaped values were caught, and
+// opaque bearer tokens, session cookies and API keys were persisted to the
+// customer-facing error store verbatim.
+func TestRedactor_ApplyHeaders_CredentialHeadersByName(t *testing.T) {
+	t.Parallel()
+	r := New(256)
+	cases := []struct {
+		header, value, want, name string
+	}{
+		{"Authorization", "Bearer ghp_16C7e42F292c6912E7710c838347Ae178B4a", "[REDACTED:authorization]", "authorization"},
+		{"authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l", "[REDACTED:authorization]", "authorization"},
+		{"Proxy-Authorization", "Bearer opaque-token-value", "[REDACTED:authorization]", "authorization"},
+		{"Cookie", "session=9f8e7d6c5b4a39281706f5e4d3c2b1a0", "[REDACTED:cookie]", "cookie"},
+		{"X-Api-Key", "k_9f8e7d6c5b4a39281706", "[REDACTED:x-api-key]", "x-api-key"},
+		{"X-API-Token", "t_0123456789abcdef", "[REDACTED:x-api-key]", "x-api-key"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.header, func(t *testing.T) {
+			out, names := r.ApplyHeaders(map[string]string{tc.header: tc.value})
+			if out[tc.header] != tc.want {
+				t.Fatalf("%s = %q, want %q", tc.header, out[tc.header], tc.want)
+			}
+			if !contains(names, tc.name) {
+				t.Fatalf("names = %v, want %q", names, tc.name)
+			}
+		})
+	}
+	// Non-credential headers keep their value; the name is never
+	// prepended to the output.
+	out, names := r.ApplyHeaders(map[string]string{"User-Agent": "curl/8.4.1"})
+	if out["User-Agent"] != "curl/8.4.1" || names != nil {
+		t.Fatalf("User-Agent = %q names=%v, want untouched", out["User-Agent"], names)
+	}
+}
+
+// TestRedactor_Apply_TruncationKeepsUTF8 — the cap is a byte cap but the
+// output is written to a Postgres text column, which rejects invalid UTF-8
+// (SQLSTATE 22021). A multi-byte rune straddling the cap must be dropped
+// whole, not split.
+func TestRedactor_Apply_TruncationKeepsUTF8(t *testing.T) {
+	t.Parallel()
+	r := New(512)
+	for _, tail := range []string{"é", "€", "😀"} {
+		in := "/" + strings.Repeat("a", 510) + tail
+		got, names := r.Apply(in)
+		if !utf8.ValidString(got) {
+			t.Fatalf("tail %q: Apply returned invalid UTF-8: %q", tail, got[len(got)-8:])
+		}
+		if !strings.HasSuffix(got, "...") || !contains(names, "truncated") {
+			t.Fatalf("tail %q: got %q names=%v, want truncation marker", tail, got[len(got)-8:], names)
+		}
+		if len(got) > 512+len("...") {
+			t.Fatalf("tail %q: len %d exceeds cap", tail, len(got))
+		}
 	}
 }
 

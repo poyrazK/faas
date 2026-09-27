@@ -34,6 +34,24 @@ func TestDomainsVerify_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDomainsAdd_EnvironmentScope(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"domain":"staging.example.com","app_id":"app-1","environment":"staging","challenge_token":"challenge"}`, http.StatusAccepted)
+	if code := cmdDomains([]string{"add", "--domain", "staging.example.com", "--app", "shop-api", "--environment", "staging"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/domains" {
+		t.Fatalf("request = %s %s, want POST /v1/domains", f.sawMethod, f.sawPath)
+	}
+	var request api.CreateCustomDomainRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatalf("decode request: %v; raw=%s", err, f.sawBody)
+	}
+	if request.Domain != "staging.example.com" || request.AppID != "shop-api" || request.Environment != "staging" {
+		t.Fatalf("request body = %+v", request)
+	}
+}
+
 func TestDomainsVerify_MissingArgExitsOne(t *testing.T) {
 	resetJSONOut(t)
 	authedFakeAPI(t, "", http.StatusOK)

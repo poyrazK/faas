@@ -488,6 +488,10 @@ func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	panic("UpdateEgressAllowlist: not stubbed")
 }
 
+func (f *fakeVmmdClient) UpdateAppCPULimit(context.Context, *vmmdpb.UpdateAppCPULimitRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	panic("UpdateAppCPULimit: not stubbed")
+}
+
 // UpdateEgressCircuit (ADR-201 §3) — same posture as the sibling above: the
 // gateway hot path never pushes circuits, schedd's egress-circuit loop does,
 // so reaching this from a gateway test is a wiring bug worth failing loudly.
@@ -789,6 +793,7 @@ func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.
 			req := httptest.NewRequest(http.MethodPost, "/", nil)
 			req.Header.Set(api.InvocationSourceHeader, "webhook")
 			req.Header.Set("X-Faas-Other-Internal", "never-forward")
+			req.Header.Set(gateway.ServiceCallerAssertionHeader, "forged.jwt.value")
 			if tc.synthetic {
 				req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
 			}
@@ -809,6 +814,9 @@ func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.
 			}
 			if value := got.Get("X-Faas-Other-Internal"); value != "" {
 				t.Errorf("unrelated internal header leaked: %q", value)
+			}
+			if value := got.Get(gateway.ServiceCallerAssertionHeader); value != "" {
+				t.Errorf("untrusted service caller assertion leaked: %q", value)
 			}
 		})
 	}
