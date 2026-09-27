@@ -1357,6 +1357,89 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 	}
 }
 
+func TestUpdateAppRequestPolicyDoesNotCreateDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "request-policy-live")
+	before, err := e.store.ListDeploymentsForApp(context.Background(), dep.AppID, 100, 0)
+	if err != nil {
+		t.Fatalf("list deployments before update: %v", err)
+	}
+	maxConcurrency, requestTimeout := 2, 20
+	requestRPS, requestBurst := 25, 120
+	rec := e.do(t, http.MethodPatch, "/v1/apps/request-policy-live", api.UpdateAppRequest{
+		MaxConcurrency:        &maxConcurrency,
+		RequestTimeoutS:       &requestTimeout,
+		RequestRateLimitRPS:   &requestRPS,
+		RequestRateLimitBurst: &requestBurst,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode app response: %v", err)
+	}
+	if response.MaxConcurrency != maxConcurrency || response.RequestTimeoutS != requestTimeout {
+		t.Fatalf("updated request policy not reflected: max_concurrency=%d request_timeout_s=%d", response.MaxConcurrency, response.RequestTimeoutS)
+	}
+	if response.EffectiveLimits.AppRequestRateRPS != requestRPS || response.EffectiveLimits.AppRequestBurst != requestBurst {
+		t.Fatalf("updated app rate policy not reflected: effective=%d/%d, want %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst, requestRPS, requestBurst)
+	}
+	zero := 0
+	reset := e.do(t, http.MethodPatch, "/v1/apps/request-policy-live", api.UpdateAppRequest{
+		RequestRateLimitRPS:   &zero,
+		RequestRateLimitBurst: &zero,
+	}, nil)
+	if reset.Code != http.StatusOK {
+		t.Fatalf("reset PATCH status %d: %s", reset.Code, reset.Body)
+	}
+	if err := json.Unmarshal(reset.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode reset app response: %v", err)
+	}
+	planLimits := api.MustLimitsFor(api.PlanPro)
+	if response.EffectiveLimits.AppRequestRateRPS != planLimits.RateLimitRPS || response.EffectiveLimits.AppRequestBurst != planLimits.RateLimitBurst {
+		t.Fatalf("zero reset effective rate policy = %d/%d, want plan defaults %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst, planLimits.RateLimitRPS, planLimits.RateLimitBurst)
+	}
+	after, err := e.store.ListDeploymentsForApp(context.Background(), dep.AppID, 100, 0)
+	if err != nil {
+		t.Fatalf("list deployments after update: %v", err)
+	}
+	if len(after) != len(before) || len(after) != 1 || after[0].ID != dep.ID {
+		t.Fatalf("request-policy PATCH changed deployments: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestUpdateAppRequestRatePolicyValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		req  api.UpdateAppRequest
+	}{
+		{name: "negative rps", req: api.UpdateAppRequest{RequestRateLimitRPS: intPointerForRequestPolicy(-1)}},
+		{name: "rps above plan", req: api.UpdateAppRequest{RequestRateLimitRPS: intPointerForRequestPolicy(api.MustLimitsFor(api.PlanPro).RateLimitRPS + 1)}},
+		{name: "negative burst", req: api.UpdateAppRequest{RequestRateLimitBurst: intPointerForRequestPolicy(-1)}},
+		{name: "burst above plan", req: api.UpdateAppRequest{RequestRateLimitBurst: intPointerForRequestPolicy(api.MustLimitsFor(api.PlanPro).RateLimitBurst + 1)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			mustSeedApp(t, e, "request-rate-invalid")
+			rec := e.do(t, http.MethodPatch, "/v1/apps/request-rate-invalid", test.req, nil)
+			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+			get := e.do(t, http.MethodGet, "/v1/apps/request-rate-invalid", nil, nil)
+			var response api.AppResponse
+			if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode app response: %v", err)
+			}
+			limits := api.MustLimitsFor(api.PlanPro)
+			if response.EffectiveLimits.AppRequestRateRPS != limits.RateLimitRPS || response.EffectiveLimits.AppRequestBurst != limits.RateLimitBurst {
+				t.Fatalf("rejected update changed rate policy: %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst)
+			}
+		})
+	}
+}
+
+func intPointerForRequestPolicy(value int) *int { return &value }
+
 func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2554,6 +2637,54 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	if out.Domain != "x.example.com" || !strings.Contains(out.TXTRecord, "_faas-verify") {
 		t.Errorf("got %+v", out)
 	}
+}
+
+func TestCreateDomain_EnvironmentScope(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "domain-project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "domain-workload", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "staging.example.com", AppID: app.Slug, Environment: "staging",
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Domain != "staging.example.com" || response.AppID != app.ID || response.Environment != "staging" {
+		t.Fatalf("environment domain response = %+v", response)
+	}
+	stored, err := e.store.DomainByName(ctx, response.Domain)
+	if err != nil || stored.AppID != app.ID || stored.EnvironmentID == "" {
+		t.Fatalf("stored environment domain = %+v err=%v", stored, err)
+	}
+	if err := e.store.MarkDomainVerified(ctx, response.Domain); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/domains/staging.example.com/default", nil, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+
+	rec = e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "missing.example.com", AppID: app.Slug, Environment: "preview-404",
+	}, nil)
+	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestCreateDomain_PerIPChallengeRateLimit(t *testing.T) {

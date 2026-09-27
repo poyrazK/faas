@@ -335,6 +335,25 @@ func (c *Config) GetAppErrorsTarget(env func(string) string) string {
 	return "/run/faas/app_errors.sock"
 }
 
+// GetSpansWriterTarget resolves the gatewayd-internal → apid spans writer
+// endpoint. Split-box deployments share the private AppErrors listener;
+// single-box deployments keep a dedicated Unix socket.
+func (c *Config) GetSpansWriterTarget(env func(string) string) string {
+	if v := env("FAAS_APID_OTEL_SPANS_WRITER_SOCKET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_REQUEST_TELEMETRY_TARGET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_APP_ERRORS_TARGET"); v != "" {
+		return v
+	}
+	if c != nil && c.AppErrorsTarget != "" {
+		return c.AppErrorsTarget
+	}
+	return "/run/faas/otel_spans_writer.sock"
+}
+
 // GetGithubdSocket returns the githubd dial target with env-var
 // overlay (FAAS_GITHUBD_SOCKET wins over TOML). Empty falls through
 // to newGithubdClient's stub-client path (every method returns

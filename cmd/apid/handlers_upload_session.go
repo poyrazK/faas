@@ -600,6 +600,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	limits := api.MustLimitsFor(acct.Plan)
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -640,11 +641,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.validateAndPlanSidecars(rolloutReq, acct, api.MustLimitsFor(acct.Plan)); prob != nil {
+	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, api.MustLimitsFor(acct.Plan), acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -696,6 +697,18 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+	if workloadProblem != nil {
+		api.WriteProblem(w, workloadProblem)
+		return
+	}
+	if workloadsApplied {
+		rollout, prob = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
@@ -706,8 +719,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
-
-	limits := api.MustLimitsFor(acct.Plan)
 
 	// apidsource.Enqueue never deletes the staged SourcePath —
 	// builderd reads it. We leave the .part in place; the reaper
@@ -750,6 +761,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ReleaseCommand:         releaseCommand.command,
 		ReleaseCommandShell:    releaseCommand.shell,
 		Scope:                  rolloutReq.Scope,

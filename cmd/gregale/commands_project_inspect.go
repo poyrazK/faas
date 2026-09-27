@@ -33,12 +33,13 @@ type projectInspectionPromotion struct {
 }
 
 type projectInspectionWorkload struct {
-	Slug                string                     `json:"workload_slug"`
-	LiveDeploymentID    string                     `json:"live_deployment_id,omitempty"`
-	ReleaseDeploymentID string                     `json:"release_deployment_id,omitempty"`
-	DeploymentStatus    string                     `json:"deployment_status"`
-	URL                 string                     `json:"url,omitempty"`
-	Bindings            []projectInspectionBinding `json:"bindings"`
+	Slug                string                                 `json:"workload_slug"`
+	LiveDeploymentID    string                                 `json:"live_deployment_id,omitempty"`
+	ReleaseDeploymentID string                                 `json:"release_deployment_id,omitempty"`
+	DeploymentStatus    string                                 `json:"deployment_status"`
+	URL                 string                                 `json:"url,omitempty"`
+	Bindings            []projectInspectionBinding             `json:"bindings"`
+	Domains             []api.ProjectEnvironmentDomainResponse `json:"domains"`
 }
 
 type projectInspectionBinding struct {
@@ -142,7 +143,7 @@ func inspectProjectWorkload(workload api.ProjectEnvironmentStateWorkloadResponse
 	out := projectInspectionWorkload{
 		Slug: workload.WorkloadSlug, LiveDeploymentID: workload.Release.DeploymentID,
 		ReleaseDeploymentID: selected, DeploymentStatus: workload.Release.Status, URL: workload.Release.URL,
-		Bindings: []projectInspectionBinding{},
+		Bindings: []projectInspectionBinding{}, Domains: workload.Domains,
 	}
 	for _, binding := range workload.Bindings {
 		out.Bindings = append(out.Bindings, projectInspectionBinding{Kind: binding.Kind, ID: binding.BindingID, Generation: binding.CredentialGeneration})
@@ -168,6 +169,13 @@ func renderProjectEnvironmentInspection(in projectEnvironmentInspection) {
 		}
 		for _, binding := range workload.Bindings {
 			_, _ = fmt.Fprintf(osStdout, "  binding: %s %s (generation %d)\n", binding.Kind, binding.ID, binding.Generation)
+		}
+		for _, domain := range workload.Domains {
+			status := "pending"
+			if domain.Verified {
+				status = "verified"
+			}
+			_, _ = fmt.Fprintf(osStdout, "  domain: %s (%s)\n", domain.Domain, status)
 		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nBinding coverage: managed PostgreSQL and object storage metadata only.")

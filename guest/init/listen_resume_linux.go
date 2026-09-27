@@ -14,7 +14,9 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -65,6 +67,10 @@ const (
 	VsockExtensionMsgType uint32 = 3
 	// VsockExtensionMaxBodyBytes mirrors extension.MaxEventBytes.
 	VsockExtensionMaxBodyBytes = 16 * 1024
+	// VsockAppCPULimitMsgType carries a live app quota update over the same
+	// host-initiated control listener used for resume and extension events.
+	VsockAppCPULimitMsgType      = runtimepolicyproto.AppCPULimitMessageType
+	VsockAppCPULimitMaxBodyBytes = runtimepolicyproto.AppCPULimitMaxBodyBytes
 )
 
 type extensionHookRequest struct {
@@ -133,7 +139,7 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 	}, nil)
 }
 
-func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) error {
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -147,10 +153,10 @@ func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtensio
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	if onExtension == nil {
+	if onExtension == nil && len(onCPULimit) == 0 {
 		go acceptResumeConns(fd, log, onResume)
 	} else {
-		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension)
+		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension, onCPULimit...)
 	}
 	return nil
 }
@@ -180,7 +186,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 	}
 }
 
-func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest)) {
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -192,7 +198,7 @@ func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, i
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConnWithExtension(f, log, onResume, onExtension)
+		go handleResumeConnWithExtension(f, log, onResume, onExtension, onCPULimit...)
 	}
 }
 
@@ -214,7 +220,7 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	}, nil)
 }
 
-func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) {
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -226,6 +232,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	msgType := binary.BigEndian.Uint32(hdr[:4])
 	if msgType == VsockExtensionMsgType {
 		handleExtensionConn(f, log, hdr[4:], onExtension)
+		return
+	}
+	if msgType == VsockAppCPULimitMsgType {
+		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
 	if msgType != VsockResumeMsgType {
@@ -314,6 +324,44 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	if onResume != nil {
 		onResume()
 	}
+}
+
+func firstCPULimitHandler(handlers []func(int) error) func(int) error {
+	if len(handlers) == 0 {
+		return nil
+	}
+	return handlers[0]
+}
+
+func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, apply func(int) error) {
+	bodyLen := binary.BigEndian.Uint32(lengthHeader)
+	if bodyLen == 0 || bodyLen > uint32(VsockAppCPULimitMaxBodyBytes) {
+		log.Warn("vsock app CPU policy body length out of range", "len", bodyLen, "max", VsockAppCPULimitMaxBodyBytes)
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(f, body); err != nil {
+		log.Warn("vsock read app CPU policy body", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckBodyRead})
+		return
+	}
+	var req runtimepolicyproto.AppCPULimitUpdate
+	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAppCPUMillicores(req.CPUMillicores) {
+		log.Warn("vsock app CPU policy body rejected", "err", err, "cpu_millicores", req.CPUMillicores)
+		_, _ = f.Write([]byte{VsockResumeAckJSON})
+		return
+	}
+	if apply == nil {
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
+	if err := apply(req.CPUMillicores); err != nil {
+		log.Warn("apply guest app CPU policy", "cpu_millicores", req.CPUMillicores, "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
+	_, _ = f.Write([]byte{VsockResumeAckOK})
 }
 
 func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest)) {

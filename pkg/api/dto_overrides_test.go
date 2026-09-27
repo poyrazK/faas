@@ -11,7 +11,7 @@ import (
 // decodeForTest wraps json.Decoder with DisallowUnknownFields, mirroring
 // what cmd/apid/server.go::decodeJSON does for the live handler. The
 // frozen-fields invariant (ADR-053 §Decision 1) is enforced by this
-// flag — every override shape beyond the six declared fields 400s.
+// flag — every override shape beyond the declared fields 400s.
 func decodeForTest(body []byte, dst any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
@@ -59,6 +59,53 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 			overrides: nil,
 		},
 		{
+			name: "main-depends-on-accepts-valid-entries",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "proxy", Condition: WorkloadDependencyHealthy},
+				{Name: "telemetry", Condition: WorkloadDependencyStarted},
+			}},
+		},
+		{
+			name: "main-depends-on-rejects-self-dependency",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "main"},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "not a companion name",
+		},
+		{
+			name: "main-depends-on-rejects-invalid-name",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "Proxy"},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "not a companion name",
+		},
+		{
+			name: "main-depends-on-rejects-duplicate-targets",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "proxy"}, {Name: "proxy", Condition: WorkloadDependencyHealthy},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "more than once",
+		},
+		{
+			name: "main-depends-on-rejects-invalid-condition",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "proxy", Condition: "ready"},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "condition",
+		},
+		{
+			name: "main-depends-on-rejects-too-many-targets",
+			overrides: &CreateDeploymentOverrides{MainDependsOn: []WorkloadDependency{
+				{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}, {Name: "e"}, {Name: "f"}, {Name: "g"},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "max is",
+		},
+		{
 			name: "happy-path-all-fields",
 			overrides: &CreateDeploymentOverrides{
 				Entrypoint: []string{"/usr/bin/node", "/srv/app.js"},
@@ -72,7 +119,9 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 					// shape as env keys / sealed-secret keys, no drift.
 					"DB_URL": "secret:DB_URL",
 				},
-				Port: 9090,
+				Port:           9090,
+				MainDependsOn:  []WorkloadDependency{{Name: "proxy", Condition: WorkloadDependencyHealthy}},
+				ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz"},
 				Healthcheck: &DeploymentHealthcheck{
 					Path:      "/healthz",
 					IntervalS: 5,
@@ -349,6 +398,60 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			wantInBody: "healthcheck.grpc.service must be at most 256 characters",
 		},
+		// Continuous primary-app readiness validation.
+		{
+			name: "readiness-probe-defaults-http",
+			overrides: &CreateDeploymentOverrides{
+				ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz"},
+			},
+		},
+		{
+			name: "readiness-probe-grpc",
+			overrides: &CreateDeploymentOverrides{
+				ReadinessProbe: &DeploymentReadinessProbe{
+					GRPC:    &DeploymentGRPCHealthcheck{Service: "catalog.v1.Catalog"},
+					PeriodS: 10, TimeoutS: 3, FailureThreshold: 2,
+				},
+			},
+		},
+		{
+			name:       "readiness-probe-requires-exactly-one-action",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe must set exactly one of path or grpc",
+		},
+		{
+			name: "readiness-probe-rejects-both-actions",
+			overrides: &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{
+				Path: "/readyz", GRPC: &DeploymentGRPCHealthcheck{},
+			}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe must set exactly one of path or grpc",
+		},
+		{
+			name:       "readiness-probe-path-must-start-with-slash",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "readyz"}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: `readiness_probe.path must start with "/"`,
+		},
+		{
+			name:       "readiness-probe-period-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", PeriodS: 61}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.period_s must be 0 (default) or in [1, 60]",
+		},
+		{
+			name:       "readiness-probe-timeout-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", TimeoutS: 6}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.timeout_s must be 0 (default) or in [1, 5]",
+		},
+		{
+			name:       "readiness-probe-failure-threshold-bounded",
+			overrides:  &CreateDeploymentOverrides{ReadinessProbe: &DeploymentReadinessProbe{Path: "/readyz", FailureThreshold: 11}},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "readiness_probe.failure_threshold must be 0 (default) or in [1, 10]",
+		},
 		// Issue #554 / ADR-078: liveness_probe validation.
 		{
 			name: "liveness-probe-path-must-start-with-slash",
@@ -602,6 +705,7 @@ func TestCreateDeploymentRequest_AcceptsOverrides(t *testing.T) {
 				"env":{"LOG_LEVEL":"debug"},
 				"env_secrets":{"DB_URL":"secret:DB_URL"},
 				"port":9090,
+				"main_depends_on":[{"name":"proxy","condition":"healthy"}],
 				"healthcheck":{"path":"/healthz","interval_s":5,"timeout_s":2,"retries":3}
 			}
 		}`)
@@ -624,13 +728,16 @@ func TestCreateDeploymentRequest_AcceptsOverrides(t *testing.T) {
 		if req.Overrides.Healthcheck == nil || req.Overrides.Healthcheck.Path != "/healthz" {
 			t.Errorf("Overrides.Healthcheck = %+v, want path=/healthz", req.Overrides.Healthcheck)
 		}
+		if got := req.Overrides.MainDependsOn; len(got) != 1 || got[0].Name != "proxy" || got[0].Condition != WorkloadDependencyHealthy {
+			t.Errorf("Overrides.MainDependsOn = %+v, want proxy/healthy", got)
+		}
 	})
 	t.Run("unknown-field-is-rejected", func(t *testing.T) {
-		// Issue #460 / ADR-053: the override field list is frozen.
+		// Issue #460 / ADR-053 + ADR-282: the override field list is frozen.
 		// DisallowUnknownFields on the handler's decoder means an
 		// unknown override field 400s the request — this is the
 		// "frozen surface" enforcement on the wire side, complementing
-		// the ADR's "no new fields" decision. The handler uses
+		// the ADR's "no unreviewed fields" decision. The handler uses
 		// decodeJSON which wires DisallowUnknownFields; this test pins
 		// that contract for the override shape.
 		body := []byte(`{

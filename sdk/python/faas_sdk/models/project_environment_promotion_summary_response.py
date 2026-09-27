@@ -36,6 +36,8 @@ class ProjectEnvironmentPromotionSummaryResponse:
     status: ProjectEnvironmentPromotionSummaryResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    sync_config: bool | Unset = UNSET
+    """Whether the operation copied non-secret source config to its target."""
     error: str | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     rollback_status: ProjectEnvironmentPromotionSummaryResponseRollbackStatus | Unset = UNSET
@@ -61,6 +63,8 @@ class ProjectEnvironmentPromotionSummaryResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        sync_config = self.sync_config
 
         error = self.error
 
@@ -98,6 +102,8 @@ class ProjectEnvironmentPromotionSummaryResponse:
                 "updated_at": updated_at,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
         if error is not UNSET:
             field_dict["error"] = error
         if completed_at is not UNSET:
@@ -133,6 +139,8 @@ class ProjectEnvironmentPromotionSummaryResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        sync_config = d.pop("sync_config", UNSET)
 
         error = d.pop("error", UNSET)
 
@@ -179,6 +187,7 @@ class ProjectEnvironmentPromotionSummaryResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            sync_config=sync_config,
             error=error,
             completed_at=completed_at,
             rollback_status=rollback_status,

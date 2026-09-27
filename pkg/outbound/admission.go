@@ -42,7 +42,12 @@ const (
 // SHA-256 digest for application-auth integrations; managed integrations use
 // workload identity and may leave it zero. Raw bearer tokens are never logged.
 type Integration struct {
-	ID                        string
+	ID string
+	// AccountID and Name are loaded from the trusted integration row. They
+	// let outboundd attribute its platform-owned dependency span without
+	// trusting caller headers or exposing credentials.
+	AccountID                 string
+	Name                      string
 	Origin                    *url.URL
 	TokenHash                 [32]byte
 	AppIDs                    map[string]struct{}

@@ -230,3 +230,30 @@ func TestEvaluator_B3Metrics(t *testing.T) {
 		})
 	}
 }
+
+// TestEvaluator_CertExpiry_NoCertificateDoesNotFire — MinCertExpiryForApp
+// answers -1 when no certificate has been observed for the app. The
+// evaluator compared that sentinel as a remaining lifetime, and -1 is below
+// the preset's `lt 1209600` threshold, so "Domain certificate is expiring"
+// fired for every app without a tenant-surface certificate.
+func TestEvaluator_CertExpiry_NoCertificateDoesNotFire(t *testing.T) {
+	store := state.NewMemStore()
+	_, ident, _ := seedRule(t, store, state.AlertMetricCertExpirySeconds, state.AlertLt, 1209600)
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+		Store:      store,
+		Audit:      audit.New(store, discardLog(), nil, "meterd"),
+		Identity:   func() *age.X25519Identity { return ident },
+		Dispatcher: dispatch,
+		Now:        func() time.Time { return now },
+		Log:        discardLog(),
+	})
+	stats, err := ev.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.Fired != 0 || dispatch.callCount() != 0 {
+		t.Fatalf("stats = %+v, dispatches = %d; want no fire for an app with no certificate", stats, dispatch.callCount())
+	}
+}
