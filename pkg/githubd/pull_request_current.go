@@ -54,13 +54,13 @@ func (c *httpCurrentPullRequests) CurrentPullRequest(ctx context.Context, instal
 	}
 	token, err := c.tokens.Token(ctx, installationID)
 	if err != nil {
-		return PullRequestSnapshot{}, fmt.Errorf("%w: installation token: %v", ErrPullRequestUnavailable, err)
+		return PullRequestSnapshot{}, fmt.Errorf("%w: installation token: %w", ErrPullRequestUnavailable, err)
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", GitHubAPI,
 		url.PathEscape(owner), url.PathEscape(repo), number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return PullRequestSnapshot{}, fmt.Errorf("%w: request: %v", ErrPullRequestUnavailable, err)
+		return PullRequestSnapshot{}, fmt.Errorf("%w: request: %w", ErrPullRequestUnavailable, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -68,7 +68,7 @@ func (c *httpCurrentPullRequests) CurrentPullRequest(ctx context.Context, instal
 	req.Header.Set("User-Agent", "faas-githubd/1.0")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return PullRequestSnapshot{}, fmt.Errorf("%w: request: %v", ErrPullRequestUnavailable, err)
+		return PullRequestSnapshot{}, fmt.Errorf("%w: request: %w", ErrPullRequestUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -85,7 +85,7 @@ func (c *httpCurrentPullRequests) CurrentPullRequest(ctx context.Context, instal
 		} `json:"head"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&payload); err != nil {
-		return PullRequestSnapshot{}, fmt.Errorf("%w: decode response: %v", ErrPullRequestUnavailable, err)
+		return PullRequestSnapshot{}, fmt.Errorf("%w: decode response: %w", ErrPullRequestUnavailable, err)
 	}
 	if payload.Number != number || (payload.State != "open" && payload.State != "closed") ||
 		(payload.State == "open" && (!isCanonicalCommitSHA(payload.Head.SHA) || payload.Head.Repo.FullName == "")) {
