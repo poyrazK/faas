@@ -51,10 +51,13 @@ WHERE id IN ('<caller_app_uuid>', '<target_app_uuid>');
 Then inspect the caller's recent deploy and service binding, the target's
 deployment and compute-node health, and the trace for a failing call. The
 service-proxy span includes `gregale.service.name`,
-`gregale.service.target_app_id`, and `http.response.status_code`; match it to the
-target UUID and service name from the alert to see whether time was spent in
-routing, wake, forwarding, or a retry. Check whether the target returned a 5xx
-or whether native gRPC returned a non-zero terminal status.
+`gregale.service.caller_app_id`, `gregale.service.target_app_id`, and
+`http.response.status_code`. Match both app IDs from the alert to identify the
+exact edge. In the fleet dashboard, compare the edge's error ratio and call
+volume, then check its p95 latency. The dependency-latency heatmap can link a
+sampled call to its trace through the `trace_id` exemplar; unsampled calls still
+contribute to the edge counters and latency histogram. Check whether the target
+returned a 5xx or whether native gRPC returned a non-zero terminal status.
 
 ## Recover
 

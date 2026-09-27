@@ -204,8 +204,10 @@ the runtime's OpenTelemetry instrumentation.
 
 Guest-to-guest HTTP calls through the node-local service proxy are represented
 as `managed_binding/service_proxy` client spans named `service.<name>`. Gregale
-records the bounded service name, target app ID, method, response status, and
-elapsed time; retries remain inside the same dependency span, with the existing
+records the bounded service name, authorized caller app ID
+(`gregale.service.caller_app_id`), target app ID
+(`gregale.service.target_app_id`), method, response status, and elapsed time;
+retries remain inside the same dependency span, with the existing
 guest-transport span beneath it. Paths, queries, headers, bodies, and caller
 credentials are not recorded. The proxy injects the dependency span's W3C
 context into the target guest request, so neither application needs an

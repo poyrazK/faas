@@ -13,6 +13,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -274,9 +276,11 @@ func TestServiceProxyDoesNotRetryPOST(t *testing.T) {
 }
 
 func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
+	const callerAppID = "11111111-1111-4111-8111-111111111111"
+	const targetAppID = "22222222-2222-4222-8222-222222222222"
 	previousProvider := otel.GetTracerProvider()
 	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(recorder))
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() {
 		_ = provider.Shutdown(context.Background())
@@ -284,17 +288,19 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	})
 
 	providerBackend := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
-		AppID:     "app-orders",
+		AppID:     targetAppID,
 		Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
 	}}
+	metrics := NewMetrics()
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: providerBackend,
 		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
-			return ServiceTarget{AppID: "app-orders"}, true, nil
+			return ServiceTarget{AppID: targetAppID}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
-			return ServiceCaller{AccountID: "d6e281f3-f5b2-436c-b4ad-8529a956609c"}, nil
+			return ServiceCaller{AppID: callerAppID, AccountID: "d6e281f3-f5b2-436c-b4ad-8529a956609c"}, nil
 		},
+		Metrics: metrics,
 		Forward: func(_ Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if span := oteltrace.SpanFromContext(r.Context()); !span.SpanContext().IsValid() {
@@ -308,7 +314,7 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	rootCtx, root := provider.Tracer("test").Start(context.Background(), "request")
 	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
 	propagation.TraceContext{}.Inject(rootCtx, propagation.HeaderCarrier(req.Header))
-	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	req.Header.Set(ServiceProxyCallerAppHeader, callerAppID)
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
 	root.End()
@@ -328,7 +334,8 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 		"gregale.dependency.kind":       "service_proxy",
 		retainedSpanAccountIDAttribute:  "d6e281f3-f5b2-436c-b4ad-8529a956609c",
 		"gregale.service.name":          "orders",
-		"gregale.service.target_app_id": "app-orders",
+		"gregale.service.caller_app_id": callerAppID,
+		"gregale.service.target_app_id": targetAppID,
 		"http.request.method":           http.MethodGet,
 	}
 	for key, want := range wantStrings {
@@ -338,6 +345,103 @@ func TestServiceProxyAddsManagedBindingSpan(t *testing.T) {
 	}
 	if got := spanAttribute(span.Attributes(), "http.response.status_code"); got != attribute.IntValue(http.StatusNoContent) {
 		t.Errorf("http.response.status_code = %v, want %d", got, http.StatusNoContent)
+	}
+	metric := &dto.Metric{}
+	observer := metrics.serviceDependencyDuration.WithLabelValues(callerAppID, targetAppID, "success")
+	if err := observer.(prometheus.Metric).Write(metric); err != nil {
+		t.Fatalf("dependency duration metric write: %v", err)
+	}
+	if got, want := histogramExemplarTraceID(t, metric), root.SpanContext().TraceID().String(); got != want {
+		t.Errorf("dependency duration exemplar trace_id = %q, want %q", got, want)
+	}
+}
+
+func TestServiceProxyDoesNotAttributeCallerBeforeAuthorization(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
+			AppID:     "app-orders",
+			Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
+		}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{}, ErrServiceProxyDenied
+		},
+	})
+	rootCtx, root := provider.Tracer("test").Start(context.Background(), "request")
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	propagation.TraceContext{}.Inject(rootCtx, propagation.HeaderCarrier(req.Header))
+	req.Header.Set(ServiceProxyCallerAppHeader, "untrusted-caller")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	root.End()
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	span := findEndedSpan(t, recorder.Ended(), "service.orders")
+	for _, attr := range span.Attributes() {
+		if attr.Key == "gregale.service.caller_app_id" {
+			t.Fatalf("unauthorized caller app ID was recorded in span: %q", attr.Value.AsString())
+		}
+	}
+}
+
+func TestServiceProxyMarksFailedGRPCDependencySpanAsError(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
+			AppID:     "app-orders",
+			Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
+		}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders", AppProtocol: api.AppProtocolGRPC}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-client", AccountID: "account"}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/grpc")
+				w.Header().Set("Trailer", "grpc-status")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("payload"))
+				w.Header().Set("grpc-status", "14")
+			})
+		},
+	})
+	rootCtx, root := provider.Tracer("test").Start(context.Background(), "request")
+	req := httptest.NewRequestWithContext(rootCtx, http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	propagation.TraceContext{}.Inject(rootCtx, propagation.HeaderCarrier(req.Header))
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	root.End()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	span := findEndedSpan(t, recorder.Ended(), "service.orders")
+	if span.Status().Code != codes.Error || span.Status().Description != "service dependency failed" {
+		t.Fatalf("span status = %+v, want dependency failure", span.Status())
 	}
 }
 

@@ -6,6 +6,7 @@ to these histograms:
 - `gateway_request_duration_seconds`
 - `gateway_wake_latency_seconds`
 - `gateway_wake_latency_seconds_by_node`
+- `gateway_service_dependency_duration_seconds`
 
 The trace ID is exemplar metadata, not a Prometheus label. It therefore does
 not create one time series per request. Unsampled requests and tracing-disabled
@@ -48,7 +49,8 @@ span was not sampled.
    Prometheus process includes `--enable-feature=exemplar-storage`.
 2. Open the request or wake heatmap for a range containing traffic.
 3. Hover an exemplar marker and verify its label is `trace_id` with 32
-   lowercase hexadecimal characters.
+   lowercase hexadecimal characters. The service-dependency heatmap retains
+   caller and target UUID labels alongside the sampled trace ID.
 4. Follow the configured destination, or use the observer endpoint fallback.
 5. If exemplars are absent but counts move, check the daemon's
    `*_otel_trace_exporter_enabled` / `*_otel_trace_exporter_up` metrics and

@@ -16,6 +16,26 @@ tests:
         values: '0+1x80'
       - series: 'gateway_service_dependency_edge_calls_total{caller_app="caller-1",target_app="target-1",outcome="success"}'
         values: '0+3x80'
+      - series: 'gateway_service_dependency_duration_seconds_bucket{caller_app="caller-1",target_app="target-1",outcome="success",le="0.1"}'
+        values: '0+19x80'
+      - series: 'gateway_service_dependency_duration_seconds_bucket{caller_app="caller-1",target_app="target-1",outcome="success",le="+Inf"}'
+        values: '0+20x80'
+    promql_expr_test:
+      - expr: 'topk(10, (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome="error"}[10m])) / clamp_min(sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])),1)) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])) >= 20) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome="error"}[10m])) >= 5))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{caller_app="caller-1", target_app="target-1"}'
+            value: 0.25
+      - expr: 'topk(10, sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{caller_app="caller-1", target_app="target-1"}'
+            value: 80
+      - expr: 'topk(10, histogram_quantile(0.95, sum by (le,caller_app,target_app) (rate(gateway_service_dependency_duration_seconds_bucket[10m]))))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{caller_app="caller-1", target_app="target-1"}'
+            value: 0.1
     alert_rule_test:
       - eval_time: 20m
         alertname: FaasServiceDependencyErrorsHigh
