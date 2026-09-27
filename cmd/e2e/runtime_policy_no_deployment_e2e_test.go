@@ -110,8 +110,10 @@ func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
 		t.Fatalf("delete runtime edge rule: status=%d body=%s", status, body)
 	}
 	assertRuntimePolicyDeploymentIDsUnchanged(t, f, deploymentIDs, "edge-rule delete")
-	_, resumedBody, resumedStatus := waitForGatewayResponse(t, f, "/runtime-policy-maintenance",
-		"normal-path:stable\n", 10*time.Second)
+	// Once the maintenance rule is gone, the request again needs the fixture's
+	// account API key even though app-level authn is disabled.
+	resumedBody, resumedStatus := waitForRuntimePolicyGatewayResponse(t, f,
+		"/runtime-policy-maintenance", "normal-path:stable\n", 10*time.Second)
 	if resumedStatus != http.StatusOK || string(resumedBody) != "normal-path:stable\n" {
 		t.Fatalf("request after deleting maintenance rule: status=%d body=%q", resumedStatus, resumedBody)
 	}
@@ -173,4 +175,29 @@ func assertRuntimePolicyDeploymentIDsUnchanged(t *testing.T, f *normalPathFixtur
 			t.Fatalf("%s changed deployment set: got %v, want %v", change, got, want)
 		}
 	}
+}
+
+func waitForRuntimePolicyGatewayResponse(
+	t *testing.T,
+	f *normalPathFixture,
+	requestPath string,
+	want string,
+	timeout time.Duration,
+) ([]byte, int) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastBody []byte
+	var lastStatus int
+	for time.Now().Before(deadline) {
+		_, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, requestPath, nil,
+			map[string]string{"Authorization": "Bearer " + f.key})
+		lastBody, lastStatus = body, status
+		if status == http.StatusOK && string(body) == want {
+			return body, status
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("GET %s%s did not return %q within %s; last status=%d body=%q",
+		f.host, requestPath, want, timeout, lastStatus, lastBody)
+	return nil, lastStatus
 }
