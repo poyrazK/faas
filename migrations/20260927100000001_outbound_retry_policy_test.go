@@ -14,6 +14,9 @@ import (
 func TestOutboundRetryPolicyMigrationDefaultsAndBounds(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
 	accountID, integrationID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, email, plan) VALUES ($1, $2, 'pro')`, accountID, "outbound-retries-"+accountID.String()+"@example.com"); err != nil {
 		t.Fatalf("insert account: %v", err)
