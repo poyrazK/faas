@@ -2666,11 +2666,18 @@ type schedFloorPlanResolver struct {
 	store state.Store
 }
 
-// ResolvePlan implements floor.PlanResolver.
+// ResolvePlan implements floor.PlanResolver. An account that may not run
+// workloads (suspended, deleted_pending) resolves to Free, which carries
+// no floor entitlement: the engine refuses those wakes anyway, and the
+// trigger otherwise retried them forever, logging "floor: admit error"
+// and counting a reconcile error for every suspended app with a floor.
 func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID string) (api.Plan, bool) {
 	acct, err := s.store.AccountByID(ctx, accountID)
 	if err != nil {
 		return api.PlanFree, false
+	}
+	if !acct.Active() {
+		return api.PlanFree, true
 	}
 	return acct.Plan, true
 }
