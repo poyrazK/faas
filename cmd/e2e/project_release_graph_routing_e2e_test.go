@@ -36,7 +36,7 @@ func createReleaseGraphApp(t *testing.T, f *normalPathFixture, accountID, projec
 	app, err := f.store.CreateApp(f.ctx, state.App{
 		AccountID: accountID, ProjectID: projectID, Slug: slug,
 		Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256,
-		MaxConcurrency: 1, WorkloadName: workload,
+		IdleTimeoutS: 3600, MaxConcurrency: 1, WorkloadName: workload,
 		Manifest: state.AppManifest{RevisionPinTTLSeconds: api.RevisionPinMaxTTLSeconds},
 	})
 	if err != nil {
