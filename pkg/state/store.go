@@ -1606,14 +1606,10 @@ type Store interface {
 	// rows affected. Idempotent (a repeat call with the same currentSid
 	// returns 0 once siblings are gone).
 	//
-	// exceptID MUST be a real sid — the method does NOT special-case
-	// the empty string. A caller that passes exceptID="" will revoke
-	// every active session for accountID, including the caller's own
-	// (because SQL `id <> ''` is true for every uuid). The handler
-	// always passes the validated sid read out of the request context
-	// (sessionFrom(r) at session_middleware.go); a future caller that
-	// doesn't have the sid should pass a placeholder and let the
-	// revocation proceed, NOT pass "" with intent-to-skip.
+	// exceptID MUST be a valid uuid — sessions.id is a uuid column, so
+	// "" is rejected by Postgres (invalid input syntax for type uuid)
+	// even though MemStore accepts it. To revoke every session, pass
+	// uuid.Nil (no real session has that id).
 	//
 	// TouchSessionLastSeen stamps last_seen_at = now(). Best-effort fire-
 	// and-forget on the apid cookie branch (5-minute debounce) — failures

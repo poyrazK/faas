@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -170,5 +171,64 @@ func TestEventsStream_RejectsRevokedAndPendingSessions(t *testing.T) {
 	}
 	if rec := dashboardGet(h, "/v1/events", cookie); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked /v1/events = %d, want 401", rec.Code)
+	}
+}
+
+// TestPasswordReset_RevokesEverySession — a reset is the recovery path for
+// a compromised account, but it left every existing session alive, so an
+// attacker signed in with the old password stayed signed in.
+func TestPasswordReset_RevokesEverySession(t *testing.T) {
+	h, cookie, store, mgr := newAuthedDashboardServerFull(t)
+	env, err := mgr.Verify(cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := make([]byte, 32)
+	for i := range raw {
+		raw[i] = byte(i + 1)
+	}
+	if err := store.IssueLoginToken(t.Context(), api.HashToken(raw), env.AccountID, time.Now().Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"token": {base64.RawURLEncoding.EncodeToString(raw)}, "password": {chosenPassword}}
+	req := httptest.NewRequest(http.MethodPost, "/auth/reset", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("reset = %d %s", rec.Code, rec.Body)
+	}
+	if got := dashboardGet(h, "/dashboard/account", cookie); got.Code != http.StatusFound || got.Header().Get("Location") != loginPath {
+		t.Fatalf("pre-reset session after reset = %d Location=%q, want 302 %s", got.Code, got.Header().Get("Location"), loginPath)
+	}
+	fresh := responseCookie(rec, sessionCookie)
+	if fresh == nil {
+		t.Fatal("reset did not sign the customer in")
+	}
+	if got := dashboardGet(h, "/dashboard/account", fresh); got.Code != http.StatusOK {
+		t.Fatalf("post-reset session = %d, want 200", got.Code)
+	}
+}
+
+// TestSetPassword_ChangeSignsOutOtherSessions — changing a password kept
+// every other session signed in.
+func TestSetPassword_ChangeSignsOutOtherSessions(t *testing.T) {
+	h, current, store, mgr := newAuthedDashboardServerFull(t)
+	id := accountID(t, store, "alice@example.com")
+	seedPassword(t, store, id)
+	other := &http.Cookie{Name: sessionCookie, Value: issueDashboardTestCookie(t, store, mgr, id)}
+
+	rec := postSetPasswordForm(t, h, current, mgr, id, url.Values{
+		"password":         {chosenPassword},
+		"current_password": {seededPassword},
+	})
+	if rec.Code != http.StatusFound {
+		t.Fatalf("set-password = %d %s", rec.Code, rec.Body)
+	}
+	if got := dashboardGet(h, "/dashboard/account", other); got.Code != http.StatusFound || got.Header().Get("Location") != loginPath {
+		t.Fatalf("other session after password change = %d Location=%q, want 302 %s", got.Code, got.Header().Get("Location"), loginPath)
+	}
+	if got := dashboardGet(h, "/dashboard/account", current); got.Code != http.StatusOK {
+		t.Fatalf("the session that changed the password = %d, want 200", got.Code)
 	}
 }

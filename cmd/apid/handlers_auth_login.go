@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -409,6 +410,11 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	// A reset is the recovery path for a compromised account: every
+	// session signed in with the old password must end here, or an
+	// attacker's session outlives the reset that was meant to lock
+	// them out.
+	s.revokeSessionsAfterPasswordChange(r.Context(), accountID, "")
 	acct, err := s.store.AccountByID(r.Context(), accountID)
 	if err != nil {
 		s.log.Error("reset.account_lookup", "err", err)
@@ -488,11 +494,38 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	// Changing the password signs out every other session; this one,
+	// which just proved the change, stays.
+	if replacing {
+		keep := ""
+		if current, ok := authmw.SessionFromContext(r); ok {
+			keep = current.ID
+		}
+		s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+	}
 	s.audit.Emit(r.Context(), "account.password_set", &acct.ID, map[string]any{
 		"proof":    proof,
 		"replaced": replacing,
 	})
 	http.Redirect(w, r, "/dashboard/account/", http.StatusFound)
+}
+
+// revokeSessionsAfterPasswordChange revokes the account's sessions except
+// keepSID. sessions.id is a uuid, so "keep none" is the nil uuid: an empty
+// string is not a valid uuid in Postgres. Best-effort: the password
+// already changed, and a failure is logged rather than undoing it.
+func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountID, keepSID string) {
+	if keepSID == "" {
+		keepSID = uuid.Nil.String()
+	}
+	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
+	if err != nil {
+		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)
+		return
+	}
+	if n > 0 {
+		s.audit.Emit(ctx, "auth.sessions_revoked_on_password_change", &accountID, map[string]any{"count": n})
+	}
 }
 
 // setPasswordStepUpTTL is the same 5-minute window ADR-077 uses on
