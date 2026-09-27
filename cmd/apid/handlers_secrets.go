@@ -307,7 +307,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
-		s.log.Error("secret set: invalidate snapshots", "app", logsanitize.Field(app.Slug), "err", err)
+		s.log.Error("secret set: invalidate snapshots", "app", stripLogCRLF(logsanitize.Field(app.Slug)), "err", err)
 		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
 		})
@@ -318,7 +318,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// used defensively even though we never log req.Value directly — a
 	// future refactor that adds a "request echo" log line won't leak.
 	s.log.Info("secret set",
-		"app", logsanitize.Field(app.Slug),
+		"app", stripLogCRLF(logsanitize.Field(app.Slug)),
 		"key", logsanitize.Field(key),
 		"scope", scope,
 		"account", acct.ID,
@@ -526,7 +526,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
-		s.log.Error("secret delete: invalidate snapshots", "app", logsanitize.Field(app.Slug), "err", err)
+		s.log.Error("secret delete: invalidate snapshots", "app", stripLogCRLF(logsanitize.Field(app.Slug)), "err", err)
 		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "delete",
 		})
@@ -543,7 +543,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 }
 
 func (s *server) recordSecretDeleteEvents(ctx context.Context, acct state.Account, app state.App, scope, key string, invalidated int, revocationID string) {
-	s.log.Info("secret deleted", "app", logsanitize.Field(app.Slug), "key", logsanitize.Field(key), "scope", scope, "account", acct.ID)
+	s.log.Info("secret deleted", "app", stripLogCRLF(logsanitize.Field(app.Slug)), "key", logsanitize.Field(key), "scope", scope, "account", acct.ID)
 	// IAM-4 (ADR-035): record the secret delete. data.scope is the
 	// env-scope the row was deleted from (ADR-092 PR-B).
 	s.audit.Emit(ctx, "secret.deleted", &acct.ID, map[string]any{
