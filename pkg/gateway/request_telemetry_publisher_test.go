@@ -4,7 +4,7 @@
 //
 // The PR-A pass-through behavior is gone: every row drained from the
 // recorder is now collapsed by
-// (app_id, deployment_id, route, method, status, dimensions,
+// (app_id, deployment_id, route, method, status, dimensions, cold_boot,
 // minute_bucket, latency_bucket) into one row with Count = the number
 // of originals that folded into the bucket. These tests pin the shape:
 //
@@ -12,7 +12,7 @@
 //   - 2 distinct routes → 2 collapsed rows with Count=100 each
 //   - rows straddling a minute boundary DO NOT fold together
 //   - latency buckets preserve distinct portions of the distribution
-//   - ColdBoot OR: any cold row in the bucket → ColdBoot=true
+//   - warm and cold-boot rows never share a bucket, preserving cold samples
 //   - TraceID: first non-empty wins
 //   - ReceivedAt is truncated to the minute bucket boundary
 //   - Count is clamped to >= 1 (defends against recorder-side bugs
@@ -140,6 +140,22 @@ func TestCollapseRequestTelemetrySeparatesTenantLinkTransition(t *testing.T) {
 	}
 }
 
+// adr: 239
+func TestCollapseRequestTelemetrySeparatesTenantSurfaces(t *testing.T) {
+	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()
+	minute := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	first := makeCollapseRow(accountID, appID, deploymentID, "GET /", "GET", 200, 20, false, "", minute)
+	first.PlatformTenantID = uuid.NewString()
+	first.PlatformTenantSurfaceID = uuid.NewString()
+	second := first
+	second.EventID = uuid.New()
+	second.PlatformTenantSurfaceID = uuid.NewString()
+	got := collapseRequestTelemetry([]RequestTelemetryRow{first, second})
+	if len(got) != 2 || got[0].Count != 1 || got[1].Count != 1 {
+		t.Fatalf("surface rows collapsed across host binding: %+v", got)
+	}
+}
+
 func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
@@ -188,6 +204,50 @@ func TestCollapseRequestTelemetry_PreservesGuestOutcomes(t *testing.T) {
 	}
 	if collapsed[0].GuestOutcome != "ok" || collapsed[1].GuestOutcome != "http_error" {
 		t.Fatalf("guest outcomes collapsed incorrectly: %+v", collapsed)
+	}
+}
+
+func TestCollapseRequestTelemetry_PreservesMeasuredGuestResourceBuckets(t *testing.T) {
+	appID, deployID, accountID := uuid.New(), uuid.New(), uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := []RequestTelemetryRow{
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, GuestCPUTimeMS: 3, GuestPeakRSSMB: 64, GuestResourceUsageAvailable: true, ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, GuestCPUTimeMS: 101, GuestPeakRSSMB: 65, GuestResourceUsageAvailable: true, ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, ReceivedAt: base, Count: 1},
+	}
+	collapsed := collapseRequestTelemetry(rows)
+	if len(collapsed) != 3 {
+		t.Fatalf("collapsed rows = %d, want distinct unavailable and measured CPU buckets: %+v", len(collapsed), collapsed)
+	}
+	measured := map[int]int{}
+	unavailable := false
+	for _, row := range collapsed {
+		if !row.GuestResourceUsageAvailable {
+			unavailable = true
+			continue
+		}
+		measured[row.GuestCPUTimeMS] = row.GuestPeakRSSMB
+	}
+	if !unavailable || measured[3] != 64 || measured[105] != 80 {
+		t.Fatalf("resource buckets = measured:%v unavailable:%t", measured, unavailable)
+	}
+}
+
+func TestRequestTelemetryMemoryBucketUpperBound(t *testing.T) {
+	cases := []struct{ input, want int }{{0, 0}, {1, 4}, {64, 64}, {65, 80}, {256, 256}, {257, 320}, {1024, 1024}, {1025, 1280}}
+	for _, tc := range cases {
+		if got := requestTelemetryMemoryBucketUpperBound(tc.input); got != tc.want {
+			t.Errorf("requestTelemetryMemoryBucketUpperBound(%d) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestRequestTelemetryCPUTimeBucketUpperBound(t *testing.T) {
+	cases := []struct{ input, want int }{{0, 0}, {1, 1}, {100, 100}, {101, 105}, {500, 500}, {501, 525}, {2_000, 2_000}, {2_001, 2_100}}
+	for _, tc := range cases {
+		if got := requestTelemetryCPUTimeBucketUpperBound(tc.input); got != tc.want {
+			t.Errorf("requestTelemetryCPUTimeBucketUpperBound(%d) = %d, want %d", tc.input, got, tc.want)
+		}
 	}
 }
 
@@ -291,7 +351,7 @@ func TestCollapseRequestTelemetry_MinuteBoundarySplitsBuckets(t *testing.T) {
 	}
 }
 
-func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
+func TestCollapseRequestTelemetrySeparatesColdBootState(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
 	deployID := uuid.New()
@@ -307,11 +367,14 @@ func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
 		"GET /v1/foo", "GET", 200, 12, true, "", base))
 
 	collapsed := collapseRequestTelemetry(rows)
-	if got, want := len(collapsed), 1; got != want {
+	if got, want := len(collapsed), 2; got != want {
 		t.Fatalf("len(collapsed) = %d, want %d", got, want)
 	}
-	if !collapsed[0].ColdBoot {
-		t.Errorf("ColdBoot = false, want true (OR semantics)")
+	if collapsed[0].ColdBoot || collapsed[0].Count != 4 {
+		t.Errorf("warm bucket = cold:%v count:%d, want false/4", collapsed[0].ColdBoot, collapsed[0].Count)
+	}
+	if !collapsed[1].ColdBoot || collapsed[1].Count != 1 {
+		t.Errorf("cold bucket = cold:%v count:%d, want true/1", collapsed[1].ColdBoot, collapsed[1].Count)
 	}
 }
 

@@ -13,6 +13,7 @@ func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
 	proto := (AppSpec{Sidecars: []fcvm.WorkloadSpec{{
 		Name:          "metrics",
 		Type:          "sidecar",
+		SealedSecrets: []fcvm.SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: []byte("age-ciphertext")}},
 		ScratchMB:     192,
 		DiskIOProfile: string(api.SidecarDiskIOProfileHigh),
 		StartupProbe:  &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3, StartPeriodS: 10},
@@ -24,6 +25,9 @@ func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
 	sc := proto.GetSidecars()[0]
 	if sc.GetScratchMb() != 192 {
 		t.Fatalf("scratch_mb = %d, want 192", sc.GetScratchMb())
+	}
+	if len(sc.GetSealedSecrets()) != 1 || sc.GetSealedSecrets()[0].GetKey() != "DATABASE_URL" || string(sc.GetSealedSecrets()[0].GetCiphertext()) != "age-ciphertext" {
+		t.Fatalf("sealed_secrets = %+v, want the explicit app-secret ciphertext", sc.GetSealedSecrets())
 	}
 	if sc.GetDiskIoProfile() != string(api.SidecarDiskIOProfileHigh) {
 		t.Fatalf("disk_io_profile = %q, want high", sc.GetDiskIoProfile())

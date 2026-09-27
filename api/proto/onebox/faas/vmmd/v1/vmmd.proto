@@ -718,6 +718,10 @@ message SidecarSpec {
   SidecarProbeSpec startup_probe = 19;
   SidecarProbeSpec liveness_probe = 20;
   SidecarProbeSpec readiness_probe = 21;
+  // sealed_secrets are the selected app-secret ciphertext rows granted to
+  // this sidecar by its env_secrets allowlist. vmmd unseals them only into
+  // this instance's sidecar env file; they are never inherited from main.
+  repeated SealedSecret sealed_secrets = 22;
 }
 
 // SidecarProbeSpec carries one container-local startup, liveness, or readiness probe.

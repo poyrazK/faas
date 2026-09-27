@@ -18,6 +18,8 @@ Public surface:
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
 * `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
   resumable streams for disposable agent executions.
+* `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
+  request's project release to managed service calls.
 """
 
 from ._rfc7807 import (
@@ -44,6 +46,15 @@ from .idempotency import (
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .release_context import (
+    GREGALE_RELEASE_HEADER,
+    GREGALE_REVISION_HEADER,
+    AsyncGregaleReleaseTransport,
+    GregaleReleaseMiddleware,
+    GregaleReleaseTransport,
+    current_gregale_release,
+    with_gregale_release,
+)
 
 __version__ = "0.1.0"
 
@@ -59,6 +70,13 @@ __all__ = (
     "with_idempotency_key",
     "mint_idempotency_key",
     "current_idempotency_key",
+    "GREGALE_RELEASE_HEADER",
+    "GREGALE_REVISION_HEADER",
+    "GregaleReleaseMiddleware",
+    "GregaleReleaseTransport",
+    "AsyncGregaleReleaseTransport",
+    "current_gregale_release",
+    "with_gregale_release",
     "Problem",
     "FaasError",
     "FaasProblemError",

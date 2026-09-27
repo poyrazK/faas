@@ -52,6 +52,34 @@ func (m *MemStore) JobCreateIfUnderQuota(_ context.Context, accountID, name, kin
 	return m.jobCreateLocked(accountID, name, kind, imageRef, command, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides)
 }
 
+// JobCreateScheduledIfUnderQuota combines account quota admission, job
+// creation, and recurring schedule persistence under the MemStore mutex.
+func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, limit int) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, existing := range m.jobs {
+		if existing.AccountID == job.AccountID && existing.Status != "deleted" {
+			count++
+		}
+	}
+	if count >= limit {
+		return Job{}, &JobQuotaError{Scope: JobQuotaScopePerAccount, Limit: limit, Observed: count}
+	}
+	created, err := m.jobCreateLocked(job.AccountID, job.Name, job.Kind, job.ImageRef, job.Command,
+		job.RAMMB, job.TaskTimeoutS, job.MaxParallelism, job.RetryMax, job.EnvOverrides)
+	if err != nil {
+		return Job{}, err
+	}
+	created.CronSchedule = job.CronSchedule
+	created.CronTimezone = job.CronTimezone
+	if created.CronTimezone == "" {
+		created.CronTimezone = "UTC"
+	}
+	m.jobs[created.ID] = created
+	return created, nil
+}
+
 func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (Job, error) {
 	// Soft-tombstone invisibility — match pgstore's WHERE status<>'deleted'.
 	for _, j := range m.jobs {
@@ -75,6 +103,7 @@ func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, comma
 		RetryMax:                   retryMax,
 		EnvOverrides:               envOverrides,
 		Status:                     "active",
+		CronTimezone:               "UTC",
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 		Command:                    command,
@@ -133,6 +162,27 @@ func (m *MemStore) JobListByAccount(_ context.Context, accountID string, limit, 
 	return matched, nil
 }
 
+// JobListScheduled returns a stable snapshot of active recurring jobs. The
+// scheduler still claims each candidate transactionally through
+// JobRunCreateScheduled before it can produce side effects.
+func (m *MemStore) JobListScheduled(_ context.Context) ([]Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var matched []Job
+	for _, job := range m.jobs {
+		if job.Status == "active" && job.Kind == "recurring" && job.CronSchedule != "" {
+			matched = append(matched, job)
+		}
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID < matched[j].ID
+		}
+		return matched[i].CreatedAt.Before(matched[j].CreatedAt)
+	})
+	return matched, nil
+}
+
 // JobUpdate mutates the optional fields of a job row. nil pointers
 // leave the column untouched; updated_at is stamped to now() on every
 // successful update so the audit trail reflects the touch.
@@ -141,6 +191,18 @@ func (m *MemStore) JobListByAccount(_ context.Context, accountID string, limit, 
 func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, nil, nil)
+}
+
+// JobUpdateWithSchedule applies ordinary job edits and schedule changes in a
+// single critical section, mirroring the PostgreSQL row update transaction.
+func (m *MemStore) JobUpdateWithSchedule(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, schedule, timezone)
+}
+
+func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
 	j, ok := m.jobs[id]
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
@@ -187,7 +249,23 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 	if status != nil {
 		j.Status = *status
 	}
-	j.UpdatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	if schedule != nil {
+		j.CronSchedule = *schedule
+		if *schedule == "" {
+			j.Kind = "batch"
+		} else {
+			j.Kind = "recurring"
+		}
+		j.LastScheduledAt = &now
+	}
+	if timezone != nil {
+		j.CronTimezone = *timezone
+		if schedule == nil && j.CronSchedule != "" {
+			j.LastScheduledAt = &now
+		}
+	}
+	j.UpdatedAt = now
 	m.jobs[id] = j
 	return j, nil
 }
@@ -608,6 +686,53 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	m.jobTasks[run.ID] = taskMap
 
 	return run, fanned, nil
+}
+
+// JobRunCreateScheduled atomically advances the occurrence cursor and creates
+// a one-task scheduled run. The expected schedule/cursor fence protects
+// against duplicate fires and stale candidates after a customer update.
+func (m *MemStore) JobRunCreateScheduled(_ context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.jobs[jobID]
+	if !ok || job.Status != "active" || job.Kind != "recurring" ||
+		job.CronSchedule != schedule || job.CronTimezone != timezone ||
+		!sameTimePointer(job.LastScheduledAt, expectedLastScheduledAt) {
+		return JobRun{}, false, nil
+	}
+	if expectedLastScheduledAt != nil && !firedAt.After(*expectedLastScheduledAt) {
+		return JobRun{}, false, nil
+	}
+	firedAt = firedAt.UTC()
+	job.LastScheduledAt = &firedAt
+	m.jobs[jobID] = job
+
+	envOverrides := append(json.RawMessage(nil), job.EnvOverrides...)
+	if len(envOverrides) == 0 {
+		envOverrides = json.RawMessage("{}")
+	}
+	run := JobRun{
+		ID:              newUUIDString(),
+		JobID:           jobID,
+		AccountID:       job.AccountID,
+		TriggerKind:     "scheduled",
+		EnvOverrides:    envOverrides,
+		Tasks:           1,
+		Parallelism:     job.MaxParallelism,
+		AggregateStatus: "queued",
+		CreatedAt:       firedAt,
+	}
+	m.jobRuns[run.ID] = run
+	task := JobTask{RunID: run.ID, TaskIndex: 0, Status: "queued", Attempt: 1, CreatedAt: firedAt}
+	m.jobTasks[run.ID] = map[int]JobTask{0: task}
+	return run, true, nil
+}
+
+func sameTimePointer(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }
 
 // JobRunGetByID returns ErrNotFound when the row is missing.

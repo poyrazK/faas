@@ -707,6 +707,9 @@ type WorkloadSpec struct {
 	// SealedEnv carries per-sidecar ciphertext from the deployment record. It is
 	// unsealed by Manager.Wake and never written into the shared sidecar image.
 	SealedEnv []SealedEnvEntry
+	// SealedSecrets carries the explicitly referenced app-secret ciphertext
+	// rows. It is unsealed into this sidecar's instance-scoped env file only.
+	SealedSecrets []SealedEnvEntry
 	// preparedEnvJSON is the per-instance plaintext env file produced by
 	// Manager.Wake. It is intentionally internal so plaintext cannot cross the
 	// scheduler/vmmd wire or be accidentally serialized as part of WorkloadSpec.

@@ -82,6 +82,9 @@ type RequestTelemetryRow struct {
 	// PlatformTenantID is the verified account-level customer at request
 	// time. The publisher must not merge rows across a link transition.
 	PlatformTenantID string
+	// Set only for anonymous traffic on an authoritative tenant surface.
+	PlatformTenantSurfaceID              string
+	PlatformTenantJWTAuthorizationRuleID string
 	// UsageOutboxed prevents the debugger's collapsed row from writing a
 	// second financial increment when its original requests are in the outbox.
 	UsageOutboxed bool
@@ -92,10 +95,13 @@ type RequestTelemetryRow struct {
 	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
 	// Guest execution evidence is emitted by the platform-owned runtime
 	// runner. Values are closed/bounded and contain no customer payload.
-	GuestDurationMS int
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
+	GuestDurationMS             int
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	GuestCPUTimeMS              int
+	GuestPeakRSSMB              int
+	GuestResourceUsageAvailable bool
 	// Deployment provenance copied from the target identity. Empty values
 	// preserve compatibility with legacy targets that predate metadata.
 	NodeID              string

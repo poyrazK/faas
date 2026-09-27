@@ -1132,6 +1132,11 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			"manifest_yaml is empty"))
 		return
 	}
+	if m.AsyncRoutes != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+			"Invalid manifest", "async_routes are applied by source deployments, not the trigger batch-create endpoint"))
+		return
+	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")

@@ -24,8 +24,8 @@ func (m *MemStore) CreateAccountReleaseWebhookIfUnderQuota(_ context.Context, in
 		if hook.AccountID != in.AccountID {
 			continue
 		}
-		if hook.Scope == AppWebhookScopeAccount {
-			if hook.TargetURL == in.TargetURL {
+		if hook.Scope == AppWebhookScopeAccount || hook.Scope == AppWebhookScopePlatformTenant {
+			if hook.Scope == AppWebhookScopeAccount && hook.TargetURL == in.TargetURL {
 				return AppWebhook{}, ErrConflict
 			}
 			count++

@@ -41,6 +41,9 @@ const (
 	// The node-local resolver answers <slug>.svc.gregale with the tenant
 	// bridge address; the HTTP proxy then authorizes the slug before forwarding.
 	ServiceDiscoveryDomain = "svc.gregale"
+	// ServiceAliasDomain is the binding-scoped short name. Unlike the legacy
+	// suffix, it is available only to callers that declare that service.
+	ServiceAliasDomain = "internal"
 
 	// ServiceCallerEnvHeader tells the target guest which environment the
 	// calling workload belongs to. Only set when it is not production, so a
@@ -74,6 +77,8 @@ var (
 	// ErrServiceProxyBindingDenied is returned after the same-account boundary
 	// succeeds when a strict caller has not declared the target service.
 	ErrServiceProxyBindingDenied = errors.New("service proxy binding denied")
+	// ErrServiceProxyCallerDenied is a target-side allowlist rejection.
+	ErrServiceProxyCallerDenied = errors.New("service proxy caller denied")
 	// ErrServiceProxyPreviewDenied is returned when a production target does
 	// not accept calls from preview apps.
 	ErrServiceProxyPreviewDenied = errors.New("service proxy preview call denied")
@@ -125,11 +130,26 @@ type ServiceCaller struct {
 	// boundary, so these cost nothing extra.
 	AccountID  string
 	InstanceID string
+	// DeploymentID is populated only from node-local instance identity, never
+	// from a guest-supplied header. It lets internal service-proxy outcomes be
+	// attributed to the exact calling revision for rollout health checks.
+	DeploymentID string
+	// RequireHTTPS is set when the caller selected the HTTPS service-binding
+	// transport. Plain-HTTP calls are denied before endpoint lookup or wake.
+	RequireHTTPS bool
+	// CallScope is the target-owned method/path grant for this logical caller.
+	// Nil preserves the existing app-level authorization contract.
+	CallScope *api.ServiceCallScope
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
 // declared-binding policy. A nil authorizer is a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
+
+// ServiceAliasAllowed checks whether a caller declared the target named by
+// a short .internal Host. It is checked even when the caller's legacy
+// outbound policy is account, so direct Host requests cannot bypass DNS.
+type ServiceAliasAllowed func(ctx context.Context, callerAppID, service string) (bool, error)
 
 // ServiceProxyCallerResolver binds the caller header to the network identity
 // observed by the node-local listener. When it is configured, the resolved
@@ -137,6 +157,12 @@ type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID s
 // compatibility assertion. This lets guest requests omit a spoofable
 // platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
+
+// ServiceProxyCallerIdentityResolver additionally binds the source IP to the
+// actual deployment. Release graph membership may never trust a guest header.
+type ServiceProxyCallerIdentityResolver func(ctx context.Context, remoteAddr string) (appID, deploymentID string, err error)
+
+type ServiceProxyReleaseResolver func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (releaseID, deploymentID string, err error)
 
 // ServiceCallerMintInput is what the proxy knows about a call it has already
 // authorized, handed to the minter so pkg/gateway does not import the token
@@ -190,11 +216,14 @@ type ServiceProxyDeploymentValidator func(ctx context.Context, appID, deployment
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
-	Provider      ServiceEndpointProvider
-	Resolve       ServiceProxyResolver
-	Authorize     ServiceProxyAuthorizer
-	ResolveCaller ServiceProxyCallerResolver
-	Forward       func(Target) http.Handler
+	Provider              ServiceEndpointProvider
+	Resolve               ServiceProxyResolver
+	Authorize             ServiceProxyAuthorizer
+	AllowAlias            ServiceAliasAllowed
+	ResolveCaller         ServiceProxyCallerResolver
+	ResolveCallerIdentity ServiceProxyCallerIdentityResolver
+	ResolveRelease        ServiceProxyReleaseResolver
+	Forward               func(Target) http.Handler
 	// RawForward is the optional verbatim-bytes bridge used for Upgrade
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
@@ -243,21 +272,24 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion      ServiceCallerMinter
-	localNodeID        string
-	provider           ServiceEndpointProvider
-	resolve            ServiceProxyResolver
-	authorize          ServiceProxyAuthorizer
-	resolveCaller      ServiceProxyCallerResolver
-	forward            func(Target) http.Handler
-	rawForward         func(Target) http.Handler
-	wake               ServiceProxyWaker
-	wakeDeployment     ServiceProxyDeploymentWaker
-	validateDeployment ServiceProxyDeploymentValidator
-	metrics            *Metrics
-	endpointTTL        time.Duration
-	now                func() time.Time
-	log                *slog.Logger
+	mintAssertion         ServiceCallerMinter
+	localNodeID           string
+	provider              ServiceEndpointProvider
+	resolve               ServiceProxyResolver
+	authorize             ServiceProxyAuthorizer
+	allowAlias            ServiceAliasAllowed
+	resolveCaller         ServiceProxyCallerResolver
+	resolveCallerIdentity ServiceProxyCallerIdentityResolver
+	resolveRelease        ServiceProxyReleaseResolver
+	forward               func(Target) http.Handler
+	rawForward            func(Target) http.Handler
+	wake                  ServiceProxyWaker
+	wakeDeployment        ServiceProxyDeploymentWaker
+	validateDeployment    ServiceProxyDeploymentValidator
+	metrics               *Metrics
+	endpointTTL           time.Duration
+	now                   func() time.Time
+	log                   *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -334,36 +366,40 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion:      cfg.MintCallerAssertion,
-		localNodeID:        strings.TrimSpace(cfg.LocalNodeID),
-		provider:           cfg.Provider,
-		resolve:            cfg.Resolve,
-		authorize:          cfg.Authorize,
-		resolveCaller:      cfg.ResolveCaller,
-		forward:            cfg.Forward,
-		rawForward:         cfg.RawForward,
-		wake:               cfg.Wake,
-		wakeDeployment:     cfg.WakeDeployment,
-		validateDeployment: cfg.ValidateDeployment,
-		metrics:            cfg.Metrics,
-		endpointTTL:        ttl,
-		now:                now,
-		log:                log,
-		breaker:            breaker,
-		retryPolicy:        retryPolicy,
-		retryBudget:        retryBudget,
-		snapshots:          make(map[string]serviceProxySnapshot),
-		next:               make(map[string]uint64),
+		mintAssertion:         cfg.MintCallerAssertion,
+		localNodeID:           strings.TrimSpace(cfg.LocalNodeID),
+		provider:              cfg.Provider,
+		resolve:               cfg.Resolve,
+		authorize:             cfg.Authorize,
+		allowAlias:            cfg.AllowAlias,
+		resolveCaller:         cfg.ResolveCaller,
+		resolveCallerIdentity: cfg.ResolveCallerIdentity,
+		resolveRelease:        cfg.ResolveRelease,
+		forward:               cfg.Forward,
+		rawForward:            cfg.RawForward,
+		wake:                  cfg.Wake,
+		wakeDeployment:        cfg.WakeDeployment,
+		validateDeployment:    cfg.ValidateDeployment,
+		metrics:               cfg.Metrics,
+		endpointTTL:           ttl,
+		now:                   now,
+		log:                   log,
+		breaker:               breaker,
+		retryPolicy:           retryPolicy,
+		retryBudget:           retryBudget,
+		snapshots:             make(map[string]serviceProxySnapshot),
+		next:                  make(map[string]uint64),
 	}
 }
 
-// ServeHTTP accepts /v1/internal/services/{service}[/{path...}] and the
-// guest-facing <service>.svc.gregale Host form. The service segment is
-// resolved to an app; the remaining path is forwarded unchanged.
+// ServeHTTP accepts /v1/internal/services/{service}[/{path...}], the
+// guest-facing <service>.svc.gregale Host form, and a bound
+// <service>.internal alias. The service segment is resolved to an app; the
+// remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	service, targetPath, ok := parseServiceProxyRequest(r)
+	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
-		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
+		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>], <name>.svc.gregale, or a bound <name>.internal")
 		return
 	}
 	// The guest-facing service-proxy listener is a standalone http.Server, not
@@ -381,6 +417,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
+	var dependencyHealthCaller ServiceCaller
+	var dependencyHealthTarget ServiceTarget
+	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
 	if upgrade {
 		// A hijacked response needs the original writer. The ordinary trace
@@ -388,25 +427,50 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// impersonate net.Hijacker.
 		dispatchWriter = w
 	}
+	probe := isServiceBindingProbeRequest(r, targetPath, alias)
+	if probe {
+		dependencySpan.SetAttributes(attribute.Bool("gregale.service.probe", true))
+	}
+	setProbeStage := func(stage string) {
+		if probe {
+			dispatchWriter.Header().Set(api.ServiceBindingProbeResponseHeader, api.ServiceBindingProbeVersion)
+			dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, stage)
+		}
+	}
+	setProbeStage("identity")
 	defer func() {
+		status := traceWriter.status
+		if status == 0 {
+			// net/http implicitly commits 200 when a handler returns without
+			// writing a response.
+			status = http.StatusOK
+		}
 		if !upgrade {
-			status := traceWriter.status
-			if status == 0 {
-				// net/http implicitly commits 200 when a handler returns without
-				// writing a response.
-				status = http.StatusOK
-			}
 			dependencySpan.SetAttributes(attribute.Int("http.response.status_code", status))
 			if status >= http.StatusBadRequest {
 				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
+			}
+			if dependencyCallEligible && dependencyHealthCaller.DeploymentID != "" {
+				p.metrics.ObserveServiceDependencyCall(
+					dependencyHealthCaller.AppID,
+					dependencyHealthCaller.DeploymentID,
+					serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header()),
+				)
 			}
 		}
 		dependencySpan.End()
 	}()
 	r = r.WithContext(dependencyCtx)
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
-	if p.resolveCaller != nil {
-		resolved, err := p.resolveCaller(dependencyCtx, r.RemoteAddr)
+	callerDeploymentID := ""
+	if p.resolveCallerIdentity != nil || p.resolveCaller != nil {
+		var resolved string
+		var err error
+		if p.resolveCallerIdentity != nil {
+			resolved, callerDeploymentID, err = p.resolveCallerIdentity(dependencyCtx, r.RemoteAddr)
+		} else {
+			resolved, err = p.resolveCaller(dependencyCtx, r.RemoteAddr)
+		}
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
@@ -429,6 +493,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	setProbeStage("binding")
+	if alias {
+		if p.allowAlias == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
+			return
+		}
+		allowed, err := p.allowAlias(dependencyCtx, caller, service)
+		if err != nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
+			return
+		}
+		if !allowed {
+			p.metrics.IncServiceCall(ServiceCallBindingDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
+			return
+		}
+	}
+	setProbeStage("discovery")
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
@@ -439,6 +521,8 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	dependencyHealthTarget = target
+	setProbeStage("authorization")
 	if p.authorize == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
@@ -461,6 +545,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
 			return
 		}
+		if errors.Is(err, ErrServiceProxyCallerDenied) {
+			p.metrics.IncServiceCall(ServiceCallCallerDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "target does not allow this service caller")
+			return
+		}
 		if errors.Is(err, ErrServiceProxyPreviewDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "production service does not accept calls from preview apps")
@@ -474,18 +563,95 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
 	}
+	if callerInfo.AppID == caller && callerDeploymentID != "" {
+		// The resolver binds this ID to the live source instance. Copy it only
+		// after the tenant authorizer confirms the caller app.
+		callerInfo.DeploymentID = callerDeploymentID
+	}
+	dependencyHealthCaller = callerInfo
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
 	}
+	if !probe && callerInfo.CallScope != nil && !callerInfo.CallScope.Allows(r.Method, targetPath) {
+		p.metrics.IncServiceCall(ServiceCallScopeDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "target service does not allow this caller method and path")
+		return
+	}
+	if callerInfo.RequireHTTPS && r.TLS == nil {
+		p.metrics.IncServiceCall(ServiceCallTransportDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "this caller requires HTTPS for service bindings")
+		return
+	}
+	setProbeStage("routing")
+	if probe {
+		if p.provider == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
+		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		if len(endpoints) == 0 {
+			p.metrics.IncServiceCall(ServiceCallNoReplica)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
+			return
+		}
+		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
+		dispatchWriter.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if p.provider == nil || p.forward == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
+	releaseID, releasePresent, releaseValid := serviceReleaseFromRequest(r)
+	if releasePresent && !releaseValid {
+		serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "X-Gregale-Release must contain one release ID")
+		return
+	}
+	releaseDeploymentID := ""
+	if releasePresent && (p.resolveRelease == nil || callerDeploymentID == "") {
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "release pin requires verified caller deployment identity")
+		return
+	}
+	if p.resolveRelease != nil && p.resolveCallerIdentity != nil {
+		requested := ""
+		if releasePresent {
+			requested = releaseID
+		}
+		var releaseErr error
+		releaseID, releaseDeploymentID, releaseErr = p.resolveRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
+		if releaseErr != nil {
+			status := http.StatusServiceUnavailable
+			switch {
+			case errors.Is(releaseErr, ErrReleaseGone):
+				status = http.StatusGone
+			case errors.Is(releaseErr, ErrReleaseConflict):
+				status = http.StatusConflict
+			}
+			serviceProxyProblem(dispatchWriter, status, "project release cannot route this service call")
+			return
+		}
+		if releaseID != "" {
+			r = r.WithContext(context.WithValue(dependencyCtx, serviceReleaseContextKey{}, releaseID))
+			dispatchWriter.Header().Set(api.ReleaseHeader, releaseID)
+		}
+	}
 	overrideID, overridePresent, overrideValid := serviceDeploymentOverrideFromRequest(r)
-	if overridePresent {
+	if overridePresent && releaseDeploymentID != "" {
+		serviceProxyProblem(dispatchWriter, http.StatusConflict, "exact deployment override conflicts with the project release")
+		return
+	}
+	if releaseDeploymentID != "" {
+		overrideID, overridePresent, overrideValid = releaseDeploymentID, true, true
+	}
+	if overridePresent && releaseDeploymentID == "" {
 		if !overrideValid {
 			p.metrics.IncServiceCall(ServiceCallOverrideRejected)
 			serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "Gregale-Target-Deployment must contain one deployment ID")
@@ -517,11 +683,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
 		}
 	}
+	// From this point, the request has passed identity, target, and binding
+	// checks and is an actual managed dependency attempt. Count route/wake
+	// failures as well as final upstream responses, but exclude malformed or
+	// unauthorized requests from release health.
+	dependencyCallEligible = true
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
 	}
 	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+func isServiceBindingProbeRequest(r *http.Request, targetPath string, alias bool) bool {
+	if r == nil || !alias || r.Method != http.MethodHead || targetPath != api.ServiceBindingProbePath {
+		return false
+	}
+	values := r.Header.Values(api.ServiceBindingProbeRequestHeader)
+	return len(values) == 1 && values[0] == api.ServiceBindingProbeVersion
 }
 
 // serviceDeploymentOverrideFromRequest rejects ambiguous headers before the
@@ -543,6 +722,26 @@ func serviceDeploymentOverrideFromRequest(r *http.Request) (id string, present, 
 		return "", true, false
 	}
 	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return "", true, false
+	}
+	return parsed.String(), true, true
+}
+
+type serviceReleaseContextKey struct{}
+
+func serviceReleaseFromRequest(r *http.Request) (id string, present, valid bool) {
+	if r == nil {
+		return "", false, true
+	}
+	values, present := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+	if !present {
+		return "", false, true
+	}
+	if len(values) != 1 || len(values[0]) != 36 {
+		return "", true, false
+	}
+	parsed, err := uuid.Parse(values[0])
 	if err != nil {
 		return "", true, false
 	}
@@ -631,25 +830,40 @@ func (p *ServiceProxy) countForward(woken bool) {
 }
 
 // parseServiceProxyRequest accepts the original explicit path form and the
-// guest-facing DNS/Host form. The latter lets a workload use a normal URL,
-// for example http://orders.svc.gregale:10080/health, without exposing node
-// addresses or requiring a platform-owned caller header.
-func parseServiceProxyRequest(r *http.Request) (service, targetPath string, ok bool) {
+// guest-facing DNS/Host forms. They let a workload use a normal URL without
+// exposing node addresses or requiring a platform-owned caller header.
+func parseServiceProxyRequest(r *http.Request) (service, targetPath string, alias, ok bool) {
+	aliasService, aliasHost := parseServiceAliasHost(r.Host)
 	if service, targetPath, ok = parseServiceProxyPath(r.URL.Path); ok {
-		return service, targetPath, true
+		if aliasHost && aliasService != service {
+			return "", "", false, false
+		}
+		return service, targetPath, aliasHost, true
 	}
-	service, ok = parseServiceProxyHost(r.Host)
-	if !ok {
-		return "", "", false
+	if aliasHost {
+		service = aliasService
+	} else {
+		service, ok = parseServiceProxyHost(r.Host)
+		if !ok {
+			return "", "", false, false
+		}
 	}
 	targetPath = r.URL.Path
 	if targetPath == "" {
 		targetPath = "/"
 	}
-	return service, targetPath, true
+	return service, targetPath, aliasHost, true
 }
 
 func parseServiceProxyHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceDiscoveryDomain)
+}
+
+func parseServiceAliasHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceAliasDomain)
+}
+
+func parseServiceHostWithDomain(host, domain string) (string, bool) {
 	host = strings.TrimSpace(host)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
 		host = parsed
@@ -657,7 +871,7 @@ func parseServiceProxyHost(host string) (string, bool) {
 		return "", false
 	}
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	suffix := "." + ServiceDiscoveryDomain
+	suffix := "." + domain
 	if !strings.HasSuffix(host, suffix) {
 		return "", false
 	}
@@ -817,7 +1031,13 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID s
 
 func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {
 	if deploymentID == "" {
-		return endpoints
+		filtered := make([]ServiceEndpoint, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			if !endpoint.trafficKnown || endpoint.trafficPercent > 0 {
+				filtered = append(filtered, endpoint)
+			}
+		}
+		return filtered
 	}
 	filtered := make([]ServiceEndpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
@@ -877,6 +1097,13 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	// An override applies only to this resolved binding. Forwarding it would
 	// unintentionally pin a later service hop to this app's deployment ID.
 	request.Header.Del(api.TargetDeploymentHeader)
+	// A revision pin is scoped to the caller app. Only the verified project
+	// release can cross a managed service hop.
+	request.Header.Del(api.RevisionHeader)
+	request.Header.Del(api.ReleaseHeader)
+	if releaseID, ok := r.Context().Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
+		request.Header.Set(api.ReleaseHeader, releaseID)
+	}
 	// Both caller-environment headers are platform-owned. Strip whatever the
 	// guest sent before deciding: otherwise any workload could label its own
 	// traffic, and a target that trusts the marker would be trusting the
@@ -1170,6 +1397,39 @@ func parseServiceProxyPath(path string) (service, targetPath string, ok bool) {
 
 func serviceProxyProblem(w http.ResponseWriter, status int, detail string) {
 	http.Error(w, detail, status)
+}
+
+// serviceProxyDependencyFailed classifies the final managed-call outcome for
+// deployment health. Native gRPC uses HTTP 200 for both successful and failed
+// RPCs, so its terminal grpc-status trailer is authoritative; a missing or
+// malformed status is an UNKNOWN/protocol failure, not a healthy call.
+func serviceProxyDependencyFailed(status int, targetProtocol string, responseHeader http.Header) bool {
+	if status >= http.StatusInternalServerError {
+		return true
+	}
+	if targetProtocol != api.AppProtocolGRPC {
+		return false
+	}
+	if status != http.StatusOK {
+		return true
+	}
+	grpcStatus, ok := serviceProxyGRPCStatus(responseHeader)
+	if !ok {
+		return true
+	}
+	code, err := strconv.Atoi(grpcStatus)
+	return err != nil || code != 0
+}
+
+func serviceProxyGRPCStatus(header http.Header) (string, bool) {
+	for key, values := range header {
+		key = strings.TrimPrefix(key, http.TrailerPrefix)
+		if !strings.EqualFold(key, "grpc-status") || len(values) == 0 {
+			continue
+		}
+		return strings.TrimSpace(values[len(values)-1]), true
+	}
+	return "", false
 }
 
 type serviceProxyResponseWriter struct {

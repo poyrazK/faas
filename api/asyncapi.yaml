@@ -2,10 +2,11 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.6.0
+  version: 1.7.0
   description: |
-    Gregale delivers selected app lifecycle and billing events to an app's
-    configured webhook subscriptions, accepts tenant-scoped events for the
+    Gregale delivers selected app lifecycle and billing events to app-owned
+    subscriptions and cross-app statement events to platform-tenant-owned
+    subscriptions, accepts tenant-scoped events for the
     internal content-based router, accepts external events for durable workflow
     runs, and exposes per-app FIFO queue operations. Outbound webhook messages
     use CloudEvents 1.0 structured JSON over HTTP POST and are signed with the
@@ -27,7 +28,7 @@ servers:
   appWebhook:
     host: '{webhook_host}'
     protocol: https
-    description: Customer endpoint configured on an app webhook subscription.
+    description: Customer endpoint configured on an outbound webhook subscription.
     variables:
       webhook_host:
         description: Hostname of the customer's webhook endpoint.
@@ -89,6 +90,14 @@ channels:
     messages:
       usageStatementFinalized:
         $ref: '#/components/messages/UsageStatementFinalized'
+  platformTenantStatementFinalized:
+    address: platform_tenant.statement.finalized
+    description: Emitted when a cross-app platform tenant usage statement becomes payable.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantStatementFinalized:
+        $ref: '#/components/messages/PlatformTenantStatementFinalized'
   internalEventPublish:
     address: /v1/events:publish
     description: Publish one tenant-scoped event for asynchronous content-based fanout.
@@ -253,6 +262,17 @@ operations:
     summary: Deliver a usage_statement.finalized event to a subscribed webhook.
     messages:
       - $ref: '#/channels/usageStatementFinalized/messages/usageStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantStatementFinalized:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantStatementFinalized'
+    summary: Deliver a platform_tenant.statement.finalized event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantStatementFinalized/messages/platformTenantStatementFinalized'
     bindings:
       http:
         method: POST
@@ -452,6 +472,18 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/UsageStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantStatementFinalized:
+      name: platform_tenant.statement.finalized
+      title: Platform tenant statement finalized
+      summary: A cross-app tenant statement revision is finalized and payable.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantStatementFinalizedEvent'
       bindings:
         http:
           headers:
@@ -670,7 +702,7 @@ components:
           description: Optional result recorded by the app invocation.
     WebhookHeaders:
       type: object
-      description: Application headers emitted on every app-webhook delivery.
+      description: Headers emitted on every durable outbound webhook delivery.
       required:
         - X-Faas-Webhook-Signature
         - X-Faas-Delivery-Id
@@ -712,18 +744,18 @@ components:
           enum: ['1.0']
         id:
           type: string
-          description: Durable app-webhook delivery identifier.
+          description: Durable outbound webhook delivery identifier.
         source:
           type: string
-          description: App source URI, formatted as urn:gregale:app:<app_id>.
-          pattern: '^urn:gregale:app:.+$'
+          description: App or platform tenant source URI.
+          pattern: '^urn:gregale:(app|platform-tenant):.+$'
         type:
           type: string
           description: Gregale event name.
         subject:
           type: string
-          description: App subject, formatted as apps/<app_id>.
-          pattern: '^apps/.+$'
+          description: App or platform tenant subject.
+          pattern: '^(apps|platform-tenants)/.+$'
         time:
           type: string
           format: date-time
@@ -732,7 +764,7 @@ components:
           enum: ['application/json']
         account_id:
           type: string
-          description: Account owning the app subscription.
+          description: Account owning the webhook subscription.
         data:
           type: object
       additionalProperties: false
@@ -799,6 +831,68 @@ components:
               enum: ['usage_statement.finalized']
             data:
               $ref: '#/components/schemas/UsageStatementFinalizedData'
+    PlatformTenantStatementFinalizedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.statement.finalized']
+            data:
+              $ref: '#/components/schemas/PlatformTenantStatementFinalizedData'
+    PlatformTenantStatementFinalizedData:
+      type: object
+      required:
+        - platform_tenant_id
+        - external_ref
+        - statement_id
+        - revision
+        - status
+        - period_start
+        - period_end
+        - currency
+        - billable_units
+        - unpriced_units
+        - amount_millicents
+        - priced
+        - lines
+        - as_of
+        - finalized_at
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean, enum: [true] }
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformTenantStatementLine'
+        as_of: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantStatementLine:
+      type: object
+      required: [app_id, window_start, billable_units, amount_millicents]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+      additionalProperties: false
     AppParkedData:
       type: object
       required:

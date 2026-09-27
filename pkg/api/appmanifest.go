@@ -195,6 +195,9 @@ type AppManifest struct {
 	// VersionAffinityManagedCookie issues an opaque edge-owned browser cookie
 	// before the first rollout pick. It cannot be combined with a cookie source.
 	VersionAffinityManagedCookie bool `json:"version_affinity_managed_cookie,omitempty"`
+	// RevisionPinTTLSeconds opts into retaining replaced revisions for exact
+	// client pins. Zero disables skew protection.
+	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
@@ -459,6 +462,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.VersionAffinityManagedCookie && m.VersionAffinityCookie != "" {
 		return fmt.Errorf("app manifest: version_affinity_managed_cookie and version_affinity_cookie are mutually exclusive")
+	}
+	if m.RevisionPinTTLSeconds < 0 || m.RevisionPinTTLSeconds > RevisionPinMaxTTLSeconds {
+		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)

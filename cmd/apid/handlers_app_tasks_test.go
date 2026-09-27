@@ -264,6 +264,28 @@ func TestAppTaskResponseProjectsTerminalEvidence(t *testing.T) {
 	}
 }
 
+func TestAppTaskResponseProjectsScheduledRetry(t *testing.T) {
+	now := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	retryAt := now.Add(30 * time.Second)
+	failureCode, failureMessage := "command_failed", "temporary outage"
+	response := appTaskResponse(state.AppTask{
+		ID: "2bdd4251-f567-4a48-9f66-a155bbfa7751", AppID: "app-id", DeploymentID: "deployment-id",
+		DeploymentScope: "default", Kind: state.AppTaskKindCron, Command: []string{"bin/task"},
+		Status: state.AppTaskQueued, TimeoutSeconds: 60, MaxOutputBytes: 4096,
+		RetryMax: 3, RetryBackoffSeconds: 15, AttemptCount: 2, RetryAt: &retryAt,
+		FailureCode: &failureCode, FailureMessage: &failureMessage, CreatedAt: now, UpdatedAt: now,
+	})
+	if response.Status != api.AppTaskStatusQueued || response.AttemptCount != 2 ||
+		response.RetryMax != 3 || response.RetryBackoffSeconds != 15 || response.RetryAt == nil ||
+		*response.RetryAt != retryAt.Format(time.RFC3339Nano) {
+		t.Fatalf("scheduled retry projection = %+v", response)
+	}
+	if response.Failure == nil || response.Failure.Code != failureCode || response.Failure.Message != failureMessage ||
+		response.FinishedAt != nil {
+		t.Fatalf("queued retry evidence = %+v", response)
+	}
+}
+
 func TestAppTaskAPIGateEnv(t *testing.T) {
 	getenv := func(values map[string]string) func(string) string {
 		return func(key string) string { return values[key] }

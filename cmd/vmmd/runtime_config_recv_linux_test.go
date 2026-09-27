@@ -32,6 +32,7 @@ type runtimeSecretsStoreStub struct {
 	deployment    state.Deployment
 	secretRows    []state.AppSecret
 	reloadResults []state.AppSecretRuntimeReloadResult
+	ackResults    []state.AppSecretRuntimeReloadAckResult
 }
 
 func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
@@ -47,6 +48,11 @@ func (s runtimeSecretsStoreStub) ListAppSecretsInScope(context.Context, string, 
 
 func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReload(_ context.Context, result state.AppSecretRuntimeReloadResult) (int, error) {
 	s.reloadResults = append(s.reloadResults, result)
+	return len(result.Candidates), nil
+}
+
+func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReloadAck(_ context.Context, result state.AppSecretRuntimeReloadAckResult) (int, error) {
+	s.ackResults = append(s.ackResults, result)
 	return len(result.Candidates), nil
 }
 
@@ -74,6 +80,32 @@ func TestRuntimeSecretReloadStatusIsVersionFenced(t *testing.T) {
 	response = sendRuntimeConfigTestRequest(t, receiver, request)
 	if response.Accepted || response.Error != "secret_reload_stale" || len(store.reloadResults) != 1 {
 		t.Fatalf("stale report response = %+v, records = %d", response, len(store.reloadResults))
+	}
+}
+
+func TestRuntimeSecretApplicationAckIsVersionFenced(t *testing.T) {
+	store := &runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "prod", Sidecars: json.RawMessage(`[]`),
+	}, secretRows: []state.AppSecret{{
+		AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "DATABASE_URL", DeliveryVersion: 3,
+	}}}
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
+	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
+	revision := runtimeSecretRevision("prod", store.secretRows)
+	request := runtimeConfigRequest{Kind: "secret_reload_ack", Revision: revision, ApplicationAck: "applied"}
+	response := sendRuntimeConfigTestRequest(t, receiver, request)
+	if !response.Accepted || response.Error != "" || len(store.ackResults) != 1 {
+		t.Fatalf("ack response = %+v, records = %d", response, len(store.ackResults))
+	}
+	result := store.ackResults[0]
+	if result.Candidates[0].Version != 3 || result.InstanceID != "instance-1" || result.Status != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("recorded application ack = %+v", result)
+	}
+
+	store.secretRows[0].DeliveryVersion++
+	response = sendRuntimeConfigTestRequest(t, receiver, request)
+	if response.Accepted || response.Error != "secret_reload_stale" || len(store.ackResults) != 1 {
+		t.Fatalf("stale app ack response = %+v, records = %d", response, len(store.ackResults))
 	}
 }
 

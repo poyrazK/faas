@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AppliedBuild } from './AppliedBuild.js';
 import type { PlanAffectedApp } from './PlanAffectedApp.js';
+import type { PlanAsyncRoute } from './PlanAsyncRoute.js';
 import type { PlanCron } from './PlanCron.js';
 import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 import type { PlanManaged } from './PlanManaged.js';
@@ -19,6 +20,10 @@ export type ApplyResponse = {
   workloads?: Array<PlanWorkload>;
   managed?: Array<PlanManaged>;
   crons?: Array<PlanCron>;
+  /**
+   * Structured async-route reconciliation returned with the applied plan.
+   */
+  async_routes?: Array<PlanAsyncRoute>;
   warnings?: Array<string>;
   /**
    * Structured skipped/merged detector decisions returned with the applied plan.

@@ -129,8 +129,9 @@ func TestPreviewShowUsesCurrentHeadEnvironment(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/preview/pr-42-web":
 			writeJSONTest(w, api.PreviewResourceResponse{
-				App:              api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"},
-				LatestDeployment: &api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive},
+				App:                  api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"},
+				LatestDeployment:     &api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive},
+				ProductionDeployment: &api.DeploymentResponse{ID: "prod-root", Status: statusLive},
 			})
 		case "/v1/preview/pr-42-web/environment":
 			writeJSONTest(w, previewEnvironmentFixture("building", false, "building"))
@@ -159,6 +160,9 @@ func TestPreviewShowUsesCurrentHeadEnvironment(t *testing.T) {
 	}
 	if got.LatestDeployment == nil || got.LatestDeployment.ID != "current-root" {
 		t.Fatalf("latest deployment = %+v, want current-head root", got.LatestDeployment)
+	}
+	if got.ProductionDeployment == nil || got.ProductionDeployment.ID != "prod-root" {
+		t.Fatalf("production deployment = %+v, want first-class preview details retained", got.ProductionDeployment)
 	}
 }
 

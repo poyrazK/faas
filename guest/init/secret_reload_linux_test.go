@@ -101,6 +101,33 @@ func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	}
 }
 
+func TestWriteRuntimeSecretRevisionProjectionIsAtomicAndPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projection", "revision")
+	uid, gid := os.Getuid(), os.Getgid()
+	revision := strings.Repeat("a", 64)
+	if err := writeRuntimeSecretRevisionProjectionForOwner(path, uid, uid, gid, revision); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o400 {
+		t.Fatalf("revision file mode = %#o, want 0400", info.Mode().Perm())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != revision {
+		t.Fatalf("revision file = %q, %v", body, err)
+	}
+	if err := writeRuntimeSecretRevisionProjectionForOwner(path, uid, uid, gid, "not-a-revision"); err == nil {
+		t.Fatal("invalid revision was published")
+	}
+	body, err = os.ReadFile(path)
+	if err != nil || string(body) != revision {
+		t.Fatalf("invalid update changed revision file = %q, %v", body, err)
+	}
+}
+
 func TestRuntimeSecretsStateCopiesValues(t *testing.T) {
 	initial := map[string]string{"A": "one"}
 	state := newRuntimeSecretsState(initial)

@@ -136,10 +136,21 @@ companions:
     image: registry.example.com/proxy@sha256:<64-hex-digest>
     type: sidecar
     port: 8081
+    env_secrets:
+      DATABASE_URL: secret:DATABASE_URL
     depends_on:
       - name: metrics
         condition: healthy
 ```
+
+Each sidecar receives only app secrets listed in its own `env_secrets` map;
+it never inherits the main workload's secret set or another sidecar's grants.
+References resolve in the deployment's environment scope. They are delivered
+at cold boot and on a Gregale-managed restart after rotation; sidecar
+in-process reload and application acknowledgements are not supported yet.
+This is a per-workload delivery allowlist, not a hostile-workload isolation
+boundary: workloads share the guest kernel, so use separate deployments when
+one workload must not be trusted with another's runtime state.
 
 Each companion retains its own memory, CPU, scratch, and I/O limits. The
 instance admission and billing reservation includes the RAM configured for

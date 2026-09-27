@@ -159,19 +159,18 @@ func (s *PgStore) MarkFireNowRequestFailed(ctx context.Context, requestID, errMs
 }
 
 // GetFireNowRequest reads one row by id. Used by the API surface to
-// poll request status (currently internal; future PR can expose
-// `GET /v1/cron-fire-now-requests/{id}` if the customer UX needs it).
+// poll request status, including the invocation or command task receipt.
 func (s *PgStore) GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error) {
 	var req FireNowRequest
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, cron_id, account_id, requested_at, status,
-		       invocation_id, error, finished_at
+		       invocation_id, task_id, error, finished_at
 		FROM cron_fire_now_requests
 		WHERE id = $1
 	`, requestID)
 	if err := row.Scan(
 		&req.ID, &req.CronID, &req.AccountID, &req.RequestedAt, &req.Status,
-		&req.InvocationID, &req.Error, &req.FinishedAt,
+		&req.InvocationID, &req.TaskID, &req.Error, &req.FinishedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FireNowRequest{}, ErrFireNowRequestNotFound

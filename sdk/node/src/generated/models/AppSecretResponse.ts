@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
  * A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row.
  */
@@ -65,5 +66,13 @@ export type AppSecretResponse = {
    * Runtime instance that reported this projection/signal outcome.
    */
   last_runtime_reload_instance_id?: string;
+  /**
+   * Complete current roster of active runtimes authorized for this secret by the deployment scope and env_secrets allowlist. Missing guest reports are represented explicitly.
+   */
+  runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
+  /**
+   * True when this response includes the complete active, secret-authorized runtime roster. The field is absent from older control-plane responses; callers must fail closed when waiting for acknowledgements.
+   */
+  runtime_reload_targets_complete?: boolean;
 };
 

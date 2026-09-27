@@ -18,6 +18,11 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * envelope-sealed at rest via secretbox (namespace
  * `"sidecar_env"`); the wire shape is plaintext, the
  * column is sealed ciphertext.
+ * `env_secrets` grants this workload only the same-named
+ * app secrets selected by explicit `secret:KEY` references.
+ * References resolve in the deployment's scope at each wake;
+ * sidecars do not inherit main-workload secrets. Secret rotation
+ * reaches sidecars through a restart, not in-process reload.
  *
  * - `name` matches RFC 1123 label (lowercase alphanumeric
  * + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -34,6 +39,11 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
  * `EnvValueMaxBytes`. Plaintext values NEVER appear in
  * any log, audit, or error.
+ * - `env_secrets` is a per-sidecar positive allowlist, for example
+ * `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
+ * and referenced app-secret name must match. Missing secrets fail
+ * the wake; an empty/omitted map grants no app secrets to this
+ * sidecar. These values refresh on cold boot or restart only.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
  * - `primary_ingress` routes the application's normal hostname and
  * custom domains through this long-running helper. It requires port.
@@ -85,6 +95,10 @@ export type Sidecar = {
    * Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes.
    */
   env?: Record<string, string>;
+  /**
+   * Per-sidecar positive allowlist of same-named app secrets, resolved at wake in the deployment scope. Values refresh on restart; sidecars do not inherit main secrets.
+   */
+  env_secrets?: Record<string, string>;
   /**
    * Listen port. 0 = absent / fall back to image default.
    */

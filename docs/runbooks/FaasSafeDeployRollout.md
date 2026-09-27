@@ -76,6 +76,62 @@ only and do not pause a rollout. A read failure is fail-closed (the canary is
 held until the alert state can be read again). The fleet counter
 `canary_progression_health_gate_blocked_total` records these holds.
 
+Before staging, run the deterministic decision-to-recovery drill:
+
+```bash
+go test ./cmd/apid -run '^TestCircuitBreakerFaultDrill$' -count=1
+```
+
+It injects each health outcome through the real canary progression policy and
+authenticated APID loopback client, then verifies rollback/hold/advance state,
+audit outcome, and the 100% traffic invariant. It uses `MemStore` and a
+controlled observation; it does not replace the staging checks below for the
+Prometheus adapter, PostgreSQL transaction, or live metrics collection.
+
+Before enabling the circuit breaker for routine production deploys, also run
+these staging checks against an app with a known-good predecessor:
+
+- **Low traffic:** leave the candidate at its first traffic stage until that
+  stage duration expires without enough candidate and stable request samples.
+  Confirm it stays at the same traffic share and
+  `canary_progression_circuit_breaker_total{event="hold_insufficient_samples"}`
+  increases. Send enough requests to both revisions; after the next stage
+  boundary, confirm progression resumes.
+- **Bad candidate:** deploy a revision that returns controlled 5xx responses
+  on a test route. Once the candidate has enough samples, confirm it is
+  aborted, its exact predecessor returns to 100%, and the audit reason names
+  the 5xx regression. Check
+  `canary_progression_circuit_breaker_total{event="abort_5xx"}`.
+- **CPU regression:** use a controlled CPU-heavy candidate and send at least
+  20 metered requests to both revisions. Confirm the rollout aborts only when
+  candidate CPU per request is at least 3x the predecessor and at least 10ms
+  higher, then verify the exact predecessor returns to 100% and
+  `canary_progression_circuit_breaker_total{event="abort_cpu_per_request"}`
+  increases.
+- **Managed dependency regression:** make a controlled test dependency return
+  5xx for the candidate while the predecessor remains healthy, or use a native
+  gRPC test target that returns a nonzero, missing, or malformed `grpc-status`
+  trailer with HTTP 200.
+  After at least 10 authorized service-proxy attempts (including route/wake
+  outcomes) and two errors, verify the candidate aborts when its error rate is
+  at least 3x the predecessor and 10 percentage points higher
+  (with a 20% floor), and check
+  `canary_progression_circuit_breaker_total{event="abort_dependency_errors"}`.
+  If only the candidate calls a newly introduced dependency, the absolute
+  threshold is 20% errors after the same sample floor. This signal covers
+  Gregale-managed service-proxy calls, not arbitrary external HTTP clients.
+- **Missing OOM telemetry:** in an isolated test environment, make the OOM
+  metric family unavailable. Confirm promotion holds and
+  `canary_progression_circuit_breaker_total{event="hold_signal_unavailable"}`
+  increases rather than treating the missing signal as zero OOMs.
+
+The remaining abort event labels are `abort_p95_latency`,
+`abort_cold_boot_p95`, and `abort_oom`; hold labels include
+`hold_observation_unavailable` and `hold_recovery_failed`.
+Never induce a workload OOM on a shared staging service; the unit tests cover
+that decision branch. Verify the serving traffic total remains 100 after every
+abort or advance.
+
 GitHub-connected deployments project the rollout state as well as the build
 state. A canary remains `in_progress` in the GitHub Check Run and Deployment
 timeline until `rollout_state=complete`; an aborted rollout is reported as a

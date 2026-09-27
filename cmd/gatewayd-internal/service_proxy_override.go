@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -19,7 +20,21 @@ func newServiceProxyDeploymentValidator(store state.Store) gateway.ServiceProxyD
 		}
 		for _, deployment := range deployments {
 			if deployment.AppID == appID && deployment.ID == deploymentID && deployment.Status == state.DeployLive {
-				return true, nil
+				// Manual dark deployments remain valid one-hop overrides.
+				// Retained stable revisions require an unexpired direct pin;
+				// status alone remains live until the minute-level sweep.
+				if deployment.TrafficPercent > 0 || deployment.TrafficPercentExplicit {
+					return true, nil
+				}
+				resolver, ok := store.(state.RevisionPinStore)
+				if !ok {
+					return false, fmt.Errorf("service deployment override: revision pin resolver unavailable")
+				}
+				_, pinErr := resolver.ResolveRevisionPin(ctx, appID, deployment.Scope, deploymentID)
+				if errors.Is(pinErr, state.ErrNotFound) {
+					return false, nil
+				}
+				return pinErr == nil, pinErr
 			}
 		}
 		return false, nil

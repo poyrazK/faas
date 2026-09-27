@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	SecretsFileEnv       = "FAAS_SECRETS_FILE"
-	secretReloadFilePath = "/tmp/gregale-secret-reload/secrets.json"
+	SecretsFileEnv               = "FAAS_SECRETS_FILE"
+	SecretsRevisionEnv           = "FAAS_SECRETS_REVISION_FILE"
+	SecretsReloadAckEnv          = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
+	secretReloadFilePath         = "/tmp/gregale-secret-reload/secrets.json"
+	secretReloadRevisionFilePath = "/tmp/gregale-secret-reload/revision"
 )
 
 // MaxRestarts is the legacy/default supervisor crash-loop budget. New
@@ -115,13 +118,18 @@ func StampSecretsFileEnv(env []string, enabled bool) []string {
 	if !enabled {
 		return env
 	}
-	out := make([]string, 0, len(env)+1)
+	out := make([]string, 0, len(env)+3)
 	for _, entry := range env {
-		if key, _, ok := cut(entry); !ok || key != SecretsFileEnv {
+		key, _, ok := cut(entry)
+		if !ok || (key != SecretsFileEnv && key != SecretsRevisionEnv && key != SecretsReloadAckEnv) {
 			out = append(out, entry)
 		}
 	}
-	return append(out, SecretsFileEnv+"="+secretReloadFilePath)
+	return append(out,
+		SecretsFileEnv+"="+secretReloadFilePath,
+		SecretsRevisionEnv+"="+secretReloadRevisionFilePath,
+		SecretsReloadAckEnv+"="+metadataSecretReloadAckEndpoint,
+	)
 }
 
 // validEnvKey enforces the same ^[A-Z][A-Z0-9_]* shape the SQL CHECK and

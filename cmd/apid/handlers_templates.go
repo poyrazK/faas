@@ -72,6 +72,8 @@ func templateDescription(name string) string {
 		return "push queue worker with queue-depth autoscaling and retries"
 	case "ai-chat":
 		return "OpenAI-compatible chat scaffold — bring your own key"
+	case "secret-reload-node":
+		return "Node.js/Postgres reference app — safely reload and ACK rotated secrets"
 	}
 	return ""
 }

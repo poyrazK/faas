@@ -231,7 +231,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	if consumer.PlatformTenantID != "" && app.PlatformTenantID != "" && consumer.PlatformTenantID != app.PlatformTenantID {
+	if app.RoutedSurfaceID != "" && app.PlatformTenantID != "" && consumer.PlatformTenantID != app.PlatformTenantID {
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

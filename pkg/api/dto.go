@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -186,16 +187,31 @@ type PrewarmIntentResponse struct {
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
-	// defaults to public; internal is available on Pro and Scale.
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	// defaults to public; internal is available on every plan.
+	Visibility string `json:"visibility,omitempty"`
+	// AllowedServiceCallers restricts internal callers to these logical app
+	// names. Omitted/null preserves same-account access; [] denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes grants named callers a narrower method/path
+	// policy. When present, callers absent from the map are denied.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
+	// ServiceBindingTargets declares outbound same-account services for a
+	// standalone app. The platform derives binding keys and internal URLs.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceBindingPolicy defaults to account for standalone apps; declared
+	// opts into gateway enforcement of ServiceBindingTargets.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport selects the canonical service URL scheme for
+	// standalone bindings. Omitted preserves the legacy HTTP URL contract.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency          int                      `json:"max_concurrency,omitempty"`
+	IdleTimeoutS            int                      `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -243,6 +259,7 @@ type CreateAppRequest struct {
 	// VersionAffinityCookie derives rollout affinity from this browser cookie.
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -462,13 +479,29 @@ type DevSessionResponse struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
-	// values are public or internal. Internal is available on Pro and Scale.
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	// values are public or internal. Internal is available on every plan.
+	Visibility *string `json:"visibility,omitempty"`
+	// AllowedServiceCallers is raw JSON to preserve three PATCH states:
+	// omitted (unchanged), null (same-account access), array (replace, with
+	// [] denying all). The handler validates and normalizes the array.
+	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is raw JSON so omitted leaves the current policy,
+	// null clears it, and an object (including {}) replaces it.
+	AllowedServiceCallScopes json.RawMessage `json:"allowed_service_call_scopes,omitempty"`
+	// ServiceBindingTargets replaces the standalone outbound target list.
+	// Omitted/null leaves it unchanged; [] clears every binding.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
+	// leaves it unchanged; set account to restore legacy same-account access.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport changes the canonical URL scheme injected for
+	// bindings. Omitted/null leaves the current transport unchanged.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	RAMMB                   *int                     `json:"ram_mb,omitempty"`
+	CPUMillicores           *int                     `json:"cpu_millicores,omitempty"`
+	ResourceProfile         *string                  `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS            *int                     `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency          *int                     `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -520,6 +553,7 @@ type UpdateAppRequest struct {
 	// VersionAffinityCookie replaces the cookie source; empty disables it.
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1289,7 +1323,7 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
-	// ServiceBindings are the repository-declared same-account app
+	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
 	// discovery projection; authorization applies them only when
 	// ServiceBindingPolicy is "declared".
@@ -1298,10 +1332,20 @@ type AppResponse struct {
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport selects the scheme used by the canonical
+	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
+	// available in either mode; legacy apps default to HTTP.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// PreviewServiceCallsPolicy is this app's policy for calls originating
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// AllowedServiceCallers is the target-side internal-service policy. Nil
+	// permits same-account callers; an empty non-nil list denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is the optional method/path policy for internal
+	// callers. When present, only callers with a matching scope are permitted.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -1345,6 +1389,7 @@ type AppResponse struct {
 	SessionAffinity              bool   `json:"session_affinity"`
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -3505,39 +3550,56 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
-// optional scheduling controls; LastFiredAt is the most recent fire stamp
-// schedd wrote (MarkCronFired).
+// CronResponse mirrors the crons table. Kind selects either an HTTP path or a
+// deployment-attached command. Timezone and SkipIfRunning expose scheduling
+// controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	ID                  string   `json:"id"`
+	AppID               string   `json:"app_id"`
+	Kind                string   `json:"kind"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool     `json:"enabled"`
+	SuspendedReason     string   `json:"suspended_reason,omitempty"`
+	Timezone            string   `json:"timezone"`
+	SkipIfRunning       bool     `json:"skip_if_running"`
+	CreatedAt           string   `json:"created_at"`
+	LastFiredAt         string   `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates either a scheduled HTTP request or a
+// deployment-attached command schedule. Command and Path are mutually
+// exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	AppID               string   `json:"app_id"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool    `json:"enabled,omitempty"`
+	Timezone            string   `json:"timezone,omitempty"`
+	SkipIfRunning       *bool    `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	Schedule            *string `json:"schedule,omitempty"`
+	Path                *string `json:"path,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	Timezone            *string `json:"timezone,omitempty"`
+	SkipIfRunning       *bool   `json:"skip_if_running,omitempty"`
+	RetryMax            *int    `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -4756,6 +4818,36 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+// Validate checks the shared per-invocation retry override shape. The
+// scheduler still clamps MaxAttempts against the account plan when dispatching
+// so a later downgrade cannot retain a larger retry budget.
+func (p *RetryPolicyDTO) Validate() *Problem {
+	if p == nil {
+		return nil
+	}
+	if p.MaxAttempts < 0 || p.MaxAttempts > DurableRetryMaxAttempts {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", DurableRetryMaxAttempts))
+	}
+	if p.BaseSeconds < 0 || math.IsNaN(p.BaseSeconds) || math.IsInf(p.BaseSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if p.MaxSeconds < 0 || math.IsNaN(p.MaxSeconds) || math.IsInf(p.MaxSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if p.BaseSeconds > 0 && p.MaxSeconds > 0 && p.MaxSeconds < p.BaseSeconds {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if p.JitterSeconds < 0 || p.JitterSeconds > 1 || math.IsNaN(p.JitterSeconds) || math.IsInf(p.JitterSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
@@ -4858,13 +4950,16 @@ const (
 	CronRunTimeout CronRunOutcome = "timeout"
 	// CronRunDeadLetter — the per-plan retry budget was exhausted.
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	// CronRunCancelled — a deployment-attached command was cancelled.
+	CronRunCancelled CronRunOutcome = "cancelled"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
 )
 
 // CronRun is one row of a cron's execution history: GET
-// /v1/crons/{id}/runs.
+// /v1/crons/{id}/runs. HTTP schedules project invocations; command schedules
+// project deployment-attached app tasks.
 //
 // Deliberately NOT the full Invocation shape. A cron run is a narrow
 // question — did it work, when, and for how long — and the caller
@@ -4874,7 +4969,7 @@ const (
 // without churning the cron surface.
 type CronRun struct {
 	ID string `json:"id"`
-	// StartedAt is the underlying invocation's created_at — when the
+	// StartedAt is the underlying invocation/task's created_at — when the
 	// cron fired, not when the app began executing.
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -4885,6 +4980,7 @@ type CronRun struct {
 	// Attempts is the dispatch count; > 1 means the row was retried.
 	Attempts   int    `json:"attempts"`
 	InstanceID string `json:"instance_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	// Error is the operator-facing failure text. Unstructured and
 	// unversioned — branch on Outcome, never on this string.
 	Error string `json:"error,omitempty"`
@@ -4922,7 +5018,8 @@ type FireCronResponse struct {
 //
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
-// consumer populates FinishedAt + Error + InvocationID at terminal stamp.
+// consumer populates FinishedAt + Error and either InvocationID (HTTP
+// crons) or TaskID (command crons) at terminal stamp.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -4930,6 +5027,7 @@ type FireCronRequestResponse struct {
 	RequestedAt  string  `json:"requested_at"`          // RFC3339Nano UTC
 	FinishedAt   *string `json:"finished_at,omitempty"` // RFC3339Nano UTC or null
 	InvocationID *string `json:"invocation_id,omitempty"`
+	TaskID       *string `json:"task_id,omitempty"`
 	Error        *string `json:"error,omitempty"`
 	AccountID    string  `json:"account_id"`
 }
@@ -5438,6 +5536,53 @@ type AppRoutesResponse struct {
 	CapHit bool `json:"cap_hit"`
 }
 
+// RequestAuditRecord is one exact, opt-in gateway observation returned by
+// GET /v1/apps/{slug}/audit/requests. Business actor/action are deliberately
+// absent; consumer and tenant IDs are only present when platform-verified.
+type RequestAuditRecord struct {
+	EventID          string    `json:"event_id"`
+	AccountID        string    `json:"account_id"`
+	AppID            string    `json:"app_id"`
+	ConsumerID       string    `json:"consumer_id,omitempty"`
+	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
+	RouteTemplate    string    `json:"route_template"`
+	Method           string    `json:"method"`
+	HTTPStatus       int       `json:"http_status"`
+	LatencyMS        int       `json:"latency_ms"`
+	TraceID          string    `json:"trace_id,omitempty"`
+	DeploymentID     string    `json:"deployment_id,omitempty"`
+	CommitSHA        string    `json:"commit_sha,omitempty"`
+	OccurredAt       time.Time `json:"occurred_at"`
+	RequestID        string    `json:"request_id,omitempty"`
+	SourceIP         string    `json:"source_ip,omitempty"`
+}
+
+// RequestAuditListResponse is a bounded, exact gateway-request window.
+type RequestAuditListResponse struct {
+	AppID   string               `json:"app_id"`
+	Records []RequestAuditRecord `json:"records"`
+	Since   time.Time            `json:"since"`
+	Until   time.Time            `json:"until"`
+}
+
+// DiscoveredAPIRoute is one bounded, durable route candidate. Counts are
+// idempotent delivered requests, independent of exact audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
+}
+
+// DiscoveredRoutesResponse is the bounded inventory read independent of
+// exact request-audit retention.
+type DiscoveredRoutesResponse struct {
+	AppID  string               `json:"app_id"`
+	Routes []DiscoveredAPIRoute `json:"routes"`
+	CapHit bool                 `json:"cap_hit"`
+	Source string               `json:"source"`
+}
+
 const (
 	AppRoutesSourceLive        = "live"
 	AppRoutesSourcePartial     = "partial"
@@ -5907,8 +6052,13 @@ type PlanWorkload struct {
 	Command    []string `json:"command"`
 	DependsOn  []string `json:"depends_on,omitempty"`
 
-	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
+	// canonical URL contract. Omitted keeps the established transport.
+	ServiceBindingTransport   ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes  *ServiceCallerScopes      `json:"allowed_service_call_scopes,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
@@ -5988,6 +6138,25 @@ type PlanCron struct {
 	Enabled      bool   `json:"enabled"`
 }
 
+// PlanAsyncRoute is one manifest-owned async route change in a project
+// deployment plan. Match and action fields describe the resulting route for
+// create/update/unchanged rows and the existing route for remove rows.
+type PlanAsyncRoute struct {
+	App           string          `json:"app"`
+	Name          string          `json:"name"`
+	Action        string          `json:"action"` // create | update | remove | unchanged | skipped
+	MatchHost     string          `json:"match_host"`
+	MatchPath     string          `json:"match_path"`
+	MatchMethods  []string        `json:"match_methods"`
+	Priority      int             `json:"priority"`
+	Enabled       bool            `json:"enabled"`
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+}
+
 // PlanAffectedApp is one row of the ADR-124 affected-workloads
 // partition (PlanResponse.WillDeploy / Unaffected). It pairs an
 // existing-or-future app with a closed-vocabulary Action that tells
@@ -6045,6 +6214,7 @@ type PlanResponse struct {
 	Workloads             []PlanWorkload         `json:"workloads"`
 	Managed               []PlanManaged          `json:"managed"`
 	Crons                 []PlanCron             `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
 	Warnings              []string               `json:"warnings,omitempty"`
 	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps          int                    `json:"observed_apps"`
@@ -6525,6 +6695,13 @@ type Sidecar struct {
 	// `Limits.EnvValueMaxBytes`. Values are sealed at rest via
 	// secretbox. Plaintext on the wire; sealed on the column.
 	Env map[string]string `json:"env,omitempty"`
+	// EnvSecrets is an explicit per-sidecar allowlist of app secrets.
+	// Each entry maps an environment key to the same-named app secret
+	// (`DB_URL`: `secret:DB_URL`). Values are resolved at wake time in the
+	// deployment's scope; sidecars never inherit the main workload's set.
+	// These secrets are restart-delivered only; sidecar live reload is not
+	// currently supported.
+	EnvSecrets map[string]string `json:"env_secrets,omitempty"`
 	// Port is the listen port. 0 means "absent / fall back to
 	// image default" (1..65535 enforced at the API layer). The
 	// host-side plumbing that propagates this value to netns +
@@ -6651,6 +6828,30 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar[%q].env[%q] value is %d bytes; max is %d.",
 					s.Name, k, len(v), limits.EnvValueMaxBytes)).
 				WithLimit(int64(limits.EnvValueMaxBytes), int64(len(v)))
+		}
+	}
+	for k, ref := range s.EnvSecrets {
+		if p := ValidateEnvKey(k); p != nil {
+			return p
+		}
+		if _, duplicate := s.Env[k]; duplicate {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env",
+				fmt.Sprintf("sidecar[%q] env and env_secrets both define %q.", s.Name, k))
+		}
+		if !strings.HasPrefix(ref, SecretRefPrefix) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference an app secret as %q%s.", s.Name, k, SecretRefPrefix, k))
+		}
+		secretKey := strings.TrimPrefix(ref, SecretRefPrefix)
+		if !SecretRefNameRe.MatchString(secretKey) || secretKey != k {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference the same app secret name (%q%s).", s.Name, k, SecretRefPrefix, k))
+		}
+		if limits.EnvValueMaxBytes > 0 && len(ref) > limits.EnvValueMaxBytes {
+			return ErrEnvVarValueTooLarge(limits, len(ref))
 		}
 	}
 	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
@@ -7087,6 +7288,42 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
+// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// by both the gateway and the read-only trace preview. It returns applied=false
+// when From is not a prefix of requestPath (the selector may still have
+// matched, but the gateway treats this inconsistent action as a miss).
+func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+	if from == "*" {
+		from = ""
+	}
+	if from == "" {
+		to = NormalizeEdgeRuleRewriteTarget(to)
+		if to == "/" {
+			return requestPath, true
+		}
+		return to + requestPath, true
+	}
+	if !strings.HasPrefix(requestPath, from) {
+		return requestPath, false
+	}
+	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+}
+
+// NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
+// one leading slash and removes a trailing slash except for the root path.
+func NormalizeEdgeRuleRewriteTarget(value string) string {
+	if value == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	if len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func (a *EdgeRuleRewriteAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("rewrite action is required")
@@ -7227,10 +7464,9 @@ type EdgeRuleCORSAction struct {
 // The grammar is deliberately tiny (no regex metacharacters, no
 // path matching, no scheme matching) so the gateway hot-path
 // matcher can stay an O(n) string-prefix scan without backtracking.
-// The regex below enforces the grammar at create-time; the gateway
-// applies the same predicates in handler.go::matchOrigin (so a
-// rule that bypasses the apid validator still matches what the
-// customer expects — defence in depth).
+// The regex below enforces the grammar at create-time; both the gateway
+// and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
+// rule that bypasses the apid validator still matches consistently).
 //
 // Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like
@@ -7351,11 +7587,12 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -7404,6 +7641,13 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	for _, alg := range a.Algorithms {
 		if _, ok := edgeRuleJWTAllowedAlgs[alg]; !ok {
 			return ErrValidation(fmt.Sprintf("jwt action algorithm %q is not in the closed vocabulary (RS256/RS384/RS512/ES256/ES384/ES512)", alg))
+		}
+	}
+	claim := a.PlatformTenantExternalRefClaim
+	if claim != "" {
+		if len(claim) > 128 || strings.TrimSpace(claim) != claim || strings.ContainsAny(claim, " \t\r\n\x00") ||
+			claim == "iss" || claim == "aud" || claim == "sub" || claim == "exp" || claim == "nbf" || claim == "iat" || claim == "jti" {
+			return ErrValidation("platform_tenant_external_ref_claim must name a custom JWT claim (1-128 characters, no whitespace), not a registered JWT claim")
 		}
 	}
 	return nil
@@ -7680,14 +7924,25 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
-// supplies retry, deadline, retention, and payload limits from the app and
-// account plan, keeping an async route's behavior aligned with /invoke/async.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures an async route's durable execution policy
+// and terminal destinations. Omitted retry and age controls keep the existing
+// app / account-plan defaults.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+}
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("async action is required")
+	}
+	if p := a.RetryPolicy.Validate(); p != nil {
+		return p
+	}
+	if a.MaxAgeSeconds < 0 || a.MaxAgeSeconds > MaxAsyncRouteAgeSeconds {
+		return ErrValidation(fmt.Sprintf("async action: max_age_seconds must be between 0 and %d", MaxAsyncRouteAgeSeconds))
 	}
 	return nil
 }
@@ -9190,17 +9445,20 @@ type EdgeRuleSuggestion struct {
 // contract preview for an app (ADR-126 follow-up / API-hosting roadmap item
 // 11). Routes are sorted by path and method; each row includes the edge rules
 // that match it so a developer can see contract drift and policy coverage
-// before changing any rules.
+// before changing any rules. The observed route set may include durable,
+// opt-in route discovery in addition to current fleet telemetry.
 type AppOpenAPIPolicyPreviewResponse struct {
-	AppID              string                         `json:"app_id"`
-	Source             string                         `json:"source"`
-	ObservedAvailable  bool                           `json:"observed_available"`
-	ObservedSource     string                         `json:"observed_source"`
-	CollectorsExpected int                            `json:"collectors_expected"`
-	CollectorsHealthy  int                            `json:"collectors_healthy"`
-	OpenAPIVersion     string                         `json:"openapi_version,omitempty"`
-	Routes             []AppOpenAPIPolicyPreviewRoute `json:"routes"`
-	Suggestions        []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+	AppID                      string                         `json:"app_id"`
+	Source                     string                         `json:"source"`
+	ObservedAvailable          bool                           `json:"observed_available"`
+	ObservedSource             string                         `json:"observed_source"`
+	ObservedInventoryAvailable bool                           `json:"observed_inventory_available"`
+	ObservedCapHit             bool                           `json:"observed_cap_hit"`
+	CollectorsExpected         int                            `json:"collectors_expected"`
+	CollectorsHealthy          int                            `json:"collectors_healthy"`
+	OpenAPIVersion             string                         `json:"openapi_version,omitempty"`
+	Routes                     []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions                []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
 // ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
@@ -9823,6 +10081,98 @@ type RequestAnalyticsRoute struct {
 	P50MS         int     `json:"p50_ms"`
 	P95MS         int     `json:"p95_ms"`
 	P99MS         int     `json:"p99_ms"`
+	// ColdRequestP95MS is the p95 gateway-observed request duration for
+	// requests that woke a cold instance. It includes app handling time; it
+	// is not an isolated VM wake-phase duration.
+	ColdRequestP95MS *int `json:"cold_request_p95_ms,omitempty"`
+	// WakeBootP95MS is p95 from schedd's boot_started event to
+	// boot_completed (instance RUNNING) for correlated route wakes.
+	WakeBootP95MS *int `json:"wake_boot_p95_ms,omitempty"`
+	// GuestExecution percentiles are present only where the platform-owned
+	// runtime runner emitted execution-duration evidence. This is wall time,
+	// not CPU time, and is not available for arbitrary HTTP containers.
+	GuestExecutionP50MS *int `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int `json:"guest_execution_p95_ms,omitempty"`
+	// GuestCPUAvgMS and GuestCPUP95MS are measured child-process CPU time
+	// for Linux one-shot runtime invocations. The measurement includes runtime
+	// startup; it is not available for persistent workers or arbitrary HTTP
+	// containers. RSS is the maximum rounded/bucketed process high-water mark.
+	GuestCPUAvgMS     *int `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS     *int `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB *int `json:"guest_peak_rss_max_mb,omitempty"`
+	// DependencySamples counts classified dependency spans retained in the
+	// bounded trace evidence window; it is a sample count, not total calls.
+	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
+	DependencyRequests int64                        `json:"dependency_requests,omitempty"`
+	Dependencies       []RequestAnalyticsDependency `json:"dependencies,omitempty"`
+	// EstimatedComputeCostMillicents allocates this app's estimated raw
+	// RAM-hour value to the route by its share of observed requests. It is
+	// an estimate at the current compute overage rate, not an invoice line.
+	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
+	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+}
+
+// RequestAnalyticsDependency is a route-scoped aggregate of classified,
+// retained dependency span evidence. Percentiles are weighted by the
+// collapsed request row count and should be read as sampled estimates.
+type RequestAnalyticsDependency struct {
+	Type           string `json:"type"`
+	Kind           string `json:"kind,omitempty"`
+	Name           string `json:"name"`
+	Samples        int64  `json:"samples"`
+	Calls          int64  `json:"calls"`
+	ErrorCalls     int64  `json:"error_calls"`
+	P95MS          int64  `json:"p95_ms"`
+	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
+}
+
+// RequestAnalyticsComputeCost describes the estimated compute value used by
+// route cost allocation. Raw RAM-hours are valued at the current overage rate;
+// account-level included allowances and egress are deliberately excluded.
+// Allocations use request_telemetry counts for the same analytics window.
+type RequestAnalyticsComputeCost struct {
+	EstimatedMillicents       int64   `json:"estimated_millicents"`
+	AllocatedMillicents       int64   `json:"allocated_millicents"`
+	UnallocatedMillicents     int64   `json:"unallocated_millicents"`
+	OtherRouteMillicents      int64   `json:"other_route_millicents"`
+	OtherRouteRequests        int64   `json:"other_route_requests"`
+	OtherRouteRequestSharePct float64 `json:"other_route_request_share_pct"`
+	RateMillicentsPerGBHour   int64   `json:"rate_millicents_per_gb_hour"`
+	Currency                  string  `json:"currency"`
+	AllocationMethod          string  `json:"allocation_method"`
+	Basis                     string  `json:"basis"`
+	RequestCount              int64   `json:"request_count"`
+}
+
+// RequestAnalyticsDeploymentCost is the estimated share of this app's compute
+// value attributed to one immutable deployment by its observed request share,
+// with optional measured CPU/request comparison data.
+type RequestAnalyticsDeploymentCost struct {
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
+}
+
+// RequestAnalyticsDeploymentCostBreakdown is the bounded deployment split of
+// this app's estimated raw compute value for one analytics window.
+type RequestAnalyticsDeploymentCostBreakdown struct {
+	EstimatedMillicents   int64                            `json:"estimated_millicents"`
+	AllocatedMillicents   int64                            `json:"allocated_millicents"`
+	UnallocatedMillicents int64                            `json:"unallocated_millicents"`
+	OtherMillicents       int64                            `json:"other_millicents"`
+	OtherRequests         int64                            `json:"other_requests"`
+	OtherRequestSharePct  float64                          `json:"other_request_share_pct"`
+	RequestCount          int64                            `json:"request_count"`
+	Deployments           []RequestAnalyticsDeploymentCost `json:"deployments"`
 }
 
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
@@ -9831,41 +10181,51 @@ type RequestAnalyticsRoute struct {
 // the other groupings. Consumer-scoped results use __anonymous__ for requests
 // without a consumer identity and __other__ for groups outside the top-N.
 type RequestAnalyticsGroup struct {
-	Value         string  `json:"value"`
-	Method        string  `json:"method,omitempty"`
-	Requests      int64   `json:"requests"`
-	ErrorRequests int64   `json:"error_requests"`
-	ErrorRatePct  float64 `json:"error_rate_pct"`
-	ColdBoots     int64   `json:"cold_boots"`
-	P50MS         int     `json:"p50_ms"`
-	P95MS         int     `json:"p95_ms"`
-	P99MS         int     `json:"p99_ms"`
+	Value               string  `json:"value"`
+	Method              string  `json:"method,omitempty"`
+	Requests            int64   `json:"requests"`
+	ErrorRequests       int64   `json:"error_requests"`
+	ErrorRatePct        float64 `json:"error_rate_pct"`
+	ColdBoots           int64   `json:"cold_boots"`
+	P50MS               int     `json:"p50_ms"`
+	P95MS               int     `json:"p95_ms"`
+	P99MS               int     `json:"p99_ms"`
+	ColdRequestP95MS    *int    `json:"cold_request_p95_ms,omitempty"`
+	WakeBootP95MS       *int    `json:"wake_boot_p95_ms,omitempty"`
+	GuestExecutionP50MS *int    `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int    `json:"guest_execution_p95_ms,omitempty"`
+	GuestCPUAvgMS       *int    `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS       *int    `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB   *int    `json:"guest_peak_rss_max_mb,omitempty"`
 }
 
 // RequestAnalyticsResponse is the bounded historical request analytics
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
-	Slug            string                  `json:"slug"`
-	Since           string                  `json:"since"`
-	From            string                  `json:"from"`
-	Until           string                  `json:"until"`
-	WindowClamped   bool                    `json:"window_clamped"`
-	Requests        int64                   `json:"requests"`
-	ErrorRequests   int64                   `json:"error_requests"`
-	ErrorRatePct    float64                 `json:"error_rate_pct"`
-	ColdBoots       int64                   `json:"cold_boots"`
-	P50MS           int                     `json:"p50_ms"`
-	P95MS           int                     `json:"p95_ms"`
-	P99MS           int                     `json:"p99_ms"`
-	GroupBy         string                  `json:"group_by"`
-	Groups          []RequestAnalyticsGroup `json:"groups"`
-	GroupsLimit     int                     `json:"groups_limit"`
-	GroupsTruncated bool                    `json:"groups_truncated"`
-	Routes          []RequestAnalyticsRoute `json:"routes"`
-	RoutesLimit     int                     `json:"routes_limit"`
-	RoutesTruncated bool                    `json:"routes_truncated"`
-	AsOf            string                  `json:"as_of"`
+	Slug                  string                                   `json:"slug"`
+	Since                 string                                   `json:"since"`
+	From                  string                                   `json:"from"`
+	Until                 string                                   `json:"until"`
+	WindowClamped         bool                                     `json:"window_clamped"`
+	Requests              int64                                    `json:"requests"`
+	ErrorRequests         int64                                    `json:"error_requests"`
+	ErrorRatePct          float64                                  `json:"error_rate_pct"`
+	ColdBoots             int64                                    `json:"cold_boots"`
+	P50MS                 int                                      `json:"p50_ms"`
+	P95MS                 int                                      `json:"p95_ms"`
+	P99MS                 int                                      `json:"p99_ms"`
+	GroupBy               string                                   `json:"group_by"`
+	Groups                []RequestAnalyticsGroup                  `json:"groups"`
+	GroupsLimit           int                                      `json:"groups_limit"`
+	GroupsTruncated       bool                                     `json:"groups_truncated"`
+	Routes                []RequestAnalyticsRoute                  `json:"routes"`
+	RoutesLimit           int                                      `json:"routes_limit"`
+	RoutesTruncated       bool                                     `json:"routes_truncated"`
+	DependenciesTruncated bool                                     `json:"dependencies_truncated"`
+	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
+	AsOf                  string                                   `json:"as_of"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
@@ -10119,6 +10479,16 @@ type RecoverRolloutRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
+// by meterd's deployment circuit breaker. The predecessor is part of the
+// compare-and-abort contract so a delayed signal cannot restore a different
+// revision after traffic has moved.
+type RecoverDeploymentRolloutRequest struct {
+	Action                          string `json:"action"`
+	Reason                          string `json:"reason,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+}
+
 // RolloutTransitionResponse is the body returned by
 // POST /v1/apps/{slug}/rollouts/recover. The Deployment carries
 // the post-transition state (rollout_state + canary_step +
@@ -10160,11 +10530,16 @@ type CreateJobRequest struct {
 	// hyphens. Validated by the handler against validSlug.
 	Name string `json:"name"`
 	// Kind is the closed-set {batch, recurring}. batch
-	// tasks run exactly once; recurring tasks re-run on
-	// the run's schedule (issue #1184 Workstream A
-	// extension — base schema accepts both). Defaults to
-	// "batch" when empty.
+	// tasks are dispatched manually; recurring jobs require
+	// a cron schedule. A non-empty Schedule also implies
+	// "recurring". Defaults to "batch" when empty.
 	Kind string `json:"kind,omitempty"`
+	// Schedule enables recurring runs. The scheduler creates one job run per
+	// matching occurrence; omitted means this is a batch job.
+	Schedule string `json:"schedule,omitempty"`
+	// Timezone is an IANA name used to evaluate Schedule. Omitted defaults to
+	// UTC and is ignored for batch jobs.
+	Timezone string `json:"timezone,omitempty"`
 	// ImageRef is the OCI image name[:tag | @digest].
 	// Digest pinning is RECOMMENDED — the same way app
 	// builds are — but not enforced at this layer.
@@ -10217,6 +10592,10 @@ type UpdateJobRequest struct {
 	// DELETE /v1/jobs/{name} (separate status='deleted'
 	// transition with the no-live-instances guard).
 	Status *string `json:"status,omitempty"`
+	// Schedule changes recurring execution. An empty string removes the
+	// schedule and converts the job back to batch mode.
+	Schedule *string `json:"schedule,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the POST /v1/jobs/{name}/runs body.
@@ -10250,11 +10629,14 @@ type CreateJobRunRequest struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID        string `json:"id"`
-	AccountID string `json:"account_id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	ImageRef  string `json:"image_ref"`
+	ID              string `json:"id"`
+	AccountID       string `json:"account_id"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	Schedule        string `json:"schedule,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
+	LastScheduledAt string `json:"last_scheduled_at,omitempty"`
+	ImageRef        string `json:"image_ref"`
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -62,13 +63,6 @@ func failOutcome(err error) state.FailOption {
 		return state.WithOutcome(state.OutcomeTimeout)
 	}
 	return state.WithOutcome(state.OutcomeFailed)
-}
-
-func invocationOutcomeForError(err error) state.InvocationOutcome {
-	if errors.Is(err, ErrDispatchTimeout) || errors.Is(err, context.DeadlineExceeded) {
-		return state.OutcomeTimeout
-	}
-	return state.OutcomeFailed
 }
 
 // Drain is the Move 1 event-shaped scheduler. It walks due rows from
@@ -240,19 +234,6 @@ func (d *Drain) emitDeadLetter(ctx context.Context, inv state.Invocation, reason
 			"app_id": inv.AppID, "source_id": inv.ID, "source": "invocation",
 			"origin": string(inv.Source), "error_kind": reason,
 		})
-	}
-}
-
-// emitInvocationDestination hands a terminal invocation outcome to the
-// existing durable app-webhook dispatcher. It is intentionally best-effort:
-// the invocation state transition has already committed, and the webhook
-// ledger provides its own retry/dead-letter semantics for a downstream outage.
-func (d *Drain) emitInvocationDestination(ctx context.Context, inv state.Invocation, outcome state.InvocationOutcome, result json.RawMessage, lastError string) {
-	if d == nil || d.store == nil {
-		return
-	}
-	if err := enqueueInvocationDestination(ctx, d.store, d.now, inv, outcome, result, lastError); err != nil {
-		d.log.Warn("drain: enqueue invocation destination", "inv", inv.ID, "err", err)
 	}
 }
 
@@ -463,7 +444,6 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			d.log.Warn("drain: reject incompatible invocation", "inv", inv.ID, "app_id", inv.AppID, "err", err)
 			return
 		}
-		d.emitInvocationDestination(ctx, inv, state.OutcomeFailed, nil, errText)
 		d.emitDone(ctx, inv, state.InvocationFailed)
 		d.log.Warn("drain: incompatible invocation failed permanently", "inv", inv.ID, "app_id", inv.AppID, "workload_class", app.WorkloadClass, "execution_mode", app.Manifest.ExecutionMode)
 		return
@@ -523,9 +503,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			err := errors.New("sched: debug replay gateway is not configured")
 			retryAfter := d.invocationRetryDelay(inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
-			failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err))
-			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
-				d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
+			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err)); failErr != nil {
+				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
 			}
 			return
 		}
@@ -538,11 +517,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			budget := d.invocationAttemptBudget(ctx, inv)
 			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err))
 			if failErr == nil && retryAfter == 0 {
-				d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
 			if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
-				d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 				d.emitDeadLetter(ctx, inv, "dead_letter")
 			}
 			d.log.Warn("drain: debug replay", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
@@ -557,21 +534,46 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			d.log.Warn("drain: complete debug replay", "inv", inv.ID, "err", err)
 			return
 		}
-		d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
 		d.emitDone(ctx, inv)
 		return
 	}
 
+	var version state.InvocationVersion
+	inv, version, err = state.ResolveInvocationVersion(ctx, d.store, inv)
+	if err != nil {
+		retryAfter := d.invocationRetryDelay(inv)
+		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
+			retryAfter = 0
+		}
+		budget := d.invocationAttemptBudget(ctx, inv)
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err)); failErr == nil && retryAfter == 0 {
+			d.emitDone(ctx, inv, state.InvocationFailed)
+		}
+		return
+	}
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
 	// the live instance handle on success; the drain stamps it onto the
 	// row so the meter's per-instance count is non-zero for this minute.
-	coord, err := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
-	if err == nil && coord.Err != nil {
-		err = coord.Err
-	}
-	if err == nil && coord.Instance == nil {
-		err = errors.New("sched: ensure wake returned no instance")
+	var wakeRes WakeResult
+	if version.DeploymentID != "" {
+		wakeRes, err = d.engine.Wake(ctx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
+			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
+		}
+	} else {
+		coord, wakeErr := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
+		err = wakeErr
+		if err == nil && coord.Err != nil {
+			err = coord.Err
+		}
+		if err == nil && coord.Instance == nil {
+			err = errors.New("sched: ensure wake returned no instance")
+		}
+		if err == nil {
+			wakeRes = WakeResult{InstanceID: coord.Instance.InstanceID, NodeID: coord.Instance.NodeID,
+				DeploymentID: coord.Instance.DeploymentID, WakeID: coord.Instance.WakeID, Port: int(coord.Instance.Port)}
+		}
 	}
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
@@ -586,22 +588,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
-		if failErr == nil && retryAfter == 0 {
-			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
-		}
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
-			d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
-	}
-	wakeRes := WakeResult{
-		InstanceID:   coord.Instance.InstanceID,
-		NodeID:       coord.Instance.NodeID,
-		DeploymentID: coord.Instance.DeploymentID,
-		WakeID:       coord.Instance.WakeID,
-		Port:         int(coord.Instance.Port),
 	}
 	// 4. Stamp the live instance handle. Failure here is non-fatal —
 	// the dispatch can still proceed; the meter just under-counts
@@ -615,7 +606,6 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
 		if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err == nil {
-			d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, nil, "")
 			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
@@ -639,11 +629,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
-			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
-			d.emitInvocationDestination(ctx, inv, state.OutcomeDeadLetter, nil, err.Error())
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
@@ -657,7 +645,6 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: complete", "inv", inv.ID, "err", err)
 		return
 	}
-	d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
 	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
 }

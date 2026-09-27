@@ -1,6 +1,12 @@
 # ADR-081 · Durable-execution wrapper over crons (issue #669)
 
 - **Status:** proposed
+- **Extended by [ADR-262](262-durable-workflow-timers.md):**
+  `wait_for_duration` adds durable timers; its cap is now plan-specific:
+  30 days on Hobby, 90 days on Pro, and 365 days on Scale. Historical
+  seven-day limits below describe the original scope.
+- **Extended by [ADR-263](263-authenticated-workflow-callbacks.md):**
+  `wait_for_callback` adds account-authorized, per-run one-time completion.
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved
@@ -196,6 +202,10 @@ with exponential backoff up to the step's `max_attempts`. A 4xx
 fails the step (the run continues if downstream steps have
 `on_error: continue`, otherwise the run is `dead`).
 
+The retry deadline is persisted on the step row. A run with parallel waits and
+retries wakes for the earliest deadline, and unrelated events cannot execute a
+retry before that step's backoff expires.
+
 The synthetic-wake RPC is the existing `GatewaySynth.Invoke` on
 `pkg/sched/loop.go:1313` (the cron path crosses the
 schedd→gatewayd boundary through this RPC; the new
@@ -247,10 +257,37 @@ such as `7d`.
 At deploy time, `apid` validates:
 
 - No circular `depends_on` (topological sort succeeds).
+- Step input references are well-formed; `steps.<name>.output` references
+  must target a direct dependency of that step.
+- `on_failure` references a distinct executable handler; failure handlers are
+  single-source, terminal, cannot chain, and cannot also be an `on_timeout`
+  target.
 - `wait_for_event` steps have no `run`.
-- All `wait_for_event.timeouts` ≤ `WorkflowMaxWaitDays = 7`.
+- Duration, event, and callback waits obey the per-plan horizon:
+  Hobby 30 days, Pro 90 days, Scale 365 days.
+- `wait_for_condition` polling keeps a separate seven-day maximum interval
+  and overall timeout.
 - All step timeouts ≤ `WorkflowStepMaxTimeout` for the plan.
 - Free plan returns 402 `plan_workflows_not_allowed` at deploy time.
+
+An omitted handler `input` defaults to the run input. An explicit input is a
+JSON template: `{{input.path}}` reads the run input and
+`{{steps.<dependency>.output.path}}` reads a completed dependency's output.
+Whole-value references retain their JSON type; embedded string references
+must be scalar. Gregale resolves and persists the request body atomically with
+the step's transition to `running`, so retries and crash recovery reuse the
+same payload rather than reevaluating a template.
+
+An executable step can name one executable `on_failure` handler. The handler
+runs only after retries are exhausted (or the source input template cannot be
+resolved), and receives
+`{"input": <run input>, "failure": {"step": ..., "status": ..., "attempt": ..., "message": ...}}`
+by default. Explicit handler templates can use `{{failure}}` or a field such
+as `{{failure.message}}`; the context is unavailable to other steps. Recovery
+does not erase the original failure: the workflow run still ends failed or
+dead after the handler completes, and the source error remains the run's
+primary error. A recovery handler is terminal and cannot have dependent
+workflow steps.
 
 Each `workflow_runs` row stores `definition_snapshot` (a copy of
 the resolved workflow spec at start time). The run reads its own
@@ -299,14 +336,14 @@ type Limits struct {
     // … existing fields …
     WorkflowMaxConcurrent   int           // concurrent runs per app
     WorkflowStepMaxTimeout  time.Duration // per-step ceiling
-    WorkflowMaxWaitDays     int           // wait_for_event timeout cap
+    WorkflowMaxWaitDays     int           // duration/event/callback wait horizon
 }
 
 var planLimits = map[api.Plan]Limits{
     PlanFree:  { WorkflowMaxConcurrent: 0,    WorkflowStepMaxTimeout: 0,     WorkflowMaxWaitDays: 0 },
-    PlanHobby: { WorkflowMaxConcurrent: 10,   WorkflowStepMaxTimeout: 10*time.Minute,  WorkflowMaxWaitDays: 7 },
-    PlanPro:   { WorkflowMaxConcurrent: 50,   WorkflowStepMaxTimeout: 30*time.Minute,  WorkflowMaxWaitDays: 7 },
-    PlanScale: { WorkflowMaxConcurrent: 200,  WorkflowStepMaxTimeout: 2*time.Hour,     WorkflowMaxWaitDays: 7 },
+    PlanHobby: { WorkflowMaxConcurrent: 10,   WorkflowStepMaxTimeout: 10*time.Minute,  WorkflowMaxWaitDays: 30 },
+    PlanPro:   { WorkflowMaxConcurrent: 50,   WorkflowStepMaxTimeout: 30*time.Minute,  WorkflowMaxWaitDays: 90 },
+    PlanScale: { WorkflowMaxConcurrent: 200,  WorkflowStepMaxTimeout: 2*time.Hour,     WorkflowMaxWaitDays: 365 },
 }
 ```
 
@@ -322,8 +359,9 @@ The enforcer per cap:
 - `WorkflowStepMaxTimeout` → `apid` at deploy (rejects the deploy
   with 400); runtime step timeouts enforced via the
   `GatewaySynth.Invoke` per-request context deadline.
-- `WorkflowMaxWaitDays` → `apid` at deploy (rejects the deploy
-  with 400).
+- `WorkflowMaxWaitDays` → `apid` at deploy for duration, event, and callback
+  waits (rejects the deploy with 400); condition waits use the fixed seven-day
+  bound described above.
 
 ### 7. State machine for `workflow_runs.status` and `workflow_steps.status`
 
@@ -413,14 +451,17 @@ competitor"):
   plane.
 - The execution model is **synthetic wakes**, not deterministic
   replay. A failed step is retried by re-running the handler; the
-  handler must be idempotent (the customer owns that).
+  handler must be idempotent (the customer owns that). Ordinary handler
+  retries share `Idempotency-Key: workflow/<run-id>/<step-name>` while the
+  attempt header increments; Gregale still provides at-least-once delivery.
 - No versioning, no replay, no signals-from-queries, no
   code-as-workflow. The DSL is declarative (steps + retries +
   events), not imperative.
-- The "wait for event" timeout is the only long-park primitive;
-  there's no general `sleep` step (a step that needs to sleep for
-  1 hour uses a step with `timeout: 1h` and a `wait_for_event`
-  step that fires on a `cron`-scheduled self-event).
+- Parking is explicit and declarative: `wait_for_duration`,
+  `wait_for_event`, and `wait_for_callback` release compute between
+  handler invocations. Their maximum horizon is plan-specific (30/90/365
+  days); `wait_for_condition` polling remains capped at seven days. There
+  is no arbitrary code suspension or deterministic `sleep` inside a handler.
 
 The ADR explicitly directs customers who outgrow this to Temporal
 Cloud / Inngest / Restate.
@@ -559,7 +600,7 @@ via a cancel + re-start.
    are ignored by in-flight runs. Documented as a non-goal
    (no migration).
 2. **`wait_for_event` long-park at scale.** A Scale customer with
-   200 concurrent runs all in `awaiting_event` for 7 days is 200
+   200 concurrent runs all in `awaiting_event` for 365 days is 200
    idle Postgres rows. Negligible storage cost. Mitigated: the
    `workflow_due` trigger does not fire while
    `status='awaiting_event'`; the row is invisible to the

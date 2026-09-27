@@ -26,8 +26,12 @@ const (
 	// Keeping a distinct, registered prefix lets secret scanners identify
 	// leaked CI credentials without confusing them with account keys.
 	DeployTokenPrefix = "fp_deploy_"
+	// PlatformTenantAccessTokenPrefix marks a read-only control-plane bearer
+	// bound to one platform tenant. It is accepted only on tenant-self routes.
+	PlatformTenantAccessTokenPrefix = "fp_tenant_"
 	// apiKeyRandomBytes is the entropy behind each key.
-	apiKeyRandomBytes = 24
+	apiKeyRandomBytes                    = 24
+	platformTenantAccessTokenRandomBytes = 32
 )
 
 const (
@@ -124,6 +128,20 @@ func GenerateDeployToken() (plaintext string, hash []byte, err error) {
 	plaintext = DeployTokenPrefix + hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(plaintext))
 	return plaintext, sum[:], nil
+}
+
+// GeneratePlatformTenantAccessToken mints a high-entropy tenant-bound bearer.
+// Plaintext is returned once; only its SHA-256 is persisted.
+func GeneratePlatformTenantAccessToken() (plaintext, prefix string, hash []byte, err error) {
+	buf := make([]byte, platformTenantAccessTokenRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", nil, fmt.Errorf("api: generate platform tenant access token: %w", err)
+	}
+	secret := hex.EncodeToString(buf)
+	plaintext = PlatformTenantAccessTokenPrefix + secret
+	prefix = PlatformTenantAccessTokenPrefix + secret[:8]
+	sum := sha256.Sum256([]byte(plaintext))
+	return plaintext, prefix, sum[:], nil
 }
 
 // HashAPIKey returns the SHA-256 of a plaintext key for lookup/comparison.
@@ -250,6 +268,20 @@ func ValidDeployTokenFormat(s string) bool {
 	return err == nil
 }
 
+// ValidPlatformTenantAccessTokenFormat cheaply checks the distinct,
+// tenant-scoped control-plane bearer format before a database lookup.
+func ValidPlatformTenantAccessTokenFormat(s string) bool {
+	if !strings.HasPrefix(s, PlatformTenantAccessTokenPrefix) {
+		return false
+	}
+	body := strings.TrimPrefix(s, PlatformTenantAccessTokenPrefix)
+	if len(body) != platformTenantAccessTokenRandomBytes*2 {
+		return false
+	}
+	_, err := hex.DecodeString(body)
+	return err == nil
+}
+
 // ConstantTimeEqualHash compares two key hashes without leaking timing.
 func ConstantTimeEqualHash(a, b []byte) bool {
 	return subtle.ConstantTimeCompare(a, b) == 1
@@ -355,6 +387,11 @@ const (
 	// deploy:write so a CI key cannot silently take over a source-control
 	// connection.
 	ScopeGithubManage = "github:manage"
+	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
+	// They are deliberately excluded from validScopes and cannot be minted as
+	// account-wide API-key scopes.
+	ScopePlatformTenantUsageRead      = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead = "platform_tenant:statements:read"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -420,14 +457,15 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 	return out, nil
 }
 
-// Pre-baked per-route scope sets for the four common patterns in
+// Pre-baked per-route scope sets for the common patterns in
 // cmd/apid/server.go. Adding a new route should pick one of these
 // named shapes; the literal scope-list form is reserved for routes
-// that need an unusual combination (none today).
+// that need an unusual combination. Tenant-self sets are the exception:
+// they contain no admin fallback and are reserved for synthetic tenant tokens.
 //
-// Admin is always in every set because principalHasScope uses any-of
-// semantics: an admin key always satisfies the route. A non-admin
-// key must carry one of the other scopes in the set to be allowed.
+// For account routes, admin is included because principalHasScope uses
+// any-of semantics. A non-admin account key must carry another scope in
+// the set to be allowed.
 var (
 	// ScopesAdminOnly: route is destructive/privileged — only admin
 	// keys (and session cookies, which are implicitly admin) pass.
@@ -511,4 +549,7 @@ var (
 	ScopesManagedPostgresManageSurface = []string{ScopeAdmin, ScopeManagedPostgresManage}
 	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
 	ScopesGithubManageSurface          = []string{ScopeAdmin, ScopeGithubManage}
+	// Tenant-self scopes are intentionally not satisfied by account admin keys.
+	ScopesPlatformTenantUsageReadSurface      = []string{ScopePlatformTenantUsageRead}
+	ScopesPlatformTenantStatementsReadSurface = []string{ScopePlatformTenantStatementsRead}
 )

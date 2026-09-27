@@ -40,10 +40,21 @@ this phase; the shorter HTTP-app cold-boot watchdog does not apply.
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3
+gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
+gregale jobs update nightly-export --schedule "30 3 * * *"
+gregale jobs update nightly-export --unschedule
 gregale jobs runs nightly
 gregale jobs retry nightly RUN_ID 0
 gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
 ```
+
+`--schedule` makes a job recurring: schedd creates one single-task run at
+each matching cron boundary, using UTC unless `--timezone` names an IANA
+timezone. A scheduled run uses the job's current image, command, environment,
+and retry/resource settings when it fires. Pausing a job stops new scheduled
+runs without cancelling existing runs. Editing the schedule resets its
+occurrence cursor; missed boundaries are coalesced into one run rather than
+replayed as a burst. `--unschedule` returns the job to batch-only operation.
 
 `--tasks` is the total queued batch size; it may exceed `--parallelism` and
 the account live-job limit. Only claimed tasks create VMs. Each claim checks

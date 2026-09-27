@@ -78,6 +78,7 @@ func writeMeterdConfig(t *testing.T, dir, metricsAddr string) string {
 func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn func(string, http.Handler, time.Duration, time.Duration, time.Duration, int64) (*http.Server, error), env func(string) string) runDeps {
 	return runDeps{
 		configPath: cfgPath,
+		capCheck:   func() error { return nil },
 		openDB: func(context.Context, string) (*pgxpool.Pool, error) {
 			return pool, nil
 		},

@@ -57,6 +57,12 @@ type ProjectPreviewView struct {
 	Unaffected []ProjectPreviewAffected
 	Removed    []string
 
+	// AsyncRoutes is the manifest-owned async-route diff shown alongside
+	// the workload plan. Removal count is split out so the template can
+	// emphasize the destructive subset without re-interpreting actions.
+	AsyncRoutes            []ProjectPreviewAsyncRoute
+	AsyncRouteRemovalCount int
+
 	// ApplyResult is populated when the apply handler renders a
 	// confirmation page after a successful reconcile. The
 	// dashboard renders a banner above the tables so the operator
@@ -75,6 +81,28 @@ type ProjectPreviewView struct {
 	// CSRF token for the multipart POST + apply POST forms.
 	PreviewFormToken  string
 	PreviewApplyToken string
+}
+
+// ProjectPreviewAsyncRoute is the dashboard presentation of one
+// api.PlanAsyncRoute. ActionClass is selected from the known action
+// vocabulary by the handler; the template never uses wire data as CSS.
+type ProjectPreviewAsyncRoute struct {
+	App          string
+	Name         string
+	Action       string
+	ActionGlyph  string
+	ActionLabel  string
+	ActionClass  string
+	MatchHost    string
+	MatchPath    string
+	MatchMethods string
+	Priority     int
+	Enabled      bool
+	OnSuccess    string
+	OnFailure    string
+	RetryPolicy  string
+	MaxAge       string
+	Reason       string
 }
 
 // ProjectPreviewApplyResult is the post-apply summary shown

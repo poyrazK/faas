@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,6 +28,10 @@ from ..models.app_secret_response_last_runtime_reload_signal import (
     check_app_secret_response_last_runtime_reload_signal,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
+
 
 T = TypeVar("T", bound="AppSecretResponse")
 
@@ -77,6 +81,12 @@ class AppSecretResponse:
     """Closed, non-sensitive guest-init outcome code."""
     last_runtime_reload_instance_id: str | Unset = UNSET
     """Runtime instance that reported this projection/signal outcome."""
+    runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
+    """Complete current roster of active runtimes authorized for this secret by the deployment scope and
+    env_secrets allowlist. Missing guest reports are represented explicitly."""
+    runtime_reload_targets_complete: bool | Unset = UNSET
+    """True when this response includes the complete active, secret-authorized runtime roster. The field is absent
+    from older control-plane responses; callers must fail closed when waiting for acknowledgements."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +144,15 @@ class AppSecretResponse:
 
         last_runtime_reload_instance_id = self.last_runtime_reload_instance_id
 
+        runtime_reload_observations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.runtime_reload_observations, Unset):
+            runtime_reload_observations = []
+            for runtime_reload_observations_item_data in self.runtime_reload_observations:
+                runtime_reload_observations_item = runtime_reload_observations_item_data.to_dict()
+                runtime_reload_observations.append(runtime_reload_observations_item)
+
+        runtime_reload_targets_complete = self.runtime_reload_targets_complete
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -174,11 +193,17 @@ class AppSecretResponse:
             field_dict["last_runtime_reload_error_code"] = last_runtime_reload_error_code
         if last_runtime_reload_instance_id is not UNSET:
             field_dict["last_runtime_reload_instance_id"] = last_runtime_reload_instance_id
+        if runtime_reload_observations is not UNSET:
+            field_dict["runtime_reload_observations"] = runtime_reload_observations
+        if runtime_reload_targets_complete is not UNSET:
+            field_dict["runtime_reload_targets_complete"] = runtime_reload_targets_complete
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
+
         d = dict(src_dict)
         key = d.pop("key")
 
@@ -261,6 +286,19 @@ class AppSecretResponse:
 
         last_runtime_reload_instance_id = d.pop("last_runtime_reload_instance_id", UNSET)
 
+        _runtime_reload_observations = d.pop("runtime_reload_observations", UNSET)
+        runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
+        if _runtime_reload_observations is not UNSET:
+            runtime_reload_observations = []
+            for runtime_reload_observations_item_data in _runtime_reload_observations:
+                runtime_reload_observations_item = SecretRuntimeReloadObservation.from_dict(
+                    runtime_reload_observations_item_data
+                )
+
+                runtime_reload_observations.append(runtime_reload_observations_item)
+
+        runtime_reload_targets_complete = d.pop("runtime_reload_targets_complete", UNSET)
+
         app_secret_response = cls(
             key=key,
             scope=scope,
@@ -282,6 +320,8 @@ class AppSecretResponse:
             last_runtime_reload_at=last_runtime_reload_at,
             last_runtime_reload_error_code=last_runtime_reload_error_code,
             last_runtime_reload_instance_id=last_runtime_reload_instance_id,
+            runtime_reload_observations=runtime_reload_observations,
+            runtime_reload_targets_complete=runtime_reload_targets_complete,
         )
 
         app_secret_response.additional_properties = d

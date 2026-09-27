@@ -136,6 +136,8 @@ func releaseWebhookMatchesSource(hook AppWebhook, app App, event AppWebhookEvent
 		return hook.AppID == app.ID && appWebhookMatches(hook.EventFilter, event)
 	case AppWebhookScopeAccount:
 		return hook.AppID == "" && len(hook.EventFilter) > 0 && appWebhookMatches(hook.EventFilter, event)
+	case AppWebhookScopePlatformTenant:
+		return false
 	default:
 		return false
 	}
@@ -229,7 +231,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		if w.AccountID != in.AccountID {
 			continue
 		}
-		if w.Scope == AppWebhookScopeAccount {
+		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
 			accountCount++
 			continue
 		}
@@ -288,8 +290,16 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 			if otherID == id || other.TargetURL != *p.TargetURL || other.Scope != w.Scope {
 				continue
 			}
-			if (w.Scope == AppWebhookScopeAccount && other.AccountID == w.AccountID) ||
-				(w.Scope != AppWebhookScopeAccount && other.AppID == w.AppID) {
+			sameOwner := false
+			switch w.Scope {
+			case AppWebhookScopeAccount:
+				sameOwner = other.AccountID == w.AccountID
+			case AppWebhookScopePlatformTenant:
+				sameOwner = other.PlatformTenantID == w.PlatformTenantID
+			default:
+				sameOwner = other.AppID == w.AppID
+			}
+			if sameOwner {
 				return AppWebhook{}, ErrConflict
 			}
 		}
@@ -297,6 +307,9 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	}
 	if p.EventFilter != nil {
 		if w.Scope == AppWebhookScopeAccount && !validAccountReleaseWebhookFilter(*p.EventFilter) {
+			return AppWebhook{}, ErrInvalidAppWebhookScope
+		}
+		if w.Scope == AppWebhookScopePlatformTenant && !validPlatformTenantWebhookFilter(*p.EventFilter) {
 			return AppWebhook{}, ErrInvalidAppWebhookScope
 		}
 		w.EventFilter = append([]string(nil), *p.EventFilter...)

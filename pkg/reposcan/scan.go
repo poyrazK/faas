@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
@@ -124,9 +125,18 @@ type Workload struct {
 	// mode declared by Compose's x-gregale-service-policy extension. Empty is
 	// the backwards-compatible account policy.
 	ServiceBindingPolicy ServiceBindingPolicy
+	// ServiceBindingTransport selects the canonical URL scheme injected for
+	// internal service bindings. Empty preserves the established HTTP contract.
+	ServiceBindingTransport ServiceBindingTransport
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+	// AllowedServiceCallers is the target-side service policy. Nil permits
+	// legacy same-account callers; a non-nil empty list denies every caller.
+	AllowedServiceCallers *[]string
+	// AllowedServiceCallScopes optionally narrows callers to per-app HTTP
+	// method and path-prefix grants. A non-nil empty map denies all callers.
+	AllowedServiceCallScopes *api.ServiceCallerScopes
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire
@@ -150,9 +160,15 @@ type Workload struct {
 // detection remains independent of the public wire DTO package.
 type ServiceBindingPolicy string
 
+// ServiceBindingTransport is the repository declaration consumed by
+// reconciliation for the canonical service-binding URL scheme.
+type ServiceBindingTransport string
+
 const (
-	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
-	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
+	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )
 
 type PreviewServiceCallsPolicy string

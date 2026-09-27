@@ -16,6 +16,7 @@ type PlatformTenantStatementStore interface {
 	CreatePlatformTenantStatement(context.Context, PlatformTenantStatementInput) (PlatformTenantStatement, bool, error)
 	GetPlatformTenantStatement(context.Context, string, string, string) (PlatformTenantStatement, error)
 	ListPlatformTenantStatements(context.Context, string, string, time.Time, time.Time) ([]PlatformTenantStatement, error)
+	ListFinalizedPlatformTenantStatements(context.Context, string, string, time.Time, time.Time, int, int) ([]PlatformTenantStatementSummary, error)
 	FinalizePlatformTenantStatement(context.Context, string, string, string) (PlatformTenantStatement, bool, error)
 	CreatePlatformTenantStatementHandoff(context.Context, PlatformTenantStatementHandoffInput) (PlatformTenantStatementHandoff, bool, error)
 	GetPlatformTenantStatementHandoff(context.Context, string, string, string) (PlatformTenantStatementHandoff, error)
@@ -24,14 +25,17 @@ type PlatformTenantStatementStore interface {
 const PlatformTenantStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 
 type PlatformTenantStatementLine struct {
-	AppID                  string    `json:"app_id"`
-	ConsumerID             string    `json:"consumer_id"`
-	WindowStart            time.Time `json:"window_start"`
-	BillableUnits          int64     `json:"billable_units"`
-	RateCardID             string    `json:"rate_card_id,omitempty"`
-	Currency               string    `json:"currency,omitempty"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	AppID                    string    `json:"app_id"`
+	ConsumerID               string    `json:"consumer_id,omitempty"`
+	SurfaceID                string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID   string    `json:"jwt_authorization_rule_id,omitempty"`
+	WindowStart              time.Time `json:"window_start"`
+	BillableUnits            int64     `json:"billable_units"`
+	RateCardID               string    `json:"rate_card_id,omitempty"`
+	PlatformTenantRateCardID string    `json:"platform_tenant_rate_card_id,omitempty"`
+	Currency                 string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit   int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents         int64     `json:"amount_millicents"`
 }
 
 type PlatformTenantStatement struct {
@@ -50,6 +54,37 @@ type PlatformTenantStatement struct {
 	AsOf             time.Time
 	CreatedAt        time.Time
 	FinalizedAt      *time.Time
+}
+
+// PlatformTenantStatementSummary is the bounded list projection. It omits
+// line items; callers fetch one full immutable statement by ID when needed.
+type PlatformTenantStatementSummary struct {
+	ID               string
+	AccountID        string
+	TenantID         string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Revision         int
+	Status           APIConsumerUsageStatementStatus
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	AsOf             time.Time
+	CreatedAt        time.Time
+	FinalizedAt      *time.Time
+}
+
+func platformTenantStatementSummary(s PlatformTenantStatement) PlatformTenantStatementSummary {
+	var finalizedAt *time.Time
+	if s.FinalizedAt != nil {
+		value := *s.FinalizedAt
+		finalizedAt = &value
+	}
+	return PlatformTenantStatementSummary{ID: s.ID, AccountID: s.AccountID, TenantID: s.TenantID,
+		PeriodStart: s.PeriodStart, PeriodEnd: s.PeriodEnd, Revision: s.Revision, Status: s.Status,
+		Currency: s.Currency, BillableUnits: s.BillableUnits, UnpricedUnits: s.UnpricedUnits,
+		AmountMillicents: s.AmountMillicents, AsOf: s.AsOf, CreatedAt: s.CreatedAt, FinalizedAt: finalizedAt}
 }
 
 type PlatformTenantStatementInput struct {
@@ -112,20 +147,45 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 		if _, err := uuid.Parse(line.AppID); err != nil {
 			return ErrInvalidArgument
 		}
-		if _, err := uuid.Parse(line.ConsumerID); err != nil {
+		sources := 0
+		if line.ConsumerID != "" {
+			sources++
+		}
+		if line.SurfaceID != "" {
+			sources++
+		}
+		if line.JWTAuthorizationRuleID != "" {
+			sources++
+		}
+		if sources != 1 {
 			return ErrInvalidArgument
+		}
+		if line.ConsumerID != "" {
+			if _, err := uuid.Parse(line.ConsumerID); err != nil {
+				return ErrInvalidArgument
+			}
+		}
+		if line.SurfaceID != "" {
+			if _, err := uuid.Parse(line.SurfaceID); err != nil {
+				return ErrInvalidArgument
+			}
+		}
+		if line.JWTAuthorizationRuleID != "" {
+			if _, err := uuid.Parse(line.JWTAuthorizationRuleID); err != nil {
+				return ErrInvalidArgument
+			}
 		}
 		if line.WindowStart.Before(in.PeriodStart) || !line.WindowStart.Before(in.PeriodEnd) ||
 			!line.WindowStart.Equal(line.WindowStart.UTC().Truncate(time.Minute)) ||
 			line.BillableUnits < 0 || line.AmountMillicents < 0 || line.PriceMillicentsPerUnit < 0 {
 			return ErrInvalidArgument
 		}
-		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.WindowStart.Format(time.RFC3339)
+		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.SurfaceID + "\x00" + line.JWTAuthorizationRuleID + "\x00" + line.WindowStart.Format(time.RFC3339)
 		if seen[key] {
 			return ErrInvalidArgument
 		}
 		seen[key] = true
-		if line.RateCardID == "" {
+		if line.RateCardID == "" && line.PlatformTenantRateCardID == "" {
 			if line.Currency != "" || line.PriceMillicentsPerUnit != 0 || line.AmountMillicents != 0 {
 				return ErrInvalidArgument
 			}
@@ -134,7 +194,14 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			}
 			unpriced += line.BillableUnits
 		} else {
-			if _, err := uuid.Parse(line.RateCardID); err != nil {
+			if line.RateCardID != "" && line.PlatformTenantRateCardID != "" {
+				return ErrInvalidArgument
+			}
+			cardID := line.RateCardID
+			if cardID == "" {
+				cardID = line.PlatformTenantRateCardID
+			}
+			if _, err := uuid.Parse(cardID); err != nil {
 				return ErrInvalidArgument
 			}
 			if line.Currency != in.Currency || !isUpperASCIICurrency(line.Currency) ||

@@ -50,7 +50,7 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 			(app_id, account_id, target_url, secret_sealed,
 			 event_filter, retry_policy, delivery_format, enabled)
 		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
-		returning id, app_id::text, account_id, target_url, secret_sealed,
+		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
@@ -119,7 +119,7 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 		select count(*) from app_webhooks w
 		 left join apps a on a.id = w.app_id
 		 where w.account_id = $1
-		   and (w.scope = 'account' or
+		   and (w.scope in ('account', 'platform_tenant') or
 		        (w.scope = 'app' and a.account_id = $1 and a.status <> 'deleted'))
 	`, in.AccountID).Scan(&accountCount); err != nil {
 		return AppWebhook{}, fmt.Errorf("state: count app_webhooks for account %s: %w", in.AccountID, err)
@@ -147,7 +147,7 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 			(app_id, account_id, target_url, secret_sealed,
 			 event_filter, retry_policy, delivery_format, enabled)
 		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
-		returning id, app_id::text, account_id, target_url, secret_sealed,
+		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
@@ -167,7 +167,7 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 
 func (s *PgStore) AppWebhookByID(ctx context.Context, id string) (AppWebhook, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, app_id::text, account_id, target_url, secret_sealed,
+		select id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks where id = $1
@@ -227,7 +227,7 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 			secret_sealed = $7,
 			updated_at = now()
 		where id = $1
-		returning id, app_id::text, account_id, target_url, secret_sealed,
+		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, id, current.TargetURL, filterArr, string(current.RetryPolicy),
@@ -255,7 +255,7 @@ func (s *PgStore) DeleteAppWebhook(ctx context.Context, id string) error {
 
 func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, app_id::text, account_id, target_url, secret_sealed,
+		select id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks
@@ -271,7 +271,7 @@ func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]Ap
 
 func (s *PgStore) ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, app_id::text, account_id, target_url, secret_sealed,
+		select id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks
@@ -299,7 +299,7 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 		insert into app_webhook_deliveries
 			(webhook_id, app_id, account_id, event, payload,
 			 attempt, status, next_attempt_at)
-		values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+		values ($1, nullif($2, '')::uuid, $3, $4, $5::jsonb, $6, $7, $8)
 		returning id, webhook_id, app_id, account_id, event, payload,
 		          attempt, status, last_error, last_response_code,
 		          next_attempt_at, delivered_at, created_at, updated_at
@@ -591,14 +591,16 @@ type appWebhookScanner interface {
 
 func scanAppWebhook(s appWebhookScanner) (AppWebhook, error) {
 	var (
-		w      AppWebhook
-		appID  pgtype.Text
-		filter []string
-		retry  string
-		format string
+		w              AppWebhook
+		appID          pgtype.Text
+		platformTenant pgtype.Text
+		scope          string
+		filter         []string
+		retry          string
+		format         string
 	)
 	err := s.Scan(
-		&w.ID, &appID, &w.AccountID, &w.TargetURL, &w.SecretSealed,
+		&w.ID, &appID, &platformTenant, &w.AccountID, &scope, &w.TargetURL, &w.SecretSealed,
 		&filter, &retry, &format, &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
@@ -606,10 +608,11 @@ func scanAppWebhook(s appWebhookScanner) (AppWebhook, error) {
 	}
 	if appID.Valid {
 		w.AppID = appID.String
-		w.Scope = AppWebhookScopeApp
-	} else {
-		w.Scope = AppWebhookScopeAccount
 	}
+	if platformTenant.Valid {
+		w.PlatformTenantID = platformTenant.String
+	}
+	w.Scope = AppWebhookScope(scope)
 	w.RetryPolicy = AppWebhookRetryPolicy(retry)
 	w.DeliveryFormat = AppWebhookDeliveryFormat(format)
 	if w.DeliveryFormat == "" {
@@ -640,6 +643,7 @@ func scanAppWebhooks(rows pgx.Rows) ([]AppWebhook, error) {
 func scanAppWebhookDelivery(s appWebhookScanner) (AppWebhookDelivery, error) {
 	var (
 		d          AppWebhookDelivery
+		appID      pgtype.Text
 		payload    []byte
 		status     string
 		event      string
@@ -647,12 +651,15 @@ func scanAppWebhookDelivery(s appWebhookScanner) (AppWebhookDelivery, error) {
 		lastRespCo *int32
 	)
 	err := s.Scan(
-		&d.ID, &d.WebhookID, &d.AppID, &d.AccountID, &event, &payload,
+		&d.ID, &d.WebhookID, &appID, &d.AccountID, &event, &payload,
 		&d.Attempt, &status, &lastErr, &lastRespCo,
 		&d.NextAttemptAt, &d.DeliveredAt, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		return AppWebhookDelivery{}, err
+	}
+	if appID.Valid {
+		d.AppID = appID.String
 	}
 	d.Event = AppWebhookEvent(event)
 	d.Status = AppWebhookDeliveryStatus(status)

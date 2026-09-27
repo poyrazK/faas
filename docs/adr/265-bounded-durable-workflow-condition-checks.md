@@ -1,0 +1,10 @@
+# ADR-265 · Bounded durable workflow condition checks
+
+- **Status:** proposed
+- **Date:** 2026-09-26
+- **Decision:** Add `wait_for_condition` as a mutually exclusive declarative workflow step target. A named app checker returns a JSON object with required boolean `done`. Gregale persists every check result, attempt count, first activation, and `next_check_at`, then suspends the run until the next check or the overall deadline. No app instance is reserved between checks. A false result becomes the next check's input; true completes the step. Transient checker failures are retried at the configured interval. A malformed 2xx result or a 4xx result fails the run. The interval is at least one minute, the attempt count is capped at 1,000, and the overall timeout follows the plan's existing seven-day maximum. Exhaustion takes the existing `on_timeout` branch or closes the run.
+- **Why:** Some external systems cannot push an event or callback. Gregale can own the schedule, attempt ledger, and timeout instead of making each application operate a cron and polling table.
+- **Consequences:** This removes customer-managed polling infrastructure, not the check calls themselves. Each attempt consumes an app invocation and is at least once; the stable run/step/attempt idempotency key lets a checker deduplicate an ambiguous retry after scheduler failure. Check results and the next due time are visible in workflow step inspection. `next_check_at` is a nullable column on `workflow_steps`; no long-lived process or code replay is introduced. A push-based provider should use `wait_for_event` or `wait_for_callback` instead.
+- **Rejected alternatives:** Arbitrary predicate evaluation against customer data would require data access and a polling language in the control plane. A permanently alive checker would consume compute. Reusing the guest's short-lived `ctx.waitUntil()` post-response tail would confuse a bounded execution tail with a durable workflow wait.
+
+This extends ADR-081, ADR-262, and ADR-263. It is not AWS-style replayed code-as-workflow execution.

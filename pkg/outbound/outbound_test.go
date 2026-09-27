@@ -54,6 +54,89 @@ func TestMemoryBackendEnforcesRateAndReleasesConcurrency(t *testing.T) {
 	}
 }
 
+func TestMemoryBackendAppliesBurstReductionImmediately(t *testing.T) {
+	backend := NewMemoryBackend()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	backend.SetClock(func() time.Time { return now })
+	initial := AdmissionSpec{IntegrationID: "integration-1", RatePerSecond: 10, Burst: 10, MaxInFlight: 10, LeaseTTL: time.Second}
+	first, err := backend.Admit(context.Background(), initial)
+	if err != nil || !first.Granted {
+		t.Fatalf("initial admission = %#v, %v", first, err)
+	}
+	if err := backend.Release(context.Background(), initial.IntegrationID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	lowered := AdmissionSpec{IntegrationID: initial.IntegrationID, RatePerSecond: .1, Burst: 1, MaxInFlight: 10, LeaseTTL: time.Second}
+	firstLowered, err := backend.Admit(context.Background(), lowered)
+	if err != nil || !firstLowered.Granted {
+		t.Fatalf("first lowered-policy admission = %#v, %v", firstLowered, err)
+	}
+	if err := backend.Release(context.Background(), lowered.IntegrationID, firstLowered.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	secondLowered, err := backend.Admit(context.Background(), lowered)
+	if err != nil || secondLowered.Granted || secondLowered.Reason != ReasonRate {
+		t.Fatalf("burst reduction left stale tokens: %#v, %v", secondLowered, err)
+	}
+}
+
+func TestMemoryBackendEnforcesDailyLimitPerBinding(t *testing.T) {
+	backend := NewMemoryBackend()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	backend.SetClock(func() time.Time { return now })
+	bindingLimit := int64(1)
+	integrationLimit := int64(3)
+	base := AdmissionSpec{
+		IntegrationID: "integration-1", RatePerSecond: 100, Burst: 10, MaxInFlight: 10,
+		DailyRequestLimit: &integrationLimit, BindingDailyRequestLimit: &bindingLimit, LeaseTTL: time.Minute,
+	}
+	appOne := base
+	appOne.BindingAppID = "app-1"
+	first, err := backend.Admit(context.Background(), appOne)
+	if err != nil || !first.Granted {
+		t.Fatalf("first binding admission = %+v, %v", first, err)
+	}
+	if err := backend.Release(context.Background(), appOne.IntegrationID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		blocked, err := backend.Admit(context.Background(), appOne)
+		if err != nil || blocked.Granted || blocked.Reason != ReasonDailyLimit {
+			t.Fatalf("over-limit binding admission = %+v, %v", blocked, err)
+		}
+	}
+	appTwo := base
+	appTwo.BindingAppID = "app-2"
+	secondBinding, err := backend.Admit(context.Background(), appTwo)
+	if err != nil || !secondBinding.Granted {
+		t.Fatalf("independent binding admission after rejected calls = %+v, %v", secondBinding, err)
+	}
+	if err := backend.Release(context.Background(), appTwo.IntegrationID, secondBinding.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	appThree := base
+	appThree.BindingAppID = "app-3"
+	thirdBinding, err := backend.Admit(context.Background(), appThree)
+	if err != nil || !thirdBinding.Granted {
+		t.Fatalf("integration budget should count only grants = %+v, %v", thirdBinding, err)
+	}
+	if err := backend.Release(context.Background(), appThree.IntegrationID, thirdBinding.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	appFour := base
+	appFour.BindingAppID = "app-4"
+	globalBlocked, err := backend.Admit(context.Background(), appFour)
+	if err != nil || globalBlocked.Granted || globalBlocked.Reason != ReasonDailyLimit {
+		t.Fatalf("integration-wide limit after three grants = %+v, %v", globalBlocked, err)
+	}
+
+	now = now.Add(24 * time.Hour)
+	reset, err := backend.Admit(context.Background(), appOne)
+	if err != nil || !reset.Granted {
+		t.Fatalf("binding limit did not reset at UTC midnight = %+v, %v", reset, err)
+	}
+}
+
 func TestHandlersShareOneBackendAcrossInstances(t *testing.T) {
 	entered := make(chan struct{})
 	finish := make(chan struct{})

@@ -126,7 +126,6 @@ CreateConsumerKeyForConsumer
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
-CreateCronWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
 CreateEdgeRule
@@ -144,8 +143,6 @@ CreateSessionWithBinding
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
 CreateUploadSession
-CreateWorkflowRun
-CronByID
 CurrentMonthOverageCents
 DailyCostCents
 DecrementAccountAsyncInflight
@@ -225,7 +222,6 @@ GetDeploymentByIDScopedToSuperseded
 GetDeploymentOpenAPIDoc
 GetDoctorObservation
 GetEdgeRuleByID
-GetFireNowRequest
 GetGithubInstallBindingForApp
 GetGithubWebhookSecret
 GetIdempotent
@@ -418,6 +414,7 @@ ListProjectsForAccount
 ListQueueBindingsForApp
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
+ListRequestTelemetryByPlatformTenant
 ListRequestTelemetryDependencySpans
 ListRunningInstancesOnDeadNodes
 ListRuntimeConfigRevisions
@@ -457,7 +454,6 @@ MarkAppWebhookDeliverySucceeded
 MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
-MarkCronFired
 MarkDeploymentCancelled
 MarkDeploymentStageFailed
 MarkDomainVerified

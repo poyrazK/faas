@@ -464,6 +464,22 @@ type AppSecret struct {
 	ManagedObjectStorageCredentialID pgtype.UUID
 }
 
+type AppSecretRuntimeReloadObservation struct {
+	AppID                   pgtype.UUID
+	Scope                   string
+	Key                     string
+	InstanceID              pgtype.UUID
+	SecretVersion           int64
+	Projection              string
+	Signal                  string
+	ObservedAt              pgtype.Timestamptz
+	ErrorCode               pgtype.Text
+	ApplicationAckVersion   pgtype.Int8
+	ApplicationAckStatus    pgtype.Text
+	ApplicationAckAt        pgtype.Timestamptz
+	ApplicationAckErrorCode pgtype.Text
+}
+
 type AppTrustedSigner struct {
 	AccountID        pgtype.UUID
 	AppID            pgtype.UUID
@@ -868,6 +884,7 @@ type Deployment struct {
 	ScanStatus               pgtype.Text
 	ScannedAt                pgtype.Timestamptz
 	OverrideLivenessProbe    []byte
+	SecretReloadSignal       pgtype.Text
 	ParkedReason             pgtype.Text
 	ParkedAt                 pgtype.Timestamptz
 	TrafficPercent           int32
@@ -1025,6 +1042,7 @@ type EdgeRule struct {
 	UpdatedAt    pgtype.Timestamptz
 	ValidateMode string
 	CorsPresetID pgtype.UUID
+	ManifestKey  pgtype.Text
 }
 
 type EgressPolicy struct {
@@ -1836,6 +1854,23 @@ type ProjectEnvironmentCleanupJob struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectReleaseMember struct {
+	ReleaseID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseSet struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Active          bool
+	TtlSeconds      int32
+	ExpiresAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ProvisionedStaticEgressIp struct {
 	AccountID  pgtype.UUID
 	CustomerIp netip.Addr
@@ -1859,35 +1894,39 @@ type ReleaseBundle struct {
 }
 
 type RequestTelemetry struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	DeploymentID        pgtype.UUID
-	Route               string
-	Method              string
-	Status              int32
-	LatencyMs           int32
-	ColdBoot            bool
-	TraceID             pgtype.Text
-	SpansSummary        []byte
-	ReceivedAt          pgtype.Timestamptz
-	Count               int32
-	UaFamily            string
-	ReferrerHost        string
-	Country             string
-	WakeID              pgtype.Text
-	InstanceID          pgtype.Text
-	GuestDurationMs     int32
-	GuestRuntime        string
-	GuestOutcome        string
-	GuestErrorClass     string
-	ConsumerID          pgtype.UUID
-	NodeID              string
-	Region              string
-	CommitSha           string
-	DeploymentTag       string
-	DeploymentCreatedAt string
-	ImageDigest         string
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	SpansSummary                []byte
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
 }
 
 type RequestTelemetry202608 struct {

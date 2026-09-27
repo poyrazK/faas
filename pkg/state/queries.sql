@@ -33,6 +33,57 @@ SET cents_remaining = credit.cents_remaining + inserted.delta_cents
 FROM inserted
 WHERE credit.id = inserted.credit_id AND credit.account_id = sqlc.arg(account_id);
 
+-- name: ListAppSecretRuntimeReloadTargets :many
+-- Build the complete active roster for each secret from the deployment's
+-- persisted scope/allowlist and reload opt-in. A missing observation remains
+-- a target with nullable outcome fields rather than disappearing from the
+-- denominator.
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND (
+       coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+       OR d.override_env_secrets ? s.key
+       OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+             CROSS JOIN LATERAL jsonb_each_text(coalesce(sidecar.value->'env_secrets', '{}'::jsonb)) AS secret_ref(env_key, ref)
+            WHERE secret_ref.ref = 'secret:' || s.key
+       )
+   )
+ORDER BY s.scope ASC, s.key ASC, i.id ASC;
+
+-- name: SetDeploymentSecretReloadSignal :execrows
+-- imaged persists the validated image opt-in on each newly built deployment;
+-- the state query keeps legacy NULL rows distinct from explicit opt-outs.
+UPDATE deployments
+   SET secret_reload_signal = sqlc.arg(signal)::text
+ WHERE id = sqlc.arg(id)::uuid;
+
 -- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger
@@ -1832,7 +1883,9 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    platform_tenant_id,
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1846,8 +1899,36 @@ INSERT INTO request_telemetry (
     sqlc.arg('commit_sha')::text,
     sqlc.arg('deployment_tag')::text,
     sqlc.arg('deployment_created_at')::text,
-    sqlc.arg('image_digest')::text
+    sqlc.arg('image_digest')::text,
+    sqlc.arg('platform_tenant_id')::uuid,
+    sqlc.arg('guest_cpu_time_ms')::int,
+    sqlc.arg('guest_peak_rss_mb')::int,
+    sqlc.arg('guest_resource_usage_available')::bool
 );
+
+-- name: ListRequestTelemetryByPlatformTenant :many
+-- Cross-app support view for a platform customer. Always constrain by both
+-- owning account and the immutable request-time tenant snapshot; do not infer
+-- attribution by joining today's consumer/surface links.
+SELECT id, app_id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = sqlc.arg('account_id')
+  AND platform_tenant_id = sqlc.arg('platform_tenant_id')
+  AND received_at >= sqlc.arg('received_from')
+  AND received_at < sqlc.arg('received_until')
+  AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
+       OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
+                               sqlc.arg('cursor_id')::uuid))
+  AND (sqlc.arg('app_id_filter')::text = ''
+       OR app_id = NULLIF(sqlc.arg('app_id_filter')::text, '')::uuid)
+  AND (sqlc.arg('status_filter')::int = 0
+       OR status = sqlc.arg('status_filter')::int)
+ORDER BY received_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryByApp :many
 -- Canonical read pattern: "give me the last N requests for this app".
@@ -1899,7 +1980,7 @@ LIMIT sqlc.arg('limit')::int;
 -- pass an app id from another tenant; the app lookup remains the primary
 -- IDOR boundary. The newest rows are preferred because spans_summary is
 -- sampled evidence, not a complete request trace archive.
-SELECT id, count, status, trace_id, received_at, spans_summary
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -1968,6 +2049,73 @@ WHERE app_id = $1
   AND received_at <  $4
 ORDER BY received_at DESC
 LIMIT $5;
+
+-- name: RequestTelemetryCircuitBreakerSummary :one
+-- Bounded candidate/stable health summary for the deployment circuit breaker.
+-- `count` weights collapsed telemetry rows; compute request and 5xx totals,
+-- overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+-- only one row.
+WITH weighted AS (
+    SELECT latency_ms,
+           SUM(count::bigint) AS requests,
+           SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+      FROM request_telemetry
+     WHERE app_id = sqlc.arg('app_id')::uuid
+       AND deployment_id = sqlc.arg('deployment_id')::uuid
+       AND received_at >= sqlc.arg('received_at')::timestamptz
+       AND received_at < sqlc.arg('received_at_2')::timestamptz
+     GROUP BY latency_ms
+), cpu_usage AS (
+    -- CPU is sampled per instance/minute. The retained instance row supplies
+    -- its deployment identity; old stopped instances remain through the
+    -- telemetry window, then state retention removes them. Ignore pure idle
+    -- minutes so background CPU with no requests cannot dominate the ratio.
+    SELECT COALESCE(SUM(u.cpu_usec) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_usec,
+           COALESCE(SUM(u.requests::bigint) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_requests
+      FROM usage_minutes AS u
+      JOIN instances AS ins ON ins.id = u.instance_id
+     WHERE u.app_id = sqlc.arg('app_id')::uuid
+       AND ins.app_id = sqlc.arg('app_id')::uuid
+       AND ins.deployment_id = sqlc.arg('deployment_id')::uuid
+       AND u.minute >= date_trunc('minute', sqlc.arg('received_at')::timestamptz)
+       AND u.minute < sqlc.arg('received_at_2')::timestamptz
+), ranked AS (
+      SELECT latency_ms,
+             requests,
+             server_errors,
+             cold_boot_requests,
+             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(requests) OVER () AS total,
+             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_requests) OVER () AS cold_boot_total
+        FROM weighted
+), summary AS (
+    SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
+           COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
+           COALESCE(
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               0
+           )::double precision AS p95_latency_ms,
+           COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
+           COALESCE(
+               MIN(latency_ms) FILTER (
+                   WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
+                     AND cold_boot_total > 0
+               ),
+               0
+           )::double precision AS cold_boot_p95_latency_ms
+      FROM ranked
+)
+SELECT summary.requests,
+       summary.server_errors,
+       summary.p95_latency_ms,
+       summary.cold_boot_requests,
+       summary.cold_boot_p95_latency_ms,
+       cpu_usage.cpu_usec,
+       cpu_usage.cpu_requests
+  FROM summary
+ CROSS JOIN cpu_usage;
 
 -- name: RequestTelemetryBaselineP95ByRoute :many
 -- Per-route p50/p95/p99 latency + represented request count for the
@@ -2142,6 +2290,46 @@ JOIN percentiles USING (route, method)
 ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
 LIMIT $5;
 
+-- name: RequestTelemetryAnalyticsByDeployment :many
+-- Bounded deployment cost allocation for the customer request analytics
+-- window. Request counts are weighted by the publisher's collapsed `count`.
+-- The window total is computed before LIMIT so the handler can allocate the
+-- omitted deployments into a visible __other__ bucket without an unbounded
+-- response.
+WITH per_deployment AS (
+    SELECT deployment_id::text AS deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(count)::bigint AS requests,
+           COALESCE(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+    GROUP BY deployment_id
+)
+SELECT deployment_id,
+       commit_sha,
+       deployment_tag,
+       deployment_created_at,
+       requests,
+       guest_cpu_measured_requests,
+       guest_cpu_avg_ms,
+       SUM(requests) OVER ()::bigint AS total_requests
+FROM per_deployment
+ORDER BY requests DESC, deployment_id ASC
+LIMIT $5;
+
 -- name: RequestTelemetryAnalyticsByDimension :many
 -- Top-N customer analytics grouped by one of the bounded dimensions. Rows
 -- outside the top-N are folded into __other__ so a customer cannot turn this
@@ -2161,6 +2349,12 @@ WITH filtered AS (
         latency_ms,
         cold_boot,
         status,
+        guest_duration_ms,
+        guest_runtime,
+        guest_cpu_time_ms,
+        guest_peak_rss_mb,
+        guest_resource_usage_available,
+        wake_id,
         count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -2183,6 +2377,12 @@ WITH filtered AS (
         filtered.latency_ms,
         filtered.cold_boot,
         filtered.status,
+        filtered.guest_duration_ms,
+        filtered.guest_runtime,
+        filtered.guest_cpu_time_ms,
+        filtered.guest_peak_rss_mb,
+        filtered.guest_resource_usage_available,
+        filtered.wake_id,
         filtered.request_count
     FROM filtered
     LEFT JOIN top_groups
@@ -2198,6 +2398,124 @@ WITH filtered AS (
            SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
            SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
     FROM latency_values
+), cold_latency_values AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE cold_boot
+    GROUP BY dimension, method, latency_ms
+), cold_wakes AS (
+    SELECT DISTINCT dimension, method, wake_id
+    FROM assigned
+    WHERE cold_boot
+      AND wake_id IS NOT NULL
+      AND wake_id <> ''
+      AND dimension <> '__other__'
+      AND sqlc.arg('group_by')::text = 'route'
+), wake_events AS (
+    SELECT cold_wakes.dimension,
+           cold_wakes.method,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_started' AND events.actor = 'schedd') AS started_at,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_completed' AND events.actor = 'schedd') AS completed_at
+    FROM cold_wakes
+    JOIN events ON events.data->>'wake_id' = cold_wakes.wake_id
+    WHERE events.kind IN ('wake.boot_started', 'wake.boot_completed')
+    GROUP BY cold_wakes.dimension, cold_wakes.method, cold_wakes.wake_id
+), wake_durations AS (
+    SELECT dimension,
+           method,
+           (EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::int AS duration_ms
+    FROM wake_events
+    WHERE started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at > started_at
+), wake_values AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           COUNT(*)::bigint AS sample_count
+    FROM wake_durations
+    GROUP BY dimension, method, duration_ms
+), wake_ranked AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM wake_values
+), wake_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS wake_boot_p95_ms
+    FROM wake_ranked
+    GROUP BY dimension, method
+), cold_ranked AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM cold_latency_values
+), cold_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS cold_request_p95_ms
+    FROM cold_ranked
+    GROUP BY dimension, method
+), guest_latency_values AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_runtime <> '__unknown__'
+    GROUP BY dimension, method, guest_duration_ms
+), guest_ranked AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_latency_values
+), guest_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.50))::int AS guest_execution_p50_ms,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_execution_p95_ms
+    FROM guest_ranked
+    GROUP BY dimension, method
+), guest_cpu_values AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_resource_usage_available
+    GROUP BY dimension, method, guest_cpu_time_ms
+), guest_cpu_ranked AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_cpu_time_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_cpu_values
+), guest_resource_metrics AS (
+    SELECT assigned.dimension,
+           assigned.method,
+           ROUND(SUM(assigned.guest_cpu_time_ms::numeric * assigned.request_count)
+                 FILTER (WHERE assigned.guest_resource_usage_available)
+                 / NULLIF(SUM(assigned.request_count) FILTER (WHERE assigned.guest_resource_usage_available), 0))::int AS guest_cpu_avg_ms,
+           MAX(assigned.guest_peak_rss_mb) FILTER (WHERE assigned.guest_resource_usage_available)::int AS guest_peak_rss_max_mb
+    FROM assigned
+    GROUP BY assigned.dimension, assigned.method
+), guest_cpu_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_cpu_time_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_cpu_p95_ms
+    FROM guest_cpu_ranked
+    GROUP BY dimension, method
 ), percentiles AS (
     SELECT dimension,
            method,
@@ -2222,9 +2540,21 @@ SELECT totals.dimension,
        totals.cold_boots,
        percentiles.p50_ms,
        percentiles.p95_ms,
-       percentiles.p99_ms
+       percentiles.p99_ms,
+       cold_percentiles.cold_request_p95_ms,
+       wake_percentiles.wake_boot_p95_ms,
+       guest_percentiles.guest_execution_p50_ms,
+       guest_percentiles.guest_execution_p95_ms,
+       guest_resource_metrics.guest_cpu_avg_ms,
+       guest_cpu_percentiles.guest_cpu_p95_ms,
+       guest_resource_metrics.guest_peak_rss_max_mb
 FROM totals
 JOIN percentiles USING (dimension, method)
+LEFT JOIN cold_percentiles USING (dimension, method)
+LEFT JOIN wake_percentiles USING (dimension, method)
+LEFT JOIN guest_percentiles USING (dimension, method)
+LEFT JOIN guest_resource_metrics USING (dimension, method)
+LEFT JOIN guest_cpu_percentiles USING (dimension, method)
 ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC;
 
 -- name: RequestTelemetryAnalyticsTimeseries :many
@@ -3921,3 +4251,31 @@ WHERE kind = 'wake.sidecar_health'
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
+
+-- name: ReadProjectReleaseSet :one
+-- A single statement reads the pointer and its complete membership together.
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = sqlc.arg(account_id) AND rs.project_id = sqlc.arg(project_id)
+   AND rs.environment_slug = sqlc.arg(environment)
+   AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+     OR rs.id = sqlc.narg(release_id)::uuid);
+
+-- name: ListProjectReleaseSetsBefore :many
+-- Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = sqlc.arg(account_id) AND rs.project_id = sqlc.arg(project_id)
+   AND rs.environment_slug = sqlc.arg(environment)
+   AND (sqlc.narg(before_at)::timestamptz IS NULL
+     OR (rs.created_at, rs.id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::uuid))
+ ORDER BY rs.created_at DESC, rs.id DESC
+ LIMIT sqlc.arg(page_limit);

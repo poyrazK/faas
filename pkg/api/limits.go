@@ -20,9 +20,25 @@ import (
 	"time"
 )
 
+// MaxOutboundRequestsPerDay is the structural upper bound for a
+// customer-configured daily request budget on one integration. Plan ceilings
+// below are at or below this value. See ADR-257.
+const MaxOutboundRequestsPerDay int64 = 100_000_000
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// Customer-configured admission budgets are safety bounds, not plan
+	// allowances. Zero disables a dimension; these caps keep counters and
+	// request validation bounded without prescribing a default quota.
+	MaxPlatformTenantRequestsPerMinute int64 = 1_000_000
+	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
+	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
+	// remain addressable by clients after a stable cutover.
+	RevisionPinMaxTTLSeconds     = 7 * 24 * 60 * 60
+	ProjectReleaseSetMaxMembers  = 100
+	ProjectReleaseSetPageDefault = 50
+	ProjectReleaseSetPageMax     = 100
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
@@ -298,6 +314,17 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
+	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
+	// request limit on any one managed outbound integration. It is a policy
+	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
+	OutboundRequestsPerDayMax int64
+	// Outbound request policy ceilings bound customer-selected per-integration
+	// rate, burst, concurrency, and timeout. These are configurable safeguards,
+	// not included outbound request allowances; see ADR-258.
+	OutboundRatePerSecondMax    float64
+	OutboundBurstMax            int
+	OutboundMaxInFlightMax      int
+	OutboundRequestTimeoutMSMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -1670,7 +1697,8 @@ type Limits struct {
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
-	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
+	// WorkflowMaxWaitDays is the plan's maximum duration, event, or callback
+	// wait. Condition polling keeps its separate bounded seven-day horizon.
 	WorkflowMaxWaitDays int
 }
 
@@ -1732,8 +1760,10 @@ const UpstreamAffinityTTL = 30 * time.Second
 //	Scale 100/20 / 1024 / 1500
 var planLimits = map[Plan]Limits{
 	PlanFree: {
-		Plan:           PlanFree,
-		DeployedApps:   1,
+		Plan:                      PlanFree,
+		DeployedApps:              1,
+		OutboundRequestsPerDayMax: 100_000,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000,
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -2112,8 +2142,10 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxWaitDays:    0,
 	},
 	PlanHobby: {
-		Plan:                  PlanHobby,
-		DeployedApps:          5,
+		Plan:                      PlanHobby,
+		DeployedApps:              5,
+		OutboundRequestsPerDayMax: 1_000_000,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000,
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -2506,11 +2538,13 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      3,
 		WorkflowMaxConcurrent:  10,
 		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    30,
 	},
 	PlanPro: {
-		Plan:                  PlanPro,
-		DeployedApps:          25,
+		Plan:                      PlanPro,
+		DeployedApps:              25,
+		OutboundRequestsPerDayMax: 10_000_000,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000,
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -2865,11 +2899,13 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      10,
 		WorkflowMaxConcurrent:  50,
 		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    90,
 	},
 	PlanScale: {
-		Plan:                  PlanScale,
-		DeployedApps:          100,
+		Plan:                      PlanScale,
+		DeployedApps:              100,
+		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000,
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -3257,7 +3293,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      50,
 		WorkflowMaxConcurrent:  200,
 		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    365,
 	},
 }
 
@@ -3727,6 +3763,10 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
+	// rule age before the serving plan applies its lower deadline cap.
+	// The Scale plan currently owns the largest invocation deadline.
+	MaxAsyncRouteAgeSeconds = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -4221,18 +4261,32 @@ const (
 	// MigrateLiveLeaseSeconds is the upper bound on the four-phase
 	// handoff — Phase 1 mints a lease_token, Phase 3 commits or
 	// the lease expires. The dying vmmd resumes the VM on lease
-	// expiry (the snapshot stays). Tuned to comfortably exceed the
-	// snapshot-upload + restore round-trip on the OCIRegistry
-	// backend (latency dominated by the registry pull, not the
-	// local VM lifecycle). Defaults to 90s; tunable via
-	// FAAS_MIGRATE_LIVE_LEASE_SECONDS (env-overridable, see
-	// cmd/schedd/main.go::runWithDeps; propagated via
-	// Engine.WithMigrateLiveLeaseSeconds).
+	// expiry (the snapshot stays). It must exceed the snapshot
+	// capture + upload + registry pull + restore round-trip on the
+	// OCIRegistry backend. Production measured that round-trip at
+	// ~85 s for small apps (Phase 1 ~38 s, Phase 3 restore ~44 s),
+	// so the original 90 s barely fit them, and every 1 GiB app
+	// failed (Phase 1 alone took 41-82 s) and was then killed by
+	// the rollout anyway. 180 s gives 1 GiB instances room to land;
+	// with MigrateLiveConcurrency a drain waits for its slowest
+	// handoff, not the sum. vmmd reads this constant directly for
+	// the lease it mints; FAAS_MIGRATE_LIVE_LEASE_SECONDS tunes
+	// only schedd's side (cmd/schedd/main.go::runWithDeps;
+	// propagated via Engine.WithMigrateLiveLeaseSeconds).
+	//
+	// MigrateLiveConcurrency bounds the live migrations one
+	// recovery tick runs at once for a single draining node
+	// (pkg/sched/recovery_arbiter.go). Serially, a drain took ~88 s
+	// per running instance whether the handoff succeeded or not,
+	// which dominated every compute-node rollout. Kept small
+	// because each handoff pauses a guest for its capture and
+	// shares the node's registry bandwidth.
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
 	MigrateLiveMaxPerTick   = 10
-	MigrateLiveLeaseSeconds = 90
+	MigrateLiveLeaseSeconds = 180
+	MigrateLiveConcurrency  = 4
 
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
@@ -4778,7 +4832,7 @@ var (
 	WorkflowMaxPerApp         = [4]int{0, 3, 10, 50}
 	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
-	WorkflowMaxWaitDays       = 7
+	WorkflowMaxWaitDays       = 365 // deprecated global ceiling; use Plan.WorkflowMaxWaitDays()
 )
 
 const (
@@ -4964,6 +5018,17 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
+// daily request limit for one managed outbound integration. It is a policy
+// configuration ceiling, not an included request allowance.
+func OutboundRequestsPerDayMaxForPlan(p Plan) (int64, bool) {
+	limits, ok := LimitsFor(p)
+	if !ok || limits.OutboundRequestsPerDayMax < 1 || limits.OutboundRequestsPerDayMax > MaxOutboundRequestsPerDay {
+		return 0, false
+	}
+	return limits.OutboundRequestsPerDayMax, true
 }
 
 // WakeQueueDefaultsForPlan returns the per-app cold-wake waiter and wait
@@ -5317,8 +5382,8 @@ func (p Plan) WorkflowStepMaxTimeout() time.Duration {
 	return l.WorkflowStepMaxTimeout
 }
 
-// WorkflowMaxWaitDays returns the maximum wait_for_event timeout for
-// the plan. Unknown plans fail closed.
+// WorkflowMaxWaitDays returns the plan's maximum duration, event, or callback
+// wait in days. Unknown plans fail closed.
 func (p Plan) WorkflowMaxWaitDays() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -5875,9 +5940,10 @@ func (p Plan) RequireAuthnAllowed() bool {
 
 // InternalIngressAllowed reports whether the plan may hide an app from the
 // public edge while keeping it reachable through authenticated service routing.
-// This is intentionally Pro/Scale-only in the first networking slice.
+// Private ingress is a networking primitive on every recognized plan.
 func (p Plan) InternalIngressAllowed() bool {
-	return p == PlanPro || p == PlanScale
+	_, ok := LimitsFor(p)
+	return ok
 }
 
 // AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
@@ -7043,6 +7109,20 @@ const (
 	// row-budget. Past 100 the caller pages via ?cursor.
 	AppErrorsSummaryDefaultLimit = 20
 	AppErrorsSummaryMaxLimit     = 100
+
+	// AllowedServiceCallersMax bounds the target-side internal service
+	// policy (ADR-266). Scale admits at most 100 deployed apps, so a larger
+	// list cannot grant additional live callers and would slow every hop.
+	AllowedServiceCallersMax = 100
+	// ServiceCallMethodsMax and ServiceCallPathPrefixesMax bound each
+	// target-owned per-caller service policy. The byte cap prevents a single
+	// path rule from bloating the app manifest or proxy authorization work.
+	ServiceCallMethodsMax         = 32
+	ServiceCallPathPrefixesMax    = 64
+	ServiceCallPathPrefixMaxBytes = 1024
+	// ServiceBindingTargetsMax bounds a standalone caller's declared targets.
+	// The account app cap is 100, so additional names cannot add live targets.
+	ServiceBindingTargetsMax = 100
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

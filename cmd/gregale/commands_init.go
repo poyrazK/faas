@@ -262,6 +262,8 @@ func docsURLForTemplate(name string) string {
 		return eventDrivenDocsURL
 	case "s3-uploader", "rest-api-postgres":
 		return storageDocsURL
+	case "secret-reload-node":
+		return secretsDocsURL
 	default:
 		return cliDocsURL
 	}
@@ -312,10 +314,11 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		values[pair.Key] = pair.Value
 	}
 	required := map[string][]string{
-		"s3-uploader":       []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":         []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres": []string{"DATABASE_URL"},
-		"cron-worker":       []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"s3-uploader":        []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres":  []string{"DATABASE_URL"},
+		"secret-reload-node": []string{"DATABASE_URL"},
+		"cron-worker":        []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -387,6 +390,14 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
 			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
 			"  cd <dest> && gregale deploy",
+		}
+	case "secret-reload-node":
+		return []string{
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate the credential with `gregale secrets rotate --app <slug> ... --wait-for-ack`.",
 		}
 	case "cron-worker":
 		return []string{

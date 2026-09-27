@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -72,6 +73,14 @@ type SafeReleaseHealthStore interface {
 	FiringSafeReleaseSignals(ctx context.Context, appID string) ([]HealthSignal, error)
 }
 
+// CircuitBreakerStore reads the candidate and its stable predecessor over
+// the same bounded rollout window, plus the candidate's OOM counter. The
+// adapter lives in meterd so this package does not depend on pkg/state or a
+// concrete Prometheus client.
+type CircuitBreakerStore interface {
+	CircuitBreakerObservation(ctx context.Context, row CanaryRow, since, now time.Time) (CircuitBreakerObservation, error)
+}
+
 // HealthSignal is the small, log-safe projection of a firing safe-release
 // alert. It intentionally excludes thresholds and observed values because the
 // progression worker only needs an explanation for why it held the ladder.
@@ -91,6 +100,10 @@ type rolloutRecoveryClient interface {
 	RecoverRollout(ctx context.Context, slug, action, reason string) (api.RolloutTransitionResponse, error)
 }
 
+type exactRolloutRecoveryClient interface {
+	RecoverDeploymentRolloutAndIdempotencyKey(ctx context.Context, deploymentID, predecessorDeploymentID, action, reason, idempotencyKey string) (api.RolloutTransitionResponse, error)
+}
+
 // CanaryRow is the subset of state.Deployment the runtime reads.
 // Mirrors the column names from migration 00480 so pkg/canary has
 // zero dependency on pkg/state's package-level types. pkg/state.Store
@@ -100,10 +113,12 @@ type CanaryRow struct {
 	ID                string
 	AppID             string
 	AppSlug           string
+	Scope             string
 	CanaryPreset      string
 	CanaryStep        int
 	CanaryTotalSteps  int
 	CanaryStepStarted time.Time
+	RolloutStarted    time.Time
 	RolloutState      string
 	// CanaryStages is the jsonb-serialised custom ladder when
 	// CanaryPreset == "custom" (SAFE-RELEASES production-leveling
@@ -280,6 +295,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
 			continue
 		}
+		if !p.circuitBreakerReady(ctx, row, currentStage.Duration, now, &stats) {
+			continue
+		}
 		elapsed := now.Sub(row.CanaryStepStarted)
 		if elapsed < currentStage.Duration {
 			stats.SkippedNotElapsed++
@@ -381,6 +399,168 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 	return false
 }
 
+// circuitBreakerReady reads the always-on deployment health policy before a
+// canary can gain more traffic. Clear 5xx, p95, or OOM regressions abort via
+// APID's atomic rollout-recovery transaction. Inconclusive samples hold only
+// at the stage boundary, so the normal stage timer still controls exposure.
+func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stageDuration time.Duration, now time.Time, stats *Stats) bool {
+	checker, ok := p.Store.(CircuitBreakerStore)
+	if !ok {
+		p.Log.Error("canary: circuit-breaker observation unavailable; holding promotion",
+			"deployment_id", row.ID, "err", "store does not implement CircuitBreakerStore")
+		stats.Errors++
+		stats.SkippedCircuitBreaker++
+		p.recordCircuitBreakerEvent("hold_observation_unavailable")
+		return false
+	}
+	since := row.CanaryStepStarted
+	if since.IsZero() {
+		since = now.Add(-5 * time.Minute)
+	}
+	observation, err := checker.CircuitBreakerObservation(ctx, row, since, now)
+	if err != nil {
+		p.Log.Warn("canary: circuit-breaker observation unavailable; holding promotion",
+			"deployment_id", row.ID, "err", err)
+		stats.Errors++
+		stats.SkippedCircuitBreaker++
+		p.recordCircuitBreakerEvent("hold_observation_unavailable")
+		return false
+	}
+	decision := EvaluateCircuitBreaker(observation)
+	switch decision.Action {
+	case CircuitBreakerAdvance:
+		return true
+	case CircuitBreakerAbort:
+		if p.abortCircuitBreaker(ctx, row, decision, observation, stats) {
+			return false
+		}
+		// If APID is temporarily unavailable, keep the candidate at the
+		// current weight and retry the same safe decision on the next tick.
+		return false
+	default:
+		if now.Sub(row.CanaryStepStarted) < stageDuration {
+			return true
+		}
+		p.Log.Warn("canary: circuit breaker is inconclusive; holding promotion",
+			"deployment_id", row.ID,
+			"stable_deployment_id", observation.StableDeploymentID,
+			"reason", decision.Reason)
+		stats.SkippedCircuitBreaker++
+		p.recordCircuitBreakerEvent(circuitBreakerHoldEvent(decision.Reason))
+		return false
+	}
+}
+
+func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, decision CircuitBreakerDecision, observation CircuitBreakerObservation, stats *Stats) bool {
+	recovery, ok := p.APID.(exactRolloutRecoveryClient)
+	if !ok || observation.StableDeploymentID == "" {
+		p.Log.Error("canary: circuit-breaker abort unavailable; holding candidate traffic",
+			"deployment_id", row.ID, "stable_deployment_id", observation.StableDeploymentID)
+		stats.Errors++
+		stats.SkippedCircuitBreaker++
+		p.recordCircuitBreakerEvent("hold_recovery_failed")
+		return false
+	}
+	// Keep the idempotent request body stable across retries. Detailed observed
+	// values are logged; the durable reason records which guard tripped.
+	reason := "circuit breaker: candidate release failed a health check; restoring predecessor " + observation.StableDeploymentID
+	switch {
+	case strings.HasPrefix(decision.Reason, "workload OOM"):
+		reason = "circuit breaker: workload OOM kill detected; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "5xx regression"):
+		reason = "circuit breaker: 5xx error rate regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "p95 latency regression"):
+		reason = "circuit breaker: p95 latency regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "cold-boot request latency regression"):
+		reason = "circuit breaker: cold-boot request latency regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "CPU/request regression"):
+		reason = "circuit breaker: CPU per request regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "dependency error regression"):
+		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
+	}
+	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
+	if _, err := recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key); err != nil {
+		p.Log.Warn("canary: circuit-breaker abort failed",
+			"deployment_id", row.ID, "stable_deployment_id", observation.StableDeploymentID, "reason", decision.Reason, "err", err)
+		stats.Errors++
+		stats.SkippedCircuitBreaker++
+		p.recordCircuitBreakerEvent("hold_recovery_failed")
+		return false
+	}
+	p.Log.Error("canary: circuit breaker aborted rollout",
+		"deployment_id", row.ID,
+		"stable_deployment_id", observation.StableDeploymentID,
+		"reason", decision.Reason,
+		"candidate_requests", observation.Candidate.Requests,
+		"stable_requests", observation.Stable.Requests,
+		"candidate_5xx", observation.Candidate.ServerErrors,
+		"stable_5xx", observation.Stable.ServerErrors,
+		"candidate_p95_ms", observation.Candidate.P95LatencyMS,
+		"stable_p95_ms", observation.Stable.P95LatencyMS,
+		"candidate_cold_boot_requests", observation.Candidate.ColdBootRequests,
+		"stable_cold_boot_requests", observation.Stable.ColdBootRequests,
+		"candidate_cold_boot_p95_ms", observation.Candidate.ColdBootP95LatencyMS,
+		"stable_cold_boot_p95_ms", observation.Stable.ColdBootP95LatencyMS,
+		"candidate_cpu_requests", observation.Candidate.CPURequests,
+		"stable_cpu_requests", observation.Stable.CPURequests,
+		"candidate_cpu_usec", observation.Candidate.CPUUsec,
+		"stable_cpu_usec", observation.Stable.CPUUsec,
+		"candidate_dependency_calls", observation.Candidate.DependencyCalls,
+		"stable_dependency_calls", observation.Stable.DependencyCalls,
+		"candidate_dependency_errors", observation.Candidate.DependencyErrors,
+		"stable_dependency_errors", observation.Stable.DependencyErrors,
+		"oom_kills", observation.OOMKills)
+	stats.Aborted++
+	stats.CircuitBreakerAborted++
+	p.recordCircuitBreakerEvent(circuitBreakerAbortEvent(decision.Reason))
+	return true
+}
+
+func circuitBreakerAbortEvent(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "5xx regression"):
+		return "abort_5xx"
+	case strings.HasPrefix(reason, "p95 latency regression"):
+		return "abort_p95_latency"
+	case strings.HasPrefix(reason, "cold-boot request latency regression"):
+		return "abort_cold_boot_p95"
+	case strings.HasPrefix(reason, "CPU/request regression"):
+		return "abort_cpu_per_request"
+	case strings.HasPrefix(reason, "dependency error regression"):
+		return "abort_dependency_errors"
+	case strings.HasPrefix(reason, "workload OOM"):
+		return "abort_oom"
+	default:
+		return "hold_recovery_failed"
+	}
+}
+
+func circuitBreakerHoldEvent(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "insufficient request samples"):
+		return "hold_insufficient_samples"
+	case strings.HasPrefix(reason, "workload OOM signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "CPU/request signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "dependency error signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "insufficient CPU/request samples"):
+		return "hold_insufficient_samples"
+	default:
+		return "hold_observation_unavailable"
+	}
+}
+
+func (p *Progression) recordCircuitBreakerEvent(event string) {
+	if p.Ops == nil {
+		return
+	}
+	if counter := p.Ops.CanaryProgressionCircuitBreakerTotal(event); counter != nil {
+		counter.Inc()
+	}
+}
+
 func (p *Progression) abortMirrorDrift(ctx context.Context, row CanaryRow, windowSeconds int, summary MirrorSummary, stats *Stats) {
 	recovery, ok := p.APID.(rolloutRecoveryClient)
 	if !ok || row.AppSlug == "" {
@@ -415,6 +595,8 @@ type Stats struct {
 	Advanced               int
 	Errors                 int
 	Aborted                int
+	CircuitBreakerAborted  int
+	SkippedCircuitBreaker  int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

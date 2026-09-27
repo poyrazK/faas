@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -13,6 +17,42 @@ import (
 // regex) so the test rows don't trip the per-element image
 // gate before reaching the cap check.
 const goodSidecarImage = "ghcr.io/me/x@sha256:" + "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+func TestSealSidecarsPreservesExplicitSecretReferencesAndSealsDirectEnv(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, problem := sealSidecars(api.Sidecars{{
+		Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+		Env:        map[string]string{"MODE": "production"},
+		EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"},
+	}}, identity.Recipient(), testSidecarLimits())
+	if problem != nil {
+		t.Fatalf("sealSidecars: %+v", problem)
+	}
+	var persisted []struct {
+		Env        map[string]string `json:"env"`
+		EnvSecrets map[string]string `json:"env_secrets"`
+	}
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("decode persisted sidecars: %v", err)
+	}
+	if len(persisted) != 1 || persisted[0].EnvSecrets["DATABASE_URL"] != "secret:DATABASE_URL" {
+		t.Fatalf("persisted secret grants = %+v, want explicit reference", persisted)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(persisted[0].Env["MODE"])
+	if err != nil {
+		t.Fatalf("decode direct env ciphertext: %v", err)
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti([]*age.X25519Identity{identity}, ciphertext)
+	if err != nil {
+		t.Fatalf("open direct env ciphertext: %v", err)
+	}
+	if namespace != "sidecar_env" || string(plaintext) != "production" {
+		t.Fatalf("opened direct env = namespace %q value %q", namespace, plaintext)
+	}
+}
 
 func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T) {
 	app := state.App{

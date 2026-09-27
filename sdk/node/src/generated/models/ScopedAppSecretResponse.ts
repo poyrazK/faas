@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
  * Per-row shape for the nested `secrets_by_scope` response
  * (ADR-092 PR-B, mirror of ADR-090 D3's env_by_scope).
@@ -51,5 +52,13 @@ export type ScopedAppSecretResponse = {
   last_runtime_reload_at?: string;
   last_runtime_reload_error_code?: 'projection_failed' | 'signal_failed';
   last_runtime_reload_instance_id?: string;
+  /**
+   * For this scope, includes every active runtime authorized for the secret by its deployment, even before the runtime reports.
+   */
+  runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
+  /**
+   * Indicates whether this scoped row contains a complete authorized target set. Older control planes omit the marker, so acknowledgement waiters must fail closed.
+   */
+  runtime_reload_targets_complete?: boolean;
 };
 

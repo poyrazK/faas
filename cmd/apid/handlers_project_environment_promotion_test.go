@@ -203,6 +203,18 @@ type corruptProjectEnvironmentPromotionVerificationStore struct {
 	state.Store
 }
 
+func (s *corruptProjectEnvironmentPromotionVerificationStore) ActiveProjectReleaseSet(ctx context.Context, accountID, projectID, environment string) (state.ProjectReleaseSet, error) {
+	return s.Store.(state.ProjectReleaseSetReader).ActiveProjectReleaseSet(ctx, accountID, projectID, environment)
+}
+
+func (s *corruptProjectEnvironmentPromotionVerificationStore) ProjectReleaseSetByID(ctx context.Context, accountID, projectID, environment, id string) (state.ProjectReleaseSet, error) {
+	return s.Store.(state.ProjectReleaseSetReader).ProjectReleaseSetByID(ctx, accountID, projectID, environment, id)
+}
+
+func (s *corruptProjectEnvironmentPromotionVerificationStore) ListProjectReleaseSetsBefore(ctx context.Context, accountID, projectID, environment string, before time.Time, beforeID string, limit int) ([]state.ProjectReleaseSet, error) {
+	return s.Store.(state.ProjectReleaseSetReader).ListProjectReleaseSetsBefore(ctx, accountID, projectID, environment, before, beforeID, limit)
+}
+
 func (s *corruptProjectEnvironmentPromotionVerificationStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (state.ProjectEnvironmentPromotion, error) {
 	promotion, err := s.Store.UpdateProjectEnvironmentPromotionVerification(ctx, accountID, id, status, errorMessage, startedAt, completedAt)
 	if err != nil || status != "verifying" {
@@ -403,5 +415,98 @@ func TestProjectEnvironmentPromotionPreviewBlocksMissingSourceRelease(t *testing
 	}
 	if preview.CanPromote || len(preview.BlockingReasons) != 1 || preview.Changes[0].Kind != "source_missing" {
 		t.Fatalf("blocked preview=%+v", preview)
+	}
+}
+
+func TestProjectEnvironmentPromotionPreviewBlocksActiveReleaseGraphs(t *testing.T) {
+	for _, activeEnvironment := range []string{"staging", "production"} {
+		t.Run(activeEnvironment, func(t *testing.T) {
+			srv, store, acct, project, app := newProjectLifecycleFixture(t)
+			ctx := context.Background()
+			if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+				AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			manifest := app.Manifest
+			manifest.RevisionPinTTLSeconds = 3600
+			if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+				t.Fatal(err)
+			}
+
+			var activeDeploymentID string
+			for _, environment := range []string{"staging", "production"} {
+				deployment, err := store.CreateDeployment(ctx, state.Deployment{
+					AppID: app.ID, Scope: environment, ImageDigest: "sha256:" + environment, Status: state.DeployPending,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+					t.Fatal(err)
+				}
+				if environment == activeEnvironment {
+					activeDeploymentID = deployment.ID
+				}
+			}
+			release, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, activeEnvironment, 1800,
+				[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: activeDeploymentID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+			req.SetPathValue("environment", "production")
+			srv.previewProjectEnvironmentPromotion(rec, req, acct)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("preview status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var preview api.ProjectEnvironmentPromotionPreviewResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+				t.Fatal(err)
+			}
+			wantReason := "environment \"" + activeEnvironment + "\" has active release set"
+			if preview.CanPromote || len(preview.BlockingReasons) != 1 || !strings.Contains(preview.BlockingReasons[0], wantReason) {
+				t.Fatalf("active release graph was not reported as a promotion blocker: %+v", preview)
+			}
+			graph := preview.FromReleaseSet
+			if activeEnvironment == "production" {
+				graph = preview.ToReleaseSet
+			}
+			if graph == nil || graph.ID != release.ID || !graph.Active || len(graph.Members) != 1 ||
+				graph.Members[0].AppID != app.ID || graph.Members[0].DeploymentID != activeDeploymentID {
+				t.Fatalf("promotion preview release graph = %+v, want release %s with deployment %s", graph, release.ID, activeDeploymentID)
+			}
+			wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+			if err != nil {
+				t.Fatalf("decode promotion token: %v", err)
+			}
+			fromReleaseID, toReleaseID := "", ""
+			if activeEnvironment == "staging" {
+				fromReleaseID = release.ID
+			} else {
+				toReleaseID = release.ID
+			}
+			if wire.FromReleaseSetID != fromReleaseID || wire.ToReleaseSetID != toReleaseID {
+				t.Fatalf("promotion token release ids = %q/%q, want %q/%q", wire.FromReleaseSetID, wire.ToReleaseSetID, fromReleaseID, toReleaseID)
+			}
+		})
+	}
+}
+
+func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T) {
+	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
+	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+		"release-source-a", "release-target", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+		"release-source-b", "release-target", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("promotion identity did not change when the source release set changed")
 	}
 }

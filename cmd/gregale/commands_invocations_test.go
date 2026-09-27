@@ -13,6 +13,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +101,125 @@ func TestCmdInvocationsGet_NoPositional(t *testing.T) {
 	}
 	if !strings.Contains(stderr(), "usage: gregale invocations get") {
 		t.Errorf("stderr missing usage line\nfull: %s", stderr())
+	}
+}
+
+func TestCmdInvocationsWait_PendingThenCompleted(t *testing.T) {
+	inv := invocationFixture()
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/invocations/"+inv.ID {
+			t.Errorf("path = %q, want /v1/invocations/%s", r.URL.Path, inv.ID)
+		}
+		current := inv
+		if gets.Add(1) == 1 {
+			current.State = "pending"
+			current.Result = nil
+			current.CompletedAt = nil
+		}
+		_ = json.NewEncoder(w).Encode(current)
+	}))
+	defer srv.Close()
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdInvocationsWait([]string{"--interval=100ms", "--timeout=1s", inv.ID}); code != 0 {
+		t.Fatalf("invocations wait = %d, want 0", code)
+	}
+	if gets.Load() != 2 {
+		t.Errorf("GET count = %d, want 2", gets.Load())
+	}
+	if !strings.Contains(stdout.String(), "State:      completed") || !strings.Contains(stdout.String(), `"txn_id":"t-1"`) {
+		t.Errorf("output missing terminal result:\n%s", stdout.String())
+	}
+}
+
+func TestCmdInvocationsWait_FailedReturnsNonzero(t *testing.T) {
+	inv := invocationFixture()
+	inv.State = "failed"
+	inv.LastError = "handler failed"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(inv)
+	}))
+	defer srv.Close()
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdInvocationsWait([]string{inv.ID}); code != 1 {
+		t.Fatalf("invocations wait failed state = %d, want 1", code)
+	}
+	if !strings.Contains(stdout.String(), "State:      failed") || !strings.Contains(stdout.String(), "handler failed") {
+		t.Errorf("output missing failure details:\n%s", stdout.String())
+	}
+}
+
+func TestCmdInvocationsWait_TimeoutReturnsLastStatus(t *testing.T) {
+	inv := invocationFixture()
+	inv.State = "pending"
+	inv.Result = nil
+	inv.CompletedAt = nil
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(inv)
+	}))
+	defer srv.Close()
+
+	stdout, stderr, restore := swapIO(t)
+	defer restore()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdInvocationsWait([]string{"--interval=1s", "--timeout=25ms", inv.ID}); code != 124 {
+		t.Fatalf("invocations wait timeout = %d, want 124", code)
+	}
+	if !strings.Contains(stdout.String(), "State:      pending") {
+		t.Errorf("output missing last known state:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr(), fmt.Sprintf("timed out waiting for invocation %s", inv.ID)) {
+		t.Errorf("stderr missing timeout message:\n%s", stderr())
+	}
+}
+
+func TestCmdInvocationsWait_JSON(t *testing.T) {
+	inv := invocationFixture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(inv)
+	}))
+	defer srv.Close()
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	previousJSONOutput := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = previousJSONOutput }()
+
+	if code := cmdInvocationsWait([]string{inv.ID}); code != 0 {
+		t.Fatalf("invocations wait --json = %d, want 0", code)
+	}
+	var got api.Invocation
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, stdout.String())
+	}
+	if got.ID != inv.ID || got.State != "completed" {
+		t.Errorf("JSON invocation = %#v, want id=%s state=completed", got, inv.ID)
+	}
+}
+
+func TestCmdInvocationsWait_NoID(t *testing.T) {
+	_, stderr, restore := swapIO(t)
+	defer restore()
+	if code := cmdInvocationsWait(nil); code != 1 {
+		t.Fatalf("invocations wait without id = %d, want 1", code)
+	}
+	if !strings.Contains(stderr(), "usage: gregale invocations wait") {
+		t.Errorf("stderr missing usage:\n%s", stderr())
 	}
 }
 

@@ -1,7 +1,6 @@
 package reconcile
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -10,26 +9,16 @@ import (
 )
 
 const (
-	serviceEnvPrefix = "GREGALE_SERVICE_"
-	serviceEnvSuffix = "_URL"
-	serviceEnvPort   = 10080
+	serviceEnvPrefix = api.ServiceBindingEnvPrefix
+	serviceEnvSuffix = api.ServiceBindingEnvSuffix
 )
 
 func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workload, available map[string]struct{}) map[string]string {
-	env := make(map[string]string, len(base)+len(w.DependsOn))
-	for key, value := range base {
-		if strings.HasPrefix(key, serviceEnvPrefix) && strings.HasSuffix(key, serviceEnvSuffix) {
-			continue
-		}
-		env[key] = value
-	}
-	for _, binding := range serviceBindingsForWorkloadWithAvailable(w, available) {
-		env[binding.Binding] = fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, serviceEnvPort)
-	}
-	if len(env) == 0 {
-		return nil
-	}
-	return env
+	return serviceEnvForWorkloadWithTransport(base, w, available, api.ServiceBindingTransport(w.ServiceBindingTransport))
+}
+
+func serviceEnvForWorkloadWithTransport(base map[string]string, w reposcan.Workload, available map[string]struct{}, transport api.ServiceBindingTransport) map[string]string {
+	return api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
 }
 
 func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[string]struct{}) []api.AppServiceBinding {
@@ -51,7 +40,7 @@ func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[
 		}
 		seen[key] = struct{}{}
 		bindings = append(bindings, api.AppServiceBinding{
-			Binding: serviceEnvKey(key),
+			Binding: api.ServiceBindingEnvKey(key),
 			Service: key,
 		})
 	}
@@ -79,28 +68,83 @@ func serviceBindingsEqual(left, right []api.AppServiceBinding) bool {
 	return true
 }
 
-func serviceBindingPolicyForWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
+func serviceBindingPolicyForNewWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
+	if w.ServiceBindingPolicy == "" {
+		return api.ServiceBindingPolicyDeclared
+	}
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
+func serviceBindingPolicyForExistingWorkload(w reposcan.Workload, existing api.ServiceBindingPolicy) api.ServiceBindingPolicy {
+	if w.ServiceBindingPolicy == "" {
+		return existing.Effective()
+	}
+	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
+func serviceBindingTransportForNewWorkload(w reposcan.Workload) api.ServiceBindingTransport {
+	if w.ServiceBindingTransport == "" {
+		return ""
+	}
+	return api.ServiceBindingTransport(w.ServiceBindingTransport).Effective()
+}
+
+func serviceBindingTransportForExistingWorkload(w reposcan.Workload, existing api.ServiceBindingTransport) api.ServiceBindingTransport {
+	if w.ServiceBindingTransport == "" {
+		return existing
+	}
+	return api.ServiceBindingTransport(w.ServiceBindingTransport).Effective()
+}
+
+func allowedServiceCallersEqual(left, right *[]string) bool {
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	if left == nil {
+		return true
+	}
+	if len(*left) != len(*right) {
+		return false
+	}
+	for i := range *left {
+		if (*left)[i] != (*right)[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func allowedServiceCallScopesEqual(left, right *api.ServiceCallerScopes) bool {
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	if left == nil || len(*left) != len(*right) {
+		return left == nil && right == nil
+	}
+	for caller, leftScope := range *left {
+		rightScope, ok := (*right)[caller]
+		if !ok || !stringListsEqual(leftScope.Methods, rightScope.Methods) ||
+			!stringListsEqual(leftScope.PathPrefixes, rightScope.PathPrefixes) {
+			return false
+		}
+	}
+	return true
+}
+
+func stringListsEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func previewServiceCallsPolicyForWorkload(w reposcan.Workload) api.PreviewServiceCallsPolicy {
 	return api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective()
-}
-
-func serviceEnvKey(name string) string {
-	name = strings.ToUpper(strings.TrimSpace(name))
-	var b strings.Builder
-	b.Grow(len(serviceEnvPrefix) + len(name) + len(serviceEnvSuffix))
-	b.WriteString(serviceEnvPrefix)
-	for _, r := range name {
-		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	b.WriteString(serviceEnvSuffix)
-	return b.String()
 }
 
 func serviceEnvEqual(actual, expected map[string]string) bool {

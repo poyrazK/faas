@@ -1,7 +1,12 @@
 package outbound_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,13 +15,16 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 // TestPostgresBackendSharesBudgetAcrossGatewayInstances is the production
@@ -42,7 +50,10 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	entered := make(chan struct{}, 5)
 	finish := make(chan struct{})
 	var providerCalls atomic.Int32
-	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
+			t.Errorf("provider Authorization = %q", got)
+		}
 		providerCalls.Add(1)
 		entered <- struct{}{}
 		<-finish
@@ -56,6 +67,9 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new integration: %v", err)
 	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1/items"}
 	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
 		AccountID: uuid.MustParse(account.ID), Name: "payments", Policy: integration,
 	}); err != nil {
@@ -69,12 +83,36 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, "test-key", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(jwks, workloadidentity.DefaultIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := signer.Mint(time.Now(), account.ID, app.ID, "instance-1", "gregale:outbound:"+integration.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handlers := make([]*outbound.Handler, 20)
 	for i := range handlers {
 		handlers[i], err = outbound.NewHandler(resolver, backend, provider.Client())
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := handlers[i].SetManagedAuthorizations(map[string]string{integration.ID: "Bearer provider-secret"}); err != nil {
+			t.Fatal(err)
+		}
+		handlers[i].IdentityVerifier = verifier
 	}
 
 	responses := make(chan int, len(handlers))
@@ -84,8 +122,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		go func(h *outbound.Handler) {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integration.ID+"/v1/items", nil)
-			req.Header.Set(outbound.TokenHeader, "secret")
-			req.Header.Set(outbound.AppHeader, app.ID)
+			req.Header.Set(outbound.WorkloadIdentityHeader, assertion.AccessToken)
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, req)
 			responses <- rr.Code
@@ -115,5 +152,535 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	}
 	if providerCalls.Load() != 5 || granted != 5 || rejected != 15 {
 		t.Fatalf("shared postgres budget: provider_calls=%d granted=%d rejected=%d; want 5/5/15", providerCalls.Load(), granted, rejected)
+	}
+}
+
+func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-policy-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-policy-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultPolicy := api.DefaultOutboundRequestPolicy()
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "request-policy",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: defaultPolicy,
+	})
+	if err != nil {
+		t.Fatalf("create customer integration: %v", err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+		t.Fatalf("bind customer integration: %v", err)
+	}
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := resolver.Integration(ctx, offer.ID)
+	if err != nil || before.RatePerSecond != defaultPolicy.RatePerSecond || before.Burst != defaultPolicy.Burst {
+		t.Fatalf("initial resolved policy = %+v, %v", before, err)
+	}
+	updatedPolicy := api.OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500}
+	if err := store.SetOutboundRequestPolicy(ctx, account.ID, offer.ID, updatedPolicy); err != nil {
+		t.Fatalf("update customer policy: %v", err)
+	}
+	after, err := resolver.Integration(ctx, offer.ID)
+	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("resolved updated policy = %+v, %v", after, err)
+	}
+
+	backend, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleResolverSnapshot := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: defaultPolicy.RatePerSecond,
+		Burst: defaultPolicy.Burst, MaxInFlight: defaultPolicy.MaxInFlight,
+		BindingAppID: app.ID,
+		LeaseTTL:     time.Duration(defaultPolicy.RequestTimeoutMS) * time.Millisecond,
+	}
+	first, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || !first.Granted || first.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("admission after policy update = %+v, %v", first, err)
+	}
+	second, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || second.Granted || second.Reason != outbound.ReasonConcurrency || second.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("stale snapshot bypassed concurrency update: %+v, %v", second, err)
+	}
+	if err := backend.Release(ctx, offer.ID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	third, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || third.Granted || third.Reason != outbound.ReasonRate {
+		t.Fatalf("stale snapshot bypassed rate update: %+v, %v", third, err)
+	}
+}
+
+func TestPostgresBackendEnforcesDailyLimitPerBinding(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-binding-budget-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appOne, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "binding-budget-a-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appTwo, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "binding-budget-b-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "binding-budget",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: api.OutboundRequestPolicy{RatePerSecond: 100, Burst: 20, MaxInFlight: 20, RequestTimeoutMS: 30_000},
+	})
+	if err != nil {
+		t.Fatalf("create customer integration: %v", err)
+	}
+	for _, app := range []state.App{appOne, appTwo} {
+		if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+			t.Fatalf("bind app %s: %v", app.ID, err)
+		}
+	}
+	appOneLimit, appTwoLimit := int64(3), int64(2)
+	if err := store.SetOutboundBindingDailyRequestLimit(ctx, account.ID, appOne.ID, offer.ID, &appOneLimit); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOutboundBindingDailyRequestLimit(ctx, account.ID, appTwo.ID, offer.ID, &appTwoLimit); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolver.Integration(ctx, offer.ID)
+	if err != nil || !resolved.AllowsApp(appOne.ID) || !resolved.AllowsApp(appTwo.ID) ||
+		len(resolved.BindingAppIDs) != 2 ||
+		resolved.BindingDailyRequestLimits[appOne.ID] == nil || *resolved.BindingDailyRequestLimits[appOne.ID] != appOneLimit ||
+		resolved.BindingDailyRequestLimits[appTwo.ID] == nil || *resolved.BindingDailyRequestLimits[appTwo.ID] != appTwoLimit {
+		t.Fatalf("resolved binding daily limits = %+v, %v", resolved.BindingDailyRequestLimits, err)
+	}
+	backend, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A stale resolver snapshot advertises a higher cap; admission must use
+	// the locked binding row so concurrent gateways cannot bypass the write.
+	staleLimit := int64(20)
+	baseSpec := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: 100, Burst: 20, MaxInFlight: 20,
+		BindingDailyRequestLimit: &staleLimit, LeaseTTL: time.Minute,
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var appOneGranted int
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			spec := baseSpec
+			spec.BindingAppID = appOne.ID
+			decision, err := backend.Admit(ctx, spec)
+			if err != nil {
+				t.Errorf("app one admission: %v", err)
+				return
+			}
+			if decision.Granted {
+				mu.Lock()
+				appOneGranted++
+				mu.Unlock()
+				if err := backend.Release(ctx, offer.ID, decision.LeaseID); err != nil {
+					t.Errorf("release app one admission: %v", err)
+				}
+			} else if decision.Reason != outbound.ReasonDailyLimit {
+				t.Errorf("app one rejection reason = %q, want daily limit", decision.Reason)
+			}
+		}()
+	}
+	wg.Wait()
+	if appOneGranted != int(appOneLimit) {
+		t.Fatalf("app one grants = %d, want %d", appOneGranted, appOneLimit)
+	}
+	for range 3 {
+		spec := baseSpec
+		spec.BindingAppID = appTwo.ID
+		decision, err := backend.Admit(ctx, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decision.Granted {
+			if err := backend.Release(ctx, offer.ID, decision.LeaseID); err != nil {
+				t.Fatal(err)
+			}
+		} else if decision.Reason != outbound.ReasonDailyLimit {
+			t.Fatalf("app two rejection reason = %q, want daily limit", decision.Reason)
+		}
+	}
+	usageOne, err := store.GetOutboundBindingUsage(ctx, account.ID, appOne.ID, offer.ID)
+	if err != nil || usageOne.DailyRequestCount != appOneLimit {
+		t.Fatalf("app one binding usage = %+v, %v", usageOne, err)
+	}
+	usageTwo, err := store.GetOutboundBindingUsage(ctx, account.ID, appTwo.ID, offer.ID)
+	if err != nil || usageTwo.DailyRequestCount != appTwoLimit {
+		t.Fatalf("app two binding usage = %+v, %v", usageTwo, err)
+	}
+	if err := store.UnbindOutboundIntegration(ctx, account.ID, appOne.ID, offer.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleSpec := baseSpec
+	staleSpec.BindingAppID = appOne.ID
+	if decision, err := backend.Admit(ctx, staleSpec); err != nil || decision.Granted || decision.Reason != outbound.ReasonAppNotAttached {
+		t.Fatalf("admission after stale unbind = %+v, %v", decision, err)
+	}
+}
+
+func TestPostgresCustomerSealedCredentialRotation(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-key-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration, err := outbound.NewIntegration(uuid.NewString(), "https://api.example.com", "unused-token", nil, 10, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.CredentialSource = outbound.CredentialSourceCustomerSealed
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1"}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAccount, err := store.CreateAccount(ctx, "outbound-key-other-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, []string{integration.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, uuid.NewString()); err == nil {
+		t.Fatal("unconfigured integration credential was resolvable")
+	}
+	for _, value := range []string{"Bearer first", "Bearer rotated"} {
+		sealed, err := secretbox.SealBytes(identity.Recipient(), outbound.ManagedAuthorizationSealNamespace, []byte(value), outbound.ManagedAuthorizationMaxBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetOutboundCredential(ctx, otherAccount.ID, integration.ID, sealed); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("cross-account credential write error = %v", err)
+		}
+		if err := store.SetOutboundCredential(ctx, account.ID, integration.ID, sealed); err != nil {
+			t.Fatal(err)
+		}
+		var stored []byte
+		if err := pool.QueryRow(ctx, `SELECT authorization_sealed FROM outbound_integration_credentials WHERE integration_id = $1`, integration.ID).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(stored, []byte(value)) {
+			t.Fatal("provider credential stored in plaintext")
+		}
+		got, err := resolver.Authorization(ctx, integration.ID)
+		if err != nil || got != value {
+			t.Fatalf("resolved credential = %q, %v", got, err)
+		}
+	}
+	if err := store.DeleteOutboundCredential(ctx, otherAccount.ID, integration.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account credential deletion error = %v", err)
+	}
+	if err := store.DeleteOutboundCredential(ctx, account.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, integration.ID); err == nil {
+		t.Fatal("revoked credential was still resolvable")
+	}
+	sealed, err := secretbox.SealBytes(identity.Recipient(), outbound.ManagedAuthorizationSealNamespace, []byte("Bearer stale"), outbound.ManagedAuthorizationMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, integration.ID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	integration.CredentialSource = outbound.CredentialSourceOperatorEnv
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	integration.CredentialSource = outbound.CredentialSourceCustomerSealed
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, integration.ID); err == nil {
+		t.Fatal("credential revived after switching the source away and back")
+	}
+}
+
+// TestPostgresGatewayKeepsManagedCredentialBehindIdentityAndRouteChecks joins
+// the database-backed policy resolver, workload identity verifier, sealed
+// credential resolver, admission backend, and outbound handler in one request
+// path. It is intentionally an explicit-gateway integration test; it does not
+// claim transparent interception of guest egress.
+func TestPostgresGatewayKeepsManagedCredentialBehindIdentityAndRouteChecks(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-boundary-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-boundary-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unboundApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-unbound-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const providerAuthorization = "Bearer integration-test-secret"
+	var providerCalls atomic.Int32
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls.Add(1)
+		if got := r.Header.Get("Authorization"); got != providerAuthorization {
+			t.Errorf("provider Authorization = %q, want configured credential", got)
+		}
+		for _, header := range []string{outbound.WorkloadIdentityHeader, outbound.TokenHeader, outbound.AppHeader} {
+			if got := r.Header.Get(header); got != "" {
+				t.Errorf("internal header %s reached provider", header)
+			}
+		}
+		if r.URL.Path != "/v1/widgets/safe/item-1" {
+			t.Errorf("provider path = %q", r.URL.Path)
+		}
+		w.Header().Set("X-Provider-Result", "accepted")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer provider.Close()
+
+	integrationID := uuid.NewString()
+	integration, err := outbound.NewIntegration(integrationID, provider.URL, "unused-test-token", nil, 10, 1, 1, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.CredentialSource = outbound.CredentialSourceCustomerSealed
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1/widgets"}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
+		AccountID: uuid.MustParse(account.ID), Name: "boundary-test", Policy: integration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, integrationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, integrationID,
+		[]string{http.MethodGet}, []string{"/v1/widgets/safe"}); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealBytes(identity.Recipient(), outbound.ManagedAuthorizationSealNamespace,
+		[]byte(providerAuthorization), outbound.ManagedAuthorizationMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, integrationID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext []byte
+	if err := pool.QueryRow(ctx, `SELECT authorization_sealed FROM outbound_integration_credentials WHERE integration_id = $1`, integrationID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(ciphertext, []byte(providerAuthorization)) {
+		t.Fatal("provider credential is stored in plaintext")
+	}
+
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, []string{integrationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, "test-key", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(jwks, workloadidentity.DefaultIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mintAssertion := func(appID string) string {
+		t.Helper()
+		assertion, err := signer.Mint(time.Now(), account.ID, appID, "instance-1", "gregale:outbound:"+integrationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return assertion.AccessToken
+	}
+	handler, err := outbound.NewHandler(resolver, backend, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.IdentityVerifier = verifier
+	handler.CredentialResolver = credentialResolver
+
+	request := func(path, appAssertion, spoofedAppID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integrationID+path, nil)
+		req.Header.Set(outbound.WorkloadIdentityHeader, appAssertion)
+		req.Header.Set(outbound.AppHeader, spoofedAppID)
+		req.Header.Set(outbound.TokenHeader, "guest-controlled-token")
+		req.Header.Set("Authorization", "Bearer guest-controlled-provider-key")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+
+	deniedRoute := request("/v1/widgets/unsafe", mintAssertion(app.ID), app.ID)
+	if deniedRoute.Code != http.StatusForbidden {
+		t.Fatalf("out-of-policy route status = %d, want 403", deniedRoute.Code)
+	}
+	unboundCaller := request("/v1/widgets/safe/item-1", mintAssertion(unboundApp.ID), app.ID)
+	if unboundCaller.Code != http.StatusForbidden {
+		t.Fatalf("unbound caller status = %d, want 403", unboundCaller.Code)
+	}
+	var admissionRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbound_admission_state WHERE integration_id = $1`, integrationID).Scan(&admissionRows); err != nil {
+		t.Fatal(err)
+	}
+	if admissionRows != 0 || providerCalls.Load() != 0 {
+		t.Fatalf("denied requests reached admission/provider: admission rows=%d provider calls=%d", admissionRows, providerCalls.Load())
+	}
+
+	allowed := request("/v1/widgets/safe/item-1", mintAssertion(app.ID), unboundApp.ID)
+	if allowed.Code != http.StatusNoContent || providerCalls.Load() != 1 {
+		t.Fatalf("allowed request status=%d provider calls=%d", allowed.Code, providerCalls.Load())
+	}
+	if bytes.Contains(allowed.Body.Bytes(), []byte(providerAuthorization)) ||
+		bytes.Contains([]byte(allowed.Header().Get("X-Provider-Result")), []byte(providerAuthorization)) ||
+		allowed.Header().Get("Authorization") != "" {
+		t.Fatal("provider credential leaked in the gateway response")
+	}
+}
+
+func TestCustomerBindingControlsManagedIntegrationAttachment(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-bind-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-bind-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration, err := outbound.NewIntegration(uuid.NewString(), "https://api.example.com", "unused-token", nil, 10, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1/widgets"}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "widgets", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || before.AllowsApp(app.ID) {
+		t.Fatalf("before binding: allows=%t err=%v", before.AllowsApp(app.ID), err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	otherAccount, err := store.CreateAccount(ctx, "outbound-other-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, otherAccount.ID, app.ID, integration.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account bind error = %v; want not found", err)
+	}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
+		AccountID: uuid.MustParse(otherAccount.ID), Name: "widgets", Policy: integration,
+	}); err == nil {
+		t.Fatal("integration ownership transfer succeeded")
+	}
+	after, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || !after.AllowsApp(app.ID) || !after.AllowsRequest(http.MethodGet, "/v1/widgets") {
+		t.Fatalf("after binding: allows=%t err=%v", after.AllowsApp(app.ID), err)
+	}
+	if err := store.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, integration.ID,
+		[]string{http.MethodGet}, []string{"/v1/widgets/safe"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, integration.ID,
+		[]string{http.MethodGet}, []string{"/v1/widgets-extra"}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("wider route policy error = %v; want invalid argument", err)
+	}
+	narrowed, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || !narrowed.AllowsAppRequest(app.ID, http.MethodGet, "/v1/widgets/safe/123") ||
+		narrowed.AllowsAppRequest(app.ID, http.MethodGet, "/v1/widgets/unsafe") {
+		t.Fatalf("gateway customer route policy = %+v, err=%v", narrowed.CustomerAppRoutes, err)
+	}
+	if err := store.UnbindOutboundIntegration(ctx, account.ID, app.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || removed.AllowsApp(app.ID) {
+		t.Fatalf("after unbinding: allows=%t err=%v", removed.AllowsApp(app.ID), err)
 	}
 }

@@ -2895,11 +2895,11 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 	return merged, nil
 }
 
-// UnsealRuntimeSecrets is the narrow live-refresh counterpart to
-// prepareWakeFiles. Callers must already have established that the request is
-// bound to an authorized live app deployment. Plaintext remains in the
-// caller's memory only; callers must not log or persist it outside the guest's
-// runtime projection.
+// UnsealRuntimeSecrets opens app-secret ciphertext for keys already selected
+// by an authorization-aware caller. It does not perform authorization and
+// requires each envelope to contain exactly its requested key. Plaintext
+// remains in caller memory only; callers must not log or persist it outside
+// the guest's runtime projection.
 func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
@@ -2925,20 +2925,21 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 	return secrets, nil
 }
 
-// prepareSidecarEnvFiles opens the per-value SealBytes payloads persisted by
-// apid and keeps the resulting plaintext only in the wake request until the
-// concrete VMM writes it to that instance's writable main layer. Unlike the
-// shared sidecar image, that layer is already deployment/instance scoped.
+// prepareSidecarEnvFiles opens direct-env and app-secret ciphertext persisted
+// by apid and keeps plaintext only in the wake request until the concrete VMM
+// writes it to that sidecar's workload-specific env file in the instance's
+// writable main upper. It never modifies the shared sidecar image.
 func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
-		if len(entries) == 0 {
+		secretEntries := req.Sidecars[i].SealedSecrets
+		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
 		if len(m.hostIdentities) == 0 {
 			return ErrNoHostKey
 		}
-		merged := make(map[string]string, len(entries))
+		merged := make(map[string]string, len(entries)+len(secretEntries))
 		for _, entry := range entries {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(m.hostIdentities, entry.Ciphertext)
 			if err != nil {
@@ -2947,7 +2948,20 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			if namespace != "sidecar_env" {
 				return fmt.Errorf("sidecar env[%s] has namespace %q, want sidecar_env", logsanitize.Field(entry.Key), namespace)
 			}
+			if _, duplicate := merged[entry.Key]; duplicate {
+				return fmt.Errorf("sidecar env[%s]: duplicate authorized key", logsanitize.Field(entry.Key))
+			}
 			merged[entry.Key] = string(plaintext)
+		}
+		secrets, err := m.UnsealRuntimeSecrets(secretEntries)
+		if err != nil {
+			return fmt.Errorf("open sidecar app secrets: %w", err)
+		}
+		for key, value := range secrets {
+			if _, duplicate := merged[key]; duplicate {
+				return fmt.Errorf("sidecar env[%s]: app secret duplicates a direct env key", logsanitize.Field(key))
+			}
+			merged[key] = value
 		}
 		blob, err := json.Marshal(merged)
 		if err != nil {
@@ -2957,6 +2971,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 		// Do not carry ciphertext any farther than the Manager's unseal
 		// boundary; the VMM only needs the per-instance plaintext bytes.
 		req.Sidecars[i].SealedEnv = nil
+		req.Sidecars[i].SealedSecrets = nil
 	}
 	return nil
 }
@@ -7025,6 +7040,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			SealedEnv:       append([]SealedEnvEntry(nil), sc.SealedEnv...),
+			SealedSecrets:   append([]SealedEnvEntry(nil), sc.SealedSecrets...),
 			preparedEnvJSON: append([]byte(nil), sc.preparedEnvJSON...),
 		})
 	}

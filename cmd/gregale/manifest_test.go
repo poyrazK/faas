@@ -185,6 +185,34 @@ func TestDeployManifestTriggers_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 099 — HTTP manifest reconciliation preserves independently managed command crons.
+func TestDeployManifestTriggersPreservesCommandCrons(t *testing.T) {
+	dir := t.TempDir()
+	writeGitkeep(t, dir)
+	writeManifest(t, dir, `triggers:
+  - kind: cron
+    app: my-api
+    schedule: "0 3 * * *"
+    path: /cleanup
+`)
+	fc := &fakeCronClient{
+		whoami: api.AccountResponse{Plan: "pro"},
+		preExistingCrons: []api.CronResponse{
+			{ID: "command-cron", Kind: "command", Schedule: "0 2 * * *", Command: []string{"bin/maintenance"}},
+			{ID: "stale-http", Kind: "http", Schedule: "0 4 * * *", Path: "/old"},
+		},
+	}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatalf("deployManifestTriggers: %v", err)
+	}
+	if len(fc.deletedIDs) != 1 || fc.deletedIDs[0] != "stale-http" {
+		t.Fatalf("deleted cron ids = %v, want only stale HTTP cron", fc.deletedIDs)
+	}
+	if len(fc.createdCalls) != 1 || fc.createdCalls[0].Path != "/cleanup" {
+		t.Fatalf("created HTTP crons = %+v, want manifest route", fc.createdCalls)
+	}
+}
+
 func TestDeployManifestTriggers_PreCountTrip(t *testing.T) {
 	dir := t.TempDir()
 	writeGitkeep(t, dir)

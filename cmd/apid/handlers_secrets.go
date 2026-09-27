@@ -101,7 +101,12 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, acct state.
 			api.WriteProblem(w, api.ErrCapacity("could not list secrets"))
 			return
 		}
-		writeSecretListAll(w, rows, limits.SecretCountMax)
+		observations, err := s.listSecretRuntimeReloadObservations(r.Context(), acct.ID, app.ID, "")
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list secret runtime status"))
+			return
+		}
+		writeSecretListAll(w, rows, limits.SecretCountMax, observations)
 		return
 	}
 	s.listSecretsInScope(w, r, acct, app, scope, limits)
@@ -120,6 +125,11 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not list secrets"))
 		return
 	}
+	observations, err := s.listSecretRuntimeReloadObservations(r.Context(), acct.ID, app.ID, scope)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list secret runtime status"))
+		return
+	}
 	out := make([]api.AppSecretResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, api.AppSecretResponse{
@@ -127,18 +137,20 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: row.Kid, ValueHash: row.ValueHash,
 			DeliveryVersion: row.DeliveryVersion, DeliveredVersion: row.DeliveredVersion,
-			DeliveryStatus:              string(row.DeliveryStatus),
-			LastDeliveryAttemptAt:       formatOptionalSecretTime(row.LastDeliveryAttemptAt),
-			LastDeliveredAt:             formatOptionalSecretTime(row.LastDeliveredAt),
-			LastDeliveryErrorCode:       row.LastDeliveryErrorCode,
-			LastDeliveredWakeID:         row.LastDeliveredWakeID,
-			LastDeliveredInstanceID:     row.LastDeliveredInstanceID,
-			LastRuntimeReloadVersion:    row.LastRuntimeReloadVersion,
-			LastRuntimeReloadProjection: string(row.LastRuntimeReloadProjection),
-			LastRuntimeReloadSignal:     string(row.LastRuntimeReloadSignal),
-			LastRuntimeReloadAt:         formatOptionalSecretTime(row.LastRuntimeReloadAt),
-			LastRuntimeReloadErrorCode:  row.LastRuntimeReloadErrorCode,
-			LastRuntimeReloadInstanceID: row.LastRuntimeReloadInstanceID,
+			DeliveryStatus:               string(row.DeliveryStatus),
+			LastDeliveryAttemptAt:        formatOptionalSecretTime(row.LastDeliveryAttemptAt),
+			LastDeliveredAt:              formatOptionalSecretTime(row.LastDeliveredAt),
+			LastDeliveryErrorCode:        row.LastDeliveryErrorCode,
+			LastDeliveredWakeID:          row.LastDeliveredWakeID,
+			LastDeliveredInstanceID:      row.LastDeliveredInstanceID,
+			LastRuntimeReloadVersion:     row.LastRuntimeReloadVersion,
+			LastRuntimeReloadProjection:  string(row.LastRuntimeReloadProjection),
+			LastRuntimeReloadSignal:      string(row.LastRuntimeReloadSignal),
+			LastRuntimeReloadAt:          formatOptionalSecretTime(row.LastRuntimeReloadAt),
+			LastRuntimeReloadErrorCode:   row.LastRuntimeReloadErrorCode,
+			LastRuntimeReloadInstanceID:  row.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:    observations[secretObservationKey{Scope: row.Scope, Key: row.Key}],
+			RuntimeReloadTargetsComplete: true,
 		})
 	}
 	totalCount, err := s.store.CountAppSecrets(r.Context(), acct.ID, app.ID)
@@ -162,7 +174,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 // Mirror of writeEnvListAll (handlers_env.go:209) — the env route
 // already uses this discriminated-union shape (ADR-090 PR-B), and
 // secrets deliberately re-use the same rendering rule for symmetry.
-func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int) {
+func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int, observations map[secretObservationKey][]api.SecretRuntimeReloadObservation) {
 	bucket := map[string][]api.ScopedAppSecretResponse{}
 	for _, r := range rows {
 		bucket[r.Scope] = append(bucket[r.Scope], api.ScopedAppSecretResponse{
@@ -170,18 +182,20 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: r.Kid, ValueHash: r.ValueHash,
 			DeliveryVersion: r.DeliveryVersion, DeliveredVersion: r.DeliveredVersion,
-			DeliveryStatus:              string(r.DeliveryStatus),
-			LastDeliveryAttemptAt:       formatOptionalSecretTime(r.LastDeliveryAttemptAt),
-			LastDeliveredAt:             formatOptionalSecretTime(r.LastDeliveredAt),
-			LastDeliveryErrorCode:       r.LastDeliveryErrorCode,
-			LastDeliveredWakeID:         r.LastDeliveredWakeID,
-			LastDeliveredInstanceID:     r.LastDeliveredInstanceID,
-			LastRuntimeReloadVersion:    r.LastRuntimeReloadVersion,
-			LastRuntimeReloadProjection: string(r.LastRuntimeReloadProjection),
-			LastRuntimeReloadSignal:     string(r.LastRuntimeReloadSignal),
-			LastRuntimeReloadAt:         formatOptionalSecretTime(r.LastRuntimeReloadAt),
-			LastRuntimeReloadErrorCode:  r.LastRuntimeReloadErrorCode,
-			LastRuntimeReloadInstanceID: r.LastRuntimeReloadInstanceID,
+			DeliveryStatus:               string(r.DeliveryStatus),
+			LastDeliveryAttemptAt:        formatOptionalSecretTime(r.LastDeliveryAttemptAt),
+			LastDeliveredAt:              formatOptionalSecretTime(r.LastDeliveredAt),
+			LastDeliveryErrorCode:        r.LastDeliveryErrorCode,
+			LastDeliveredWakeID:          r.LastDeliveredWakeID,
+			LastDeliveredInstanceID:      r.LastDeliveredInstanceID,
+			LastRuntimeReloadVersion:     r.LastRuntimeReloadVersion,
+			LastRuntimeReloadProjection:  string(r.LastRuntimeReloadProjection),
+			LastRuntimeReloadSignal:      string(r.LastRuntimeReloadSignal),
+			LastRuntimeReloadAt:          formatOptionalSecretTime(r.LastRuntimeReloadAt),
+			LastRuntimeReloadErrorCode:   r.LastRuntimeReloadErrorCode,
+			LastRuntimeReloadInstanceID:  r.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:    observations[secretObservationKey{Scope: r.Scope, Key: r.Key}],
+			RuntimeReloadTargetsComplete: true,
 		})
 	}
 	for scope := range bucket {
@@ -204,6 +218,37 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 		Quota:          quota,
 		Count:          len(rows),
 	})
+}
+
+type secretObservationKey struct {
+	Scope string
+	Key   string
+}
+
+func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) (map[secretObservationKey][]api.SecretRuntimeReloadObservation, error) {
+	rows, err := s.store.ListAppSecretRuntimeReloadTargets(ctx, accountID, appID, scope)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[secretObservationKey][]api.SecretRuntimeReloadObservation, len(rows))
+	for _, row := range rows {
+		key := secretObservationKey{Scope: row.Scope, Key: row.Key}
+		observation := api.SecretRuntimeReloadObservation{
+			InstanceID: row.InstanceID, RuntimeState: row.RuntimeState,
+			ReloadSupport: row.ReloadSupport, Reported: row.Reported,
+			ErrorCode:             row.ErrorCode,
+			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
+			ApplicationAckAt: formatOptionalSecretTime(row.ApplicationAckAt), ApplicationAckErrorCode: row.ApplicationAckErrorCode,
+		}
+		if row.Reported {
+			observation.Version = row.Version
+			observation.Projection = string(row.Projection)
+			observation.Signal = string(row.Signal)
+			observation.ObservedAt = formatOptionalSecretTime(row.ObservedAt)
+		}
+		out[key] = append(out[key], observation)
+	}
+	return out, nil
 }
 
 func formatOptionalSecretTime(value *time.Time) string {

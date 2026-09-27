@@ -63,7 +63,7 @@ func (s *server) getAppRoutes(w http.ResponseWriter, r *http.Request, acct state
 		// loadApp already wrote the 404.
 		return
 	}
-	snapshot := s.collectObservedRoutes(r.Context(), app.ID, app.Slug)
+	snapshot := s.collectObservedRoutes(r.Context(), acct.ID, app.ID, app.Slug)
 	w.Header().Set("X-Faas-Routes-State", snapshot.Source)
 	writeJSON(w, http.StatusOK, api.AppRoutesResponse{
 		Slug:               app.Slug,

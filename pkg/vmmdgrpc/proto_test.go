@@ -565,6 +565,7 @@ func TestSidecarsFromProto(t *testing.T) {
 			StorageKey:       "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:        "layer-sidecar-0",
 			SealedEnv:        []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
+			SealedSecrets:    []*vmmdpb.SealedSecret{{Key: "DATABASE_URL", Ciphertext: []byte("app-secret-ciphertext")}},
 			DependsOn:        []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
 			StartupProbeTest: []string{"CMD", "/usr/local/bin/ready"}, StartupProbeIntervalS: 5,
 			StartupProbeTimeoutS: 2, StartupProbeRetries: 3, StartupProbeStartPeriodS: 10,
@@ -598,6 +599,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if len(got[0].SealedEnv) != 1 || got[0].SealedEnv[0].Key != "TOKEN" || string(got[0].SealedEnv[0].Ciphertext) != "age-ciphertext" {
 		t.Errorf("entry 0 sealed env wrong: got %+v", got[0].SealedEnv)
+	}
+	if len(got[0].SealedSecrets) != 1 || got[0].SealedSecrets[0].Key != "DATABASE_URL" || string(got[0].SealedSecrets[0].Ciphertext) != "app-secret-ciphertext" {
+		t.Errorf("entry 0 sealed app secrets wrong: got %+v", got[0].SealedSecrets)
 	}
 	if len(got[0].DependsOn) != 1 || got[0].DependsOn[0].Name != "main" || got[0].DependsOn[0].Condition != api.WorkloadDependencyStarted {
 		t.Errorf("entry 0 dependencies wrong: got %+v", got[0].DependsOn)

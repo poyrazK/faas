@@ -26,9 +26,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,6 +167,7 @@ func (s *server) submitProjectPreview(w http.ResponseWriter, r *http.Request, lo
 	view.Skipped = toProjectPreviewAffected(resp.Skipped, true)
 	view.Unaffected = toProjectPreviewAffected(resp.Unaffected, false)
 	view.Removed = resp.Removed
+	view.AsyncRoutes, view.AsyncRouteRemovalCount = toProjectPreviewAsyncRoutes(resp.AsyncRoutes)
 	view.PlanToken = resp.PlanToken
 	view.CanApply = resp.CanApply
 	view.NotAllowed = resp.NotAllowed
@@ -356,6 +359,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	view.Skipped = toProjectPreviewAffected(resp.Skipped, true)
 	view.Unaffected = toProjectPreviewAffected(resp.Unaffected, false)
 	view.Removed = resp.Removed
+	view.AsyncRoutes, view.AsyncRouteRemovalCount = toProjectPreviewAsyncRoutes(resp.AsyncRoutes)
 	view.PlanToken = resp.PlanToken
 	view.CanApply = resp.CanApply
 	view.NotAllowed = resp.NotAllowed
@@ -430,6 +434,61 @@ func toProjectPreviewAffected(in []api.PlanAffectedApp, excluded bool) []views.P
 		})
 	}
 	return out
+}
+
+// toProjectPreviewAsyncRoutes translates the route diff into display-ready
+// rows and returns the destructive subset count for the preview warning.
+func toProjectPreviewAsyncRoutes(in []api.PlanAsyncRoute) ([]views.ProjectPreviewAsyncRoute, int) {
+	if len(in) == 0 {
+		return nil, 0
+	}
+	out := make([]views.ProjectPreviewAsyncRoute, 0, len(in))
+	removals := 0
+	for _, route := range in {
+		glyph, label, class := asyncRouteActionAffordance(route.Action)
+		if route.Action == "remove" {
+			removals++
+		}
+		methods := strings.Join(route.MatchMethods, ", ")
+		if methods == "" {
+			methods = "unspecified"
+		}
+		retryPolicy := "platform default"
+		if policy := route.RetryPolicy; policy != nil && (policy.MaxAttempts != 0 || policy.BaseSeconds != 0 || policy.MaxSeconds != 0 || policy.JitterSeconds != 0) {
+			retryPolicy = fmt.Sprintf("max %d attempts; backoff %.2f–%.2fs; jitter %.2fs",
+				policy.MaxAttempts, policy.BaseSeconds, policy.MaxSeconds, policy.JitterSeconds)
+		}
+		maxAge := "not set"
+		if route.MaxAgeSeconds > 0 {
+			maxAge = strconv.Itoa(route.MaxAgeSeconds) + "s"
+		}
+		out = append(out, views.ProjectPreviewAsyncRoute{
+			App: route.App, Name: route.Name, Action: route.Action,
+			ActionGlyph: glyph, ActionLabel: label, ActionClass: class,
+			MatchHost: route.MatchHost, MatchPath: route.MatchPath,
+			MatchMethods: methods, Priority: route.Priority, Enabled: route.Enabled,
+			OnSuccess: route.OnSuccess, OnFailure: route.OnFailure,
+			RetryPolicy: retryPolicy, MaxAge: maxAge, Reason: route.Reason,
+		})
+	}
+	return out, removals
+}
+
+func asyncRouteActionAffordance(action string) (glyph, label, class string) {
+	switch action {
+	case "create":
+		return "+", "will create", "badge-create"
+	case "update":
+		return "~", "will update", "badge-update"
+	case "remove":
+		return "x", "will remove", "badge-remove"
+	case "unchanged":
+		return "·", "unchanged", "badge-noop"
+	case "skipped":
+		return "—", "skipped", "badge-skipped"
+	default:
+		return "?", "unrecognized action", "badge-noop"
+	}
 }
 
 // actionAffordance picks the customer-facing glyph + label for

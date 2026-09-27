@@ -433,15 +433,21 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	//   {id, occurred_at, rule, rule_name, app_id, payload}
 	// We fill rule='app.webhook' (the surface name), rule_name=event
 	// (so dashboards key off the event), and the rest verbatim.
+	source := "urn:gregale:app:" + row.AppID
+	subject := "apps/" + row.AppID
+	if hook.Scope == state.AppWebhookScopePlatformTenant {
+		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
+		subject = "platform-tenants/" + hook.PlatformTenantID
+	}
 	evt := webhookout.Event{
 		ID:         row.ID,
 		OccurredAt: row.CreatedAt,
 		Rule:       "app.webhook",
 		RuleName:   string(row.Event),
 		AppID:      row.AppID,
-		Source:     "urn:gregale:app:" + row.AppID,
+		Source:     source,
 		Type:       string(row.Event),
-		Subject:    "apps/" + row.AppID,
+		Subject:    subject,
 		AccountID:  row.AccountID,
 		Data:       json.RawMessage(row.Payload),
 		Payload: map[string]any{

@@ -748,6 +748,32 @@ func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	}
 }
 
+func TestListPlatformTenantActivityEncodesFiltersAndCursor(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tenant_id":"11111111-1111-4111-8111-111111111111","since":"2h","window_start":"2026-09-25T10:00:00Z","window_end":"2026-09-25T12:00:00Z","plan_retention_days":7,"retention_clamped":false,"page_telemetry_rows":0,"page_represented_requests":0,"page_error_requests":0,"page_complete":true,"filters":{},"requests":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	_, err := c.ListPlatformTenantActivity(context.Background(), "11111111-1111-4111-8111-111111111111", PlatformTenantActivityOptions{
+		Since: "2h", AppID: "22222222-2222-4222-8222-222222222222", Status: 503,
+		Cursor: "opaque+/=", Limit: 25,
+	})
+	if err != nil {
+		t.Fatalf("ListPlatformTenantActivity: %v", err)
+	}
+	if gotPath != "/v1/account/platform-tenants/11111111-1111-4111-8111-111111111111/activity" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	want := "app_id=22222222-2222-4222-8222-222222222222&cursor=opaque%2B%2F%3D&limit=25&since=2h&status=503"
+	if gotQuery != want {
+		t.Fatalf("query = %q, want %q", gotQuery, want)
+	}
+}
+
 func TestGetAccountTraceUsesDurableEndpoint(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

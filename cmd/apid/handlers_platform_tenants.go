@@ -294,7 +294,7 @@ func (s *server) getPlatformTenantUsage(w http.ResponseWriter, r *http.Request, 
 		out.ErrorCount += row.ErrorCount
 		out.BillableUnits += row.BillableUnits
 		out.Buckets = append(out.Buckets, api.PlatformTenantUsageBucketResponse{
-			AppID: row.AppID, ConsumerID: row.ConsumerKey, WindowStart: row.WindowStart,
+			AppID: row.AppID, ConsumerID: row.ConsumerKey, SurfaceID: row.SurfaceID, JWTAuthorizationRuleID: row.JWTAuthorizationRuleID, WindowStart: row.WindowStart,
 			RequestCount: row.RequestCount, ErrorCount: row.ErrorCount, BillableUnits: row.BillableUnits,
 		})
 	}

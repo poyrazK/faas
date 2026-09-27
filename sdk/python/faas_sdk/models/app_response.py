@@ -21,6 +21,7 @@ from ..models.app_response_workload_class import AppResponseWorkloadClass, check
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from ..models.public_auth_status import PublicAuthStatus
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
 
 
 T = TypeVar("T", bound="AppResponse")
@@ -88,7 +90,7 @@ class AppResponse:
     ADR-037."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
-    service routing. Internal visibility is Pro/Scale."""
+    service routing. Available on every plan."""
     workload_class: AppResponseWorkloadClass | Unset = UNSET
     """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
     may replace it. Distinct from type, which selects the app-vs-function execution contract."""
@@ -116,15 +118,26 @@ class AppResponse:
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
     service_bindings: list[AppServiceBinding] | Unset = UNSET
-    """Repository-declared same-account service dependencies currently injected into this workload. They are
-    discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared`
-    policy."""
+    """Declared same-account service dependencies injected into this workload as legacy `_URL` environment
+    variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
+    apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
+    outbound authorization allowlist under the `declared` policy."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account
+    caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   """
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -144,6 +157,9 @@ class AppResponse:
     version_affinity_managed_cookie: bool | Unset = False
     """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
     exclusive with version_affinity_cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -327,9 +343,21 @@ class AppResponse:
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
 
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
+
         preview_service_calls_policy: str | Unset = UNSET
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
 
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
@@ -344,6 +372,8 @@ class AppResponse:
         version_affinity_cookie = self.version_affinity_cookie
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
         route_metrics_enabled = self.route_metrics_enabled
 
@@ -507,8 +537,14 @@ class AppResponse:
             field_dict["service_bindings"] = service_bindings
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -521,6 +557,8 @@ class AppResponse:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -581,6 +619,7 @@ class AppResponse:
         from ..models.public_auth_status import PublicAuthStatus
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -738,12 +777,28 @@ class AppResponse:
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
 
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
+
         _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
         preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
         if isinstance(_preview_service_calls_policy, Unset):
             preview_service_calls_policy = UNSET
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -756,6 +811,8 @@ class AppResponse:
         version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
@@ -976,13 +1033,17 @@ class AppResponse:
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
             service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

@@ -88,6 +88,38 @@ type ProjectEnvironmentReleaseListResponse struct {
 	Workloads   []ProjectEnvironmentReleaseWorkloadResponse `json:"workloads"`
 }
 
+// PublishProjectReleaseSetRequest atomically publishes a complete immutable
+// deployment graph. Keys are project workload slugs, values deployment IDs.
+type PublishProjectReleaseSetRequest struct {
+	TTLSeconds  int               `json:"ttl_seconds"`
+	Deployments map[string]string `json:"deployments"`
+}
+
+// ProjectReleaseSetResponse is the published immutable deployment graph.
+type ProjectReleaseSetResponse struct {
+	ID          string                            `json:"id"`
+	AccountID   string                            `json:"account_id"`
+	ProjectID   string                            `json:"project_id"`
+	Environment string                            `json:"environment"`
+	Active      bool                              `json:"active"`
+	TTLSeconds  int                               `json:"ttl_seconds"`
+	ExpiresAt   *time.Time                        `json:"expires_at,omitempty"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	Members     []ProjectReleaseSetMemberResponse `json:"members"`
+}
+
+// ProjectReleaseSetListResponse includes retired and expired release graphs.
+type ProjectReleaseSetListResponse struct {
+	Items      []ProjectReleaseSetResponse `json:"items"`
+	NextBefore string                      `json:"next_before,omitempty"`
+}
+
+// ProjectReleaseSetMemberResponse maps one project app to its deployment.
+type ProjectReleaseSetMemberResponse struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+}
+
 // ProjectEnvironmentReleaseWorkloadResponse identifies the live deployment
 // serving one project workload in an environment. It contains release
 // metadata only; environment configuration and secret values are excluded.
@@ -144,6 +176,7 @@ type ProjectEnvironmentBindingResponse struct {
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
+	AppID        string                                    `json:"app_id"`
 	WorkloadSlug string                                    `json:"workload_slug"`
 	WorkloadName string                                    `json:"workload_name"`
 	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
@@ -205,13 +238,15 @@ type ProjectEnvironmentSharedResourceResponse struct {
 // ProjectEnvironmentStateResponse is the canonical read model used by future
 // clone operations and by the unified environment diff.
 type ProjectEnvironmentStateResponse struct {
-	ProjectSlug     string                                     `json:"project_slug"`
-	Environment     string                                     `json:"environment"`
-	Protected       bool                                       `json:"protected"`
-	Configuration   ProjectEnvironmentConfigResponse           `json:"configuration"`
-	Workloads       []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
-	SharedResources []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
-	GeneratedAt     string                                     `json:"generated_at"`
+	ActiveReleaseSet *ProjectReleaseSetResponse                 `json:"active_release_set"`
+	ReleaseSetStatus string                                     `json:"release_set_status"`
+	ProjectSlug      string                                     `json:"project_slug"`
+	Environment      string                                     `json:"environment"`
+	Protected        bool                                       `json:"protected"`
+	Configuration    ProjectEnvironmentConfigResponse           `json:"configuration"`
+	Workloads        []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
+	SharedResources  []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt      string                                     `json:"generated_at"`
 }
 
 // ProjectEnvironmentReleaseDiffResponse compares the live artifact selected
@@ -426,6 +461,8 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	BlockingReasons        []string                             `json:"blocking_reasons,omitempty"`
 	ConfigDiff             ProjectEnvironmentConfigDiffResponse `json:"config_diff"`
 	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
+	FromReleaseSet         *ProjectReleaseSetResponse           `json:"from_release_set,omitempty"`
+	ToReleaseSet           *ProjectReleaseSetResponse           `json:"to_release_set,omitempty"`
 	PromotionHash          string                               `json:"promotion_hash"`
 	PromotionToken         string                               `json:"promotion_token"`
 }

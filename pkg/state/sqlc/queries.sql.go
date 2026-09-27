@@ -4320,7 +4320,9 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    platform_tenant_id,
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -4334,38 +4336,46 @@ INSERT INTO request_telemetry (
     $24::text,
     $25::text,
     $26::text,
-    $27::text
+    $27::text,
+    $28::uuid,
+    $29::int,
+    $30::int,
+    $31::bool
 )
 `
 
 type InsertRequestTelemetryParams struct {
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	DeploymentID        pgtype.UUID
-	Route               string
-	Method              string
-	Status              int32
-	LatencyMs           int32
-	ColdBoot            bool
-	TraceID             pgtype.Text
-	ReceivedAt          pgtype.Timestamptz
-	Count               int32
-	UaFamily            string
-	ReferrerHost        string
-	Country             string
-	WakeID              pgtype.Text
-	InstanceID          pgtype.Text
-	GuestDurationMs     int32
-	GuestRuntime        string
-	GuestOutcome        string
-	GuestErrorClass     string
-	ConsumerID          pgtype.UUID
-	NodeID              string
-	Region              string
-	CommitSha           string
-	DeploymentTag       string
-	DeploymentCreatedAt string
-	ImageDigest         string
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
 }
 
 // ---------------------------------------------------------------------------
@@ -4431,6 +4441,10 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+		arg.PlatformTenantID,
+		arg.GuestCpuTimeMs,
+		arg.GuestPeakRssMb,
+		arg.GuestResourceUsageAvailable,
 	)
 	return err
 }
@@ -5205,6 +5219,109 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 			&i.DeploymentTag,
 			&i.DeploymentCreatedAt,
 			&i.ImageDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppSecretRuntimeReloadTargets = `-- name: ListAppSecretRuntimeReloadTargets :many
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+ WHERE s.account_id = $1::uuid
+   AND i.app_id = $2::uuid
+   AND ($3::text = '' OR s.scope = $3::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND (
+       coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+       OR d.override_env_secrets ? s.key
+       OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+             CROSS JOIN LATERAL jsonb_each_text(coalesce(sidecar.value->'env_secrets', '{}'::jsonb)) AS secret_ref(env_key, ref)
+            WHERE secret_ref.ref = 'secret:' || s.key
+       )
+   )
+ORDER BY s.scope ASC, s.key ASC, i.id ASC
+`
+
+type ListAppSecretRuntimeReloadTargetsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+type ListAppSecretRuntimeReloadTargetsRow struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	RuntimeState            string
+	ReloadSupport           string
+	SecretVersion           pgtype.Int8
+	Projection              pgtype.Text
+	Signal                  pgtype.Text
+	ObservedAt              pgtype.Timestamptz
+	ErrorCode               pgtype.Text
+	ApplicationAckVersion   pgtype.Int8
+	ApplicationAckStatus    pgtype.Text
+	ApplicationAckAt        pgtype.Timestamptz
+	ApplicationAckErrorCode pgtype.Text
+}
+
+// Build the complete active roster for each secret from the deployment's
+// persisted scope/allowlist and reload opt-in. A missing observation remains
+// a target with nullable outcome fields rather than disappearing from the
+// denominator.
+func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX, arg ListAppSecretRuntimeReloadTargetsParams) ([]ListAppSecretRuntimeReloadTargetsRow, error) {
+	rows, err := db.Query(ctx, listAppSecretRuntimeReloadTargets, arg.AccountID, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppSecretRuntimeReloadTargetsRow{}
+	for rows.Next() {
+		var i ListAppSecretRuntimeReloadTargetsRow
+		if err := rows.Scan(
+			&i.Scope,
+			&i.Key,
+			&i.InstanceID,
+			&i.RuntimeState,
+			&i.ReloadSupport,
+			&i.SecretVersion,
+			&i.Projection,
+			&i.Signal,
+			&i.ObservedAt,
+			&i.ErrorCode,
+			&i.ApplicationAckVersion,
+			&i.ApplicationAckStatus,
+			&i.ApplicationAckAt,
+			&i.ApplicationAckErrorCode,
 		); err != nil {
 			return nil, err
 		}
@@ -6338,7 +6455,7 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -6387,6 +6504,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.ScanStatus,
 			&i.ScannedAt,
 			&i.OverrideLivenessProbe,
+			&i.SecretReloadSignal,
 			&i.ParkedReason,
 			&i.ParkedAt,
 			&i.TrafficPercent,
@@ -6762,6 +6880,58 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 	return items, nil
 }
 
+const listProjectReleaseSetsBefore = `-- name: ListProjectReleaseSetsBefore :many
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = $1 AND rs.project_id = $2
+   AND rs.environment_slug = $3
+   AND ($4::timestamptz IS NULL
+     OR (rs.created_at, rs.id) < ($4::timestamptz, $5::uuid))
+ ORDER BY rs.created_at DESC, rs.id DESC
+ LIMIT $6
+`
+
+type ListProjectReleaseSetsBeforeParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	BeforeAt    pgtype.Timestamptz
+	BeforeID    pgtype.UUID
+	PageLimit   int32
+}
+
+// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
+func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listProjectReleaseSetsBefore,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var release []byte
+		if err := rows.Scan(&release); err != nil {
+			return nil, err
+		}
+		items = append(items, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEventsForAccount = `-- name: ListRecentEventsForAccount :many
 select id, at, actor, kind, subject, data
 from events
@@ -6975,8 +7145,127 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRequestTelemetryByPlatformTenant = `-- name: ListRequestTelemetryByPlatformTenant :many
+SELECT id, app_id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = $1
+  AND platform_tenant_id = $2
+  AND received_at >= $3
+  AND received_at < $4
+  AND ($5::timestamptz IS NULL
+       OR (received_at, id) < ($5::timestamptz,
+                               $6::uuid))
+  AND ($7::text = ''
+       OR app_id = NULLIF($7::text, '')::uuid)
+  AND ($8::int = 0
+       OR status = $8::int)
+ORDER BY received_at DESC, id DESC
+LIMIT $9::int
+`
+
+type ListRequestTelemetryByPlatformTenantParams struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	ReceivedFrom     pgtype.Timestamptz
+	ReceivedUntil    pgtype.Timestamptz
+	CursorReceivedAt pgtype.Timestamptz
+	CursorID         pgtype.UUID
+	AppIDFilter      string
+	StatusFilter     int32
+	Limit            int32
+}
+
+type ListRequestTelemetryByPlatformTenantRow struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// Cross-app support view for a platform customer. Always constrain by both
+// owning account and the immutable request-time tenant snapshot; do not infer
+// attribution by joining today's consumer/surface links.
+func (q *Queries) ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error) {
+	rows, err := db.Query(ctx, listRequestTelemetryByPlatformTenant,
+		arg.AccountID,
+		arg.PlatformTenantID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.CursorReceivedAt,
+		arg.CursorID,
+		arg.AppIDFilter,
+		arg.StatusFilter,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestTelemetryByPlatformTenantRow{}
+	for rows.Next() {
+		var i ListRequestTelemetryByPlatformTenantRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.ColdBoot,
+			&i.TraceID,
+			&i.ReceivedAt,
+			&i.WakeID,
+			&i.InstanceID,
+			&i.GuestDurationMs,
+			&i.GuestRuntime,
+			&i.GuestOutcome,
+			&i.GuestErrorClass,
+			&i.ConsumerID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, count, status, trace_id, received_at, spans_summary
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -6997,6 +7286,8 @@ type ListRequestTelemetryDependencySpansParams struct {
 
 type ListRequestTelemetryDependencySpansRow struct {
 	ID           pgtype.UUID
+	Route        string
+	Method       string
 	Count        int32
 	Status       int32
 	TraceID      pgtype.Text
@@ -7026,6 +7317,8 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 		var i ListRequestTelemetryDependencySpansRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Route,
+			&i.Method,
 			&i.Count,
 			&i.Status,
 			&i.TraceID,
@@ -10428,6 +10721,39 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = $1 AND rs.project_id = $2
+   AND rs.environment_slug = $3
+   AND (($4::uuid IS NULL AND rs.active)
+     OR rs.id = $4::uuid)
+`
+
+type ReadProjectReleaseSetParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	ReleaseID   pgtype.UUID
+}
+
+// A single statement reads the pointer and its complete membership together.
+func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readProjectReleaseSet,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ReleaseID,
+	)
+	var release []byte
+	err := row.Scan(&release)
+	return release, err
+}
+
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
 SELECT id, part_path
 FROM upload_sessions
@@ -10657,6 +10983,101 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	return inserted, err
 }
 
+const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
+WITH per_deployment AS (
+    SELECT deployment_id::text AS deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(count)::bigint AS requests,
+           COALESCE(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+    GROUP BY deployment_id
+)
+SELECT deployment_id,
+       commit_sha,
+       deployment_tag,
+       deployment_created_at,
+       requests,
+       guest_cpu_measured_requests,
+       guest_cpu_avg_ms,
+       SUM(requests) OVER ()::bigint AS total_requests
+FROM per_deployment
+ORDER BY requests DESC, deployment_id ASC
+LIMIT $5
+`
+
+type RequestTelemetryAnalyticsByDeploymentParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+	Limit        int32
+}
+
+type RequestTelemetryAnalyticsByDeploymentRow struct {
+	DeploymentID             string
+	CommitSha                interface{}
+	DeploymentTag            interface{}
+	DeploymentCreatedAt      interface{}
+	Requests                 int64
+	GuestCpuMeasuredRequests int64
+	GuestCpuAvgMs            int32
+	TotalRequests            int64
+}
+
+// Bounded deployment cost allocation for the customer request analytics
+// window. Request counts are weighted by the publisher's collapsed `count`.
+// The window total is computed before LIMIT so the handler can allocate the
+// omitted deployments into a visible __other__ bucket without an unbounded
+// response.
+func (q *Queries) RequestTelemetryAnalyticsByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByDeploymentParams) ([]RequestTelemetryAnalyticsByDeploymentRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsByDeployment,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsByDeploymentRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsByDeploymentRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.Requests,
+			&i.GuestCpuMeasuredRequests,
+			&i.GuestCpuAvgMs,
+			&i.TotalRequests,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryAnalyticsByDimension = `-- name: RequestTelemetryAnalyticsByDimension :many
 WITH filtered AS (
     SELECT
@@ -10672,6 +11093,12 @@ WITH filtered AS (
         latency_ms,
         cold_boot,
         status,
+        guest_duration_ms,
+        guest_runtime,
+        guest_cpu_time_ms,
+        guest_peak_rss_mb,
+        guest_resource_usage_available,
+        wake_id,
         count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -10694,6 +11121,12 @@ WITH filtered AS (
         filtered.latency_ms,
         filtered.cold_boot,
         filtered.status,
+        filtered.guest_duration_ms,
+        filtered.guest_runtime,
+        filtered.guest_cpu_time_ms,
+        filtered.guest_peak_rss_mb,
+        filtered.guest_resource_usage_available,
+        filtered.wake_id,
         filtered.request_count
     FROM filtered
     LEFT JOIN top_groups
@@ -10709,6 +11142,124 @@ WITH filtered AS (
            SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
            SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
     FROM latency_values
+), cold_latency_values AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE cold_boot
+    GROUP BY dimension, method, latency_ms
+), cold_wakes AS (
+    SELECT DISTINCT dimension, method, wake_id
+    FROM assigned
+    WHERE cold_boot
+      AND wake_id IS NOT NULL
+      AND wake_id <> ''
+      AND dimension <> '__other__'
+      AND $5::text = 'route'
+), wake_events AS (
+    SELECT cold_wakes.dimension,
+           cold_wakes.method,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_started' AND events.actor = 'schedd') AS started_at,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_completed' AND events.actor = 'schedd') AS completed_at
+    FROM cold_wakes
+    JOIN events ON events.data->>'wake_id' = cold_wakes.wake_id
+    WHERE events.kind IN ('wake.boot_started', 'wake.boot_completed')
+    GROUP BY cold_wakes.dimension, cold_wakes.method, cold_wakes.wake_id
+), wake_durations AS (
+    SELECT dimension,
+           method,
+           (EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::int AS duration_ms
+    FROM wake_events
+    WHERE started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at > started_at
+), wake_values AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           COUNT(*)::bigint AS sample_count
+    FROM wake_durations
+    GROUP BY dimension, method, duration_ms
+), wake_ranked AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM wake_values
+), wake_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS wake_boot_p95_ms
+    FROM wake_ranked
+    GROUP BY dimension, method
+), cold_ranked AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM cold_latency_values
+), cold_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS cold_request_p95_ms
+    FROM cold_ranked
+    GROUP BY dimension, method
+), guest_latency_values AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_runtime <> '__unknown__'
+    GROUP BY dimension, method, guest_duration_ms
+), guest_ranked AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_latency_values
+), guest_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.50))::int AS guest_execution_p50_ms,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_execution_p95_ms
+    FROM guest_ranked
+    GROUP BY dimension, method
+), guest_cpu_values AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_resource_usage_available
+    GROUP BY dimension, method, guest_cpu_time_ms
+), guest_cpu_ranked AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_cpu_time_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_cpu_values
+), guest_resource_metrics AS (
+    SELECT assigned.dimension,
+           assigned.method,
+           ROUND(SUM(assigned.guest_cpu_time_ms::numeric * assigned.request_count)
+                 FILTER (WHERE assigned.guest_resource_usage_available)
+                 / NULLIF(SUM(assigned.request_count) FILTER (WHERE assigned.guest_resource_usage_available), 0))::int AS guest_cpu_avg_ms,
+           MAX(assigned.guest_peak_rss_mb) FILTER (WHERE assigned.guest_resource_usage_available)::int AS guest_peak_rss_max_mb
+    FROM assigned
+    GROUP BY assigned.dimension, assigned.method
+), guest_cpu_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_cpu_time_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_cpu_p95_ms
+    FROM guest_cpu_ranked
+    GROUP BY dimension, method
 ), percentiles AS (
     SELECT dimension,
            method,
@@ -10733,9 +11284,21 @@ SELECT totals.dimension,
        totals.cold_boots,
        percentiles.p50_ms,
        percentiles.p95_ms,
-       percentiles.p99_ms
+       percentiles.p99_ms,
+       cold_percentiles.cold_request_p95_ms,
+       wake_percentiles.wake_boot_p95_ms,
+       guest_percentiles.guest_execution_p50_ms,
+       guest_percentiles.guest_execution_p95_ms,
+       guest_resource_metrics.guest_cpu_avg_ms,
+       guest_cpu_percentiles.guest_cpu_p95_ms,
+       guest_resource_metrics.guest_peak_rss_max_mb
 FROM totals
 JOIN percentiles USING (dimension, method)
+LEFT JOIN cold_percentiles USING (dimension, method)
+LEFT JOIN wake_percentiles USING (dimension, method)
+LEFT JOIN guest_percentiles USING (dimension, method)
+LEFT JOIN guest_resource_metrics USING (dimension, method)
+LEFT JOIN guest_cpu_percentiles USING (dimension, method)
 ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC
 `
 
@@ -10749,14 +11312,21 @@ type RequestTelemetryAnalyticsByDimensionParams struct {
 }
 
 type RequestTelemetryAnalyticsByDimensionRow struct {
-	Dimension     interface{}
-	Method        interface{}
-	Requests      int64
-	ErrorRequests int64
-	ColdBoots     int64
-	P50Ms         int32
-	P95Ms         int32
-	P99Ms         int32
+	Dimension           interface{}
+	Method              interface{}
+	Requests            int64
+	ErrorRequests       int64
+	ColdBoots           int64
+	P50Ms               int32
+	P95Ms               int32
+	P99Ms               int32
+	ColdRequestP95Ms    pgtype.Int4
+	WakeBootP95Ms       pgtype.Int4
+	GuestExecutionP50Ms pgtype.Int4
+	GuestExecutionP95Ms pgtype.Int4
+	GuestCpuAvgMs       pgtype.Int4
+	GuestCpuP95Ms       pgtype.Int4
+	GuestPeakRssMaxMb   pgtype.Int4
 }
 
 // Top-N customer analytics grouped by one of the bounded dimensions. Rows
@@ -10788,6 +11358,13 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
+			&i.ColdRequestP95Ms,
+			&i.WakeBootP95Ms,
+			&i.GuestExecutionP50Ms,
+			&i.GuestExecutionP95Ms,
+			&i.GuestCpuAvgMs,
+			&i.GuestCpuP95Ms,
+			&i.GuestPeakRssMaxMb,
 		); err != nil {
 			return nil, err
 		}
@@ -11480,6 +12057,111 @@ func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const requestTelemetryCircuitBreakerSummary = `-- name: RequestTelemetryCircuitBreakerSummary :one
+WITH weighted AS (
+    SELECT latency_ms,
+           SUM(count::bigint) AS requests,
+           SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $2::uuid
+       AND received_at >= $3::timestamptz
+       AND received_at < $4::timestamptz
+     GROUP BY latency_ms
+), cpu_usage AS (
+    -- CPU is sampled per instance/minute. The retained instance row supplies
+    -- its deployment identity; old stopped instances remain through the
+    -- telemetry window, then state retention removes them. Ignore pure idle
+    -- minutes so background CPU with no requests cannot dominate the ratio.
+    SELECT COALESCE(SUM(u.cpu_usec) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_usec,
+           COALESCE(SUM(u.requests::bigint) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_requests
+      FROM usage_minutes AS u
+      JOIN instances AS ins ON ins.id = u.instance_id
+     WHERE u.app_id = $1::uuid
+       AND ins.app_id = $1::uuid
+       AND ins.deployment_id = $2::uuid
+       AND u.minute >= date_trunc('minute', $3::timestamptz)
+       AND u.minute < $4::timestamptz
+), ranked AS (
+      SELECT latency_ms,
+             requests,
+             server_errors,
+             cold_boot_requests,
+             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(requests) OVER () AS total,
+             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_requests) OVER () AS cold_boot_total
+        FROM weighted
+), summary AS (
+    SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
+           COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
+           COALESCE(
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               0
+           )::double precision AS p95_latency_ms,
+           COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
+           COALESCE(
+               MIN(latency_ms) FILTER (
+                   WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
+                     AND cold_boot_total > 0
+               ),
+               0
+           )::double precision AS cold_boot_p95_latency_ms
+      FROM ranked
+)
+SELECT summary.requests,
+       summary.server_errors,
+       summary.p95_latency_ms,
+       summary.cold_boot_requests,
+       summary.cold_boot_p95_latency_ms,
+       cpu_usage.cpu_usec,
+       cpu_usage.cpu_requests
+  FROM summary
+ CROSS JOIN cpu_usage
+`
+
+type RequestTelemetryCircuitBreakerSummaryParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt2  pgtype.Timestamptz
+}
+
+type RequestTelemetryCircuitBreakerSummaryRow struct {
+	Requests             int64
+	ServerErrors         int64
+	P95LatencyMs         float64
+	ColdBootRequests     int64
+	ColdBootP95LatencyMs float64
+	CpuUsec              int64
+	CpuRequests          int64
+}
+
+// Bounded candidate/stable health summary for the deployment circuit breaker.
+// `count` weights collapsed telemetry rows; compute request and 5xx totals,
+// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+// only one row.
+func (q *Queries) RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryCircuitBreakerSummary,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt2,
+	)
+	var i RequestTelemetryCircuitBreakerSummaryRow
+	err := row.Scan(
+		&i.Requests,
+		&i.ServerErrors,
+		&i.P95LatencyMs,
+		&i.ColdBootRequests,
+		&i.ColdBootP95LatencyMs,
+		&i.CpuUsec,
+		&i.CpuRequests,
+	)
+	return i, err
+}
+
 const requestTelemetryCoverage = `-- name: RequestTelemetryCoverage :one
 SELECT
     COUNT(*)::bigint AS telemetry_rows,
@@ -12030,6 +12712,27 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const setDeploymentSecretReloadSignal = `-- name: SetDeploymentSecretReloadSignal :execrows
+UPDATE deployments
+   SET secret_reload_signal = $1::text
+ WHERE id = $2::uuid
+`
+
+type SetDeploymentSecretReloadSignalParams struct {
+	Signal string
+	ID     pgtype.UUID
+}
+
+// imaged persists the validated image opt-in on each newly built deployment;
+// the state query keeps legacy NULL rows distinct from explicit opt-outs.
+func (q *Queries) SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error) {
+	result, err := db.Exec(ctx, setDeploymentSecretReloadSignal, arg.Signal, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many

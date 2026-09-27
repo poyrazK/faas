@@ -3,6 +3,7 @@ package sched
 // adr: 175
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -73,6 +74,93 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("workload specs = %#v, want %#v", got, want)
+	}
+}
+
+func TestSidecarsForDeployment_ResolvesOnlyExplicitSecretGrants(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	raw, err := json.Marshal(api.Sidecars{
+		{Name: "proxy", Image: "ghcr.io/org/proxy@sha256:01", Type: api.SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}},
+		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:02", Type: api.SidecarTypeSidecar},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sidecar-secrets", Status: state.DeployLive,
+		Scope: api.DefaultEnvScope, Sidecars: raw,
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	for _, name := range []string{"proxy", "metrics"} {
+		if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+			DeploymentID: dep.ID, SidecarName: name, StorageKey: "apps/app/" + name + ".ext4",
+		}); err != nil {
+			t.Fatalf("set %s layer: %v", name, err)
+		}
+	}
+	if err := store.UpsertAppSecret(ctx, account.ID, app.ID, "DATABASE_URL", []byte("cipher-db")); err != nil {
+		t.Fatalf("seed DATABASE_URL: %v", err)
+	}
+	if err := store.UpsertAppSecret(ctx, account.ID, app.ID, "UNGRANTED_TOKEN", []byte("cipher-token")); err != nil {
+		t.Fatalf("seed UNGRANTED_TOKEN: %v", err)
+	}
+
+	e := &Engine{store: store, log: testLog()}
+	got, candidates, err := e.sidecarsForDeployment(ctx, dep, account.ID)
+	if err != nil {
+		t.Fatalf("sidecarsForDeployment: %v", err)
+	}
+	if len(got) != 2 || len(got[0].SealedSecrets) != 1 || got[0].SealedSecrets[0].Key != "DATABASE_URL" {
+		t.Fatalf("proxy secret delivery = %#v, want only DATABASE_URL", got)
+	}
+	if len(got[1].SealedSecrets) != 0 {
+		t.Fatalf("ungranted metrics sidecar received secrets: %#v", got[1].SealedSecrets)
+	}
+	if len(candidates) != 1 || candidates[0].Key != "DATABASE_URL" {
+		t.Fatalf("delivery candidates = %#v, want only DATABASE_URL", candidates)
+	}
+}
+
+func TestSidecarsForDeployment_RejectsMalformedSecretGrant(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sidecar-secrets", Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","image":"r/x@sha256:01","type":"sidecar","env_secrets":{"DATABASE_URL":"secret:OTHER"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+		DeploymentID: dep.ID, SidecarName: "proxy", StorageKey: "apps/app/proxy.ext4",
+	}); err != nil {
+		t.Fatalf("set proxy layer: %v", err)
+	}
+	e := &Engine{store: store, log: testLog()}
+	if _, _, err := e.sidecarsForDeployment(ctx, dep, account.ID); err == nil || !strings.Contains(err.Error(), "invalid env_secrets") {
+		t.Fatalf("sidecarsForDeployment error = %v, want invalid env_secrets", err)
+	}
+}
+
+func TestMergeSecretDeliveryCandidatesDeduplicatesAndFencesVersions(t *testing.T) {
+	base := []state.AppSecretDeliveryCandidate{{Scope: "prod", Key: "DATABASE_URL", Version: 4}}
+	merged, err := mergeSecretDeliveryCandidates(base, []state.AppSecretDeliveryCandidate{
+		{Scope: "prod", Key: "DATABASE_URL", Version: 4},
+		{Scope: "prod", Key: "SIDECAR_TOKEN", Version: 2},
+	})
+	if err != nil {
+		t.Fatalf("merge same-version candidates: %v", err)
+	}
+	if len(merged) != 2 {
+		t.Fatalf("merged candidates = %#v, want two unique keys", merged)
+	}
+	if _, err := mergeSecretDeliveryCandidates(base, []state.AppSecretDeliveryCandidate{{Scope: "prod", Key: "DATABASE_URL", Version: 5}}); err == nil {
+		t.Fatal("merge accepted candidates from different secret versions")
 	}
 }
 

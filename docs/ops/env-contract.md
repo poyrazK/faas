@@ -46,6 +46,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
+| `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
 | `FAAS_API_HOSTING_SMOKE_URL` | imaged | `dropin` |  |  | `url` | public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain |
 | `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, shared | `envfile` |  |  | `` |  |
@@ -129,7 +130,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
-| `FAAS_FLEET_AGE_IDENTITY_PATH` | apid | `unit` |  |  | `` |  |
+| `FAAS_FLEET_AGE_IDENTITY_PATH` | apid, outboundd | `unit` |  |  | `` |  |
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -328,7 +329,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
-| `FAAS_RELEASE_PHASE_ENABLED` | imaged | `default` |  |  | `` | exact opt-in for pre-boot release commands; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
+| `FAAS_RELEASE_PHASE_ENABLED` | imaged | `default` |  |  | `` | exact opt-in for pre-boot release commands; deployments declaring a release command fail with `release_phase_unavailable` while off; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
+| `FAAS_REQUEST_AUDIT_ENABLED` | gatewayd-internal | `default` |  |  | `` | exact request audit is off by default until the receiver rollout and path-privacy review are complete (ADR-242) |
 | `FAAS_REQUEST_TELEMETRY_ENABLED` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
@@ -356,7 +358,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
-| `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206 opt-in: mint a signed caller assertion on every internal service call. Off is production-correct today because nothing verifies one yet (guest JWKS, runtime helper, and allow_callers policy are follow-ups), so no deploy path sets it and an operator without a verifier loads no key and computes no signature |
+| `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
+| `FAAS_SECRETS_REVISION_FILE` | guest | `guest` |  |  | `` | guest-init stamps a mode-0400 tmpfs file containing only the current non-sensitive secret-set revision for opted-in apps |
+| `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206/279 opt-in: mint a signed caller assertion on every internal service call. Workloads can fetch public verification keys from /v1/service-caller-keys; keep this off until the deployment's verifier rollout is ready. A signing failure remains additive and forwards the call unsigned |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |
 | `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |

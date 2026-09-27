@@ -80,6 +80,30 @@ from ..models.update_app_request_restart_policy_type_3_type_1 import (
     UpdateAppRequestRestartPolicyType3Type1,
     check_update_app_request_restart_policy_type_3_type_1,
 )
+from ..models.update_app_request_service_binding_policy_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType1,
+    check_update_app_request_service_binding_policy_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_2_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType2Type1,
+    check_update_app_request_service_binding_policy_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_3_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType3Type1,
+    check_update_app_request_service_binding_policy_type_3_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_1 import (
+    UpdateAppRequestServiceBindingTransportType1,
+    check_update_app_request_service_binding_transport_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+    check_update_app_request_service_binding_transport_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+    check_update_app_request_service_binding_transport_type_3_type_1,
+)
 from ..models.update_app_request_visibility_type_1 import (
     UpdateAppRequestVisibilityType1,
     check_update_app_request_visibility_type_1,
@@ -99,6 +123,7 @@ if TYPE_CHECKING:
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -118,7 +143,36 @@ class UpdateAppRequest:
         | UpdateAppRequestVisibilityType2Type1
         | UpdateAppRequestVisibilityType3Type1
     ) = UNSET
-    """Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."""
+    """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
+    allowed_service_callers: list[str] | None | Unset = UNSET
+    """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
+    restore same-account access. Project-managed and preview apps reject this PATCH."""
+    allowed_service_call_scopes: None | ServiceCallerScopes | Unset = UNSET
+    """Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to
+    clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
+    service_binding_targets: list[str] | None | Unset = UNSET
+    """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
+    bindings. Project-managed and preview apps reject non-null changes."""
+    service_binding_policy: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingPolicyType1
+        | UpdateAppRequestServiceBindingPolicyType2Type1
+        | UpdateAppRequestServiceBindingPolicyType3Type1
+    ) = UNSET
+    """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
+    reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   """
+    service_binding_transport: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingTransportType1
+        | UpdateAppRequestServiceBindingTransportType2Type1
+        | UpdateAppRequestServiceBindingTransportType3Type1
+    ) = UNSET
+    """Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy
+    endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null
+    changes."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -204,6 +258,8 @@ class UpdateAppRequest:
     version_affinity_managed_cookie: bool | None | Unset = UNSET
     """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
     change."""
+    revision_pin_ttl_seconds: int | None | Unset = UNSET
+    """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -295,6 +351,7 @@ class UpdateAppRequest:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -307,6 +364,56 @@ class UpdateAppRequest:
             visibility = self.visibility
         else:
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | None | Unset
+        if isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = UNSET
+        elif isinstance(self.allowed_service_callers, list):
+            allowed_service_callers = self.allowed_service_callers
+
+        else:
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | None | Unset
+        if isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        elif isinstance(self.allowed_service_call_scopes, ServiceCallerScopes):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+        else:
+            allowed_service_call_scopes = self.allowed_service_call_scopes
+
+        service_binding_targets: list[str] | None | Unset
+        if isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = UNSET
+        elif isinstance(self.service_binding_targets, list):
+            service_binding_targets = self.service_binding_targets
+
+        else:
+            service_binding_targets = self.service_binding_targets
+
+        service_binding_policy: None | str | Unset
+        if isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        else:
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: None | str | Unset
+        if isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        else:
+            service_binding_transport = self.service_binding_transport
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -500,6 +607,12 @@ class UpdateAppRequest:
         else:
             version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds: int | None | Unset
+        if isinstance(self.revision_pin_ttl_seconds, Unset):
+            revision_pin_ttl_seconds = UNSET
+        else:
+            revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -660,6 +773,16 @@ class UpdateAppRequest:
         field_dict.update({})
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -714,6 +837,8 @@ class UpdateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -771,6 +896,7 @@ class UpdateAppRequest:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -824,6 +950,161 @@ class UpdateAppRequest:
             )
 
         visibility = _parse_visibility(d.pop("visibility", UNSET))
+
+        def _parse_allowed_service_callers(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                allowed_service_callers_type_0 = cast(list[str], data)
+
+                return allowed_service_callers_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
+
+        def _parse_allowed_service_call_scopes(data: object) -> None | ServiceCallerScopes | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                allowed_service_call_scopes_type_0 = ServiceCallerScopes.from_dict(data)
+
+                return allowed_service_call_scopes_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceCallerScopes | Unset, data)
+
+        allowed_service_call_scopes = _parse_allowed_service_call_scopes(d.pop("allowed_service_call_scopes", UNSET))
+
+        def _parse_service_binding_targets(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                service_binding_targets_type_0 = cast(list[str], data)
+
+                return service_binding_targets_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        service_binding_targets = _parse_service_binding_targets(d.pop("service_binding_targets", UNSET))
+
+        def _parse_service_binding_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingPolicyType1
+            | UpdateAppRequestServiceBindingPolicyType2Type1
+            | UpdateAppRequestServiceBindingPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_1 = check_update_app_request_service_binding_policy_type_1(data)
+
+                return service_binding_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_2_type_1 = check_update_app_request_service_binding_policy_type_2_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_3_type_1 = check_update_app_request_service_binding_policy_type_3_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingPolicyType1
+                | UpdateAppRequestServiceBindingPolicyType2Type1
+                | UpdateAppRequestServiceBindingPolicyType3Type1,
+                data,
+            )
+
+        service_binding_policy = _parse_service_binding_policy(d.pop("service_binding_policy", UNSET))
+
+        def _parse_service_binding_transport(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingTransportType1
+            | UpdateAppRequestServiceBindingTransportType2Type1
+            | UpdateAppRequestServiceBindingTransportType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_1 = check_update_app_request_service_binding_transport_type_1(data)
+
+                return service_binding_transport_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_2_type_1 = (
+                    check_update_app_request_service_binding_transport_type_2_type_1(data)
+                )
+
+                return service_binding_transport_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_3_type_1 = (
+                    check_update_app_request_service_binding_transport_type_3_type_1(data)
+                )
+
+                return service_binding_transport_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingTransportType1
+                | UpdateAppRequestServiceBindingTransportType2Type1
+                | UpdateAppRequestServiceBindingTransportType3Type1,
+                data,
+            )
+
+        service_binding_transport = _parse_service_binding_transport(d.pop("service_binding_transport", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -1251,6 +1532,15 @@ class UpdateAppRequest:
             d.pop("version_affinity_managed_cookie", UNSET)
         )
 
+        def _parse_revision_pin_ttl_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1547,6 +1837,11 @@ class UpdateAppRequest:
 
         update_app_request = cls(
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            service_binding_targets=service_binding_targets,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,
@@ -1574,6 +1869,7 @@ class UpdateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

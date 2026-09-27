@@ -182,6 +182,9 @@ func (c cliCommand) completionSlugWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Positionals are documented in the leaf synopsis for verbs whose
+	// argument contract is narrower than the parent command's.
+	Positionals []string
 	// Flags enumerates the per-subcommand flag set. Req marks the
 	// required flags; ClosedSet marks the closed-enum values
 	// (plan names, metric enums, etc.) — completion backends
@@ -219,7 +222,7 @@ type cliFlag struct {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 16 embedded templates. Mirrors
+// symbol; it now contains all 18 embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -242,6 +245,7 @@ var templateNames13 = []string{
 	"cron-worker",
 	"webhook-receiver",
 	"ai-chat",
+	"secret-reload-node",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -302,8 +306,32 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List PostgreSQL, object-storage, and queue bindings for an app",
+		Short:       "List bindings, verify connectivity, or smoke-test a pinned private service deployment",
 		Positionals: []string{"<app>"},
+		Subcommands: []cliSub{
+			{
+				Name:        "verify",
+				Short:       "Check DNS, TLS, authorization, and live routing for one or all bound services",
+				Positionals: []string{"<app>", "[<service>]"},
+				Flags: []cliFlag{
+					{Name: "all", Short: "verify every declared service binding"},
+					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
+					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
+				},
+			},
+			{
+				Name:        "smoke",
+				Short:       "Invoke a path on one exact live target deployment over the private HTTPS binding",
+				Positionals: []string{"<app>", "<service>"},
+				Flags: []cliFlag{
+					{Name: "deployment", Short: "exact live target deployment to invoke", Req: true, Value: "ID"},
+					{Name: "path", Short: "absolute path on the target service", Req: true, Value: "PATH"},
+					{Name: "expect-status", Short: "require this exact HTTP status; default accepts any 2xx response", Value: "CODE"},
+					{Name: "poll-interval", Short: "status polling interval while the smoke task runs", Value: "D"},
+					{Name: "wait-timeout", Short: "maximum time to wait for the smoke task", Value: "D"},
+				},
+			},
+		},
 	},
 	{
 		Name:    "capabilities",
@@ -584,14 +612,44 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "crons",
 		DocSlug: "crons",
-		Short:   "Manage scheduled requests",
+		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List cron rules"},
-			{Name: "add", Short: "Add a cron rule"},
+			{Name: "add", Short: "Schedule an HTTP request or deployment command", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (required)", Req: true, Value: "slug"},
+				{Name: "schedule", Short: "five-field cron expression (required)", Req: true, Value: "EXPR"},
+				{Name: "path", Short: "HTTP request path (mutually exclusive with --command)", Value: "PATH"},
+				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
+				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
+				{Name: "shell", Short: "run --command as one shell string"},
+				{Name: "timeout-seconds", Short: "command timeout (default 600 seconds)", Value: "N"},
+				{Name: "max-output-bytes", Short: "captured output limit (default 1048576 bytes)", Value: "N"},
+				{Name: "timezone", Short: "IANA timezone (default UTC)", Value: "TZ"},
+				{Name: "skip-if-running", Short: "skip fires while the previous run is active"},
+				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
+				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt"},
+			}},
 			{Name: "info", Short: "Show one cron rule"},
-			{Name: "update", Short: "Update one cron rule"},
+			{Name: "update", Short: "Update one cron rule", Flags: []cliFlag{
+				{Name: "schedule", Short: "new five-field cron expression", Value: "EXPR"},
+				{Name: "path", Short: "HTTP request path", Value: "PATH"},
+				{Name: "timezone", Short: "IANA timezone", Value: "TZ"},
+				{Name: "enable", Short: "enable the cron"},
+				{Name: "disable", Short: "disable the cron"},
+				{Name: "skip-if-running", Short: "skip fires while a previous run is active"},
+				{Name: "allow-overlap", Short: "allow scheduled fires to overlap"},
+				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
+				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
+			}},
 			{Name: "rm", Short: "Delete one cron rule"},
-			{Name: "runs", Short: "Show execution history"},
+			{Name: "run", Short: "Fire one cron immediately"},
+			{Name: "fire-now", Short: "Show the status of a manual fire request"},
+			{Name: "runs", Short: "Show execution history", Flags: []cliFlag{
+				{Name: "before", Short: "pagination cursor for older runs", Value: "CURSOR"},
+				{Name: "limit", Short: "max runs to show (1..100)", Value: "N"},
+				{Name: "run", Short: "show details and captured output for one command run", Value: "TASK-ID"},
+			}},
+			{Name: "cancel", Short: "Request cancellation of one command-cron run"},
 		},
 	},
 	{
@@ -677,9 +735,17 @@ var cliCommands = []cliCommand{
 		Short:   "Manage jobs (run-to-completion workloads)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List jobs in this account"},
-			{Name: "add", Short: "Create a new job"},
+			{Name: "add", Short: "Create a new job", Flags: []cliFlag{
+				{Name: "image", Value: "REF", Short: "OCI image (required)", Req: true},
+				{Name: "schedule", Value: "EXPR", Short: "recurring five-field cron schedule"},
+				{Name: "timezone", Value: "TZ", Short: "IANA timezone for the recurring schedule"},
+			}},
 			{Name: "info", Short: "Show one job"},
-			{Name: "update", Short: "Update one job"},
+			{Name: "update", Short: "Update one job", Flags: []cliFlag{
+				{Name: "schedule", Value: "EXPR", Short: "replace recurring cron schedule"},
+				{Name: "timezone", Value: "TZ", Short: "replace schedule IANA timezone"},
+				{Name: "unschedule", Short: "remove recurring schedule"},
+			}},
 			{Name: "rm", Short: "Soft-delete one job"},
 			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)"},
 			{Name: "runs", Short: "List runs for one job"},
@@ -921,7 +987,7 @@ var cliCommands = []cliCommand{
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
 			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
-			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
+			{Name: "no-triggers", Short: "skip gregale.yaml trigger and async-route changes"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},
@@ -1090,17 +1156,35 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
-			{Name: "trace", Short: "Preview matching edge rules and simulate request headers and IP/geo decisions", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "url", Short: "absolute HTTP(S) request URL", Req: true, Value: "URL"},
+			{Name: "trace", Short: "Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)", Flags: []cliFlag{
+				{Name: "config", Short: "load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags", Value: "file|-"},
+				{Name: "app", Short: "app slug (required unless --config is used)", Value: "slug"},
+				{Name: "url", Short: "absolute HTTP(S) request URL (required unless --config is used)", Value: "URL"},
 				{Name: "method", Short: "request method (default GET)", Value: "method"},
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
+				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 			}},
-			{Name: subCreate, Short: "Add an edge rule"},
+			{Name: subCreate, Short: "Add an edge rule", Flags: []cliFlag{
+				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
+				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
+				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "async-retry-base-seconds", Short: "exponential retry base delay", Value: "N"},
+				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
+				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
+				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+			}},
 			{Name: subGet, Short: "Show one edge rule"},
-			{Name: subUpdate, Short: "Update one edge rule"},
+			{Name: subUpdate, Short: "Update one edge rule", Flags: []cliFlag{
+				{Name: "on-success-webhook", Short: "success webhook subscription", Value: "ID"},
+				{Name: "on-failure-webhook", Short: "failure webhook subscription", Value: "ID"},
+				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "async-retry-base-seconds", Short: "exponential retry base delay", Value: "N"},
+				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
+				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
+				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+			}},
 			{Name: subRm, Short: "Delete one edge rule"},
 		},
 		Flags: []cliFlag{
@@ -1240,10 +1324,14 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "invocations",
 		DocSlug: "invocations",
-		Short:   "Per-account invocation ledger (invocations list|get <id>)",
+		Short:   "Per-account invocation ledger (invocations list|get|wait <id>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List invocations"},
 			{Name: "get", Short: "Show one invocation"},
+			{Name: "wait", Short: "Wait for one invocation to finish", Flags: []cliFlag{
+				{Name: "timeout", Value: "D", Short: "stop waiting after this duration (0 waits indefinitely)"},
+				{Name: "interval", Value: "D", Short: "time between status checks (default 1s)"},
+			}},
 		},
 		Positionals: []string{"<id>"},
 	},
@@ -1633,7 +1721,24 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]"},
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
+				{Name: "list", Short: "List environments"},
+				{Name: "create", Short: "Create or clone an environment"},
+				{Name: "protect", Short: "Protect an environment"},
+				{Name: "unprotect", Short: "Remove environment protection"},
+				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
+				{Name: "release-sets", Short: "List release graphs and their retention deadlines", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}},
+				{Name: "releases", Short: "List live workload deployments"},
+				{Name: "history", Short: "List environment promotions"},
+				{Name: "config", Short: "Manage environment configuration"},
+				{Name: "routes", Short: "Manage environment routes"},
+				{Name: "policies", Short: "Manage environment policies"},
+				{Name: "diff", Short: "Compare environments"},
+				{Name: "preview", Short: "Plan a promotion"},
+				{Name: "promote", Short: "Promote workloads"},
+				{Name: "status", Short: "Inspect a promotion"},
+				{Name: "rollback", Short: "Roll back a promotion"},
+			}},
 			{Name: "update", Short: "Update repository or production branch", Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
@@ -1684,7 +1789,7 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
 			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Re-seal one secret under the current host key", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}}},
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},
 		},
 	},
 	{

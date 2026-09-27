@@ -20,8 +20,9 @@ func platformTenantStatementResponse(s state.PlatformTenantStatement) api.Platfo
 		Lines: make([]api.PlatformTenantStatementLineResponse, 0, len(s.Lines))}
 	for _, line := range s.Lines {
 		out.Lines = append(out.Lines, api.PlatformTenantStatementLineResponse{
-			AppID: line.AppID, ConsumerID: line.ConsumerID, WindowStart: line.WindowStart,
-			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID, Currency: line.Currency,
+			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID, JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart,
+			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID,
+			PlatformTenantRateCardID: line.PlatformTenantRateCardID, Currency: line.Currency,
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,
 		})
 	}
@@ -136,8 +137,9 @@ func sameTenantStatementSnapshot(existing state.PlatformTenantStatement, input s
 	}
 	for i, line := range existing.Lines {
 		other := input.Lines[i]
-		if line.AppID != other.AppID || line.ConsumerID != other.ConsumerID || !line.WindowStart.Equal(other.WindowStart) ||
-			line.BillableUnits != other.BillableUnits || line.RateCardID != other.RateCardID || line.Currency != other.Currency ||
+		if line.AppID != other.AppID || line.ConsumerID != other.ConsumerID || line.SurfaceID != other.SurfaceID || line.JWTAuthorizationRuleID != other.JWTAuthorizationRuleID || !line.WindowStart.Equal(other.WindowStart) ||
+			line.BillableUnits != other.BillableUnits || line.RateCardID != other.RateCardID ||
+			line.PlatformTenantRateCardID != other.PlatformTenantRateCardID || line.Currency != other.Currency ||
 			line.PriceMillicentsPerUnit != other.PriceMillicentsPerUnit || line.AmountMillicents != other.AmountMillicents {
 			return false
 		}
@@ -152,6 +154,14 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 		return state.PlatformTenantStatementInput{}, state.ErrNotFound
 	}
 	cards := map[string][]state.APIConsumerRateCard{}
+	tenantCardsStore, ok := s.store.(state.PlatformTenantRateCardStore)
+	if !ok {
+		return state.PlatformTenantStatementInput{}, state.ErrNotFound
+	}
+	tenantCards, err := tenantCardsStore.ListPlatformTenantRateCards(r.Context(), accountID, tenantID)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
 	for _, bucket := range usage {
 		if _, loaded := cards[bucket.AppID]; loaded {
 			continue
@@ -162,7 +172,7 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 		}
 		cards[bucket.AppID] = appCards
 	}
-	return billing.BuildPlatformTenantStatement(accountID, tenantID, start, end, time.Now().UTC(), usage, cards, prior)
+	return billing.BuildPlatformTenantStatement(accountID, tenantID, start, end, time.Now().UTC(), usage, cards, tenantCards, prior)
 }
 
 func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {

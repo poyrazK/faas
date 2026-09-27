@@ -40,6 +40,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -49,6 +50,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type exactDeploymentRolloutRecoverer interface {
+	RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (state.Deployment, int64, error)
+}
 
 // recoverRollout is the handler body mounted at
 // POST /v1/apps/{slug}/rollouts/recover.
@@ -154,6 +159,76 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// therefore returns 202 while its durable handoff remains rolling_out.
 	// audit id on the operator's terminal.
 	writeJSON(w, status, api.RolloutTransitionResponse{
+		Deployment: s.deploymentResponse(updated, app),
+		AuditID:    int64ToAuditIDString(auditID),
+	})
+}
+
+// recoverDeploymentRollout is the loopback-only exact-target recovery path
+// used by meterd's circuit breaker. It checks both the candidate and the
+// predecessor observed by the health decision inside the store transaction.
+func (s *server) recoverDeploymentRollout(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.TrafficSplitAllowed() {
+		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
+		return
+	}
+	var req api.RecoverDeploymentRolloutRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if req.Action != "abort" || req.ExpectedPredecessorDeploymentID == "" {
+		api.WriteProblem(w, api.ErrInvalidRecoverAction(req.Action))
+		return
+	}
+	d, err := s.store.DeploymentByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.internalSafeDeployLookupError(w, r, err, "deployment")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), d.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such deployment")
+		return
+	}
+	recoverer, ok := s.store.(exactDeploymentRolloutRecoverer)
+	if !ok {
+		writeCustomerInternalProblem(w, r, s.log, "recover exact deployment rollout",
+			"Gregale could not recover this rollout.",
+			"Retry in a moment; if it continues, contact support.", errors.New("configured store does not support exact rollout recovery"))
+		return
+	}
+	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
+	updated, auditID, err := recoverer.RecoverRolloutForDeployment(
+		r.Context(), app.ID, d.ID, req.ExpectedPredecessorDeploymentID, req.Action, req.Reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			s.notFound(w, "no such active rollout or predecessor")
+		case errors.Is(err, state.ErrInvalidRecoverAction):
+			api.WriteProblem(w, api.ErrInvalidRecoverAction(req.Action))
+		case errors.Is(err, state.ErrRolloutStateInvalid):
+			api.WriteProblem(w, api.ErrRolloutStateInvalid(updated.RolloutState))
+		default:
+			writeCustomerInternalProblem(w, r, s.log, "recover exact deployment rollout",
+				"Gregale could not recover this rollout.",
+				"Retry the request in a moment; if it continues, contact support.", err)
+		}
+		return
+	}
+	if s.audit != nil {
+		s.audit.Emit(r.Context(), "deployment.rollout_recovered", &acct.ID, map[string]any{
+			"app":                  app.ID,
+			"deployment":           updated.ID,
+			"expected_predecessor": req.ExpectedPredecessorDeploymentID,
+			"action":               req.Action,
+			"reason":               req.Reason,
+			"deployment_audit":     auditID,
+			"actor":                acct.ID,
+		})
+	}
+	s.notifyCanaryTraffic(r, app, updated)
+	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{
 		Deployment: s.deploymentResponse(updated, app),
 		AuditID:    int64ToAuditIDString(auditID),
 	})
