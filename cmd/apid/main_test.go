@@ -314,7 +314,7 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	t.Setenv("FAAS_APID_REQUEST_TELEMETRY_SOCKET", filepath.Join(socketDir, "usage.sock"))
-	spansWriterSocket := filepath.Join(socketDir, "spans-writer.sock")
+	spansWriterSocket := filepath.Join(socketDir, "spans_writer.sock")
 	t.Setenv("FAAS_APID_OTEL_SPANS_WRITER_SOCKET", spansWriterSocket)
 	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "true")
 	deps := defaultDeps()

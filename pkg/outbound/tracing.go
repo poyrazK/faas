@@ -48,7 +48,7 @@ func dependencySpanName(integration Integration) string {
 	}
 	for i := 0; i < len(name); i++ {
 		ch := name[i]
-		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || (i > 0 && ch == '-')) {
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && (i == 0 || ch != '-') {
 			return "outbound.integration"
 		}
 	}

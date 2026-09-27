@@ -757,6 +757,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_APPS_DOMAIN="+testDomain,
 			"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 			"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+			"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
@@ -861,6 +862,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		// tests to `bind: address already in use` on 9101.
 		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
