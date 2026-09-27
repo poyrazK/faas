@@ -40,6 +40,14 @@ class SourceRefDeployRequest:
     caller's `ref` is preserved on the `deploy.source_ref`
     audit row for traceability).
     """
+    source_branch: str | Unset = UNSET
+    """Optional branch provenance for a request whose `ref` is a full
+    commit SHA. The server verifies this branch still points at the
+    fetched commit, then rechecks it immediately before promotion.
+    GitHub Actions push deployments use this to keep their immutable
+    event SHA from becoming stale during a long build. Omit for an
+    explicit pinned deployment or a tag.
+    """
     format_: SourceRefDeployRequestFormat | Unset = "tarball"
     """Forward-compat field. PR-A only supports `tarball`."""
     environment: str | Unset = UNSET
@@ -75,6 +83,8 @@ class SourceRefDeployRequest:
         repo = self.repo
 
         ref = self.ref
+
+        source_branch = self.source_branch
 
         format_: str | Unset = UNSET
         if not isinstance(self.format_, Unset):
@@ -128,6 +138,8 @@ class SourceRefDeployRequest:
                 "ref": ref,
             }
         )
+        if source_branch is not UNSET:
+            field_dict["source_branch"] = source_branch
         if format_ is not UNSET:
             field_dict["format"] = format_
         if environment is not UNSET:
@@ -161,6 +173,8 @@ class SourceRefDeployRequest:
         repo = d.pop("repo")
 
         ref = d.pop("ref")
+
+        source_branch = d.pop("source_branch", UNSET)
 
         _format_ = d.pop("format", UNSET)
         format_: SourceRefDeployRequestFormat | Unset
@@ -233,6 +247,7 @@ class SourceRefDeployRequest:
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
+            source_branch=source_branch,
             format_=format_,
             environment=environment,
             no_triggers=no_triggers,

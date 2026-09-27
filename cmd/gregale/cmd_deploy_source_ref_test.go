@@ -179,6 +179,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 				rollback := true
 				ann.TrafficPercent = &zero
 				ann.RollbackOn5xx = &rollback
+				ann.SourceBranch = "release/canary"
 				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
 			},
 			expect: expect{
@@ -210,6 +211,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					}
 					if got.Format != "tarball" {
 						t.Errorf("body.format = %q, want tarball (PR-A only supports tarball)", got.Format)
+					}
+					if got.SourceBranch != "release/canary" {
+						t.Errorf("body.source_branch = %q, want release/canary", got.SourceBranch)
 					}
 					if got.TrafficPercent == nil || *got.TrafficPercent != 0 {
 						t.Errorf("body.traffic_percent = %v, want explicit 0", got.TrafficPercent)
@@ -406,6 +410,13 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			args:     []string{"--repo", "onebox-faas/hello", "--ref", "main", "--diff"},
 			wantExit: 0,
 			wantScan: true,
+		},
+		{
+			name:            "source_branch_rejected_for_read_only_preview",
+			args:            []string{"--repo", "onebox-faas/hello", "--ref", "0123456789abcdef0123456789abcdef01234567", "--source-branch", "main", "--diff"},
+			wantExit:        1,
+			wantStderrHas:   "unsupported with --repo --dry-run/--diff: --source-branch",
+			wantNoServerHit: true,
 		},
 		{
 			name:            "repo_cannot_hide_image",

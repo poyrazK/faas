@@ -89,14 +89,18 @@ that check only confirms admission and must not be used as a release gate.
 Check publication is best-effort, so missing permission never
 blocks the deployment.
 
-On a branch push that deploys `github.sha`, the Action checks the current
-GitHub branch head before submitting the deployment. A superseded run or an
-old rerun exits with `status=skipped` and never queues a stale release. On a
+On a branch push that uses the event SHA, the Action checks the current
+GitHub branch head before submitting the deployment and passes the branch
+identity to Gregale. The server checks it again after fetching source, then
+imaged checks it immediately before promotion. A superseded run or an old
+rerun exits with `status=skipped`; a branch that moves during the build fails
+with `source_ref_stale` and cannot replace the live deployment. On a
 `v*` tag push, it accepts only a new, unforced SemVer tag creation; moved,
 deleted, and invalid tags exit with `status=skipped`. The deployment uses the
 event's immutable `github.sha`, not the mutable tag name. The generated
 workflow also serializes runs for the same app. A workflow that deliberately
-supplies another `ref` bypasses these push-event checks.
+supplies another `ref` bypasses branch freshness checks, preserving explicit
+rollback and release choices.
 
 Set `rollout: "safe"` for a balanced health-gated canary. The action submits
 the canary, waits for readiness, and then waits for rollout completion when
@@ -131,7 +135,8 @@ The bundled `cli-version` output lets you lint for drift in enterprise monorepos
 
 | Server response | What it means | What to do |
 |---|---|---|
-| `409 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Re-run the workflow. |
+| `503 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Re-run the workflow. |
+| `409 source_ref_stale` | The source branch moved after this workflow's commit was selected. | Let the newer branch run deploy, or rerun from its current head. |
 | `404 github_install_not_found` | The account has no `github_installations` row. | Run `gregale connect` on a workstation once. |
 | `413 source_too_large` | Repo tarball exceeds the per-plan `SourceTarballMaxMB` cap. | Trim history or upgrade plan. |
 | `400 invalid_ref` | `--ref` is not a branch, tag, or 7+/40-char SHA. | Pin to a SHA. |

@@ -133,12 +133,15 @@ type DeployAnnotations struct {
 	SourceURL   string
 	CommitSHA   string
 	Environment string // registered project environment; resolved by apid
-	Reason      string // free text, ≤280 chars (DB CHECK)
-	Tag         string // closed-set enum (DB CHECK; handler validates too)
-	DeployedBy  string // human-readable actor label
-	PRNumber    int    // positive int (DB CHECK; 0 collapses to NULL)
-	Workflows   []WorkflowSpec
-	Companions  Companions
+	// SourceBranch is source-ref-only provenance for CI pushes that request
+	// an immutable SHA while wanting the server to guard the originating branch.
+	SourceBranch string
+	Reason       string // free text, ≤280 chars (DB CHECK)
+	Tag          string // closed-set enum (DB CHECK; handler validates too)
+	DeployedBy   string // human-readable actor label
+	PRNumber     int    // positive int (DB CHECK; 0 collapses to NULL)
+	Workflows    []WorkflowSpec
+	Companions   Companions
 	// Sidecars is the deprecated transport name retained for older callers.
 	Sidecars Sidecars
 	// Rollout options share this transport envelope so local directory,

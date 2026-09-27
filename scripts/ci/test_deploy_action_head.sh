@@ -18,7 +18,7 @@ export MOCK_CURL_URL_FILE="$tmp/url"
 export GITHUB_EVENT_NAME=push GITHUB_REPOSITORY=acme/api
 export GITHUB_REF=refs/heads/release/canary
 export GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-export INPUT_REPO="$GITHUB_REPOSITORY" INPUT_REF="$GITHUB_SHA"
+export INPUT_REPO="$GITHUB_REPOSITORY" INPUT_REF="$GITHUB_SHA" INPUT_REF_EXPLICIT=false
 export GITHUB_TOKEN=test-token GITHUB_API_URL=https://github.example.test
 export GITHUB_OUTPUT="$tmp/output"
 
@@ -30,6 +30,16 @@ if [ -s "$GITHUB_OUTPUT" ] || ! grep -q '/repos/acme/api/branches/release%2Fcana
     echo 'current head was not accepted or branch was not encoded' >&2
     exit 1
 fi
+if [ "$(current_run_source_branch)" != "release/canary" ]; then
+    echo 'current branch push did not return its source branch' >&2
+    exit 1
+fi
+export INPUT_REF_EXPLICIT=true
+if [ -n "$(current_run_source_branch)" ]; then
+    echo 'explicit ref was unexpectedly branch-bound' >&2
+    exit 1
+fi
+export INPUT_REF_EXPLICIT=false
 
 export MOCK_HEAD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 if verify_current_push_head; then
@@ -37,6 +47,16 @@ if verify_current_push_head; then
     exit 1
 fi
 grep -qx 'status=skipped' "$GITHUB_OUTPUT"
+
+export INPUT_REF_EXPLICIT=true INPUT_REF=cccccccccccccccccccccccccccccccccccccccc
+ : > "$MOCK_CURL_URL_FILE"
+: > "$GITHUB_OUTPUT"
+verify_current_push_head
+if [ -s "$GITHUB_OUTPUT" ] || [ -s "$MOCK_CURL_URL_FILE" ]; then
+    echo 'explicit commit ref did not bypass branch-event preflight' >&2
+    exit 1
+fi
+export INPUT_REF_EXPLICIT=false INPUT_REF="$GITHUB_SHA"
 
 export MOCK_CURL_FAIL=1
 if (verify_current_push_head) >/dev/null 2>&1; then
@@ -46,6 +66,10 @@ fi
 
 export GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3
 export INPUT_REF="$GITHUB_SHA"
+if [ -n "$(current_run_source_branch)" ]; then
+    echo 'tag push was unexpectedly branch-bound' >&2
+    exit 1
+fi
 export GITHUB_EVENT_PATH="$tmp/event.json"
 cat > "$GITHUB_EVENT_PATH" <<'EOF'
 {"before":"0000000000000000000000000000000000000000","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created":true,"forced":false,"deleted":false}

@@ -73,6 +73,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	req.Repo = strings.TrimSpace(req.Repo)
 	req.Ref = strings.TrimSpace(req.Ref)
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
 	if req.Repo == "" || req.Ref == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Validation failed", "repo and ref are required"))
@@ -81,6 +82,19 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if !isValidRef(req.Ref) {
 		api.WriteProblem(w, api.ErrInvalidRef(req.Ref))
 		return
+	}
+	if req.SourceBranch != "" {
+		if strings.HasPrefix(req.SourceBranch, "refs/tags/") {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch must name a GitHub branch"))
+			return
+		}
+		req.SourceBranch = strings.TrimPrefix(req.SourceBranch, "refs/heads/")
+		if !isValidRef(req.SourceBranch) || !isCanonicalCommitSHA(req.Ref) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch requires a valid branch name and a full 40-character commit SHA in ref"))
+			return
+		}
 	}
 	// Forward-compat: only "tarball" is wired in PR-A; any other
 	// value is a 400 so future readers don't silently drive a
@@ -189,6 +203,13 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			_ = os.Remove(spoolPath)
 		}
 	}()
+	if req.SourceBranch != "" {
+		if p := s.verifyPinnedSourceBranch(r.Context(), acct.ID, installID, req.Repo, req.SourceBranch, resolvedSHA); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		branchRef = req.SourceBranch
+	}
 	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -325,6 +346,29 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+func (s *server) verifyPinnedSourceBranch(ctx context.Context, accountID string, installationID int64, repo, branch, commitSHA string) *api.Problem {
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return api.ErrSourceRefUnavailable("could not verify the source branch after fetching its commit")
+	}
+	if !found {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer exists", branch))
+	}
+	if !isCanonicalCommitSHA(head) {
+		return api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	if !strings.EqualFold(head, commitSHA) {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer points to source commit %s", branch, commitSHA))
+	}
+	return nil
 }
 
 // resolveSourceRefBranch records mutable intent only when GitHub confirms the

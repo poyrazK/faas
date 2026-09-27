@@ -23,6 +23,7 @@ type deployIdempotencyIntent struct {
 	Image                  string `json:"image,omitempty"`
 	Repo                   string `json:"repo,omitempty"`
 	Ref                    string `json:"ref,omitempty"`
+	SourceBranch           string `json:"source_branch,omitempty"`
 	SourceSHA256           string `json:"source_sha256,omitempty"`
 	SourceRoot             string `json:"source_root,omitempty"`
 	Profile                string `json:"profile,omitempty"`

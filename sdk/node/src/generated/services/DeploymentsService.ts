@@ -461,12 +461,16 @@ export class DeploymentsService {
       mediaType: 'application/json',
       errors: {
         400: `code: invalid_ref | validation_failed. ref must be a valid 40-char
-        SHA, branch, or tag.
+        SHA, branch, or tag. source_branch can only be paired with a full
+        commit SHA.
         `,
         401: `code: unauthorized`,
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `No durable GitHub install bound to the caller's account
         (code: github_install_not_found).
+        `,
+        409: `code: source_ref_stale. source_branch no longer points at the
+        requested immutable commit SHA.
         `,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses

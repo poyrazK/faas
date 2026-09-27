@@ -1033,6 +1033,7 @@ var cliCommands = []cliCommand{
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
 			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
+			{Name: "source-branch", Short: "reject promotion if the branch for a pinned --ref moves", Value: "BRANCH"},
 			// Issue #270: --github emits a copy-paste Actions workflow
 			// snippet for the Gregale deploy action. No auth, no side effects.
 			// The snippet uses --name / cwd as the app slug.

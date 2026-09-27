@@ -27,6 +27,16 @@ export type SourceRefDeployRequest = {
    */
   ref: string;
   /**
+   * Optional branch provenance for a request whose `ref` is a full
+   * commit SHA. The server verifies this branch still points at the
+   * fetched commit, then rechecks it immediately before promotion.
+   * GitHub Actions push deployments use this to keep their immutable
+   * event SHA from becoming stale during a long build. Omit for an
+   * explicit pinned deployment or a tag.
+   *
+   */
+  source_branch?: string;
+  /**
    * Forward-compat field. PR-A only supports `tarball`.
    */
   format?: 'tarball';

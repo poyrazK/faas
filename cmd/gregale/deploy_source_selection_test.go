@@ -19,11 +19,15 @@ func TestValidateDeploySourceSelection(t *testing.T) {
 		template      string
 		githubSnippet bool
 		ref           string
+		sourceBranch  string
 		want          string
 	}{
 		{name: "zero config"},
 		{name: "repository", repo: "owner/repo", ref: "main"},
 		{name: "orphan ref", ref: "main", want: "--ref requires --repo"},
+		{name: "orphan source branch", sourceBranch: "main", want: "--source-branch requires --repo"},
+		{name: "source branch requires full SHA", repo: "owner/repo", ref: "main", sourceBranch: "main", want: "full 40-character commit SHA"},
+		{name: "source branch pinned SHA", repo: "owner/repo", ref: strings.Repeat("a", 40), sourceBranch: "release/canary"},
 		{name: "image and archive", image: "registry/app:latest", archive: "app.tgz", want: "--image, --tarball"},
 		{name: "repository and template", repo: "owner/repo", ref: "main", template: "node", want: "--repo, --template"},
 		{name: "snippet and image", image: "registry/app:latest", githubSnippet: true, want: "--image, --github"},
@@ -31,7 +35,7 @@ func TestValidateDeploySourceSelection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateDeploySourceSelection(tt.path, tt.worktree, tt.image, tt.archive, tt.repo, tt.template, tt.githubSnippet, tt.ref)
+			err := validateDeploySourceSelection(tt.path, tt.worktree, tt.image, tt.archive, tt.repo, tt.template, tt.githubSnippet, tt.ref, tt.sourceBranch)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
