@@ -4325,3 +4325,26 @@ WITH old AS (
     LIMIT sqlc.arg(batch_size)::integer
 )
 DELETE FROM outbound_flow_events e USING old WHERE e.id = old.id;
+
+-- name: InsertOutboundFlowCaptureSample :execrows
+INSERT INTO outbound_flow_capture_samples (
+    id, session_id, node_id, public_ip, sampled_at, listening, reason,
+    queue_dropped_total, database_dropped_total, unparsed_total, stderr_total
+) VALUES (
+    sqlc.arg(id)::uuid, sqlc.arg(session_id)::uuid, sqlc.arg(node_id)::uuid,
+    (SELECT public_ip FROM compute_nodes WHERE id = sqlc.arg(node_id)::uuid),
+    sqlc.arg(sampled_at)::timestamptz, sqlc.arg(listening)::boolean,
+    sqlc.arg(reason)::text, sqlc.arg(queue_dropped_total)::bigint,
+    sqlc.arg(database_dropped_total)::bigint, sqlc.arg(unparsed_total)::bigint,
+    sqlc.arg(stderr_total)::bigint
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- name: DeleteOutboundFlowCaptureSamplesBefore :execrows
+WITH old AS (
+    SELECT id FROM outbound_flow_capture_samples
+    WHERE sampled_at < sqlc.arg(cutoff)::timestamptz
+    ORDER BY sampled_at, id
+    LIMIT sqlc.arg(batch_size)::integer
+)
+DELETE FROM outbound_flow_capture_samples s USING old WHERE s.id = old.id;

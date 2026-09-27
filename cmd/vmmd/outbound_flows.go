@@ -33,6 +33,11 @@ type flowEventSink interface {
 	InsertOutboundFlowEvents(context.Context, []state.OutboundFlowEvent) error
 }
 
+type flowCaptureSink interface {
+	flowEventSink
+	flowCoverageSink
+}
+
 type conntrackTuple struct {
 	protocol, sourceIP, destinationIP string
 	sourcePort, destinationPort       uint16
@@ -116,17 +121,30 @@ func parseConntrackNew(line string) (conntrackTuple, bool) {
 // from the legacy 10-second, 32-summary capacity snapshot. Failure never
 // blocks guest traffic. Every loss path emits a coverage_gap log record so
 // operators cannot interpret missing rows as proof of no activity.
-func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink flowEventSink, nodeID string, log *slog.Logger) {
+func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, log *slog.Logger) {
 	if owners == nil || sink == nil || nodeID == "" {
 		return
 	}
 	if log == nil {
 		log = slog.Default()
 	}
+	coverage := newFlowCaptureCoverage(sink, nodeID, log)
+	coverageCtx, stopCoverage := context.WithCancel(context.WithoutCancel(ctx))
+	go coverage.run(coverageCtx)
 	queue := make(chan state.OutboundFlowEvent, flowQueueSize)
-	go writeOutboundFlows(ctx, sink, queue, log)
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		writeOutboundFlows(ctx, sink, queue, log, coverage)
+	}()
+	defer func() {
+		close(queue)
+		<-writerDone
+		stopCoverage()
+		<-coverage.done
+	}()
 	for ctx.Err() == nil {
-		err := captureOutboundFlowProcess(ctx, owners, nodeID, queue, log)
+		err := captureOutboundFlowProcess(ctx, owners, nodeID, queue, log, coverage)
 		if ctx.Err() != nil {
 			return
 		}
@@ -139,7 +157,7 @@ func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink fl
 	}
 }
 
-func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nodeID string, queue chan<- state.OutboundFlowEvent, log *slog.Logger) error {
+func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nodeID string, queue chan<- state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) error {
 	cmd := exec.CommandContext(ctx, flowConntrackBin, "-E", "-e", "NEW", "-o", "timestamp,extended", "-b", "1048576")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -152,6 +170,8 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	coverage.setListening(true, "listening")
+	defer coverage.setListening(false, "collector_stopped")
 	stderrDone := make(chan struct{})
 	go func() {
 		defer close(stderrDone)
@@ -162,6 +182,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 				line = line[:256]
 			}
 			log.Warn("outbound flow capture coverage_gap", "reason", "conntrack_stderr", "detail", line)
+			coverage.stderrEvent()
 		}
 	}()
 	log.Info("outbound flow capture started", "node_id", nodeID)
@@ -175,6 +196,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		if !ok {
 			if strings.Contains(line, "[NEW]") && (strings.Contains(line, " tcp ") || strings.Contains(line, " udp ")) {
 				unparsed++
+				coverage.unparsedEvent()
 				if unparsed == 1 || unparsed%1000 == 0 {
 					log.Warn("outbound flow capture coverage_gap", "reason", "unparsed_event", "count", unparsed)
 				}
@@ -197,6 +219,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		case queue <- event:
 		default:
 			dropped++
+			coverage.queueDrop()
 			if dropped == 1 || dropped%1000 == 0 {
 				log.Warn("outbound flow capture coverage_gap", "reason", "queue_full", "dropped", dropped)
 			}
@@ -214,7 +237,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 	return errors.New("conntrack event stream ended")
 }
 
-func writeOutboundFlows(ctx context.Context, sink flowEventSink, queue <-chan state.OutboundFlowEvent, log *slog.Logger) {
+func writeOutboundFlows(ctx context.Context, sink flowEventSink, queue <-chan state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) {
 	tick := time.NewTicker(flowFlushEvery)
 	defer tick.Stop()
 	batch := make([]state.OutboundFlowEvent, 0, flowBatchSize)
@@ -231,6 +254,7 @@ func writeOutboundFlows(ctx context.Context, sink flowEventSink, queue <-chan st
 				return
 			}
 			if attempt == 3 || ctx.Err() != nil {
+				coverage.databaseDrop(int64(len(batch)), "database_write_failed")
 				log.Warn("outbound flow capture coverage_gap", "reason", "database_write_failed", "dropped", len(batch), "err", err)
 				batch = batch[:0]
 				return
@@ -242,17 +266,36 @@ func writeOutboundFlows(ctx context.Context, sink flowEventSink, queue <-chan st
 			}
 		}
 	}
+	done := ctx.Done()
+	draining := false
 	for {
 		select {
-		case <-ctx.Done():
-			return
-		case event := <-queue:
+		case <-done:
+			// The collector closes queue after the conntrack process exits.
+			// Drain its remaining events so the final coverage sample counts
+			// every queued event that cannot be written during shutdown.
+			done = nil
+			draining = true
+		case event, ok := <-queue:
+			if !ok {
+				if draining {
+					if len(batch) > 0 {
+						coverage.databaseDrop(int64(len(batch)), "shutdown_queue")
+						log.Warn("outbound flow capture coverage_gap", "reason", "shutdown_queue", "dropped", len(batch))
+					}
+				} else {
+					flush()
+				}
+				return
+			}
 			batch = append(batch, event)
-			if len(batch) == flowBatchSize {
+			if len(batch) == flowBatchSize && !draining {
 				flush()
 			}
 		case <-tick.C:
-			flush()
+			if !draining {
+				flush()
+			}
 		}
 	}
 }

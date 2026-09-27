@@ -61,3 +61,36 @@ func TestPgOutboundFlowAttributionSurvivesDeploymentRemovalAndIPReuse(t *testing
 		t.Fatalf("account erasure left %d flow rows", count)
 	}
 }
+
+func TestPgOutboundFlowCaptureSamplesRetainKnownLossAndExpire(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	sessionID := uuid.NewString()
+	now := time.Now().UTC()
+	makeSample := func(at time.Time, listening bool, dropped int64) state.OutboundFlowCaptureSample {
+		return state.OutboundFlowCaptureSample{
+			ID: uuid.NewString(), SessionID: sessionID, NodeID: nodeID,
+			SampledAt: at, Listening: listening, Reason: "heartbeat",
+			QueueDroppedTotal: dropped,
+		}
+	}
+	old := makeSample(now.Add(-48*time.Hour), true, 0)
+	recent := makeSample(now, false, 4)
+	for _, sample := range []state.OutboundFlowCaptureSample{old, recent, recent} {
+		if err := s.InsertOutboundFlowCaptureSample(ctx, sample); err != nil {
+			t.Fatalf("insert coverage sample: %v", err)
+		}
+	}
+	var count int
+	var dropped int64
+	if err := pool.QueryRow(ctx, `SELECT count(*), max(queue_dropped_total) FROM outbound_flow_capture_samples WHERE session_id = $1`, sessionID).Scan(&count, &dropped); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || dropped != 4 {
+		t.Fatalf("coverage rows=%d lost=%d", count, dropped)
+	}
+	deleted, err := s.DeleteOutboundFlowCaptureSamplesBefore(ctx, now.Add(-24*time.Hour), 100)
+	if err != nil || deleted != 1 {
+		t.Fatalf("coverage retention: deleted=%d err=%v", deleted, err)
+	}
+}

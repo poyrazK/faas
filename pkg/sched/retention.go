@@ -134,6 +134,19 @@ func (r *Retention) SweepOnce(ctx context.Context) (int, error) {
 			}
 		}
 	}
+	if coverage, ok := r.store.(interface {
+		DeleteOutboundFlowCaptureSamplesBefore(context.Context, time.Time, int) (int64, error)
+	}); ok {
+		for {
+			n, err := coverage.DeleteOutboundFlowCaptureSamplesBefore(ctx, cutoff, outboundFlowRetentionBatch)
+			if err != nil {
+				return deleted, err
+			}
+			if n < outboundFlowRetentionBatch {
+				break
+			}
+		}
+	}
 	if deleted > 0 {
 		r.log.Info("retention sweep", "deleted", deleted, "retention", r.retention, "cutoff", cutoff.Format(time.RFC3339))
 	}

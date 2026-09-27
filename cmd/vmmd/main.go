@@ -315,7 +315,7 @@ type runDeps struct {
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
 	// Nil in runDeps{} tests; production streams host conntrack NEW events.
-	startFlowCapture func(context.Context, flowOwnerLookup, flowEventSink, string, *slog.Logger)
+	startFlowCapture func(context.Context, flowOwnerLookup, flowCaptureSink, string, *slog.Logger) <-chan struct{}
 	// detectOverlayIP — best-effort, default shelles out to
 	// `tailscale ip -4`. nil means "skip overlay detection"
 	// (WireGuard-mode operators set [compute_node].overlay_ip
@@ -412,8 +412,13 @@ func defaultDeps() runDeps {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
 		openStore: state.NewPgStore,
-		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowEventSink, nodeID string, log *slog.Logger) {
-			go runOutboundFlowCapture(ctx, owners, sink, nodeID, log)
+		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, log *slog.Logger) <-chan struct{} {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				runOutboundFlowCapture(ctx, owners, sink, nodeID, log)
+			}()
+			return done
 		},
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
@@ -1490,7 +1495,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	serveErr := make(chan error, 1)
 	if nodeID != "" && deps.startFlowCapture != nil {
 		if flowStore, ok := store.(*state.PgStore); ok {
-			deps.startFlowCapture(ctx, mgr, flowStore, nodeID, log)
+			captureCtx, stopCapture := context.WithCancel(ctx)
+			captureDone := deps.startFlowCapture(captureCtx, mgr, flowStore, nodeID, log)
+			defer func() {
+				stopCapture()
+				if captureDone == nil {
+					return
+				}
+				select {
+				case <-captureDone:
+				case <-time.After(4 * time.Second):
+					log.Warn("outbound flow capture shutdown timed out", "node_id", nodeID)
+				}
+			}()
 		}
 	}
 	go func() {

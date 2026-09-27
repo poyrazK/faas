@@ -1772,6 +1772,21 @@ type OrgMembership struct {
 	RemovedAt          pgtype.Timestamptz
 }
 
+type OutboundFlowCaptureSample struct {
+	ID                   pgtype.UUID
+	SessionID            pgtype.UUID
+	NodeID               pgtype.UUID
+	PublicIp             *netip.Addr
+	SampledAt            pgtype.Timestamptz
+	ReceivedAt           pgtype.Timestamptz
+	Listening            bool
+	Reason               string
+	QueueDroppedTotal    int64
+	DatabaseDroppedTotal int64
+	UnparsedTotal        int64
+	StderrTotal          int64
+}
+
 type OutboundFlowEvent struct {
 	ID              pgtype.UUID
 	ObservedAt      pgtype.Timestamptz

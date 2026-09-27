@@ -197,6 +197,7 @@ type Querier interface {
 	// natural expiry path; Delete is the "kill this CI job's
 	// credential now" lever.
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
+	DeleteOutboundFlowCaptureSamplesBefore(ctx context.Context, db DBTX, arg DeleteOutboundFlowCaptureSamplesBeforeParams) (int64, error)
 	DeleteOutboundFlowEventsBefore(ctx context.Context, db DBTX, arg DeleteOutboundFlowEventsBeforeParams) (int64, error)
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
 	// The hostname label uses the app's immutable UUID so aliases remain stable
@@ -417,6 +418,7 @@ type Querier interface {
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
+	InsertOutboundFlowCaptureSample(ctx context.Context, db DBTX, arg InsertOutboundFlowCaptureSampleParams) (int64, error)
 	// The host has already resolved the live lease. Enrich while the deployment
 	// and public-IP assignments are still available, then keep their values even
 	// after those rows are deleted or the private address is reused.

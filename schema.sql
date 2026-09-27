@@ -2853,6 +2853,30 @@ CREATE INDEX outbound_flow_events_account_time_idx ON public.outbound_flow_event
 CREATE INDEX outbound_flow_events_instance_time_idx ON public.outbound_flow_events USING btree (instance_id, observed_at DESC);
 CREATE INDEX outbound_flow_events_retention_idx ON public.outbound_flow_events USING btree (observed_at, id);
 
+CREATE TABLE public.outbound_flow_capture_samples (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    public_ip inet,
+    sampled_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    listening boolean NOT NULL,
+    reason text NOT NULL,
+    queue_dropped_total bigint NOT NULL,
+    database_dropped_total bigint NOT NULL,
+    unparsed_total bigint NOT NULL,
+    stderr_total bigint NOT NULL,
+    CONSTRAINT outbound_flow_capture_samples_pkey PRIMARY KEY (id),
+    CONSTRAINT outbound_flow_capture_samples_reason_check CHECK ((length(reason) >= 1) AND (length(reason) <= 64)),
+    CONSTRAINT outbound_flow_capture_samples_queue_dropped_total_check CHECK ((queue_dropped_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_database_dropped_total_check CHECK ((database_dropped_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_unparsed_total_check CHECK ((unparsed_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_stderr_total_check CHECK ((stderr_total >= 0))
+);
+CREATE INDEX outbound_flow_capture_samples_node_time_idx ON public.outbound_flow_capture_samples USING btree (node_id, sampled_at, id);
+CREATE INDEX outbound_flow_capture_samples_public_time_idx ON public.outbound_flow_capture_samples USING btree (public_ip, sampled_at, id);
+CREATE INDEX outbound_flow_capture_samples_retention_idx ON public.outbound_flow_capture_samples USING btree (sampled_at, id);
+
 
 --
 -- Name: app_secret_runtime_reload_observations; Type: TABLE; Schema: public; Owner: -

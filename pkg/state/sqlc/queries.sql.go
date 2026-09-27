@@ -1786,6 +1786,29 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 	return err
 }
 
+const deleteOutboundFlowCaptureSamplesBefore = `-- name: DeleteOutboundFlowCaptureSamplesBefore :execrows
+WITH old AS (
+    SELECT id FROM outbound_flow_capture_samples
+    WHERE sampled_at < $1::timestamptz
+    ORDER BY sampled_at, id
+    LIMIT $2::integer
+)
+DELETE FROM outbound_flow_capture_samples s USING old WHERE s.id = old.id
+`
+
+type DeleteOutboundFlowCaptureSamplesBeforeParams struct {
+	Cutoff    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) DeleteOutboundFlowCaptureSamplesBefore(ctx context.Context, db DBTX, arg DeleteOutboundFlowCaptureSamplesBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteOutboundFlowCaptureSamplesBefore, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOutboundFlowEventsBefore = `-- name: DeleteOutboundFlowEventsBefore :execrows
 WITH old AS (
     SELECT id FROM outbound_flow_events
@@ -4334,6 +4357,53 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertOutboundFlowCaptureSample = `-- name: InsertOutboundFlowCaptureSample :execrows
+INSERT INTO outbound_flow_capture_samples (
+    id, session_id, node_id, public_ip, sampled_at, listening, reason,
+    queue_dropped_total, database_dropped_total, unparsed_total, stderr_total
+) VALUES (
+    $1::uuid, $2::uuid, $3::uuid,
+    (SELECT public_ip FROM compute_nodes WHERE id = $3::uuid),
+    $4::timestamptz, $5::boolean,
+    $6::text, $7::bigint,
+    $8::bigint, $9::bigint,
+    $10::bigint
+)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertOutboundFlowCaptureSampleParams struct {
+	ID                   pgtype.UUID
+	SessionID            pgtype.UUID
+	NodeID               pgtype.UUID
+	SampledAt            pgtype.Timestamptz
+	Listening            bool
+	Reason               string
+	QueueDroppedTotal    int64
+	DatabaseDroppedTotal int64
+	UnparsedTotal        int64
+	StderrTotal          int64
+}
+
+func (q *Queries) InsertOutboundFlowCaptureSample(ctx context.Context, db DBTX, arg InsertOutboundFlowCaptureSampleParams) (int64, error) {
+	result, err := db.Exec(ctx, insertOutboundFlowCaptureSample,
+		arg.ID,
+		arg.SessionID,
+		arg.NodeID,
+		arg.SampledAt,
+		arg.Listening,
+		arg.Reason,
+		arg.QueueDroppedTotal,
+		arg.DatabaseDroppedTotal,
+		arg.UnparsedTotal,
+		arg.StderrTotal,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertOutboundFlowEvents = `-- name: InsertOutboundFlowEvents :execrows
