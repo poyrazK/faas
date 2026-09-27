@@ -66,7 +66,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
-		Root: outboxRoot,
+		Root:               outboxRoot,
+		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
 	})
 	if err != nil {
 		return err

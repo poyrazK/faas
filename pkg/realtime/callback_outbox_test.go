@@ -143,6 +143,88 @@ func TestCallbackOutboxDeadLettersAfterBoundedFailures(t *testing.T) {
 	}
 }
 
+func TestCallbackOutboxEvictsOldestDeadLetterWithoutTouchingPending(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root, MaxAttempts: 1})
+	first := testCallbackEvent()
+	first.ID = "evt_dead_older1"
+	if claimed, err := queue.EnqueueAndClaim(first); err != nil || !claimed {
+		t.Fatalf("first EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if err := queue.Fail(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	queue.deadMaxBytes = queue.Stats().DeadLetterBytes + 128
+	second := testCallbackEvent()
+	second.ID = "evt_dead_newer2"
+	if claimed, err := queue.EnqueueAndClaim(second); err != nil || !claimed {
+		t.Fatalf("second EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if err := queue.Fail(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	stats := queue.Stats()
+	if stats.DeadLetterTotal != 1 || stats.DeadLetterEvictions != 1 || stats.DeadLetterBytes > stats.DeadLetterCapacityBytes {
+		t.Fatalf("Stats after eviction = %+v", stats)
+	}
+	if _, err := os.Stat(filepath.Join(root, "dead", first.ID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oldest dead letter stat = %v, want not found", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "dead", second.ID+".json")); err != nil {
+		t.Fatalf("newest dead letter stat: %v", err)
+	}
+	pending := testCallbackEvent()
+	pending.ID = "evt_pending"
+	if claimed, err := queue.EnqueueAndClaim(pending); err != nil || !claimed {
+		t.Fatalf("pending EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if queue.Stats().Pending != 1 {
+		t.Fatalf("pending callback removed by dead-letter retention: %+v", queue.Stats())
+	}
+}
+
+func TestCallbackOutboxPrunesExistingDeadLettersOnRestart(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root, MaxAttempts: 1})
+	for _, id := range []string{"evt_restart_old", "evt_restart_new"} {
+		event := testCallbackEvent()
+		event.ID = id
+		if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+			t.Fatalf("EnqueueAndClaim %s = (%v, %v)", id, claimed, err)
+		}
+		if err := queue.Fail(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldPath := filepath.Join(root, "dead", "evt_restart_old.json")
+	newPath := filepath.Join(root, "dead", "evt_restart_new.json")
+	oldTime := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	pending := testCallbackEvent()
+	pending.ID = "evt_restart_pending"
+	if claimed, err := queue.EnqueueAndClaim(pending); err != nil || !claimed {
+		t.Fatalf("pending EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	queue.Release(pending.ID)
+	newInfo, err := os.Stat(newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root, DeadLetterMaxBytes: newInfo.Size()})
+	stats := restarted.Stats()
+	if stats.Pending != 1 || stats.DeadLetterTotal != 1 || stats.DeadLetterBytes != newInfo.Size() || stats.DeadLetterEvictions != 1 {
+		t.Fatalf("restarted Stats = %+v", stats)
+	}
+	if _, err := os.Stat(oldPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old dead letter stat = %v, want not found", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("new dead letter stat: %v", err)
+	}
+}
+
 func TestCallbackOutboxRunReplaysPendingEvents(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 2})
 	event := testCallbackEvent()

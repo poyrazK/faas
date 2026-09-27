@@ -20,6 +20,33 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: faas_realtime_callbacks
+    interval: 30s
+    rules:
+      - alert: FaasRealtimeCallbackDeadLettersNearCapacity
+        expr: realtimed_callback_dead_letter_bytes / realtimed_callback_dead_letter_capacity_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead-letter storage is near capacity"
+          description: "Retained callback dead letters exceed 80% of the node's configured byte limit. Inspect failed callbacks and preserve any records needed for replay before retention evicts the oldest files."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackDeadLettersEvicted
+        expr: time() - realtimed_callback_dead_letter_last_eviction_timestamp_seconds < 3600
+        for: 0m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead letters were evicted"
+          description: "The node evicted dead-letter files to enforce its byte limit, including any excess found at daemon startup. Inspect callback failures and available records."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
   - name: faas_consumer_usage_delivery
     interval: 30s
     rules:

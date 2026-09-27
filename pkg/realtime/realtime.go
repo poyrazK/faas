@@ -241,18 +241,22 @@ type EndpointInventory struct {
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
-	CurrentConnections   uint64 `json:"current_connections"`
-	AcceptedConnections  uint64 `json:"accepted_connections"`
-	RejectedConnections  uint64 `json:"rejected_connections"`
-	ReceivedMessages     uint64 `json:"received_messages"`
-	ReceivedBytes        uint64 `json:"received_bytes"`
-	SentMessages         uint64 `json:"sent_messages"`
-	SentBytes            uint64 `json:"sent_bytes"`
-	DroppedMessages      uint64 `json:"dropped_messages"`
-	CallbackErrors       uint64 `json:"callback_errors"`
-	CallbackPending      uint64 `json:"callback_pending"`
-	CallbackPendingBytes uint64 `json:"callback_pending_bytes"`
-	CallbackDeadLetters  uint64 `json:"callback_dead_letters"`
+	CurrentConnections                 uint64 `json:"current_connections"`
+	AcceptedConnections                uint64 `json:"accepted_connections"`
+	RejectedConnections                uint64 `json:"rejected_connections"`
+	ReceivedMessages                   uint64 `json:"received_messages"`
+	ReceivedBytes                      uint64 `json:"received_bytes"`
+	SentMessages                       uint64 `json:"sent_messages"`
+	SentBytes                          uint64 `json:"sent_bytes"`
+	DroppedMessages                    uint64 `json:"dropped_messages"`
+	CallbackErrors                     uint64 `json:"callback_errors"`
+	CallbackPending                    uint64 `json:"callback_pending"`
+	CallbackPendingBytes               uint64 `json:"callback_pending_bytes"`
+	CallbackDeadLetters                uint64 `json:"callback_dead_letters"`
+	CallbackDeadLetterBytes            uint64 `json:"callback_dead_letter_bytes"`
+	CallbackDeadLetterCapacityBytes    uint64 `json:"callback_dead_letter_capacity_bytes"`
+	CallbackDeadLetterEvictions        uint64 `json:"callback_dead_letter_evictions"`
+	CallbackDeadLetterLastEvictionUnix int64  `json:"callback_dead_letter_last_eviction_unix"`
 }
 
 type connection struct {
@@ -1048,6 +1052,10 @@ func (m *Manager) Stats() Stats {
 		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
 		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
 		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))
+		stats.CallbackDeadLetterBytes = uint64(maxInt64(outbox.DeadLetterBytes, 0))
+		stats.CallbackDeadLetterCapacityBytes = uint64(maxInt64(outbox.DeadLetterCapacityBytes, 0))
+		stats.CallbackDeadLetterEvictions = outbox.DeadLetterEvictions
+		stats.CallbackDeadLetterLastEvictionUnix = outbox.DeadLetterLastEvictionUnix
 	}
 	return stats
 }

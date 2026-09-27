@@ -225,8 +225,12 @@ Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
 adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
-node-local callback spool (default `/var/lib/faas/realtime-callbacks`). The
-default directory is provisioned as `faas:faas` with mode `0700` and is writable
+node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
+`FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` caps retained dead letters
+(default 64 MiB). The oldest dead letters are evicted first when the cap is
+exceeded, including on startup if an existing spool is over the limit. Copy
+records needed for investigation or manual replay before lowering the cap.
+The default directory is provisioned as `faas:faas` with mode `0700` and is writable
 through the realtimed systemd unit. On the first start after upgrading, realtimed
 moves pending events and dead letters from the former `/run/faas/realtime-callbacks`
 directory into the persistent spool before accepting connections. A conflicting
@@ -243,8 +247,13 @@ override must provide persistent storage if they need reboot survival. The
 spool contains callback payloads and bearer tokens, so keep it out of broadly
 readable backups. Callback handlers should deduplicate by event ID because
 delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
-not dead letters; monitor the `dead/` directory and remove reviewed files
-according to the operator's retention policy.
+and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
+the pending count and bytes, retained dead-letter count and bytes, retention
+capacity, eviction count, and last eviction time. The
+`FaasRealtimeCallbackDeadLettersNearCapacity` and
+`FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
 `/internal/stats` includes callback-pending, callback-pending-bytes, and
-callback-dead-letter counters alongside the connection and delivery counters.
+callback-dead-letter retention counters alongside the connection and delivery
+counters.

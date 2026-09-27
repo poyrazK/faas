@@ -48,3 +48,35 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 		t.Fatalf("auth metrics exposed an unbounded label:\n%s", text)
 	}
 }
+
+func TestStatsCollectorExposesCallbackOutboxRetention(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	queue.deadMaxBytes = 1
+	if err := queue.Fail(event.ID); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
+	defer func() { _ = manager.Close() }()
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(NewStatsCollector(manager))
+	recorder := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	text := recorder.Body.String()
+	for _, metric := range []string{
+		"realtimed_callback_pending 0",
+		"realtimed_callback_pending_bytes 0",
+		"realtimed_callback_dead_letters 0",
+		"realtimed_callback_dead_letter_bytes 0",
+		"realtimed_callback_dead_letter_capacity_bytes 1",
+		"realtimed_callback_dead_letter_evictions_total 1",
+		"realtimed_callback_dead_letter_last_eviction_timestamp_seconds ",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Errorf("metric %q missing from:\n%s", metric, text)
+		}
+	}
+}

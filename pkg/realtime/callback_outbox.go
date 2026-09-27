@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ const (
 	DefaultCallbackOutboxRoot                = "/var/lib/faas/realtime-callbacks"
 	LegacyCallbackOutboxRoot                 = "/run/faas/realtime-callbacks"
 	DefaultCallbackOutboxMaxBytes      int64 = 64 << 20
+	DefaultCallbackDeadLetterMaxBytes  int64 = 64 << 20
 	DefaultCallbackOutboxMaxAttempts         = 10
 	DefaultCallbackOutboxRetryInterval       = time.Second
 )
@@ -30,20 +32,49 @@ var (
 
 // CallbackOutboxConfig controls the node-local callback spool.
 type CallbackOutboxConfig struct {
-	Root          string
-	MaxBytes      int64
-	MaxAttempts   int
-	RetryInterval time.Duration
+	Root               string
+	MaxBytes           int64
+	DeadLetterMaxBytes int64
+	MaxAttempts        int
+	RetryInterval      time.Duration
 }
 
 // CallbackOutboxStats is a point-in-time view of pending and dead-lettered
 // callback events. The queue is intentionally node-local; aggregate these
 // counters across realtimed nodes for fleet-level metering.
 type CallbackOutboxStats struct {
-	Pending         int   `json:"pending"`
-	PendingBytes    int64 `json:"pending_bytes"`
-	CapacityBytes   int64 `json:"capacity_bytes"`
-	DeadLetterTotal int64 `json:"dead_letter_total"`
+	Pending                    int    `json:"pending"`
+	PendingBytes               int64  `json:"pending_bytes"`
+	CapacityBytes              int64  `json:"capacity_bytes"`
+	DeadLetterTotal            int64  `json:"dead_letter_total"`
+	DeadLetterBytes            int64  `json:"dead_letter_bytes"`
+	DeadLetterCapacityBytes    int64  `json:"dead_letter_capacity_bytes"`
+	DeadLetterEvictions        uint64 `json:"dead_letter_evictions"`
+	DeadLetterLastEvictionUnix int64  `json:"dead_letter_last_eviction_unix"`
+}
+
+type callbackDeadLetter struct {
+	id       string
+	size     int64
+	modified time.Time
+}
+
+type callbackDeadLetterHeap []callbackDeadLetter
+
+func (h callbackDeadLetterHeap) Len() int { return len(h) }
+func (h callbackDeadLetterHeap) Less(i, j int) bool {
+	if !h[i].modified.Equal(h[j].modified) {
+		return h[i].modified.Before(h[j].modified)
+	}
+	return h[i].id < h[j].id
+}
+func (h callbackDeadLetterHeap) Swap(i, j int)   { h[i], h[j] = h[j], h[i] }
+func (h *callbackDeadLetterHeap) Push(value any) { *h = append(*h, value.(callbackDeadLetter)) }
+func (h *callbackDeadLetterHeap) Pop() any {
+	last := len(*h) - 1
+	value := (*h)[last]
+	*h = (*h)[:last]
+	return value
 }
 
 type callbackOutboxRecord struct {
@@ -75,16 +106,21 @@ type callbackOutboxItem struct {
 // Delivery is at-least-once, so callback handlers should deduplicate by the
 // event ID carried in the request header and JSON body.
 type CallbackOutbox struct {
-	mu            sync.Mutex
-	root          string
-	deadRoot      string
-	maxBytes      int64
-	maxAttempts   int
-	retryInterval time.Duration
-	items         map[string]*callbackOutboxItem
-	inFlight      map[string]struct{}
-	bytes         int64
-	deadLetters   int64
+	mu                   sync.Mutex
+	root                 string
+	deadRoot             string
+	maxBytes             int64
+	deadMaxBytes         int64
+	maxAttempts          int
+	retryInterval        time.Duration
+	items                map[string]*callbackOutboxItem
+	inFlight             map[string]struct{}
+	bytes                int64
+	deadBytes            int64
+	deadEvictions        uint64
+	deadLastEvictionUnix int64
+	dead                 callbackDeadLetterHeap
+	deadIDs              map[string]struct{}
 }
 
 // NewCallbackOutbox opens or creates a node-local callback spool.
@@ -94,6 +130,9 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	}
 	if cfg.MaxBytes <= 0 {
 		cfg.MaxBytes = DefaultCallbackOutboxMaxBytes
+	}
+	if cfg.DeadLetterMaxBytes <= 0 {
+		cfg.DeadLetterMaxBytes = DefaultCallbackDeadLetterMaxBytes
 	}
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = DefaultCallbackOutboxMaxAttempts
@@ -109,10 +148,12 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		root:          cfg.Root,
 		deadRoot:      deadRoot,
 		maxBytes:      cfg.MaxBytes,
+		deadMaxBytes:  cfg.DeadLetterMaxBytes,
 		maxAttempts:   cfg.MaxAttempts,
 		retryInterval: cfg.RetryInterval,
 		items:         make(map[string]*callbackOutboxItem),
 		inFlight:      make(map[string]struct{}),
+		deadIDs:       make(map[string]struct{}),
 	}
 	if err := q.load(); err != nil {
 		return nil, err
@@ -160,9 +201,50 @@ func (q *CallbackOutbox) load() error {
 		return fmt.Errorf("realtime: read callback dead letters: %w", err)
 	}
 	for _, entry := range deadEntries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-			q.deadLetters++
+		if !strings.HasSuffix(entry.Name(), ".json") || strings.HasPrefix(entry.Name(), ".") {
+			continue
 		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if !validCallbackOutboxID(id) || !entry.Type().IsRegular() {
+			return fmt.Errorf("realtime: invalid callback dead letter %q", entry.Name())
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("realtime: stat callback dead letter %q: %w", id, err)
+		}
+		q.dead = append(q.dead, callbackDeadLetter{id: id, size: info.Size(), modified: info.ModTime()})
+		q.deadIDs[id] = struct{}{}
+		q.deadBytes += info.Size()
+	}
+	heap.Init(&q.dead)
+	return q.pruneDeadLetters()
+}
+
+// pruneDeadLetters is called with q.mu held. Oldest files are removed first;
+// the ID breaks ties so startup and live retention choose the same victims.
+func (q *CallbackOutbox) pruneDeadLetters() (err error) {
+	if q.deadBytes <= q.deadMaxBytes {
+		return nil
+	}
+	removed := false
+	defer func() {
+		if removed {
+			if syncErr := syncCallbackOutboxDir(q.deadRoot); syncErr != nil {
+				err = errors.Join(err, fmt.Errorf("realtime: sync callback dead-letter eviction: %w", syncErr))
+			}
+		}
+	}()
+	for q.deadBytes > q.deadMaxBytes {
+		oldest := heap.Pop(&q.dead).(callbackDeadLetter)
+		if err := os.Remove(filepath.Join(q.deadRoot, oldest.id+".json")); err != nil {
+			heap.Push(&q.dead, oldest)
+			return fmt.Errorf("realtime: evict callback dead letter %q: %w", oldest.id, err)
+		}
+		q.deadBytes -= oldest.size
+		q.deadEvictions++
+		q.deadLastEvictionUnix = time.Now().Unix()
+		delete(q.deadIDs, oldest.id)
+		removed = true
 	}
 	return nil
 }
@@ -195,6 +277,9 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if _, exists := q.deadIDs[event.ID]; exists {
+		return false, ErrCallbackOutboxItem
+	}
 	if _, exists := q.items[event.ID]; exists {
 		if _, inFlight := q.inFlight[event.ID]; inFlight {
 			return false, nil
@@ -349,16 +434,28 @@ func (q *CallbackOutbox) Fail(id string) error {
 			delete(q.inFlight, id)
 			return fmt.Errorf("realtime: persist callback dead letter: %w", err)
 		}
+		modified := time.Now().UTC()
+		if info, err := os.Stat(item.path); err == nil {
+			modified = info.ModTime()
+		}
 		deadPath := filepath.Join(q.deadRoot, id+".json")
 		if err := os.Rename(item.path, deadPath); err != nil {
 			delete(q.inFlight, id)
 			return fmt.Errorf("realtime: move callback dead letter: %w", err)
 		}
 		q.bytes -= item.size
-		q.deadLetters++
+		q.deadBytes += int64(len(payload))
+		heap.Push(&q.dead, callbackDeadLetter{id: id, size: int64(len(payload)), modified: modified})
+		q.deadIDs[id] = struct{}{}
 		delete(q.items, id)
 		delete(q.inFlight, id)
-		return nil
+		if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
+			return fmt.Errorf("realtime: sync callback dead letter: %w", err)
+		}
+		if err := syncCallbackOutboxDir(q.root); err != nil {
+			return fmt.Errorf("realtime: sync callback outbox after dead-letter move: %w", err)
+		}
+		return q.pruneDeadLetters()
 	}
 	if err := writeCallbackOutboxFile(item.path, payload); err != nil {
 		delete(q.inFlight, id)
@@ -389,10 +486,14 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return CallbackOutboxStats{
-		Pending:         len(q.items),
-		PendingBytes:    q.bytes,
-		CapacityBytes:   q.maxBytes,
-		DeadLetterTotal: q.deadLetters,
+		Pending:                    len(q.items),
+		PendingBytes:               q.bytes,
+		CapacityBytes:              q.maxBytes,
+		DeadLetterTotal:            int64(len(q.dead)),
+		DeadLetterBytes:            q.deadBytes,
+		DeadLetterCapacityBytes:    q.deadMaxBytes,
+		DeadLetterEvictions:        q.deadEvictions,
+		DeadLetterLastEvictionUnix: q.deadLastEvictionUnix,
 	}
 }
 
