@@ -54,6 +54,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 285 | [Bounded parallel managed realtime callback replay](285-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
+| 284 | [Live managed realtime callback credential rotation](284-live-realtime-callback-auth-rotation.md) | accepted | Existing sockets use rotated credentials for new events while queued records retain their original tokens |
+| 283 | [Bounded managed realtime callback dead letters](283-bounded-realtime-callback-dead-letters.md) | accepted | Byte-bounded dead-letter retention, eviction metrics, alerts, and operator runbook |
 | 282 | [Persistent managed realtime callback outbox](282-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
 | 281 | [Managed realtime revocation and delivery outcomes](281-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |

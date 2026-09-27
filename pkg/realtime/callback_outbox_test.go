@@ -344,6 +344,123 @@ func TestCallbackOutboxRunReplaysPendingEvents(t *testing.T) {
 	}
 }
 
+func TestCallbackOutboxReplayRunsIndependentConnectionsInParallelAndKeepsOrder(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{ReplayWorkers: 2})
+	first := testCallbackEvent()
+	first.ID = "evt_parallel_first"
+	first.Sequence = 1
+	second := first
+	second.ID = "evt_parallel_second"
+	second.Sequence = 2
+	independent := first
+	independent.ID = "evt_parallel_independent"
+	independent.ConnectionID = "connection-2"
+	for _, event := range []Event{first, second, independent} {
+		claimed, err := queue.EnqueueAndClaim(event)
+		if err != nil {
+			t.Fatalf("EnqueueAndClaim(%q): %v", event.ID, err)
+		}
+		if claimed {
+			queue.Release(event.ID)
+		}
+	}
+
+	release := map[string]chan struct{}{
+		first.ID:       make(chan struct{}),
+		second.ID:      make(chan struct{}),
+		independent.ID: make(chan struct{}),
+	}
+	started := make(chan string, len(release))
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- queue.Run(ctx, func(ctx context.Context, event Event) error {
+			started <- event.ID
+			select {
+			case <-release[event.ID]:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+
+	initial := make(map[string]bool, 2)
+	for range 2 {
+		select {
+		case id := <-started:
+			initial[id] = true
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("timed out waiting for independent callbacks to start in parallel")
+		}
+	}
+	if !initial[first.ID] || !initial[independent.ID] || initial[second.ID] {
+		cancel()
+		t.Fatalf("callbacks started before releasing the first event = %v, want first and independent only", initial)
+	}
+
+	close(release[independent.ID])
+	close(release[first.ID])
+	select {
+	case id := <-started:
+		if id != second.ID {
+			cancel()
+			t.Fatalf("next callback = %q, want same-connection successor %q", id, second.ID)
+		}
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("timed out waiting for same-connection successor")
+	}
+	close(release[second.ID])
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if stats := queue.Stats(); stats.Pending != 0 {
+		t.Fatalf("pending after successful replay = %d, want 0", stats.Pending)
+	}
+}
+
+func TestCallbackOutboxReplayCancellationReleasesClaim(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{ReplayWorkers: 1})
+	event := testCallbackEvent()
+	claimed, err := queue.EnqueueAndClaim(event)
+	if err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	queue.Release(event.ID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- queue.Run(ctx, func(ctx context.Context, _ Event) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("timed out waiting for callback replay")
+	}
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+
+	got, ok, err := queue.ClaimNext()
+	if err != nil || !ok || got.ID != event.ID {
+		t.Fatalf("ClaimNext after cancellation = (%+v, %v, %v), want released event", got, ok, err)
+	}
+	if err := queue.Ack(got.ID); err != nil {
+		t.Fatalf("Ack after cancellation: %v", err)
+	}
+}
+
 func TestCallbackOutboxRejectsFullPayload(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 1})
 	if _, err := queue.EnqueueAndClaim(testCallbackEvent()); !errors.Is(err, ErrCallbackOutboxFull) {

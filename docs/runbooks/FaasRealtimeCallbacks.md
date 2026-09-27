@@ -28,3 +28,9 @@ removed in the past hour, including during daemon startup.
 The default dead-letter limit is 64 MiB, separate from the 64 MiB pending
 callback limit. Retention removes the oldest files by modification time,
 breaking ties by event ID. Evictions are counted and surfaced in metrics.
+
+Pending callback recovery uses eight workers by default. Set
+`FAAS_REALTIME_CALLBACK_REPLAY_WORKERS` to tune the per-node concurrency; values
+above 32 are capped. Events from one connection remain ordered, while callbacks
+from different connections can run at the same time. Account for this
+concurrency when sizing callback receivers across the fleet.

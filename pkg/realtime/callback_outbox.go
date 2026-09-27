@@ -22,6 +22,8 @@ const (
 	DefaultCallbackOutboxMaxBytes      int64 = 64 << 20
 	DefaultCallbackDeadLetterMaxBytes  int64 = 64 << 20
 	DefaultCallbackOutboxMaxAttempts         = 10
+	DefaultCallbackOutboxReplayWorkers       = 8
+	MaxCallbackOutboxReplayWorkers           = 32
 	DefaultCallbackOutboxRetryInterval       = time.Second
 )
 
@@ -36,6 +38,7 @@ type CallbackOutboxConfig struct {
 	MaxBytes           int64
 	DeadLetterMaxBytes int64
 	MaxAttempts        int
+	ReplayWorkers      int
 	RetryInterval      time.Duration
 }
 
@@ -100,11 +103,13 @@ type callbackOutboxItem struct {
 	size   int64
 }
 
-// CallbackOutbox is a single-consumer, multi-producer durable spool for
-// message and disconnect callbacks. Each event is written and fsynced before
-// its first HTTP attempt; an unacknowledged file is replayed after restart.
-// Delivery is at-least-once, so callback handlers should deduplicate by the
-// event ID carried in the request header and JSON body.
+// CallbackOutbox is a multi-producer durable spool for message and disconnect
+// callbacks. Its bounded worker pool preserves event order per connection
+// while allowing independent connections to deliver concurrently.
+// Each event is written and fsynced before its first HTTP attempt; an
+// unacknowledged file is replayed after restart. Delivery is at-least-once, so
+// callback handlers should deduplicate by the event ID carried in the request
+// header and JSON body.
 type CallbackOutbox struct {
 	mu                   sync.Mutex
 	root                 string
@@ -112,6 +117,7 @@ type CallbackOutbox struct {
 	maxBytes             int64
 	deadMaxBytes         int64
 	maxAttempts          int
+	replayWorkers        int
 	retryInterval        time.Duration
 	items                map[string]*callbackOutboxItem
 	inFlight             map[string]struct{}
@@ -138,6 +144,12 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = DefaultCallbackOutboxMaxAttempts
 	}
+	if cfg.ReplayWorkers <= 0 {
+		cfg.ReplayWorkers = DefaultCallbackOutboxReplayWorkers
+	}
+	if cfg.ReplayWorkers > MaxCallbackOutboxReplayWorkers {
+		cfg.ReplayWorkers = MaxCallbackOutboxReplayWorkers
+	}
 	if cfg.RetryInterval <= 0 {
 		cfg.RetryInterval = DefaultCallbackOutboxRetryInterval
 	}
@@ -151,6 +163,7 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		maxBytes:           cfg.MaxBytes,
 		deadMaxBytes:       cfg.DeadLetterMaxBytes,
 		maxAttempts:        cfg.MaxAttempts,
+		replayWorkers:      cfg.ReplayWorkers,
 		retryInterval:      cfg.RetryInterval,
 		items:              make(map[string]*callbackOutboxItem),
 		inFlight:           make(map[string]struct{}),
@@ -566,6 +579,40 @@ func (q *CallbackOutbox) Run(ctx context.Context, deliver func(context.Context, 
 }
 
 func (q *CallbackOutbox) drain(ctx context.Context, deliver func(context.Context, Event) error) error {
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var workers sync.WaitGroup
+	var errMu sync.Mutex
+	var firstErr error
+	workers.Add(q.replayWorkers)
+	for range q.replayWorkers {
+		go func() {
+			defer workers.Done()
+			if err := q.drainWorker(workerCtx, deliver); err != nil && !errors.Is(err, context.Canceled) {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+					cancel()
+				}
+				errMu.Unlock()
+			}
+		}()
+	}
+	workers.Wait()
+
+	errMu.Lock()
+	defer errMu.Unlock()
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.Context, Event) error) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -577,9 +624,14 @@ func (q *CallbackOutbox) drain(ctx context.Context, deliver func(context.Context
 		if !ok {
 			return nil
 		}
+		if ctx.Err() != nil {
+			q.Release(event.ID)
+			return ctx.Err()
+		}
 		err = deliver(ctx, event)
 		if err == nil {
 			if ackErr := q.Ack(event.ID); ackErr != nil {
+				q.Release(event.ID)
 				return ackErr
 			}
 			continue
