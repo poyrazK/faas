@@ -24,7 +24,7 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRealtimeCallbackReplayStalled
-        expr: realtimed_callback_pending > 0 and realtimed_callback_oldest_pending_age_seconds > 300 and increase(realtimed_callback_replay_deliveries_total[5m]) == 0
+        expr: realtimed_callback_replay_ready > 0 and increase(realtimed_callback_replay_attempts_total[5m]) == 0
         for: 5m
         labels:
           severity: warn
@@ -32,7 +32,7 @@ groups:
           family: realtime_callbacks
         annotations:
           summary: "Realtime callback replay has stalled"
-          description: "The node has pending callbacks older than five minutes but no successful replay deliveries in the last five minutes. Check realtimed logs, callback receiver failures, and outbox disk health."
+          description: "The node has callbacks eligible for replay but no replay attempts in the last five minutes. Check the replay supervisor, realtimed logs, and outbox disk health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
       - alert: FaasRealtimeCallbackReplayRestarting

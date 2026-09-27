@@ -64,6 +64,9 @@ type CallbackOutboxStats struct {
 	Pending                    int     `json:"pending"`
 	PendingBytes               int64   `json:"pending_bytes"`
 	CapacityBytes              int64   `json:"capacity_bytes"`
+	ReplayReady                int     `json:"replay_ready"`
+	ReplayDelayed              int     `json:"replay_delayed"`
+	ReplayAttempts             uint64  `json:"replay_attempts"`
 	ReplayDeliveries           uint64  `json:"replay_deliveries"`
 	OldestPendingAgeSeconds    float64 `json:"oldest_pending_age_seconds"`
 	DeadLetterTotal            int64   `json:"dead_letter_total"`
@@ -262,6 +265,7 @@ type CallbackOutbox struct {
 	ready                callbackReadyHeap
 	delayed              callbackRetryHeap
 	bytes                int64
+	replayAttempts       uint64
 	replayDeliveries     uint64
 	deadBytes            int64
 	deadEvictions        uint64
@@ -1103,6 +1107,9 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	// Keep due retry heads visible as ready work even if the replay loop has
+	// stopped before its next poll.
+	q.promoteDueLocked(time.Now().UTC())
 	oldestPendingAge := float64(0)
 	if q.pendingAge.Len() > 0 {
 		oldestPendingAge = time.Since(q.pendingAge[0].enqueuedAt).Seconds()
@@ -1114,6 +1121,9 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 		Pending:                    len(q.items),
 		PendingBytes:               q.bytes,
 		CapacityBytes:              q.maxBytes,
+		ReplayReady:                q.ready.Len(),
+		ReplayDelayed:              q.delayed.Len(),
+		ReplayAttempts:             q.replayAttempts,
 		ReplayDeliveries:           q.replayDeliveries,
 		OldestPendingAgeSeconds:    oldestPendingAge,
 		DeadLetterTotal:            int64(len(q.dead)),
@@ -1195,6 +1205,9 @@ func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.C
 			q.Release(event.ID)
 			return ctx.Err()
 		}
+		q.mu.Lock()
+		q.replayAttempts++
+		q.mu.Unlock()
 		err = deliver(ctx, event)
 		if err == nil {
 			if ackErr := q.ackReplay(event.ID); ackErr != nil {
