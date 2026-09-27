@@ -6736,6 +6736,24 @@ func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(_ context.Context, dep
 	return ErrNotFound
 }
 
+// DeploymentSidecarSecretReloadSignal returns the persisted image opt-in for
+// one long-running sidecar. A missing row means the image did not opt in.
+func (m *MemStore) DeploymentSidecarSecretReloadSignal(_ context.Context, deploymentID, sidecarName string) (string, error) {
+	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) {
+		return "", ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.deployments[deploymentID]; !ok {
+		return "", ErrNotFound
+	}
+	signal, ok := m.sidecarSecretReloadSignals[deploymentID+"\x00"+sidecarName]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return signal, nil
+}
+
 func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentID string, receipt []byte) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

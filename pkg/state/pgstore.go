@@ -22898,6 +22898,26 @@ func (s *PgStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, de
 	return nil
 }
 
+// DeploymentSidecarSecretReloadSignal returns the persisted image opt-in for
+// one long-running sidecar. A missing row means the image did not opt in.
+func (s *PgStore) DeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName string) (string, error) {
+	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) {
+		return "", ErrInvalidArgument
+	}
+	var signal string
+	err := s.pool.QueryRow(ctx,
+		`select signal from deployment_sidecar_secret_reload_signals
+		 where deployment_id = $1 and sidecar_name = $2`,
+		mustPgUUID(deploymentID), sidecarName).Scan(&signal)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", mapErr(err)
+	}
+	return signal, nil
+}
+
 func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error) {
 	if accountID == "" || appID == "" {
 		return nil, ErrInvalidArgument

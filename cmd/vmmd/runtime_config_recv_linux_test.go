@@ -29,10 +29,11 @@ func (s runtimeConfigStoreStub) ListAppEnv(context.Context, string, string) ([]s
 
 type runtimeSecretsStoreStub struct {
 	runtimeConfigStoreStub
-	deployment    state.Deployment
-	secretRows    []state.AppSecret
-	reloadResults []state.AppSecretRuntimeReloadResult
-	ackResults    []state.AppSecretRuntimeReloadAckResult
+	deployment           state.Deployment
+	secretRows           []state.AppSecret
+	sidecarReloadSignals map[string]string
+	reloadResults        []state.AppSecretRuntimeReloadResult
+	ackResults           []state.AppSecretRuntimeReloadAckResult
 }
 
 func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
@@ -44,6 +45,17 @@ func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (s
 
 func (s runtimeSecretsStoreStub) ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error) {
 	return s.secretRows, nil
+}
+
+func (s runtimeSecretsStoreStub) DeploymentSidecarSecretReloadSignal(_ context.Context, deploymentID, sidecarName string) (string, error) {
+	if deploymentID != s.deployment.ID {
+		return "", state.ErrNotFound
+	}
+	signal, ok := s.sidecarReloadSignals[sidecarName]
+	if !ok {
+		return "", state.ErrNotFound
+	}
+	return signal, nil
 }
 
 func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReload(_ context.Context, result state.AppSecretRuntimeReloadResult) (int, error) {
@@ -325,6 +337,75 @@ func TestLoadRuntimeSecretsForWorkloadUsesOnlySidecarGrant(t *testing.T) {
 	}
 	if _, err := loadRuntimeSecretsForWorkloadIfChanged(context.Background(), store, manager, "dep-1", "app-1", "acct-1", "", ""); !errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
 		t.Fatalf("main workload error = %v, want the existing sidecar deployment restriction", err)
+	}
+}
+
+func TestRuntimeSidecarSecretDeletionProducesEmptyProjection(t *testing.T) {
+	store := runtimeSecretsStoreStub{
+		deployment: state.Deployment{
+			ID: "dep-1", AppID: "app-1", Scope: "prod",
+			Sidecars: json.RawMessage(`[{"name":"worker","type":"sidecar","env_secrets":{"TOKEN":"secret:TOKEN"}}]`),
+		},
+		secretRows: []state.AppSecret{{
+			AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "TOKEN",
+			Ciphertext: []byte("sealed-before-delete"), DeliveryVersion: 1,
+		}},
+		sidecarReloadSignals: map[string]string{"worker": "SIGHUP"},
+	}
+	before, err := selectRuntimeSecretRowsForWorkload(context.Background(), store, "dep-1", "app-1", "acct-1", "worker")
+	if err != nil {
+		t.Fatalf("select before delete: %v", err)
+	}
+
+	store.secretRows = nil
+	after, err := selectRuntimeSecretRowsForWorkload(context.Background(), store, "dep-1", "app-1", "acct-1", "worker")
+	if err != nil {
+		t.Fatalf("select after delete: %v", err)
+	}
+	if len(after.Rows) != 0 || len(after.Entries) != 0 {
+		t.Fatalf("deleted secret remained in projection: rows=%+v entries=%+v", after.Rows, after.Entries)
+	}
+	if after.Revision == before.Revision {
+		t.Fatalf("revision did not change after deletion: %q", after.Revision)
+	}
+
+	store.secretRows = []state.AppSecret{{
+		AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "TOKEN",
+		Ciphertext: []byte("sealed-after-recreate"), DeliveryVersion: 1,
+	}}
+	recreated, err := selectRuntimeSecretRowsForWorkload(context.Background(), store, "dep-1", "app-1", "acct-1", "worker")
+	if err != nil {
+		t.Fatalf("select after recreate: %v", err)
+	}
+	if recreated.Revision == before.Revision || recreated.Revision == after.Revision {
+		t.Fatalf("delete-and-recreate revision was not fenced: before=%q deleted=%q recreated=%q", before.Revision, after.Revision, recreated.Revision)
+	}
+}
+
+func TestRuntimeSidecarSecretDeletionRequiresReloadOptIn(t *testing.T) {
+	store := runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "prod",
+		Sidecars: json.RawMessage(`[{"name":"worker","type":"sidecar","env_secrets":{"TOKEN":"secret:TOKEN"}}]`),
+	}}
+	_, err := selectRuntimeSecretRowsForWorkload(context.Background(), store, "dep-1", "app-1", "acct-1", "worker")
+	if err == nil || !strings.Contains(err.Error(), "TOKEN") {
+		t.Fatalf("missing key without reload opt-in error = %v, want a missing TOKEN error", err)
+	}
+}
+
+func TestRuntimeMainSecretDeletionProducesEmptyProjectionWhenOptedIn(t *testing.T) {
+	store := runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "prod",
+		OverrideEnvSecrets: json.RawMessage(`{"TOKEN":"secret:TOKEN"}`),
+		SecretReloadSignal: "SIGHUP",
+		Sidecars:           json.RawMessage(`[]`),
+	}}
+	selection, err := selectRuntimeSecretRowsForWorkload(context.Background(), store, "dep-1", "app-1", "acct-1", "")
+	if err != nil {
+		t.Fatalf("select revoked main workload projection: %v", err)
+	}
+	if len(selection.Entries) != 0 {
+		t.Fatalf("main workload projection retained revoked key: %+v", selection.Entries)
 	}
 }
 

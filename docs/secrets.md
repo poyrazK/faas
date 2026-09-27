@@ -87,6 +87,15 @@ its own clients or connection pools. Refresh is checked every 10 seconds; use
 `--restart` when the app cannot implement that contract or when a rolling
 replacement is preferred.
 
+For an opted-in running workload, `secrets unset` is delivered as a replacement
+projection with the deleted key omitted, followed by the configured reload
+signal. The application must remove the old credential from its own clients;
+removing the key from the file cannot erase values already held in process
+memory. Restart-only workloads keep their existing value until the process is
+replaced by a deployment that no longer grants the key. A cold wake that still
+references the deleted key fails closed; remove the grant before replacing
+that workload.
+
 The main image's reload opt-in still supports single-workload deployments only;
 a main image declaring the reload label is rejected when that deployment has
 sidecars. Independently, each long-running sidecar image may declare the same
