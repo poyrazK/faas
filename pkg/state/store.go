@@ -391,6 +391,7 @@ var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
 // api.ErrPlanLimitApps without re-running the count.
 // QuotaErrorKind names the cap that tripped. "apps" is the
 // Limits.DeployedApps cap; "developer_apps" is Limits.DeveloperApps;
+// "preview_apps" is Limits.PreviewApps;
 // "crons" is Limits.CronLimitPerAccount.
 // "apps" is the zero value so existing call sites that build a
 // QuotaError without a Kind keep behaving the same.
@@ -399,6 +400,7 @@ type QuotaErrorKind string
 const (
 	QuotaErrorKindApps          QuotaErrorKind = "apps"
 	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
+	QuotaErrorKindPreviewApps   QuotaErrorKind = "preview_apps"
 	QuotaErrorKindCrons         QuotaErrorKind = "crons"
 	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
@@ -421,7 +423,7 @@ const (
 )
 
 type QuotaError struct {
-	Kind       QuotaErrorKind // "apps" | "crons" | "memory" | "mirror" | "openapi_imports"
+	Kind       QuotaErrorKind // "apps" | "preview_apps" | "developer_apps" | "crons" | "memory" | "mirror" | "openapi_imports"
 	Limit      int            // caps at the time of the call
 	Observed   int            // count(*) observed inside the same critical section
 	NotAllowed bool           // true when the plan tier forbids the entity entirely (e.g. Free cron)
@@ -431,6 +433,8 @@ func (e *QuotaError) Error() string {
 	switch e.Kind {
 	case QuotaErrorKindDeveloperApps:
 		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+	case QuotaErrorKindPreviewApps:
+		return fmt.Sprintf("state: PR preview quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"

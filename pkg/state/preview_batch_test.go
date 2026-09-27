@@ -20,7 +20,7 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	limits := api.Limits{DeployedApps: 5}
+	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
 	previews := []App{
 		{AccountID: account.ID, ProjectID: "project", Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: AppActive},
 		{AccountID: account.ID, ProjectID: "project", Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: AppActive},
@@ -51,11 +51,11 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 		}
 	}
 	// Increasing the cap makes the same batch succeed without replacing root.
-	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 6})
+	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3})
 	if err != nil || len(created) != len(previews) || created[0].ID != root.ID {
 		t.Fatalf("idempotent batch = (%+v, %v)", created, err)
 	}
-	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 6}); err != nil {
+	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3}); err != nil {
 		t.Fatalf("full-capacity retry: %v", err)
 	}
 }

@@ -7,6 +7,14 @@ This action is part of the Gregale [control plane](https://github.com/poyrazK/fa
 ## Usage
 
 ```yaml
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: gregale-${{ github.repository }}-my-app-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-22.04
@@ -21,10 +29,9 @@ jobs:
           api-base: https://api.gregale.dev
           app: my-app
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
-          # Queue the deployment and continue; set wait: "true" to block until live.
-          wait: "false"
+          # Report the terminal deployment result to this workflow.
+          wait: "true"
           # For a Pro/Scale production app, use the balanced health-gated rollout:
-          # wait: "true"
           # rollout: "safe"
 ```
 
@@ -37,6 +44,9 @@ gregale deploy --github --name my-app > .github/workflows/deploy.yml
 ```
 
 The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GITHUB_REPOSITORY` + `GITHUB_SHA` env vars set), the snippet hard-codes those values; from a local checkout it emits the `${{ github.* }}` expressions so the same file is portable across repos.
+For a repository connected to Gregale's GitHub App, run `gregale github setup`
+or set the deployment policy to `production_trigger=actions` before using a
+push workflow. The App remains responsible for PR previews.
 
 ## Inputs
 
@@ -49,8 +59,8 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
 | `ref` | git ref — branch, tag, or 40-char SHA. | no | `${{ github.sha }}` |
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
-| `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `false` |
-| `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `600` |
+| `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `true` |
+| `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `1200` |
 | `rollout` | Production rollout mode: `standard` or `safe` (balanced health-gated rollout; Pro/Scale only). | no | `standard` |
 
 ## Outputs
@@ -59,7 +69,7 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 |---|---|
 | `deployment-id` | The new deployment id (32-char hex). |
 | `app-slug` | Echo of the input `app` slug. |
-| `status` | Observed status: `live` when waiting succeeds, `queued` when waiting is disabled, or the terminal failure/timeout status. |
+| `status` | Observed status: `live` when waiting succeeds, `queued` when waiting is disabled, `skipped` for a superseded push, or the terminal failure/timeout status. |
 | `rollout` | Selected rollout mode: `standard` or `safe`. |
 | `url` | URL of the deployment record on the control-plane API (`{api-base}/v1/apps/{slug}/deployments/{id}`). |
 | `check-run-id` | GitHub Check Run id containing the deployment link; empty if the workflow cannot write Checks. |
@@ -67,10 +77,17 @@ The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GI
 
 When `checks: write` is granted, the action creates a **Gregale deployment**
 Check Run with a direct link to the control-plane deployment record. The Check
-Run is completed with a neutral result for the asynchronous default (the
-deployment itself may still be building), and is updated to the terminal result
-when `wait: "true"` is used. It is best-effort, so missing permission never
+Run is updated to the terminal result. With explicit `wait: "false"`, the
+Action instead creates a separate **Gregale deployment queued** Check Run;
+that check only confirms admission and must not be used as a release gate.
+Check publication is best-effort, so missing permission never
 blocks the deployment.
+
+On a push workflow that deploys `github.sha`, the Action checks the current
+GitHub branch head before submitting the deployment. A superseded run or an
+old rerun exits with `status=skipped` and never queues a stale release. The
+generated workflow also serializes runs for the same app. A workflow that
+deliberately supplies another `ref` bypasses this push-head check.
 
 Set `rollout: "safe"` for a balanced health-gated canary. The action submits
 the canary, waits for readiness, and then waits for rollout completion when

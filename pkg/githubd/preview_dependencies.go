@@ -122,6 +122,14 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 
 // makePRDependencyPreview builds the desired sibling row. The caller reserves
 // the root and all siblings together before refreshing leases or enqueueing.
+func previewManifest(parent state.AppManifest) state.AppManifest {
+	// A PR head executes code that has not been promoted. App environment
+	// values can contain production credentials, so only copy non-env runtime
+	// configuration. Reconciliation will inject the PR's service bindings.
+	parent.Env = nil
+	return parent
+}
+
 func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy) (state.App, error) {
 	slug, err := previewSlug(parent.Slug, prNumber)
 	if err != nil {
@@ -133,13 +141,16 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
 		RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,
 		WorkloadClass: parent.WorkloadClass, StartCommand: parent.StartCommand,
-		Manifest: parent.Manifest, AppProtocol: parent.AppProtocol, Status: state.AppActive,
+		Manifest: previewManifest(parent.Manifest), AppProtocol: parent.AppProtocol, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber,
 		PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiresAt,
 	}, policy), nil
 }
 
 func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
+	// Also clear environment values on an existing preview. Earlier preview
+	// rows inherited parent values; a synchronize event must not retain them.
+	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
 	desired = applyGitHubRootPolicy(desired, policy)
 	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, state.UpdateAppParams{

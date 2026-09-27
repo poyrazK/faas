@@ -434,7 +434,6 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve GitHub deployment policy: %w", err)
 	}
-
 	// 3a. Takeover guard: the bind row's InstallID must match
 	// the install row's InstallationID. If they diverge, the
 	// binding points at a stale install (rotated webhook
@@ -452,6 +451,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			"install_installation_id", install.InstallationID,
 			"repo", ev.Repository.FullName)
 		return reconcile.Result{}, ErrNoBinding
+	}
+	if policy.ProductionTrigger == state.ProductionTriggerActions {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
 
 	// An explicit commit marker is a customer-controlled no-op. Resolve the
@@ -1403,7 +1405,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		WorkloadName:     parentApp.WorkloadName,
 		WorkloadClass:    parentApp.WorkloadClass,
 		StartCommand:     parentApp.StartCommand,
-		Manifest:         parentApp.Manifest,
+		Manifest:         previewManifest(parentApp.Manifest),
 		AppProtocol:      parentApp.AppProtocol,
 		Status:           state.AppActive,
 		PreviewOfSlug:    parentApp.Slug,
@@ -1412,9 +1414,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		PreviewExpiresAt: &expiresAt,
 	}
 	previewApp = applyGitHubRootPolicy(previewApp, policy)
-	// ADR-094 D4: previews are apps and consume the account's real plan quota.
-	// Resolve the account server-side instead of using a synthetic high ceiling
-	// that lets webhook traffic bypass the customer-facing quota boundary.
+	// Resolve the account server-side so the separate, bounded PR-preview
+	// allowance comes from the plan table, including dependency previews.
 	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
@@ -1483,7 +1484,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
 				if werr := s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
 					ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
-					"Preview skipped: the full dependency set exceeds the deployed app limit. Close an app or upgrade your plan."); werr != nil {
+					"Preview skipped: the full dependency set exceeds the PR preview limit. Close a preview or upgrade your plan."); werr != nil {
 					s.Log.Warn("githubd: write quota preview check", "err", werr)
 				}
 				return reconcile.Result{WasIgnored: true}, ErrIgnored
@@ -1510,8 +1511,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 					if werr := s.writePreviewCheck(ctx, install.InstallationID,
 						ev.Repository.FullName, ev.PullRequest.HeadSHA,
 						githubdgrpc.CheckPhaseFailed, previewURL,
-						"Preview skipped: account has reached its deployed app limit. "+
-							"Close an existing app or upgrade your plan."); werr != nil {
+						"Preview skipped: account has reached its PR preview limit. "+
+							"Close an existing preview or upgrade your plan."); werr != nil {
 						s.Log.Warn("githubd: write quota preview check", "err", werr,
 							"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
 					}

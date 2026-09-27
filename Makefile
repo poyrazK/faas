@@ -279,6 +279,10 @@ text-encoding-check-test: ## Exercise the text-encoding gate against fixture tre
 shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture trees in both directions
 	python3 scripts/ci/check_shell_quoting_test.py
 
+.PHONY: deploy-action-head-check
+deploy-action-head-check: ## Verify stale push runs cannot submit an Action deployment
+	@bash scripts/ci/test_deploy_action_head.sh
+
 .PHONY: canary-alert-test
 canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
 	bash scripts/ops/canary_alert_test.sh
