@@ -2,9 +2,27 @@ package api
 
 import "time"
 
+const (
+	MaxPlatformTenantHostnameSuffixes = 32
+	MaxPlatformTenantDelegatedHosts   = 100
+)
+
 type CreatePlatformTenantRequest struct {
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+}
+
+type SetPlatformTenantHostnamePolicyRequest struct {
+	AllowedSuffixes []string `json:"allowed_suffixes"`
+	MaxHostnames    *int     `json:"max_hostnames"`
+}
+
+type PlatformTenantHostnamePolicyResponse struct {
+	TenantID        string     `json:"tenant_id"`
+	Enabled         bool       `json:"enabled"`
+	AllowedSuffixes []string   `json:"allowed_suffixes"`
+	MaxHostnames    int        `json:"max_hostnames"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
 }
 
 // ApplyPlatformTenantRequest adds missing consumers and links existing surfaces

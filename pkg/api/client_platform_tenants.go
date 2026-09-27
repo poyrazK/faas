@@ -48,6 +48,16 @@ func (c *Client) GetPlatformTenantRequestBudget(ctx context.Context, id string) 
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/request-budget", nil, &out)
 }
 
+func (c *Client) GetPlatformTenantHostnamePolicy(ctx context.Context, id string) (PlatformTenantHostnamePolicyResponse, error) {
+	var out PlatformTenantHostnamePolicyResponse
+	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/hostname-policy", nil, &out)
+}
+
+func (c *Client) SetPlatformTenantHostnamePolicy(ctx context.Context, id string, req SetPlatformTenantHostnamePolicyRequest) (PlatformTenantHostnamePolicyResponse, error) {
+	var out PlatformTenantHostnamePolicyResponse
+	return out, c.do(ctx, "PUT", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/hostname-policy", req, &out)
+}
+
 func (c *Client) SetPlatformTenantRequestBudget(ctx context.Context, id string, req SetPlatformTenantRequestBudgetRequest) (PlatformTenantRequestBudgetResponse, error) {
 	var out PlatformTenantRequestBudgetResponse
 	return out, c.do(ctx, "PUT", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/request-budget", req, &out)

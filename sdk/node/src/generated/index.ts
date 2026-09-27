@@ -568,6 +568,7 @@ export type { PlatformTenantCredentialMetadata } from './models/PlatformTenantCr
 export type { PlatformTenantCredentialResult } from './models/PlatformTenantCredentialResult.js';
 export type { PlatformTenantCredentialsResponse } from './models/PlatformTenantCredentialsResponse.js';
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
+export type { PlatformTenantHostnamePolicyResponse } from './models/PlatformTenantHostnamePolicyResponse.js';
 export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/PlatformTenantHostnameVerifiedWebhookPayload.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
@@ -788,6 +789,7 @@ export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasReque
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucketAccessGrantRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
+export type { SetPlatformTenantHostnamePolicyRequest } from './models/SetPlatformTenantHostnamePolicyRequest.js';
 export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';

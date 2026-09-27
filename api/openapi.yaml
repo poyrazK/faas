@@ -4107,6 +4107,48 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantActivationResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/hostname-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose delegated hostname policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantHostnamePolicy
+      summary: Read the downstream customer's hostname delegation policy.
+      description: Empty suffixes and a zero limit mean self-service hostname creation is disabled. Tenant-surface feature and plan gates still apply.
+      responses:
+        '200':
+          description: Current hostname delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantHostnamePolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantHostnamePolicy
+      summary: Replace a downstream customer's hostname delegation policy.
+      description: Requires deploy:write and recent MFA. Suffixes are canonical DNS names; delegation is disabled with an empty array and a zero limit. Tenant-bound access tokens do not gain these account-owner permissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantHostnamePolicyRequest' }
+      responses:
+        '200':
+          description: Updated hostname delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantHostnamePolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid suffixes or hostname limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/platform-tenants/{id}/request-budget:
     parameters:
       - name: id
@@ -23810,6 +23852,31 @@ components:
       properties:
         max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
         max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    SetPlatformTenantHostnamePolicyRequest:
+      description: Replace the tenant's domain delegation. Empty suffixes and zero max_hostnames disable tenant self-service.
+      type: object
+      required: [allowed_suffixes, max_hostnames]
+      properties:
+        allowed_suffixes:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, maxLength: 253, pattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$' }
+        max_hostnames: { type: integer, minimum: 0, maximum: 100 }
+
+    PlatformTenantHostnamePolicyResponse:
+      description: Owner-managed allowlist and total hostname cap for downstream self-service. An absent policy is disabled.
+      type: object
+      required: [tenant_id, enabled, allowed_suffixes, max_hostnames]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        allowed_suffixes:
+          type: array
+          items: { type: string }
+        max_hostnames: { type: integer, minimum: 0, maximum: 100 }
+        updated_at: { type: string, format: date-time }
 
     PlatformTenantRequestBudgetResponse:
       description: One customer's authoritative cross-app admitted-request budget and current UTC counters. Absent policy has configured=false and zero ceilings.

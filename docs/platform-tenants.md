@@ -38,6 +38,17 @@ Content-Type: application/json
 
 The response reports `create`, `link`, or `unchanged` for each resource, including hostnames. New hostnames return a TXT record name (`_faas-verify.<hostname>`) and challenge token to publish in DNS. A dry run checks ownership, quota, names, and conflicts without writes; a token for a planned hostname is withheld because it is not yet durable. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs and tokens with `unchanged` actions. A different name, revoked consumer, hostname already claimed by another surface, or resource owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed. Surface declarations require the tenant-surfaces feature flag and a plan that includes surfaces; this flow currently supports `per_host_san` certificates.
 
+Platform owners can configure the domain boundary for downstream hostname self-service:
+
+```http
+PUT /v1/account/platform-tenants/{id}/hostname-policy
+Content-Type: application/json
+
+{"allowed_suffixes":["customers.example.com"],"max_hostnames":20}
+```
+
+The allowlist is disabled by default. A delegated hostname must equal an allowed suffix or be a subdomain of it, and must still pass DNS ownership verification and the normal account/plan quotas. The tenant-wide cap counts hostnames already attached across its linked surfaces; lowering the cap never removes existing hostnames, but prevents adding more until the count is below the new limit. Use `{"allowed_suffixes":[],"max_hostnames":0}` to disable delegation. This policy does not create or remove any surface or hostname. See [ADR-299](adr/299-platform-tenant-hostname-delegation.md).
+
 DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. `GET /v1/account/platform-tenants/{id}/activation` reports whether routing is enabled, each hostname is verified, the certificate is issued and unexpired, and every linked surface is active. `ready` is true only when the feature is enabled, the platform tenant is active, at least one linked surface exists, and every linked surface is ready. Certificate and hostname errors remain visible to the account owner for diagnosis. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `gregale platform-tenants activation --id <uuid>` for a snapshot or add `--wait --timeout 10m` to poll until ready. Use `--json` for machine-readable output.
 
 ## Issue and rotate customer credentials
