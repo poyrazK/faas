@@ -509,6 +509,10 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 const applyRegressionAction = `-- name: ApplyRegressionAction :one
 UPDATE debug_regression_observations
 SET state = $4,
+    first_detected_at = CASE
+        WHEN $4 = 'active' AND state <> 'active' THEN now()
+        ELSE first_detected_at
+    END,
     last_detected_at = CASE WHEN $4 = 'active' THEN now() ELSE last_detected_at END,
     acknowledged_at = CASE WHEN $4 = 'acknowledged' THEN now() ELSE NULL END,
     dismissed_until = CASE WHEN $4 = 'dismissed' THEN $5::timestamptz ELSE NULL END,
@@ -531,7 +535,9 @@ type ApplyRegressionActionParams struct {
 }
 
 // Change only the debugger workflow state for one app-scoped observation.
-// The handler maps reopen to active before calling this query.
+// The handler maps reopen to active before calling this query. Reopening a
+// non-active observation starts a new detection lifecycle so the transition
+// webhook gets its own stable id.
 func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error) {
 	row := db.QueryRow(ctx, applyRegressionAction,
 		arg.AppID,
@@ -14140,17 +14146,25 @@ const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, last_detected_at
+    regression_factor, state, first_detected_at, last_detected_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now()
+    $7, 'active', now(), now()
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    first_detected_at = CASE
+        WHEN debug_regression_observations.state = 'resolved'
+          OR (debug_regression_observations.state = 'dismissed'
+              AND (debug_regression_observations.dismissed_until IS NULL
+                   OR debug_regression_observations.dismissed_until <= now()))
+        THEN EXCLUDED.last_detected_at
+        ELSE debug_regression_observations.first_detected_at
+    END,
     last_detected_at  = EXCLUDED.last_detected_at,
     state             = CASE
         WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
@@ -14198,13 +14212,11 @@ type UpsertRegressionObservationParams struct {
 // Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 // route) — the cron upserts on this triple so the table grows at most
 // one row per (deployment, route) across all cron passes, not one row
-// per cron tick. Mirrors UpsertDoctorObservation's primary-key upsert
-// shape (migrations/00313). first_detected_at is set on INSERT only;
-// the ON CONFLICT clause does NOT touch it, so the column survives
-// subsequent upserts and the dashboard shows "regression detected 4h
-// ago" correctly. last_detected_at is refreshed to EXCLUDED on every
-// pass; the column backs the `since=<duration>` filter on the dashboard
-// and the GET /v1/apps/{slug}/debug/regressions endpoint.
+// per cron tick. first_detected_at remains stable during one active
+// lifecycle, then resets when a resolved regression is detected again
+// (or a dismissal expires). The webhook trigger uses that timestamp as
+// the detection transition's idempotency key. last_detected_at is
+// refreshed on every pass and backs the dashboard's since filter.
 func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error {
 	_, err := db.Exec(ctx, upsertRegressionObservation,
 		arg.AppID,

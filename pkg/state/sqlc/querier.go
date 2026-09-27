@@ -66,7 +66,9 @@ type Querier interface {
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	// Change only the debugger workflow state for one app-scoped observation.
-	// The handler maps reopen to active before calling this query.
+	// The handler maps reopen to active before calling this query. Reopening a
+	// non-active observation starts a new detection lifecycle so the transition
+	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
@@ -1325,13 +1327,11 @@ type Querier interface {
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row
-	// per cron tick. Mirrors UpsertDoctorObservation's primary-key upsert
-	// shape (migrations/00313). first_detected_at is set on INSERT only;
-	// the ON CONFLICT clause does NOT touch it, so the column survives
-	// subsequent upserts and the dashboard shows "regression detected 4h
-	// ago" correctly. last_detected_at is refreshed to EXCLUDED on every
-	// pass; the column backs the `since=<duration>` filter on the dashboard
-	// and the GET /v1/apps/{slug}/debug/regressions endpoint.
+	// per cron tick. first_detected_at remains stable during one active
+	// lifecycle, then resets when a resolved regression is detected again
+	// (or a dismissal expires). The webhook trigger uses that timestamp as
+	// the detection transition's idempotency key. last_detected_at is
+	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
 }

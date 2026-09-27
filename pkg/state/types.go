@@ -3344,6 +3344,8 @@ const (
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
+	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
+	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3370,6 +3372,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventPlatformTenantStatementFinalized,
+	AppWebhookEventDebugRegressionDetected,
+	AppWebhookEventDebugRegressionResolved,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
