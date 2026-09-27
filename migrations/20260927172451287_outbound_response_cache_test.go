@@ -45,7 +45,7 @@ func TestOutboundResponseCacheMigrationDefaultsAndBounds(t *testing.T) {
 		t.Fatalf("database rejected maximum cache TTL: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id = 20260927110000001`); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id = 20260927172451287`); err != nil {
 		t.Fatalf("remove migration ledger row: %v", err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {
