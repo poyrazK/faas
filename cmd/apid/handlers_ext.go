@@ -106,6 +106,22 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 //
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
+// validateIdleTimeout keeps idle_timeout_s inside what the reaper applies:
+// 0 means the plan default, otherwise [floor, plan default × 2] (spec
+// §4.3). The reaper clamped out-of-range values silently, so the API
+// stored and reported a timeout — -5, or 999999999 — that never took
+// effect.
+func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
+	if v == 0 {
+		return nil
+	}
+	floor, ceiling := limits.IdleTimeoutBounds()
+	if v < floor || v > ceiling {
+		return api.ErrValidation(fmt.Sprintf("idle_timeout_s must be 0 (plan default) or %d..%d; got %d", floor, ceiling, v))
+	}
+	return nil
+}
+
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
 	if req.RetryPolicy != nil {
 		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
@@ -119,6 +135,11 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		}
 		if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
 			return api.ErrPlanInternalIngressNotAllowed(acct.Plan)
+		}
+	}
+	if req.IdleTimeoutS != nil {
+		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
+			return prob
 		}
 	}
 	// The app-wide edge bucket is a tightening-only runtime policy. Zero

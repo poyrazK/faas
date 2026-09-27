@@ -251,6 +251,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
 		return state.App{}, api.ErrPlanInternalIngressNotAllowed(acct.Plan)
 	}
+	if prob := validateIdleTimeout(req.IdleTimeoutS, limits); prob != nil {
+		return state.App{}, prob
+	}
 	ram := req.RAMMB
 	cpuMillicores := req.CPUMillicores
 	if req.ResourceProfile != "" {

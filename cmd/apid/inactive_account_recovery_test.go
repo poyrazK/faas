@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -220,6 +221,40 @@ func TestRestoreApp_HonoursDeployedAppQuota(t *testing.T) {
 		}
 		if step.want == http.StatusForbidden && !strings.Contains(rec.Body.String(), "plan_limit_apps") {
 			t.Fatalf("over-quota restore body = %s, want plan_limit_apps", rec.Body.String())
+		}
+	}
+}
+
+// TestAppIdleTimeout_OutOfRangeIsRejected — the reaper clamps idle_timeout_s
+// to [floor, plan default × 2] and treats 0 as the plan default, but the API
+// accepted and echoed -5 or 999999999, a timeout that never applied.
+func TestAppIdleTimeout_OutOfRangeIsRejected(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanPro, "")
+	do := func(method, path, body string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		env.h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	floor, ceiling := api.MustLimitsFor(api.PlanPro).IdleTimeoutBounds()
+	if code := do("POST", "/v1/apps", `{"slug":"idle-app","runtime":"node22","idle_timeout_s":999999999}`); code != http.StatusBadRequest {
+		t.Fatalf("create with an out-of-range idle timeout = %d, want 400", code)
+	}
+	if code := do("POST", "/v1/apps", `{"slug":"idle-app","runtime":"node22"}`); code != http.StatusCreated {
+		t.Fatalf("create = %d", code)
+	}
+	for body, want := range map[string]int{
+		`{"idle_timeout_s":-5}`:                              http.StatusBadRequest,
+		`{"idle_timeout_s":` + strconv.Itoa(floor-1) + `}`:   http.StatusBadRequest,
+		`{"idle_timeout_s":` + strconv.Itoa(ceiling+1) + `}`: http.StatusBadRequest,
+		`{"idle_timeout_s":0}`:                               http.StatusOK,
+		`{"idle_timeout_s":` + strconv.Itoa(floor) + `}`:     http.StatusOK,
+		`{"idle_timeout_s":` + strconv.Itoa(ceiling) + `}`:   http.StatusOK,
+	} {
+		if code := do("PATCH", "/v1/apps/idle-app", body); code != want {
+			t.Errorf("PATCH %s = %d, want %d", body, code, want)
 		}
 	}
 }
