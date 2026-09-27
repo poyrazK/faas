@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -434,5 +435,26 @@ func TestLoadOrg_LogDoesNotLeakSlug(t *testing.T) {
 	// it must not appear in the hash output.
 	if strings.Contains(hashField, "acct-1") {
 		t.Errorf("account_id_hash leaks raw account id: %q", hashField)
+	}
+}
+
+// TestLoadOrg_RemovedMember_403 — removal only stamps removed_at, and
+// OrgMemberByAccount returns that row. LoadOrg stamped it as a live
+// membership, so a removed member kept their role on every /v1 org
+// route (and the org keys they minted could invite them back).
+func TestLoadOrg_RemovedMember_403(t *testing.T) {
+	resolver := newStubResolver()
+	resolver.orgs["acme"] = state.Org{ID: "org-1", Slug: "acme"}
+	removedAt := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	resolver.members["org-1|acct-1"] = state.OrgMembership{
+		OrgID: "org-1", AccountID: "acct-1", Role: state.OrgRoleAdmin, RemovedAt: &removedAt,
+	}
+	audit := &fakeAudit{}
+	rec, next := runLoadOrg(t, reqWithPrincipal(t, "GET", "/v1/orgs/acme", "acme"), resolver, audit)
+	if next.called || rec.Code != http.StatusForbidden {
+		t.Fatalf("removed member: called=%v status=%d, want 403 without reaching the handler", next.called, rec.Code)
+	}
+	if len(audit.events) != 1 || audit.events[0].fields["action"] != "org.load.not_member" {
+		t.Fatalf("audit = %+v, want one org.load.not_member", audit.events)
 	}
 }

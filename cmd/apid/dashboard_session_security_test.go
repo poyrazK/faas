@@ -523,3 +523,56 @@ func TestSignIn_RejectsOtherOrigins(t *testing.T) {
 		t.Fatalf("non-browser login was refused: %s", rec.Body)
 	}
 }
+
+// TestOrgRemoval_EndsTheMembersAccess — removing a member stamped
+// removed_at, but LoadOrg accepted the stamped row as a membership: the
+// removed member kept their role, and the org admin key they had minted
+// invited a new admin (them again) after removal.
+func TestOrgRemoval_EndsTheMembersAccess(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanPro, "")
+	call := func(key, method, path, body string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Active-Org", "offboard-team")
+		env.h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if code := call(env.key, "POST", "/v1/orgs", `{"slug":"offboard-team","name":"Team"}`); code != http.StatusCreated {
+		t.Fatalf("create org = %d", code)
+	}
+	org, err := env.store.OrgBySlug(t.Context(), "offboard-team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := env.store.CreateAccount(t.Context(), "bob@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.AddOrgMember(t.Context(), org.ID, bob.ID, state.OrgRoleAdmin, &env.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	bobKey, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.CreateOrgAPIKeyWithProvenance(t.Context(), org.ID, bob.ID, hash, "bob", []string{api.ScopeAdmin}, nil, "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(bobKey, "GET", "/v1/orgs/offboard-team/members", ""); code != http.StatusOK {
+		t.Fatalf("member listing members = %d, want 200", code)
+	}
+	if err := env.store.RemoveOrgMember(t.Context(), org.ID, bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/v1/orgs/offboard-team/members", ""},
+		{"GET", "/v1/orgs/offboard-team/keys", ""},
+		{"POST", "/v1/orgs/offboard-team/members", `{"email":"bob-again@example.com","role":"admin"}`},
+	} {
+		if code := call(bobKey, c.method, c.path, c.body); code != http.StatusForbidden {
+			t.Errorf("removed member %s %s = %d, want 403", c.method, c.path, code)
+		}
+	}
+}
