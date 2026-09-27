@@ -3406,8 +3406,10 @@ func (m *Metrics) ObserveServiceDependencyCall(appID, deploymentID string, faile
 
 // ObserveServiceDependencyEdge records one final, unsampled managed HTTP call.
 // Both identities come from the authorizer and resolver, never from a guest
-// header. Invalid identities are excluded to keep metric labels bounded.
-func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, failed bool, duration time.Duration) {
+// header. Invalid identities are excluded to keep metric labels bounded. A
+// sampled trace ID is attached to the duration observation as an exemplar; it
+// is never a metric label and does not affect the unsampled health counter.
+func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, failed bool, duration time.Duration, traceID string) {
 	if m == nil || m.serviceDependencyEdges == nil || m.serviceDependencyDuration == nil {
 		return
 	}
@@ -3425,7 +3427,7 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 	}
 	labels := []string{caller.String(), target.String(), outcome}
 	m.serviceDependencyEdges.WithLabelValues(labels...).Inc()
-	m.serviceDependencyDuration.WithLabelValues(labels...).Observe(duration.Seconds())
+	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
 }
 
 // ObserveServiceWakeLatency records how long an internal caller waited for a

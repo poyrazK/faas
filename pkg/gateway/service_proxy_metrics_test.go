@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // newMeteredProxy builds a proxy with real Metrics and a controllable clock so
@@ -204,6 +206,14 @@ func TestServiceProxyEmitsUnsampledCallerTargetEdge(t *testing.T) {
 	}
 	if got := testutil.CollectAndCount(m.serviceDependencyDuration); got != 1 {
 		t.Fatalf("caller-target latency series = %d, want 1", got)
+	}
+	metric := &dto.Metric{}
+	observer := m.serviceDependencyDuration.WithLabelValues(callerID, targetID, "error")
+	if err := observer.(prometheus.Metric).Write(metric); err != nil {
+		t.Fatalf("dependency duration metric write: %v", err)
+	}
+	if got := histogramExemplarTraceID(t, metric); got != "" {
+		t.Fatalf("unsampled dependency exemplar trace_id = %q, want empty", got)
 	}
 }
 
