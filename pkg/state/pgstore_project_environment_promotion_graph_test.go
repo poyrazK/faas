@@ -24,6 +24,27 @@ func TestPgProjectEnvironmentPromotionReleaseGraphCutoverAndRollback(t *testing.
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
+	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: account.ID, ProjectID: project.ID, EnvironmentSlug: "staging",
+		ConfigHash: sourceConfigHash, Values: sourceConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	previousConfigValues, previousConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us","replicas":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousConfig, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: account.ID, ProjectID: project.ID, EnvironmentSlug: "production",
+		ConfigHash: previousConfigHash, Values: previousConfigValues,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(ctx, state.App{
 		AccountID: account.ID, ProjectID: project.ID, Slug: "app-" + uuid.NewString()[:8], WorkloadName: "api",
 		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 60,
@@ -57,6 +78,8 @@ func TestPgProjectEnvironmentPromotionReleaseGraphCutoverAndRollback(t *testing.
 		FromEnvironment: "staging", ToEnvironment: "production", PromotionHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		IdempotencyKey: "graph-promotion-" + uuid.NewString(), Status: "running",
 		PreviousTargetReleaseSetID: previousGraph.ID,
+		SyncConfig:                 true, SourceConfigHash: sourceConfigHash, PreviousTargetConfigHash: previousConfigHash,
+		SourceConfigSnapshot: sourceConfigValues, PreviousTargetConfigSnapshot: previousConfigValues,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +106,13 @@ func TestPgProjectEnvironmentPromotionReleaseGraphCutoverAndRollback(t *testing.
 	if err != nil || promotion.TargetReleaseSetID != activated.ID {
 		t.Fatalf("durable graph checkpoint=%+v err=%v", promotion, err)
 	}
+	if !promotion.SyncConfig || promotion.TargetConfigVersion <= previousConfig.Version {
+		t.Fatalf("durable config checkpoint=%+v; want config version after %d", promotion, previousConfig.Version)
+	}
+	activeConfig, err := store.ProjectEnvironmentConfigLatest(ctx, account.ID, project.ID, "production")
+	if err != nil || activeConfig.ConfigHash != sourceConfigHash || string(activeConfig.Values) != string(sourceConfigValues) {
+		t.Fatalf("cutover config=%+v err=%v; want source config %s", activeConfig, err, sourceConfigHash)
+	}
 
 	restored, err := publisher.RollbackProjectEnvironmentPromotionReleaseSet(ctx, account.ID, promotion.ID, previousGraph.TTLSeconds, previousGraph.Members)
 	if err != nil {
@@ -94,6 +124,14 @@ func TestPgProjectEnvironmentPromotionReleaseGraphCutoverAndRollback(t *testing.
 	replayedRollback, err := publisher.RollbackProjectEnvironmentPromotionReleaseSet(ctx, account.ID, promotion.ID, previousGraph.TTLSeconds, previousGraph.Members)
 	if err != nil || replayedRollback.ID != restored.ID {
 		t.Fatalf("rollback replay=%+v err=%v; want release %s", replayedRollback, err, restored.ID)
+	}
+	promotion, _, err = store.ProjectEnvironmentPromotionByID(ctx, account.ID, project.Slug, "production", promotion.ID)
+	if err != nil || promotion.RollbackConfigVersion <= promotion.TargetConfigVersion {
+		t.Fatalf("durable rollback config checkpoint=%+v err=%v", promotion, err)
+	}
+	rolledBackConfig, err := store.ProjectEnvironmentConfigLatest(ctx, account.ID, project.ID, "production")
+	if err != nil || rolledBackConfig.ConfigHash != previousConfigHash || string(rolledBackConfig.Values) != string(previousConfigValues) {
+		t.Fatalf("rollback config=%+v err=%v; want previous config %s", rolledBackConfig, err, previousConfigHash)
 	}
 	external := createLive("production", "sha256:external")
 	externalGraph, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,

@@ -117,16 +117,25 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 		if !ok || !release.Active {
 			return ProjectReleaseSet{}, ErrConflict
 		}
+		if err := m.validateProjectEnvironmentPromotionConfigLocked(promotion, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return cloneProjectReleaseSet(release), nil
 	}
 	if activeID != promotion.PreviousTargetReleaseSetID {
 		return ProjectReleaseSet{}, ErrConflict
+	}
+	if err := m.validateProjectEnvironmentPromotionConfigLocked(promotion, false); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	promotion.TargetReleaseSetID = release.ID
+	if promotion.SyncConfig {
+		promotion.TargetConfigVersion = m.appendProjectEnvironmentPromotionConfigLocked(promotion, false)
+	}
 	promotion.UpdatedAt = time.Now().UTC()
 	m.projectEnvironmentPromotions[promotionID] = promotion
 	return cloneProjectReleaseSet(release), nil
@@ -152,16 +161,25 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 		if !ok || !release.Active {
 			return ProjectReleaseSet{}, ErrConflict
 		}
+		if err := m.validateProjectEnvironmentPromotionConfigLocked(promotion, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return cloneProjectReleaseSet(release), nil
 	}
 	if activeID != promotion.TargetReleaseSetID {
 		return ProjectReleaseSet{}, ErrConflict
+	}
+	if err := m.validateProjectEnvironmentPromotionConfigLocked(promotion, true); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	promotion.RollbackReleaseSetID = release.ID
+	if promotion.SyncConfig {
+		promotion.RollbackConfigVersion = m.appendProjectEnvironmentPromotionConfigLocked(promotion, true)
+	}
 	promotion.UpdatedAt = time.Now().UTC()
 	m.projectEnvironmentPromotions[promotionID] = promotion
 	return cloneProjectReleaseSet(release), nil

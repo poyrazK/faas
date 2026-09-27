@@ -14,10 +14,13 @@ const projectEnvironmentPromotionSelectColumns = `id, account_id, project_id, pr
 	rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
 	rollback_completed_at, verification_status, verification_error,
 	verification_started_at, verification_completed_at,
-	source_release_set_id, previous_target_release_set_id, target_release_set_id, rollback_release_set_id`
+	source_release_set_id, previous_target_release_set_id, target_release_set_id, rollback_release_set_id,
+	sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot,
+	previous_target_config_snapshot, target_config_version, rollback_config_version`
 
 func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, error) {
 	var promotion ProjectEnvironmentPromotion
+	var sourceConfigSnapshot, previousTargetConfigSnapshot []byte
 	if err := row.Scan(
 		&promotion.ID, &promotion.AccountID, &promotion.ProjectID, &promotion.ProjectSlug,
 		&promotion.FromEnvironment, &promotion.ToEnvironment, &promotion.PromotionHash,
@@ -29,9 +32,14 @@ func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, 
 		&promotion.VerificationStartedAt, &promotion.VerificationCompletedAt,
 		&promotion.SourceReleaseSetID, &promotion.PreviousTargetReleaseSetID,
 		&promotion.TargetReleaseSetID, &promotion.RollbackReleaseSetID,
+		&promotion.SyncConfig, &promotion.SourceConfigHash, &promotion.PreviousTargetConfigHash,
+		&sourceConfigSnapshot, &previousTargetConfigSnapshot, &promotion.TargetConfigVersion,
+		&promotion.RollbackConfigVersion,
 	); err != nil {
 		return ProjectEnvironmentPromotion{}, mapErr(err)
 	}
+	promotion.SourceConfigSnapshot = append([]byte(nil), sourceConfigSnapshot...)
+	promotion.PreviousTargetConfigSnapshot = append([]byte(nil), previousTargetConfigSnapshot...)
 	return promotion, nil
 }
 
@@ -61,14 +69,20 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 		insert into project_environment_promotions
 			(account_id, project_id, project_slug, from_environment, to_environment,
 			 promotion_hash, idempotency_key, status, error, verification_status,
-			 source_release_set_id, previous_target_release_set_id, target_release_set_id, rollback_release_set_id)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			 source_release_set_id, previous_target_release_set_id, target_release_set_id, rollback_release_set_id,
+			 sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot,
+			 previous_target_config_snapshot, target_config_version, rollback_config_version)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+		        coalesce($18::jsonb, '{}'::jsonb), coalesce($19::jsonb, '{}'::jsonb), $20, $21)
 		returning `+projectEnvironmentPromotionSelectColumns,
 		promotion.AccountID, promotion.ProjectID, promotion.ProjectSlug,
 		promotion.FromEnvironment, promotion.ToEnvironment, promotion.PromotionHash,
 		promotion.IdempotencyKey, promotion.Status, promotion.Error, promotion.VerificationStatus,
 		promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID,
-		promotion.TargetReleaseSetID, promotion.RollbackReleaseSetID)
+		promotion.TargetReleaseSetID, promotion.RollbackReleaseSetID,
+		promotion.SyncConfig, promotion.SourceConfigHash, promotion.PreviousTargetConfigHash,
+		promotion.SourceConfigSnapshot, promotion.PreviousTargetConfigSnapshot,
+		promotion.TargetConfigVersion, promotion.RollbackConfigVersion)
 	created, err := scanProjectEnvironmentPromotion(row)
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err

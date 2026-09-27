@@ -242,17 +242,24 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		if err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		return release, nil
+	}
+	targetConfigVersion, err := applyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
+	if err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
 		ttlSeconds, members, &promotion.PreviousTargetReleaseSetID)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	if _, err := tx.Exec(ctx, `update project_environment_promotions set target_release_set_id = $2, updated_at = now() where id = $1`, promotionID, release.ID); err != nil {
+	if _, err := tx.Exec(ctx, `update project_environment_promotions set target_release_set_id = $2, target_config_version = $3, updated_at = now() where id = $1`, promotionID, release.ID, targetConfigVersion); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -300,17 +307,24 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		if err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		return release, nil
+	}
+	rollbackConfigVersion, err := rollbackProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
+	if err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
 		ttlSeconds, members, &promotion.TargetReleaseSetID)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	if _, err := tx.Exec(ctx, `update project_environment_promotions set rollback_release_set_id = $2, updated_at = now() where id = $1`, promotionID, release.ID); err != nil {
+	if _, err := tx.Exec(ctx, `update project_environment_promotions set rollback_release_set_id = $2, rollback_config_version = $3, updated_at = now() where id = $1`, promotionID, release.ID, rollbackConfigVersion); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -334,6 +348,113 @@ func activeProjectReleaseSetIDTx(ctx context.Context, tx pgx.Tx, projectID, envi
 		return "", nil
 	}
 	return id, err
+}
+
+func projectEnvironmentConfigLatestTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string) (ProjectEnvironmentConfig, error) {
+	config, err := scanProjectEnvironmentConfig(tx.QueryRow(ctx, `
+		select c.id, c.account_id, c.project_id, c.environment_slug,
+		       c.version, c.config_hash, c.config_json, c.created_at
+		  from project_environment_config_versions c
+		 where c.account_id = $1 and c.project_id = $2 and c.environment_slug = $3
+		 order by c.version desc
+		 limit 1
+	`, accountID, projectID, environment))
+	if errors.Is(err, ErrNotFound) {
+		return ProjectEnvironmentConfig{
+			AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment,
+			ConfigHash: api.EmptyProjectEnvironmentConfigHash(), Values: json.RawMessage(`{}`),
+		}, nil
+	}
+	return config, err
+}
+
+func insertProjectEnvironmentConfigVersionTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, values json.RawMessage, hash string) (int64, error) {
+	canonical, actualHash, err := api.NormalizeProjectEnvironmentConfig(values)
+	if err != nil || actualHash != hash {
+		return 0, ErrConflict
+	}
+	var version int64
+	if err := tx.QueryRow(ctx, `
+		select coalesce(max(version), 0) + 1
+		  from project_environment_config_versions
+		 where project_id = $1 and environment_slug = $2
+	`, projectID, environment).Scan(&version); err != nil {
+		return 0, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into project_environment_config_versions
+			(account_id, project_id, environment_slug, version, config_hash, config_json)
+		values ($1, $2, $3, $4, $5, $6::jsonb)
+	`, accountID, projectID, environment, version, hash, []byte(canonical)); err != nil {
+		return 0, mapErr(err)
+	}
+	return version, nil
+}
+
+func applyProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion) (int64, error) {
+	if !promotion.SyncConfig {
+		return 0, nil
+	}
+	if promotion.TargetConfigVersion != 0 {
+		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, false); err != nil {
+			return 0, err
+		}
+		return promotion.TargetConfigVersion, nil
+	}
+	source, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.FromEnvironment)
+	if err != nil {
+		return 0, err
+	}
+	target, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
+	if err != nil {
+		return 0, err
+	}
+	if source.ConfigHash != promotion.SourceConfigHash || target.ConfigHash != promotion.PreviousTargetConfigHash {
+		return 0, ErrConflict
+	}
+	return insertProjectEnvironmentConfigVersionTx(ctx, tx, promotion.AccountID, promotion.ProjectID,
+		promotion.ToEnvironment, promotion.SourceConfigSnapshot, promotion.SourceConfigHash)
+}
+
+func rollbackProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion) (int64, error) {
+	if !promotion.SyncConfig {
+		return 0, nil
+	}
+	if promotion.RollbackConfigVersion != 0 {
+		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, true); err != nil {
+			return 0, err
+		}
+		return promotion.RollbackConfigVersion, nil
+	}
+	target, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
+	if err != nil {
+		return 0, err
+	}
+	if target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		return 0, ErrConflict
+	}
+	return insertProjectEnvironmentConfigVersionTx(ctx, tx, promotion.AccountID, promotion.ProjectID,
+		promotion.ToEnvironment, promotion.PreviousTargetConfigSnapshot, promotion.PreviousTargetConfigHash)
+}
+
+func verifyProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion, rolledBack bool) error {
+	if !promotion.SyncConfig {
+		return nil
+	}
+	target, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
+	if err != nil {
+		return err
+	}
+	if rolledBack {
+		if promotion.RollbackConfigVersion == 0 || target.Version != promotion.RollbackConfigVersion || target.ConfigHash != promotion.PreviousTargetConfigHash {
+			return ErrConflict
+		}
+		return nil
+	}
+	if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		return ErrConflict
+	}
+	return nil
 }
 
 func readProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment, releaseID string) (ProjectReleaseSet, error) {

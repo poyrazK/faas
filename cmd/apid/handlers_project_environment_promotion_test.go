@@ -20,6 +20,26 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
+	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "staging",
+		ConfigHash: sourceConfigHash, Values: sourceConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetConfigValues, targetConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "production",
+		ConfigHash: targetConfigHash, Values: targetConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	source, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Scope: "staging", SourceSHA256: "source-staging",
 		Status: state.DeployPending,
@@ -107,7 +127,7 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if err := json.Unmarshal(executeRec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Workloads) != 1 || response.Workloads[0].Status != "promoted" {
+	if response.SyncConfig || len(response.Workloads) != 1 || response.Workloads[0].Status != "promoted" {
 		t.Fatalf("promotion response=%+v", response)
 	}
 	if response.PromotionID == "" {
@@ -166,6 +186,10 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	if live.ID == target.ID || live.SourceSHA256 != source.SourceSHA256 || live.RootfsKey != "apps/source.ext4" {
 		t.Fatalf("promoted live deployment=%+v", live)
+	}
+	activeConfig, err := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, "production")
+	if err != nil || activeConfig.ConfigHash != targetConfigHash || string(activeConfig.Values) != string(targetConfigValues) {
+		t.Fatalf("default promotion changed target config: %+v err=%v", activeConfig, err)
 	}
 	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
@@ -416,6 +440,19 @@ func TestProjectEnvironmentPromotionPreviewBlocksMissingSourceRelease(t *testing
 	if preview.CanPromote || len(preview.BlockingReasons) != 1 || preview.Changes[0].Kind != "source_missing" {
 		t.Fatalf("blocked preview=%+v", preview)
 	}
+	syncReq, syncRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging&sync_config=true", "shop", nil)
+	syncReq.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentPromotion(syncRec, syncReq, acct)
+	if syncRec.Code != http.StatusOK {
+		t.Fatalf("config-sync preview status=%d body=%s", syncRec.Code, syncRec.Body.String())
+	}
+	var syncPreview api.ProjectEnvironmentPromotionPreviewResponse
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncPreview); err != nil {
+		t.Fatal(err)
+	}
+	if syncPreview.CanPromote || !syncPreview.SyncConfig || !strings.Contains(strings.Join(syncPreview.BlockingReasons, ";"), "configuration sync requires an active target release graph") {
+		t.Fatalf("config sync without a target graph should be blocked: %+v", syncPreview)
+	}
 }
 
 func TestProjectEnvironmentPromotionPreviewHandlesActiveReleaseGraphs(t *testing.T) {
@@ -503,6 +540,27 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
+	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "staging",
+		ConfigHash: sourceConfigHash, Values: sourceConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	previousConfigValues, previousConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us","replicas":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousConfig, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "production",
+		ConfigHash: previousConfigHash, Values: previousConfigValues,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
 	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
@@ -541,7 +599,7 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 	}
 	createLive("production", "sha256:production-newer", "production-newer")
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging&sync_config=true", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
 	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
@@ -551,10 +609,14 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	if !preview.CanPromote || preview.FromReleaseSet == nil || preview.FromReleaseSet.ID != sourceGraph.ID ||
+	if !preview.CanPromote || !preview.SyncConfig || preview.FromReleaseSet == nil || preview.FromReleaseSet.ID != sourceGraph.ID ||
 		preview.ToReleaseSet == nil || preview.ToReleaseSet.ID != previousTargetGraph.ID || len(preview.Changes) != 1 ||
 		preview.Changes[0].SourceDeploymentID != sourceGraphDeployment.ID || preview.Changes[0].TargetDeploymentID != previousTarget.ID {
 		t.Fatalf("preview did not preserve graph members: %+v", preview)
+	}
+	wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+	if err != nil || !wire.SyncConfig {
+		t.Fatalf("promotion token sync_config=%t err=%v", wire.SyncConfig, err)
 	}
 	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
@@ -582,8 +644,14 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 		t.Fatal(err)
 	}
 	if promotion.SourceReleaseSetID != sourceGraph.ID || promotion.PreviousTargetReleaseSetID != previousTargetGraph.ID ||
-		promotion.TargetReleaseSetID == "" || promotion.TargetReleaseSetID == previousTargetGraph.ID || len(workloads) != 1 {
+		promotion.TargetReleaseSetID == "" || promotion.TargetReleaseSetID == previousTargetGraph.ID || len(workloads) != 1 ||
+		!promotion.SyncConfig || promotion.SourceConfigHash != sourceConfigHash ||
+		promotion.PreviousTargetConfigHash != previousConfigHash || promotion.TargetConfigVersion <= previousConfig.Version {
 		t.Fatalf("promotion graph checkpoints=%+v workloads=%+v", promotion, workloads)
+	}
+	activeConfig, err := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, "production")
+	if err != nil || activeConfig.ConfigHash != sourceConfigHash || string(activeConfig.Values) != string(sourceConfigValues) {
+		t.Fatalf("synced target config=%+v err=%v; want source hash %s", activeConfig, err, sourceConfigHash)
 	}
 	active, err := store.ActiveProjectReleaseSet(ctx, acct.ID, project.ID, "production")
 	if err != nil {
@@ -610,8 +678,13 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 		t.Fatal(err)
 	}
 	if rolledBack.RollbackReleaseSetID == "" || active.ID != rolledBack.RollbackReleaseSetID || active.ID == previousTargetGraph.ID ||
-		len(active.Members) != 1 || active.Members[0].DeploymentID != previousTarget.ID {
+		len(active.Members) != 1 || active.Members[0].DeploymentID != previousTarget.ID ||
+		rolledBack.RollbackConfigVersion <= promotion.TargetConfigVersion {
 		t.Fatalf("rollback did not publish the previous graph as a new atomic release: promotion=%+v graph=%+v", rolledBack, active)
+	}
+	rolledBackConfig, err := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, "production")
+	if err != nil || rolledBackConfig.ConfigHash != previousConfigHash || string(rolledBackConfig.Values) != string(previousConfigValues) {
+		t.Fatalf("rollback config=%+v err=%v; want previous hash %s", rolledBackConfig, err, previousConfigHash)
 	}
 	releaseID, deploymentID, err := store.ResolveProjectRelease(ctx, app.ID, "production", "")
 	if err != nil || releaseID != active.ID || deploymentID != previousTarget.ID {
@@ -622,16 +695,24 @@ func TestProjectEnvironmentPromotionAtomicallyMovesAndRollsBackReleaseGraph(t *t
 func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T) {
 	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
 	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		"release-source-a", "release-target", nil)
+		false, "release-source-a", "release-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		"release-source-b", "release-target", nil)
+		false, "release-source-b", "release-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first == second {
 		t.Fatal("promotion identity did not change when the source release set changed")
+	}
+	withConfigSync, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+		true, "release-source-a", "release-target", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == withConfigSync {
+		t.Fatal("promotion identity did not change when non-secret config sync was enabled")
 	}
 }
