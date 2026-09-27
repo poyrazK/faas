@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1414,15 +1415,42 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	if until, ok := b.staleTargets[staleTargetKey(appID, target.InstanceID)]; ok && until.After(time.Now()) {
 		return
 	}
-	if target.RequiresReadiness && target.ReadinessUpdatedAt.IsZero() {
-		target.Ready = false
-	}
-	if readiness, ok := b.readinessState[staleTargetKey(appID, target.InstanceID)]; ok &&
-		(!target.RequiresReadiness || readinessAfter(readiness.at, readiness.eventID, target.ReadinessUpdatedAt, target.ReadinessEventID)) {
+	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
 		target.RequiresReadiness = true
-		target.Ready = readiness.ready
-		target.ReadinessUpdatedAt = readiness.at
-		target.ReadinessEventID = readiness.eventID
+	}
+	if !target.RequiresReadiness {
+		if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, "")]; ok {
+			target.RequiresReadiness = true
+			applyReadinessState(&target, "", readiness)
+		}
+	}
+	if target.RequiresReadiness {
+		target.ReadinessGates = cloneReadinessGates(target.ReadinessGates)
+		var sources []string
+		if target.ReadinessGates != nil {
+			sources = target.ReadinessGates.RequiredSources
+		}
+		if len(sources) == 0 {
+			sources = []string{""}
+		}
+		for _, source := range sources {
+			if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, source)]; ok {
+				applyReadinessState(&target, source, readiness)
+			}
+		}
+		if target.ReadinessGates == nil || len(target.ReadinessGates.RequiredSources) == 0 {
+			readiness, ok := ReadinessState{}, false
+			if target.ReadinessGates != nil {
+				readiness, ok = target.ReadinessGates.States[""]
+			}
+			if ok {
+				target.Ready = readiness.Ready
+			} else if target.ReadinessUpdatedAt.IsZero() {
+				target.Ready = false
+			}
+		} else {
+			target.Ready = target.routeReady()
+		}
 	}
 	picker := b.appsPicker[appID]
 	if picker == nil {
@@ -1445,10 +1473,17 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	set.add(target)
 }
 
-// SetInstanceReadiness applies the latest sidecar readiness event to every
-// cached copy of an instance. Status updates are timestamp/event-ID ordered so
-// a delayed PostgreSQL notification cannot roll back a newer transition.
+// SetInstanceReadiness retains the legacy unscoped readiness update surface.
+// New callers should use SetInstanceReadinessSource so independent probes are
+// combined instead of overwriting one another.
 func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64) {
+	b.SetInstanceReadinessSource(appID, instanceID, "", status, at, eventID)
+}
+
+// SetInstanceReadinessSource applies one source's latest readiness transition
+// to matching cached targets. Updates are ordered per source so one gate cannot
+// mask or roll back another gate's independent state.
+func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64) {
 	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
 		return
 	}
@@ -1466,7 +1501,7 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	if b.readinessState == nil {
 		b.readinessState = make(map[string]instanceReadiness)
 	}
-	key := staleTargetKey(appID, instanceID)
+	key := readinessStateKey(appID, instanceID, source)
 	current := b.readinessState[key]
 	if !current.at.IsZero() && !readinessAfter(at, eventID, current.at, current.eventID) {
 		return
@@ -1474,9 +1509,13 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	if picker := b.appsPicker[appID]; picker != nil {
 		for _, set := range picker.sets {
 			for _, target := range set.entries {
-				if target.InstanceID == instanceID && !target.ReadinessUpdatedAt.IsZero() &&
-					!readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
-					return
+				if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+					continue
+				}
+				if target.ReadinessGates != nil {
+					if current, ok := target.ReadinessGates.States[source]; ok && !readinessAfter(at, eventID, current.UpdatedAt, current.EventID) {
+						return
+					}
 				}
 			}
 		}
@@ -1489,18 +1528,73 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 	for _, set := range picker.sets {
 		for i := range set.entries {
 			target := &set.entries[i]
-			if target.InstanceID != instanceID {
+			if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
 				continue
 			}
-			if !target.ReadinessUpdatedAt.IsZero() && !readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
-				continue
+			if target.ReadinessGates == nil {
+				target.ReadinessGates = &ReadinessGates{}
 			}
+			if target.ReadinessGates.States == nil {
+				target.ReadinessGates.States = make(map[string]ReadinessState)
+			}
+			target.ReadinessGates.States[source] = ReadinessState{Ready: ready, UpdatedAt: at, EventID: eventID}
 			target.RequiresReadiness = true
-			target.Ready = ready
-			target.ReadinessUpdatedAt = at
-			target.ReadinessEventID = eventID
+			if len(target.ReadinessGates.RequiredSources) == 0 {
+				target.Ready = ready
+			} else {
+				target.Ready = target.routeReady()
+			}
+			noteReadinessFreshness(target, at, eventID)
 		}
 	}
+}
+
+func readinessStateKey(appID, instanceID, source string) string {
+	return staleTargetKey(appID, instanceID) + "\x00" + source
+}
+
+func cloneReadinessGates(in *ReadinessGates) *ReadinessGates {
+	if in == nil {
+		return nil
+	}
+	out := &ReadinessGates{RequiredSources: append([]string(nil), in.RequiredSources...), States: make(map[string]ReadinessState, len(in.States))}
+	for source, state := range in.States {
+		out.States[source] = state
+	}
+	return out
+}
+
+func applyReadinessState(target *Target, source string, readiness instanceReadiness) {
+	if target.ReadinessGates == nil {
+		target.ReadinessGates = &ReadinessGates{}
+	}
+	if target.ReadinessGates.States == nil {
+		target.ReadinessGates.States = make(map[string]ReadinessState)
+	}
+	current, ok := target.ReadinessGates.States[source]
+	if !ok || readinessAfter(readiness.at, readiness.eventID, current.UpdatedAt, current.EventID) {
+		target.ReadinessGates.States[source] = ReadinessState{Ready: readiness.ready, UpdatedAt: readiness.at, EventID: readiness.eventID}
+	}
+	noteReadinessFreshness(target, readiness.at, readiness.eventID)
+}
+
+func noteReadinessFreshness(target *Target, at time.Time, eventID int64) {
+	if target.ReadinessUpdatedAt.IsZero() || readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
+		target.ReadinessUpdatedAt = at
+		target.ReadinessEventID = eventID
+	}
+}
+
+func (t Target) requiresReadinessSource(source string) bool {
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.RequiresReadiness && source == ""
+	}
+	for _, required := range t.ReadinessGates.RequiredSources {
+		if required == source {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *PGBackend) purgeReadinessStateLocked(now time.Time) {
@@ -1750,7 +1844,12 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 		b.staleTargets = make(map[string]time.Time)
 	}
 	now := time.Now()
-	delete(b.readinessState, staleTargetKey(appID, instanceID))
+	prefix := staleTargetKey(appID, instanceID) + "\x00"
+	for key := range b.readinessState {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.readinessState, key)
+		}
+	}
 	b.purgeStaleTargetsLocked(now)
 	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
 	picker := b.appsPicker[appID]
