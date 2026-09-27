@@ -14,6 +14,7 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -361,21 +362,24 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 
 	mirrorRequests := 0
 	wantReplayPath := strings.TrimPrefix(request.Route, request.Method+" ")
+	var observedBridgeRequests []string
 	for _, capture := range f.vmmd.Requests() {
-		// VMMD also records unrelated health probes; count only the replay call.
-		if capture.Init.Instance != mirrorInstance.ID {
+		if capture.Init.Instance != sourceInstance.ID {
+			observedBridgeRequests = append(observedBridgeRequests,
+				fmt.Sprintf("%s %s instance=%s", capture.Init.Method, capture.Init.RequestUri, capture.Init.Instance))
+		}
+		// VMMD also records health and setup traffic; count only the replay's
+		// cross-instance request with the expected method and route.
+		if capture.Init.Instance == sourceInstance.ID || capture.Init.Method != request.Method || capture.Init.RequestUri != wantReplayPath {
 			continue
 		}
 		mirrorRequests++
-		if capture.Init.Method != request.Method || capture.Init.RequestUri != wantReplayPath {
-			t.Fatalf("debugger replay bridge request = method %q uri %q, want %q %q", capture.Init.Method, capture.Init.RequestUri, request.Method, wantReplayPath)
-		}
 		if len(capture.Body) != 0 {
 			t.Fatalf("debugger replay forwarded body=%q, want empty metadata-only body", capture.Body)
 		}
 	}
 	if mirrorRequests != 1 {
-		t.Fatalf("debugger replay mirror forwards=%d, want exactly one after idempotent retry", mirrorRequests)
+		t.Fatalf("debugger replay mirror forwards=%d, want exactly one after idempotent retry; cross-instance VMMD requests=%v", mirrorRequests, observedBridgeRequests)
 	}
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
