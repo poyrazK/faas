@@ -115,10 +115,7 @@ func outboundCacheRequestEligible(req *http.Request, ttlSeconds int) bool {
 			return false
 		}
 	}
-	if requestCacheControlDisablesCaching(req.Header) {
-		return false
-	}
-	return true
+	return !requestCacheControlDisablesCaching(req.Header)
 }
 
 func requestCacheControlDisablesCaching(header http.Header) bool {

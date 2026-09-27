@@ -213,7 +213,11 @@ func TestOutboundResponseCachePreservesBodyReadErrors(t *testing.T) {
 	if !errors.Is(err, errInjectedCacheRead) || string(body) != "partial" {
 		t.Fatalf("replayed body = %q, err=%v; want partial bytes and original read error", body, err)
 	}
-	if _, hit := cache.get("key", time.Now()); hit {
+	cached, hit := cache.get("key", time.Now())
+	if hit {
+		if cached != nil && cached.Body != nil {
+			_ = cached.Body.Close()
+		}
 		t.Fatal("response with a body read error was cached")
 	}
 }
