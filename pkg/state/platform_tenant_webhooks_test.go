@@ -365,14 +365,16 @@ func TestPgPlatformTenantSurfaceDeploymentChangedWebhook(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantDeployment := deployment
+			wantStatus := state.DeployFailed
 			if payload.DeploymentStatus == string(state.DeployLive) {
 				wantDeployment = liveDeployment
+				wantStatus = state.DeployLive
 			}
 			if payload.PlatformTenantID != tc.tenantID || payload.ExternalRef != tc.external ||
 				payload.SurfaceID != tc.surfaceID || payload.SurfaceName != tc.surfaceName || payload.Revision != wantDeployment.Revision ||
-				payload.DeploymentStatus != string(wantDeployment.Status) || !payload.StartedAt.Equal(wantDeployment.CreatedAt) ||
+				payload.DeploymentStatus != string(wantStatus) || !payload.StartedAt.Equal(wantDeployment.CreatedAt) ||
 				payload.ChangedAt.IsZero() {
-				t.Fatalf("deployment event payload = %+v", payload)
+				t.Fatalf("deployment event payload = %+v; want tenant=%s external_ref=%s surface=%s/%s status=%s deployment=%+v changed_at_set=%t", payload, tc.tenantID, tc.external, tc.surfaceID, tc.surfaceName, wantStatus, wantDeployment, !payload.ChangedAt.IsZero())
 			}
 			seen[payload.DeploymentStatus]++
 			for _, forbidden := range []string{appID, deployment.ID, liveDeployment.ID, "private-image-digest", "another-private-image", "0123456789abcdef", "private build failure"} {
