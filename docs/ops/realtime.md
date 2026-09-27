@@ -225,17 +225,26 @@ Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
 adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
-node-local callback spool (default `/run/faas/realtime-callbacks`). Message and
-disconnect events are fsynced before delivery and replayed after a realtimed
-restart; delivery is at-least-once, and poison events are retained under the
-outbox's `dead/` directory after the bounded retry budget. Keep the callback URL
+node-local callback spool (default `/var/lib/faas/realtime-callbacks`). The
+default directory is provisioned as `faas:faas` with mode `0700` and is writable
+through the realtimed systemd unit. On the first start after upgrading, realtimed
+moves pending events and dead letters from the former `/run/faas/realtime-callbacks`
+directory into the persistent spool before accepting connections. A conflicting
+event ID stops startup for operator inspection rather than discarding either
+copy. Message and disconnect events are fsynced before delivery and replayed
+after a daemon restart or host reboot; delivery is at-least-once, and poison
+events are retained under the outbox's `dead/` directory after the bounded
+retry budget. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
 application to process an event. Pending callbacks for one connection replay in
-WebSocket sequence order, with disconnect after the final message. The default
-`/run/faas` spool is lost on host reboot; set
-`FAAS_REALTIME_CALLBACK_OUTBOX` to a persistent mount if reboot survival is
-required. Callback handlers should deduplicate by event ID because delivery
-remains at-least-once.
+WebSocket sequence order, with disconnect after the final message. Existing
+`FAAS_REALTIME_CALLBACK_OUTBOX` overrides are unchanged; operators using an
+override must provide persistent storage if they need reboot survival. The
+spool contains callback payloads and bearer tokens, so keep it out of broadly
+readable backups. Callback handlers should deduplicate by event ID because
+delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
+not dead letters; monitor the `dead/` directory and remove reviewed files
+according to the operator's retention policy.
 
 `/internal/stats` includes callback-pending, callback-pending-bytes, and
 callback-dead-letter counters alongside the connection and delivery counters.

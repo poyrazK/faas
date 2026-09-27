@@ -59,8 +59,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	callbackTimeout := envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second)
+	outboxRoot := getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot)
+	if outboxRoot == realtime.DefaultCallbackOutboxRoot {
+		if err := realtime.MigrateCallbackOutbox(realtime.LegacyCallbackOutboxRoot, outboxRoot); err != nil {
+			return fmt.Errorf("realtimed: migrate callback outbox: %w", err)
+		}
+	}
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
-		Root: getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot),
+		Root: outboxRoot,
 	})
 	if err != nil {
 		return err

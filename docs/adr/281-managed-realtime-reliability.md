@@ -32,6 +32,6 @@
   order. Returning a generic failure for a partially delivered publish hides
   the queues that already accepted it and encourages duplicate retries.
 
-The callback spool remains node-local. Its default `/run/faas` location
-survives process restarts but requires a persistent mount for reboot survival.
+The callback spool remains node-local. ADR-282 moves its default from
+`/run/faas` to persistent host storage for reboot survival.
 The public publish operation reports queue admission, not client receipt.

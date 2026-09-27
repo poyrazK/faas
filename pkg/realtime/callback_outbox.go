@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	// DefaultCallbackOutboxRoot is node-local durable storage. /run/faas is
-	// writable by the realtimed unit and survives a process restart; operators
-	// that need reboot survival can override it with a persistent mount.
-	DefaultCallbackOutboxRoot                = "/run/faas/realtime-callbacks"
+	// DefaultCallbackOutboxRoot is node-local persistent storage. The runtime
+	// directory is retained only as a migration source for older installs.
+	DefaultCallbackOutboxRoot                = "/var/lib/faas/realtime-callbacks"
+	LegacyCallbackOutboxRoot                 = "/run/faas/realtime-callbacks"
 	DefaultCallbackOutboxMaxBytes      int64 = 64 << 20
 	DefaultCallbackOutboxMaxAttempts         = 10
 	DefaultCallbackOutboxRetryInterval       = time.Second
@@ -102,7 +102,7 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		cfg.RetryInterval = DefaultCallbackOutboxRetryInterval
 	}
 	deadRoot := filepath.Join(cfg.Root, "dead")
-	if err := os.MkdirAll(deadRoot, 0o750); err != nil {
+	if err := os.MkdirAll(deadRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("realtime: create callback outbox: %w", err)
 	}
 	q := &CallbackOutbox{
@@ -471,5 +471,14 @@ func writeCallbackOutboxFile(path string, payload []byte) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	return nil
+	return syncCallbackOutboxDir(filepath.Dir(path))
+}
+
+func syncCallbackOutboxDir(path string) error {
+	dir, err := os.Open(path) //nolint:forbidigo // path is the operator-owned callback spool directory, never a customer path
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
