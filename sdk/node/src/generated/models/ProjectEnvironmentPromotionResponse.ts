@@ -12,6 +12,10 @@ export type ProjectEnvironmentPromotionResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Whether this promotion copied the source's non-secret configuration.
+   */
+  sync_config?: boolean;
   promotion_hash: string;
   release_graph?: ProjectEnvironmentPromotionReleaseGraphResponse;
   workloads: Array<ProjectEnvironmentPromotionWorkloadResponse>;

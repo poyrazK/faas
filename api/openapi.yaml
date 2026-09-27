@@ -14011,6 +14011,11 @@ paths:
         required: true
         description: Source environment whose live releases are compared with the target.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: sync_config
+        in: query
+        required: false
+        description: Opt in to copying the source's non-secret configuration atomically with the target release graph.
+        schema: { type: boolean, default: false }
     get:
       tags: [projects]
       operationId: getProjectEnvironmentPromotionPreview
@@ -14020,7 +14025,10 @@ paths:
         response includes non-secret configuration changes, live deployment
         identities, target protection state, and an opaque promotion token
         bound to those identities. It does not create deployments or audit
-        mutations.
+        mutations. Configuration remains target-scoped by default;
+        `sync_config=true` opts into applying the source's non-secret
+        configuration snapshot with the release graph, and is blocked unless
+        the target already has an active release graph for atomic cutover.
       responses:
         '200':
           description: Promotion preview and immutable promotion identity.
@@ -14060,7 +14068,8 @@ paths:
         issued for that exact promotion. After cutover, every target artifact
         is verified against its source release and target environment. A
         failed verification automatically rolls back the promotion. Target
-        configuration and secrets are never copied from the source environment.
+        configuration remains target-scoped unless the token was created with
+        `sync_config=true`; secrets are never copied from the source environment.
       requestBody:
         required: true
         content:
@@ -29769,6 +29778,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether this exact promotion will copy the source's non-secret configuration to the target.
         to_environment_protected: { type: boolean }
         approval_required: { type: boolean }
         can_promote: { type: boolean }
@@ -29884,6 +29896,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether this promotion copied the source's non-secret configuration.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         release_graph: { $ref: '#/components/schemas/ProjectEnvironmentPromotionReleaseGraphResponse' }
         workloads:
@@ -29934,6 +29949,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Config sync was enabled for this promotion.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         status:
           type: string
@@ -29968,6 +29986,9 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
+        sync_config:
+          type: boolean
+          description: Whether the operation copied non-secret source config to its target.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         status: { type: string, enum: [running, succeeded, failed] }
         error: { type: string }

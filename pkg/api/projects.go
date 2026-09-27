@@ -455,6 +455,7 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	ProjectSlug            string                               `json:"project_slug"`
 	FromEnvironment        string                               `json:"from_environment"`
 	ToEnvironment          string                               `json:"to_environment"`
+	SyncConfig             bool                                 `json:"sync_config,omitempty"`
 	ToEnvironmentProtected bool                                 `json:"to_environment_protected"`
 	ApprovalRequired       bool                                 `json:"approval_required"`
 	CanPromote             bool                                 `json:"can_promote"`
@@ -480,7 +481,8 @@ type PromoteProjectEnvironmentRequest struct {
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's
 // promotion result. Promoted deployments reuse the source rootfs artifact;
-// environment configuration and secrets remain target-scoped.
+// environment configuration remains target-scoped unless sync_config was
+// explicitly requested, and secrets always remain target-scoped.
 type ProjectEnvironmentPromotionWorkloadResponse struct {
 	WorkloadSlug       string `json:"workload_slug"`
 	WorkloadName       string `json:"workload_name"`
@@ -496,6 +498,7 @@ type ProjectEnvironmentPromotionResponse struct {
 	ProjectSlug     string                                           `json:"project_slug"`
 	FromEnvironment string                                           `json:"from_environment"`
 	ToEnvironment   string                                           `json:"to_environment"`
+	SyncConfig      bool                                             `json:"sync_config,omitempty"`
 	PromotionHash   string                                           `json:"promotion_hash"`
 	ReleaseGraph    *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
 	Workloads       []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
@@ -535,6 +538,7 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	ProjectSlug             string                                              `json:"project_slug"`
 	FromEnvironment         string                                              `json:"from_environment"`
 	ToEnvironment           string                                              `json:"to_environment"`
+	SyncConfig              bool                                                `json:"sync_config,omitempty"`
 	PromotionHash           string                                              `json:"promotion_hash"`
 	Status                  string                                              `json:"status"`
 	Error                   string                                              `json:"error,omitempty"`
@@ -561,6 +565,7 @@ type ProjectEnvironmentPromotionSummaryResponse struct {
 	ProjectSlug             string `json:"project_slug"`
 	FromEnvironment         string `json:"from_environment"`
 	ToEnvironment           string `json:"to_environment"`
+	SyncConfig              bool   `json:"sync_config,omitempty"`
 	PromotionHash           string `json:"promotion_hash"`
 	Status                  string `json:"status"`
 	Error                   string `json:"error,omitempty"`

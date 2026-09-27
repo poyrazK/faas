@@ -46,6 +46,30 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 	}
+	if f.sawQuery != "from=staging" {
+		t.Fatalf("default promotion preview query = %q, want from=staging", f.sawQuery)
+	}
+}
+
+func TestProjectsEnvironmentPromotionPreviewCanIncludeConfigSync(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"to_environment_protected":false,"approval_required":false,"can_promote":true,"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[{"key":"REGION","kind":"changed","before":"us","after":"eu"}]},"changes":[],"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentPromotionPreview([]string{"shop", "--from", "staging", "--to", "production", "--sync-config"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" ||
+		f.sawQuery != "from=staging&sync_config=true" {
+		t.Fatalf("route = %s %s?%s", f.sawMethod, f.sawPath, f.sawQuery)
+	}
+	if !strings.Contains(out.String(), "Non-secret configuration to copy:") ||
+		!strings.Contains(out.String(), "REGION") || !strings.Contains(out.String(), "after=\"eu\"") {
+		t.Fatalf("preview did not show requested config changes: %s", out.String())
+	}
 }
 
 func TestProjectsEnvironmentPromotionPreviewShowsReleaseGraphSnapshot(t *testing.T) {
@@ -104,6 +128,22 @@ func TestProjectsEnvironmentHistoryUsesFilters(t *testing.T) {
 	}
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotions" || f.sawQuery != "before=cursor&from=staging&limit=10&status=succeeded" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestProjectsEnvironmentHistoryShowsConfigSync(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"items":[{"promotion_id":"prom-1","project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"status":"succeeded","created_at":"2026-09-27T00:00:00Z","updated_at":"2026-09-27T00:00:00Z"}]}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentHistory([]string{"shop", "production"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out.String(), "CONFIG") || !strings.Contains(out.String(), "synced") {
+		t.Fatalf("history did not report opt-in config sync: %s", out.String())
 	}
 }
 
