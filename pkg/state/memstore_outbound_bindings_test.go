@@ -53,6 +53,10 @@ func TestOutboundIntegrationValidation(t *testing.T) {
 		{"zero request policy", func(o *OutboundIntegrationOffer) { o.RequestPolicy = api.OutboundRequestPolicy{} }},
 		{"zero daily limit", func(o *OutboundIntegrationOffer) { n := int64(0); o.DailyRequestLimit = &n }},
 		{"oversized daily limit", func(o *OutboundIntegrationOffer) { o.DailyRequestLimit = &tooMany }},
+		{"negative response cache TTL", func(o *OutboundIntegrationOffer) { o.RequestPolicy.ResponseCacheTTLSeconds = -1 }},
+		{"oversized response cache TTL", func(o *OutboundIntegrationOffer) {
+			o.RequestPolicy.ResponseCacheTTLSeconds = api.MaxOutboundResponseCacheTTLSeconds + 1
+		}},
 		{"uppercase name", func(o *OutboundIntegrationOffer) { o.Name = "Stripe" }},
 		{"leading hyphen", func(o *OutboundIntegrationOffer) { o.Name = "-stripe" }},
 		{"trailing hyphen", func(o *OutboundIntegrationOffer) { o.Name = "stripe-" }},

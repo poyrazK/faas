@@ -52,6 +52,7 @@ type Handler struct {
 	IdentityVerifier       IdentityVerifier
 	CredentialResolver     ManagedCredentialResolver
 	managedAuthorization   map[string]string
+	responseCache          *outboundResponseCache
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -124,10 +125,15 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		client.Transport = http.DefaultTransport
 	}
 	client.Transport = newDependencyTransport(client.Transport)
+	responseCache, err := newOutboundResponseCache()
+	if err != nil {
+		return nil, errors.New("outbound response cache key could not be initialized")
+	}
 	return &Handler{
 		Resolver:               resolver,
 		Backend:                backend,
 		Client:                 client,
+		responseCache:          responseCache,
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
@@ -294,7 +300,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	resp, attempts, err := h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+	cacheEligible := outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
+	cacheKey := ""
+	var resp *http.Response
+	attempts := 0
+	cacheHit := false
+	if cacheEligible {
+		cacheKey = h.responseCache.key(integration.ID, appID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
+		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
+			resp = cached
+			cacheHit = true
+			h.Metrics.ObserveCache(metricIntegrationID, "hit")
+		} else {
+			h.Metrics.ObserveCache(metricIntegrationID, "miss")
+		}
+	}
+	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
+	if !cacheHit {
+		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, metricIntegrationID, integration.MaxRetries)
+		if err == nil && cacheEligible {
+			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
+		}
+	}
 	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
 	if err != nil {
 		dependencySpan.RecordError(err)

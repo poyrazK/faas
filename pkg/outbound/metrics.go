@@ -16,6 +16,7 @@ type Metrics struct {
 	inFlight         *prometheus.GaugeVec
 	upstreamRequests *prometheus.CounterVec
 	upstreamLatency  *prometheus.HistogramVec
+	cacheRequests    *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -47,6 +48,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:    "Outbound provider request latency by integration.",
 			Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30},
 		}, []string{"integration_id"}),
+		cacheRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_response_cache_requests_total",
+			Help: "Outbound response-cache lookups by integration and outcome (hit or miss).",
+		}, []string{"integration_id", "outcome"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -54,6 +59,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.inFlight,
 		m.upstreamRequests,
 		m.upstreamLatency,
+		m.cacheRequests,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -120,4 +126,11 @@ func (m *Metrics) ObserveUpstreamError(integrationID string, latency time.Durati
 	if latency >= 0 {
 		m.upstreamLatency.WithLabelValues(integrationID).Observe(latency.Seconds())
 	}
+}
+
+func (m *Metrics) ObserveCache(integrationID, outcome string) {
+	if m == nil || m.cacheRequests == nil {
+		return
+	}
+	m.cacheRequests.WithLabelValues(integrationID, outcome).Inc()
 }
