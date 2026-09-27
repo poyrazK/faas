@@ -5678,14 +5678,16 @@ haveApp:
 	// on the request context so Handler.observe can read it on
 	// the single exit funnel. Declared templates take precedence; common
 	// identifier shapes are inferred from the original public path before
-	// edge rewriting. The routeLabelSet bounds the per-app
-	// distinct-route count to 50 + the __route_other__ overflow
+	// edge rewriting. The routeLabelSet bounds each app to 50 distinct
+	// Prometheus route labels plus the __route_other__ overflow
 	// bucket. The label is empty when the app is not opted in
-	// (routeSetFor returns nil) — Handler.observe short-circuits
-	// the per-route emission on "".
+	// (route metrics are disabled) — Handler.observe short-circuits
+	// the per-route emission on "". Request telemetry uses the same bounded
+	// route set for entitled apps even when the operator disables those series.
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	if set != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5695,6 +5697,13 @@ haveApp:
 		preLabel := observedRouteLabel(r.Method, path)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
+		}
+		if h.requestTelemetry != nil {
+			telemetryRoute := otherRouteLabel
+			if telemetryRouteSet != nil {
+				telemetryRoute = telemetryRouteSet.admit(preLabel)
+			}
+			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
 		if set != nil {
 			routeLabel = set.admit(preLabel)
@@ -7302,7 +7311,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
-			telemetryRoute := routeLabel
+			telemetryRoute := requestTelemetryRouteFrom(r)
+			if telemetryRoute == "" {
+				telemetryRoute = routeLabel
+			}
 			if telemetryRoute == "" {
 				// Route metrics are optional; the telemetry schema requires a label.
 				telemetryRoute = otherRouteLabel
