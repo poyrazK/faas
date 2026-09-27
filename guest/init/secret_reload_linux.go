@@ -226,10 +226,6 @@ func validGuestRuntimeSecretRevision(revision string) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
-func fetchRuntimeSecrets(revision string) (runtimeConfigResponse, error) {
-	return fetchRuntimeSecretsForWorkload("", revision)
-}
-
 func fetchRuntimeSecretsForWorkload(workloadName, revision string) (runtimeConfigResponse, error) {
 	conn, err := dialRuntimeConfigHost()
 	if err != nil {

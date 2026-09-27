@@ -26,9 +26,18 @@ ALTER TABLE app_secret_runtime_reload_observations
     ADD CONSTRAINT app_secret_runtime_reload_observations_pkey
         PRIMARY KEY (app_id, scope, key, instance_id, workload_name);
 
-ALTER TABLE app_secret_runtime_reload_observations
-    ADD CONSTRAINT app_secret_runtime_reload_observation_workload_name_chk
-        CHECK (workload_name = '' OR workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+         WHERE conname = 'app_secret_runtime_reload_observation_workload_name_chk'
+           AND conrelid = 'app_secret_runtime_reload_observations'::regclass
+    ) THEN
+        ALTER TABLE app_secret_runtime_reload_observations
+            ADD CONSTRAINT app_secret_runtime_reload_observation_workload_name_chk
+                CHECK (workload_name = '' OR workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$');
+    END IF;
+END$$;
 
 -- +goose StatementEnd
 

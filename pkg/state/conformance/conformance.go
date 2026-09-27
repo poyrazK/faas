@@ -5,6 +5,7 @@ package conformance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -50,6 +51,7 @@ func Run(t *testing.T, open Open) {
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
+		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -2899,6 +2901,39 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
+}
+
+func testSidecarSecretReloadSignal(t *testing.T, fx *Fixture) {
+	const scope = "sidecar-signal"
+	deployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64),
+		Status: state.DeployLive, Scope: scope,
+		Sidecars: json.RawMessage(`[{"name":"worker","type":"sidecar","env_secrets":{"DATABASE_URL":"secret:DATABASE_URL"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(sidecar): %v", err)
+	}
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(sidecar): %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, "DATABASE_URL", []byte("cipher")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(sidecar): %v", err)
+	}
+	if err := fx.Store.SetDeploymentSidecarSecretReloadSignal(fx.Ctx, deployment.ID, "worker", ""); err != nil {
+		t.Fatalf("SetDeploymentSidecarSecretReloadSignal(disabled): %v", err)
+	}
+	targets, err := fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 1 || targets[0].WorkloadName != "worker" || targets[0].ReloadSupport != "disabled" {
+		t.Fatalf("sidecar targets with reload disabled = %+v, %v; want one disabled worker target", targets, err)
+	}
+	if err := fx.Store.SetDeploymentSidecarSecretReloadSignal(fx.Ctx, deployment.ID, "worker", "SIGHUP"); err != nil {
+		t.Fatalf("SetDeploymentSidecarSecretReloadSignal(enabled): %v", err)
+	}
+	targets, err = fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 1 || targets[0].WorkloadName != "worker" || targets[0].ReloadSupport != "enabled" {
+		t.Fatalf("sidecar targets with reload enabled = %+v, %v; want one enabled worker target", targets, err)
 	}
 }
 

@@ -434,10 +434,6 @@ type runtimeSecretSelection struct {
 	Revision string
 }
 
-func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, deploymentID, appID, accountID string) (runtimeSecretSelection, error) {
-	return selectRuntimeSecretRowsForWorkload(ctx, store, deploymentID, appID, accountID, "")
-}
-
 func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecretsStore, deploymentID, appID, accountID, workloadName string) (runtimeSecretSelection, error) {
 	if ctx == nil || store == nil || deploymentID == "" || appID == "" || accountID == "" {
 		return runtimeSecretSelection{}, errors.New("runtime secret selection dependencies are not configured")

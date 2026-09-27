@@ -4077,20 +4077,20 @@ func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 	// need that contract here (guest-init parses each file once
 	// at boot) but the determinism is free.
 	manifest := workloadManifest{
-		Name:          w.Name,
-		Type:          w.Type,
-		RamMB:         w.RamMB,
-		CPUMillicores: w.CPUMillicores,
-		ScratchMB:     w.ScratchMB,
-		DiskIOProfile: w.DiskIOProfile,
-		Port:          w.Port,
-		Essential:     w.Essential,
-		LivenessProbe: w.LivenessProbe,
-		StartupProbe:  w.StartupProbe,
-		Cmd:           w.Cmd,
-		Entrypoint:    w.Entrypoint,
-		DependsOn:     w.DependsOn,
-		SecretKeys:    w.SecretKeys,
+		Name:            w.Name,
+		Type:            w.Type,
+		RamMB:           w.RamMB,
+		CPUMillicores:   w.CPUMillicores,
+		ScratchMB:       w.ScratchMB,
+		DiskIOProfile:   w.DiskIOProfile,
+		Port:            w.Port,
+		Essential:       w.Essential,
+		LivenessProbe:   w.LivenessProbe,
+		StartupProbe:    w.StartupProbe,
+		Cmd:             w.Cmd,
+		Entrypoint:      w.Entrypoint,
+		DependsOn:       w.DependsOn,
+		GrantedEnvNames: w.GrantedEnvNames,
 		// StorageKey is omitted: the guest doesn't need to know
 		// the host-side path; it just reads the workload spec
 		// from the manifest and ignores the storage key. ADR-069
@@ -4150,7 +4150,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
 	secretKeyBytes := int64(0)
-	for _, key := range w.SecretKeys {
+	for _, key := range w.GrantedEnvNames {
 		secretKeyBytes += int64(len(key)) * 2
 	}
 	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe) + projectedSidecarProbeBytes(w.ReadinessProbe)
@@ -4239,21 +4239,21 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd            []string                 `json:"cmd,omitempty"`
-	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
-	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint     []string                 `json:"entrypoint,omitempty"`
-	Essential      bool                     `json:"essential"`
-	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
-	Name           string                   `json:"name"`
-	Port           int                      `json:"port"`
-	RamMB          int                      `json:"ram_mb"`
-	ScratchMB      int                      `json:"scratch_mb,omitempty"`
-	SecretKeys     []string                 `json:"secret_keys,omitempty"`
-	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
-	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
-	Type           string                   `json:"type"`
+	Cmd             []string                 `json:"cmd,omitempty"`
+	CPUMillicores   int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile   string                   `json:"disk_io_profile,omitempty"`
+	DependsOn       []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint      []string                 `json:"entrypoint,omitempty"`
+	Essential       bool                     `json:"essential"`
+	LivenessProbe   *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name            string                   `json:"name"`
+	Port            int                      `json:"port"`
+	RamMB           int                      `json:"ram_mb"`
+	ScratchMB       int                      `json:"scratch_mb,omitempty"`
+	GrantedEnvNames []string                 `json:"secret_keys,omitempty"`
+	StartupProbe    *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe  *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type            string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -4355,21 +4355,21 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:           sc.Name,
-			Type:           sc.Type,
-			RamMB:          sc.RamMB,
-			CPUMillicores:  sc.CPUMillicores,
-			ScratchMB:      sc.ScratchMB,
-			DiskIOProfile:  sc.DiskIOProfile,
-			Port:           sc.Port,
-			Essential:      sc.Essential,
-			LivenessProbe:  sc.LivenessProbe,
-			ReadinessProbe: sc.ReadinessProbe,
-			StartupProbe:   sc.StartupProbe,
-			Cmd:            sc.Cmd,
-			Entrypoint:     sc.Entrypoint,
-			DependsOn:      sc.DependsOn,
-			SecretKeys:     sc.SecretKeys,
+			Name:            sc.Name,
+			Type:            sc.Type,
+			RamMB:           sc.RamMB,
+			CPUMillicores:   sc.CPUMillicores,
+			ScratchMB:       sc.ScratchMB,
+			DiskIOProfile:   sc.DiskIOProfile,
+			Port:            sc.Port,
+			Essential:       sc.Essential,
+			LivenessProbe:   sc.LivenessProbe,
+			ReadinessProbe:  sc.ReadinessProbe,
+			StartupProbe:    sc.StartupProbe,
+			Cmd:             sc.Cmd,
+			Entrypoint:      sc.Entrypoint,
+			DependsOn:       sc.DependsOn,
+			GrantedEnvNames: sc.GrantedEnvNames,
 		})
 	}
 	blob, err := json.Marshal(roster)

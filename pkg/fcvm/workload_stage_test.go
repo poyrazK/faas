@@ -307,7 +307,7 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 			name: "explicit secret key names",
 			in: workloadManifest{
 				Name: "metrics", Type: "sidecar", RamMB: 64, Port: 9100, Essential: true,
-				SecretKeys: []string{"DATABASE_URL", "TOKEN"},
+				GrantedEnvNames: []string{"DATABASE_URL", "TOKEN"},
 			},
 			wantJSON: `{"essential":true,"name":"metrics","port":9100,"ram_mb":64,"secret_keys":["DATABASE_URL","TOKEN"],"type":"sidecar"}`,
 		},
@@ -349,7 +349,7 @@ func TestProjectedWorkloadManifestBytes_AccountsForCmdEntry(t *testing.T) {
 	withEntry := empty
 	withEntry.Entrypoint = []string{"/usr/local/bin/start.sh"}
 	withKeys := empty
-	withKeys.SecretKeys = []string{"DATABASE_URL", "TOKEN"}
+	withKeys.GrantedEnvNames = []string{"DATABASE_URL", "TOKEN"}
 
 	emptyP := projectedWorkloadManifestBytes(empty)
 	withCmdP := projectedWorkloadManifestBytes(withCmd)

@@ -2942,11 +2942,11 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
-		req.Sidecars[i].SecretKeys = req.Sidecars[i].SecretKeys[:0]
+		req.Sidecars[i].GrantedEnvNames = req.Sidecars[i].GrantedEnvNames[:0]
 		for _, entry := range secretEntries {
-			req.Sidecars[i].SecretKeys = append(req.Sidecars[i].SecretKeys, entry.Key)
+			req.Sidecars[i].GrantedEnvNames = append(req.Sidecars[i].GrantedEnvNames, entry.Key)
 		}
-		slices.Sort(req.Sidecars[i].SecretKeys)
+		slices.Sort(req.Sidecars[i].GrantedEnvNames)
 		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
@@ -7077,7 +7077,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			SealedEnv:       append([]SealedEnvEntry(nil), sc.SealedEnv...),
 			SealedSecrets:   append([]SealedEnvEntry(nil), sc.SealedSecrets...),
-			SecretKeys:      append([]string(nil), sc.SecretKeys...),
+			GrantedEnvNames: append([]string(nil), sc.GrantedEnvNames...),
 			preparedEnvJSON: append([]byte(nil), sc.preparedEnvJSON...),
 		})
 	}

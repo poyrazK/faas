@@ -30,7 +30,7 @@ export type AppManifest = {
    */
   stop_signal?: string | null;
   /**
-   * Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222).
+   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must differ from stop_signal (ADR-222).
    */
   secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
   /**

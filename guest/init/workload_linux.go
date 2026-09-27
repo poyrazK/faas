@@ -96,23 +96,23 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd            []string                 `json:"cmd,omitempty"`
-	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
-	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint     []string                 `json:"entrypoint,omitempty"`
-	Essential      bool                     `json:"essential"`
-	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
-	Name           string                   `json:"name"`
-	Port           int                      `json:"port"`
-	Ports          []api.WorkloadPort       `json:"ports,omitempty"`
-	RamMB          int                      `json:"ram_mb"`
-	ScratchMB      int                      `json:"scratch_mb,omitempty"`
-	SecretKeys     []string                 `json:"secret_keys,omitempty"`
-	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
-	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
-	Type           string                   `json:"type"` // "main" | "init" | "sidecar"
-	runtimeSecrets *runtimeSecretsState
+	Cmd             []string                 `json:"cmd,omitempty"`
+	CPUMillicores   int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile   string                   `json:"disk_io_profile,omitempty"`
+	DependsOn       []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint      []string                 `json:"entrypoint,omitempty"`
+	Essential       bool                     `json:"essential"`
+	LivenessProbe   *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name            string                   `json:"name"`
+	Port            int                      `json:"port"`
+	Ports           []api.WorkloadPort       `json:"ports,omitempty"`
+	RamMB           int                      `json:"ram_mb"`
+	ScratchMB       int                      `json:"scratch_mb,omitempty"`
+	GrantedEnvNames []string                 `json:"secret_keys,omitempty"`
+	StartupProbe    *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe  *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type            string                   `json:"type"` // "main" | "init" | "sidecar"
+	runtimeSecrets  *runtimeSecretsState
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -343,13 +343,13 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 			// Sidecar image metadata is immutable and stays outside the
 			// deployment roster. Project the OCI stop contract onto the
 			// supervisor before it can receive a shutdown signal.
-			if baked.SecretReloadSignal != "" && len(sc.SecretKeys) > 0 && sc.Type == "sidecar" {
+			if baked.SecretReloadSignal != "" && len(sc.GrantedEnvNames) > 0 && sc.Type == "sidecar" {
 				initialEnv, envErr := loadSidecarEnv(sc.Name)
 				if envErr != nil && !isNotExist(envErr) {
 					return fmt.Errorf("workload %q: load secret grants for reload: %w", sc.Name, envErr)
 				}
-				initialSecrets := make(map[string]string, len(sc.SecretKeys))
-				for _, key := range sc.SecretKeys {
+				initialSecrets := make(map[string]string, len(sc.GrantedEnvNames))
+				for _, key := range sc.GrantedEnvNames {
 					value, ok := initialEnv[key]
 					if !ok {
 						return fmt.Errorf("workload %q: granted secret %q is missing from its wake-time env", sc.Name, key)
@@ -805,7 +805,7 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
 		if spec.runtimeSecrets != nil {
 			currentSecrets := spec.runtimeSecrets.snapshot()
-			for _, key := range spec.SecretKeys {
+			for _, key := range spec.GrantedEnvNames {
 				if value, ok := currentSecrets[key]; ok {
 					sidecarEnv[key] = value
 				}
