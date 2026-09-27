@@ -342,3 +342,32 @@ func TestE2E_ServiceMesh_AccessBoundaries(t *testing.T) {
 		})
 	}
 }
+
+// ADR-266: a target's explicit deny-all caller policy overrides legacy
+// same-account reachability and runs before endpoint routing or waking.
+func TestE2E_ServiceMesh_TargetCallerAllowlistDeniesBeforeWake(t *testing.T) {
+	f := newNormalPathFixture(t, "mesh-target-denied-caller")
+	if f == nil {
+		return
+	}
+	createServiceApp(t, f, "meshrestricted", map[string]any{
+		"allowed_service_callers": []string{},
+	})
+
+	forwardCount := f.vmmd.ForwardCount()
+	restoreCount := len(f.vmmd.RestoreCalls())
+	coldBootCount := len(f.vmmd.ColdBootCalls())
+	status, _, body := serviceCall(t, f.h, f.app.ID, "meshrestricted", "/health")
+	if status != http.StatusForbidden || !strings.Contains(body, "target does not allow this service caller") {
+		t.Fatalf("status = %d, want target-policy 403; body=%s", status, body)
+	}
+	if got := f.vmmd.ForwardCount(); got != forwardCount {
+		t.Errorf("VMMD forwarded %d requests, want unchanged count %d", got, forwardCount)
+	}
+	if got := len(f.vmmd.RestoreCalls()); got != restoreCount {
+		t.Errorf("VMMD restored %d instances, want unchanged count %d", got, restoreCount)
+	}
+	if got := len(f.vmmd.ColdBootCalls()); got != coldBootCount {
+		t.Errorf("VMMD cold-booted %d instances, want unchanged count %d", got, coldBootCount)
+	}
+}
