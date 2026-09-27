@@ -1068,6 +1068,9 @@ const (
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
 	CodeTrafficServingChanged = "traffic_serving_changed"
+	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
+	// would change the serving weights owned by an in-flight canary rollout.
+	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1892,7 +1895,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -5015,6 +5018,15 @@ func ErrTrafficServingChanged() *Problem {
 		"Production revision changed",
 		"the expected revision is no longer the sole 100% serving deployment; run gregale traffic status before promoting again.").
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficChangeDuringCanary explains why the generic traffic-split route
+// cannot modify weights while the canary state machine owns them.
+func ErrTrafficChangeDuringCanary() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
+		"Canary rollout controls traffic",
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		WithDocs(docsBase + "/deployments#canary")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring

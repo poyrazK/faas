@@ -423,6 +423,19 @@ func TestStatusForCode_ImageCodes(t *testing.T) {
 	}
 }
 
+func TestTrafficChangeDuringCanaryProblem(t *testing.T) {
+	problem := ErrTrafficChangeDuringCanary()
+	if problem.Status != http.StatusConflict {
+		t.Fatalf("problem status = %d, want %d", problem.Status, http.StatusConflict)
+	}
+	if problem.Code != CodeTrafficChangeDuringCanary {
+		t.Fatalf("problem code = %q, want %q", problem.Code, CodeTrafficChangeDuringCanary)
+	}
+	if got := StatusForCode(CodeTrafficChangeDuringCanary); got != http.StatusConflict {
+		t.Fatalf("StatusForCode(%q) = %d, want %d", CodeTrafficChangeDuringCanary, got, http.StatusConflict)
+	}
+}
+
 func TestStatusForCode_ReleasePhaseUnavailable(t *testing.T) {
 	if got := StatusForCode(CodeReleasePhaseUnavailable); got != http.StatusUnprocessableEntity {
 		t.Errorf("StatusForCode(%q) = %d, want %d", CodeReleasePhaseUnavailable, got, http.StatusUnprocessableEntity)

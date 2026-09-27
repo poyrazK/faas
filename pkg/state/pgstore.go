@@ -7339,6 +7339,23 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 		appID); err != nil {
 		return Deployment{}, fmt.Errorf("state: lock sibling live rows: %w", err)
 	}
+	// The generic traffic-split endpoint must not bypass a live canary's
+	// persisted stage and its worker/health gates. Check only after every live
+	// row for the app is locked so this decision shares the write transaction's
+	// serialization boundary with canary advancement and rollout completion.
+	var activeCanary bool
+	if err := tx.QueryRow(ctx,
+		`select exists (
+		   select 1 from deployments
+		    where app_id = $1 and status = 'live'
+		      and canary_total_steps > 0
+		      and rollout_state in ('pending', 'rolling_out')
+		 )`, appID).Scan(&activeCanary); err != nil {
+		return Deployment{}, fmt.Errorf("state: check active canary before traffic update: %w", err)
+	}
+	if activeCanary {
+		return Deployment{}, ErrTrafficChangeDuringCanary
+	}
 
 	// (4) Stamp target + redistribute residual across siblings via
 	// the largest-remainder method (see RedistributeTraffic).
