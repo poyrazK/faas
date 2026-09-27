@@ -913,6 +913,7 @@ var cliCommands = []cliCommand{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
+			{Name: "source", Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
 			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
 			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
 			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},

@@ -672,9 +672,9 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		}
 	}
 	if command.Name == "deploy" {
-		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD at the repository root when origin exists.")
-		_, _ = fmt.Fprintln(w, "Use --path DIR for a subtree or --worktree to include local changes.")
-		_, _ = fmt.Fprintln(w, "\nExamples:\n  gregale deploy --plan\n  gregale deploy --path packages/api\n  gregale deploy --worktree")
+		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD when origin exists; otherwise it uses local files.")
+		_, _ = fmt.Fprintln(w, "Use --source=head to require a commit, --source=worktree to include local changes, or --path DIR for a subtree.")
+		_, _ = fmt.Fprintln(w, "\nExamples:\n  gregale deploy --plan\n  gregale deploy --source=head\n  gregale deploy --path packages/api --source=worktree")
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }

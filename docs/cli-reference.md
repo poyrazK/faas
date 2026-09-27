@@ -1161,13 +1161,14 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | deploy from a container image reference |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
+| `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
 | `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
