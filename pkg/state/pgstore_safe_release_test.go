@@ -1,10 +1,132 @@
 package state_test
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPg_AbortCanaryOnExpiredWorkerLease(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, priorID := seedLiveDeploy(t, s, ctx, "lease-emergency", "lease-emergency")
+	canary, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:lease-emergency",
+		Status: state.DeployPending, Scope: "default", CanaryTotalSteps: 4, TrafficPercent: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', rollout_state = 'rolling_out', canary_step = 1, traffic_percent = 10 where id = $1`, canary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set traffic_percent = 90 where id = $1`, priorID); err != nil {
+		t.Fatal(err)
+	}
+	grace := 2 * time.Minute
+	if _, _, err := s.AbortCanaryOnExpiredWorkerLease(ctx, appID, canary.ID, grace); !errors.Is(err, state.ErrSafeReleaseLeaseMissing) {
+		t.Fatalf("missing lease = %v", err)
+	}
+	if err := s.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AbortCanaryOnExpiredWorkerLease(ctx, appID, canary.ID, grace); !errors.Is(err, state.ErrSafeReleaseLeaseNotExpired) {
+		t.Fatalf("fresh lease = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update safe_release_worker_lease set healthy_at = clock_timestamp() - interval '3 minutes', expires_at = clock_timestamp() - interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AbortCanaryOnExpiredWorkerLease(ctx, appID, canary.ID, grace); !errors.Is(err, state.ErrSafeReleaseLeaseNotExpired) {
+		t.Fatalf("lease inside grace = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update safe_release_worker_lease set healthy_at = clock_timestamp() - interval '5 minutes', expires_at = clock_timestamp() - interval '3 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Release()
+	if _, err := listener.Exec(ctx, `listen deployment_changed`); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		deployment state.Deployment
+		auditID    int64
+		err        error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	recoverCtx, recoverCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer recoverCancel()
+	for range 2 {
+		go func() {
+			<-start
+			d, id, callErr := s.AbortCanaryOnExpiredWorkerLease(recoverCtx, appID, canary.ID, grace)
+			results <- result{deployment: d, auditID: id, err: callErr}
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first.err != nil {
+		first, second = second, first
+	}
+	if first.err != nil || !errors.Is(second.err, state.ErrNotFound) {
+		t.Fatalf("concurrent aborts: first=%v second=%v", first.err, second.err)
+	}
+	aborted, auditID := first.deployment, first.auditID
+	notifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	notification, err := listener.Conn().WaitForNotification(notifyCtx)
+	if err != nil || notification.Channel != "deployment_changed" || !strings.Contains(notification.Payload, appID) {
+		t.Fatalf("traffic invalidation = %+v, err=%v", notification, err)
+	}
+	if aborted.RolloutState != "aborted" || aborted.TrafficPercent != 0 || auditID == 0 {
+		t.Fatalf("abort = %+v, audit_id=%d", aborted, auditID)
+	}
+	prior, err := s.DeploymentByID(ctx, priorID)
+	if err != nil || prior.TrafficPercent != 100 {
+		t.Fatalf("predecessor = %+v, err=%v", prior, err)
+	}
+	var actor string
+	if err := pool.QueryRow(ctx, `select actor from deployment_audit where id = $1`, auditID).Scan(&actor); err != nil || actor != "apid:safe_release_lease_expired" {
+		t.Fatalf("audit actor = %q, err=%v", actor, err)
+	}
+	if _, _, err := s.AbortCanaryOnExpiredWorkerLease(ctx, appID, canary.ID, grace); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("duplicate abort = %v", err)
+	}
+}
+
+func TestPg_AbortServingPendingCanaryOnExpiredWorkerLease(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, priorID := seedLiveDeploy(t, s, ctx, "lease-pending", "lease-pending")
+	canary, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:lease-pending",
+		Status: state.DeployPending, Scope: "default", CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', rollout_state = 'pending', canary_step = 0, traffic_percent = 1 where id = $1`, canary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set traffic_percent = 99 where id = $1`, priorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update safe_release_worker_lease set healthy_at = clock_timestamp() - interval '5 minutes', expires_at = clock_timestamp() - interval '3 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	aborted, _, err := s.AbortCanaryOnExpiredWorkerLease(ctx, appID, canary.ID, 2*time.Minute)
+	if err != nil || aborted.RolloutState != "aborted" {
+		t.Fatalf("pending canary abort = %+v, err=%v", aborted, err)
+	}
+}
 
 func TestPg_RecoverRolloutAbortRedistributesTraffic(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)

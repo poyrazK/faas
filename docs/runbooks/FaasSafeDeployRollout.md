@@ -149,6 +149,14 @@ these staging checks against an app with a known-good predecessor:
   metric family unavailable. Confirm promotion holds and
   `canary_progression_circuit_breaker_total{event="hold_signal_unavailable"}`
   increases rather than treating the missing signal as zero OOMs.
+- **Worker loss during a serving canary:** start a canary with a known-good
+  same-scope predecessor and hold it at a nonzero traffic share. Stop meterd
+  after its last successful lease renewal. Confirm new canaries are rejected
+  after the 30-second lease TTL and the active canary is aborted after the
+  additional two-minute grace period plus one 15-second APID sweep. Confirm
+  the gateway serves the predecessor at 100%, the candidate at 0%, and the
+  deployment audit actor is `apid:safe_release_lease_expired`. Restart meterd
+  and confirm it does not resume the aborted rollout.
 
 The remaining abort event labels are `abort_p95_latency`,
 `abort_cold_boot_p95`, and `abort_oom`; hold labels include
@@ -177,6 +185,7 @@ slice. Watch these signals for at least one full rollout window:
 - `deployment_audit_emitted_total{outcome="failed"}`
 - `safedeploy_orchestrator_auto_aborted_total`
 - `safedeploy_orchestrator_auto_abort_failed_total`
+- `faas_safe_release_emergency_abort_total{outcome=~"aborted|failed|skipped|sweep_failed"}`
 
 The default stage and orchestrator cadence is 30 seconds. The default stuck
 threshold is 30 minutes. Once a rollout exceeds that threshold, meterd makes
@@ -185,16 +194,24 @@ known-good revision and the deployment audit records the automatic action.
 Tune `FAAS_SAFEDEPLOY_STUCK_AFTER` only after staging has established the
 expected rollout duration.
 
+APID independently checks active canaries every 15 seconds. If meterd's
+database lease has been expired for two minutes, APID atomically aborts each
+canary that is still serving traffic and restores its exact same-scope
+predecessor. Check the `apid:safe_release_lease_expired` deployment-audit actor
+and the emergency-abort metric after a worker-loss drill. A missing lease row,
+database error, or absent live predecessor leaves the canary for operator
+inspection and emits an error or skipped outcome.
+
 ## Kill switch and recovery
 
 Remove both Safe Deploy tokens from the meterd secret file and restart meterd.
 After meterd has stopped, remove the pair from APID's sealed environment and
 restart APID to unmount the operator mutations as well.
 The lease expires within 30 seconds of the last renewal, so APID rejects new
-canaries while this switch is active.
-This stops automatic progression and alert actions; it does not change the
-traffic already assigned to a deployment. Recover an in-flight rollout
-manually after inspecting its audit trail:
+canaries while this switch is active. Active canaries serving traffic are
+automatically aborted after the additional two-minute grace period while APID
+and Postgres remain available. Inspect the audit trail and recover manually if
+the emergency abort cannot find a serving predecessor or if APID is down:
 
 ```bash
 gregale rollouts recover <slug> --action abort \

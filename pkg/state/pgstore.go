@@ -8164,7 +8164,7 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 // the same closed-set guards so handler tests can pin the same
 // shape against either store.
 func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
-	return s.recoverRollout(ctx, appID, "", "", action, reason)
+	return s.recoverRollout(ctx, appID, "", "", action, reason, nil)
 }
 
 // RecoverRolloutForDeployment aborts the named candidate only when the
@@ -8174,10 +8174,21 @@ func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploy
 	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
-	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
+	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
-func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+// AbortCanaryOnExpiredWorkerLease is the emergency-only path for an in-flight
+// canary. The lease row is locked and rechecked in the same transaction that
+// restores its exact same-scope predecessor. A concurrent renewal either wins
+// first (no abort) or waits until the abort commits.
+func (s *PgStore) AbortCanaryOnExpiredWorkerLease(ctx context.Context, appID, deploymentID string, grace time.Duration) (Deployment, int64, error) {
+	if appID == "" || deploymentID == "" || grace < 0 {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return s.recoverRollout(ctx, appID, deploymentID, "", "abort", "Safe Deploy worker lease expired during active canary", &grace)
+}
+
+func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration) (Deployment, int64, error) {
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8195,6 +8206,24 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	if emergencyGrace != nil {
+		var expiresAt time.Time
+		if err := tx.QueryRow(ctx, `select expires_at from safe_release_worker_lease where singleton = true for update`).Scan(&expiresAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Deployment{}, 0, ErrSafeReleaseLeaseMissing
+			}
+			return Deployment{}, 0, fmt.Errorf("state: lock safe release worker lease: %w", err)
+		}
+		// clock_timestamp is sampled after the row lock; now() would retain
+		// the transaction start time even if a renewal held the lock.
+		var checkedAt time.Time
+		if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&checkedAt); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: read safe release worker lease clock: %w", err)
+		}
+		if checkedAt.Before(expiresAt.Add(*emergencyGrace)) {
+			return Deployment{}, 0, ErrSafeReleaseLeaseNotExpired
+		}
+	}
 	if deploymentID != "" {
 		// Deployment creation already serializes on the app row. Taking the
 		// same lock prevents a new release from changing the candidate or its
@@ -8233,6 +8262,44 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	}
 	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
 		return dep, 0, ErrRolloutStateInvalid
+	}
+	if emergencyGrace != nil {
+		rolloutState := NormalizeRolloutState(dep.RolloutState)
+		if IsServiceRollout(dep) || dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps ||
+			(rolloutState != "pending" && rolloutState != "rolling_out") || dep.TrafficPercent <= 0 {
+			return dep, 0, ErrRolloutStateInvalid
+		}
+		// Require the sole serving sibling, as the meterd circuit breaker
+		// does. Choosing the newest of several serving rows could send all
+		// traffic to an unrelated revision. Lock them while deciding.
+		rows, err := tx.Query(ctx,
+			`select id, created_at from deployments
+			  where app_id = $1 and scope = $2 and status = 'live'
+			    and id <> $3::uuid and traffic_percent > 0
+			  order by created_at desc, id desc for update`,
+			dep.AppID, dep.Scope, dep.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: emergency recovery predecessors: %w", err)
+		}
+		var predecessorCount int
+		var predecessorCreatedAt time.Time
+		for rows.Next() {
+			predecessorCount++
+			if err := rows.Scan(&expectedPredecessorID, &predecessorCreatedAt); err != nil {
+				rows.Close()
+				return Deployment{}, 0, fmt.Errorf("state: emergency recovery predecessor row: %w", err)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: emergency recovery predecessor rows: %w", err)
+		}
+		if predecessorCount == 0 {
+			return dep, 0, ErrNotFound
+		}
+		if predecessorCount != 1 || !predecessorCreatedAt.Before(dep.CreatedAt) {
+			return dep, 0, ErrRolloutStateInvalid
+		}
 	}
 	if expectedPredecessorID != "" {
 		if IsServiceRollout(dep) {
@@ -8519,11 +8586,12 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		auditData = rolloutAuditData("abort", reason)
 	}
 
-	// Audit emit rides the same tx as the deployment stamp —
-	// failures roll back the deployment update. The audit row's
-	// actor sentinel "operator:cli:recover_rollout" distinguishes
-	// the operator-driven path from the meterd-driven
-	// canary_progression / safedeploy orchestrator paths.
+	// Audit emit rides the same tx as the deployment stamp. The actor
+	// distinguishes operator recovery from APID's worker-loss fallback.
+	actor := "operator:cli:recover_rollout"
+	if emergencyGrace != nil {
+		actor = "apid:safe_release_lease_expired"
+	}
 	var auditID int64
 	if err := tx.QueryRow(ctx,
 		`insert into deployment_audit
@@ -8531,9 +8599,9 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
 		 returning id`,
 		dep.ID,
-		nil, // account_id is nullable; the CLI carries the actor via the actor column
+		nil, // account_id is nullable; actor records the operator or APID fallback
 		string(auditKind),
-		"operator:cli:recover_rollout",
+		actor,
 		now,
 		auditData,
 	).Scan(&auditID); err != nil {
@@ -8547,6 +8615,21 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	updated, scanErr := scanDeploymentWithRootfs(row2)
 	if scanErr != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout readback: %w", scanErr)
+	}
+	if emergencyGrace != nil {
+		// Keep the gateway cache invalidation in the same commit as the
+		// traffic restoration. A failed publish rolls back the abort rather
+		// than leaving an emergency recovery with stale routing weights.
+		payload, err := json.Marshal(map[string]any{
+			"kind": "traffic", "app_id": dep.AppID, "deployment_id": dep.ID,
+			"traffic_percent": updated.TrafficPercent,
+		})
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: emergency recovery notification payload: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyDeploymentChanged, string(payload)); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: emergency recovery notify deployment changed: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)

@@ -8,6 +8,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+var (
+	// ErrSafeReleaseLeaseNotExpired means the worker has renewed recently
+	// enough that emergency recovery must leave traffic alone.
+	ErrSafeReleaseLeaseNotExpired = errors.New("state: safe release worker lease has not expired past the recovery grace")
+	ErrSafeReleaseLeaseMissing    = errors.New("state: safe release worker lease is missing")
+)
+
+// SafeReleaseEmergencyRecoveryStore is the narrow APID fallback surface. It
+// does not advance rollouts or consume health metrics.
+type SafeReleaseEmergencyRecoveryStore interface {
+	ListCanaryInFlight(context.Context) ([]Deployment, error)
+	AbortCanaryOnExpiredWorkerLease(context.Context, string, string, time.Duration) (Deployment, int64, error)
+}
+
 // SafeReleaseWorkerLeaseStore is shared by meterd's successful tick observer
 // and apid's canary admission gate. The database owns the lease clock.
 type SafeReleaseWorkerLeaseStore interface {
@@ -44,3 +58,4 @@ func (m *MemStore) SafeReleaseWorkerLeaseReady(_ context.Context) (bool, error) 
 
 var _ SafeReleaseWorkerLeaseStore = (*PgStore)(nil)
 var _ SafeReleaseWorkerLeaseStore = (*MemStore)(nil)
+var _ SafeReleaseEmergencyRecoveryStore = (*PgStore)(nil)
