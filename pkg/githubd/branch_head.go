@@ -47,13 +47,13 @@ func (c *httpBranchHeads) BranchHead(ctx context.Context, installationID int64, 
 	}
 	token, err := c.tokens.Token(ctx, installationID)
 	if err != nil {
-		return "", fmt.Errorf("%w: installation token: %v", ErrBranchHeadUnavailable, err)
+		return "", fmt.Errorf("%w: installation token: %w", ErrBranchHeadUnavailable, err)
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/%s/branches/%s", GitHubAPI,
 		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(branch))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", fmt.Errorf("%w: request: %v", ErrBranchHeadUnavailable, err)
+		return "", fmt.Errorf("%w: request: %w", ErrBranchHeadUnavailable, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -61,7 +61,7 @@ func (c *httpBranchHeads) BranchHead(ctx context.Context, installationID int64, 
 	req.Header.Set("User-Agent", "faas-githubd/1.0")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: request: %v", ErrBranchHeadUnavailable, err)
+		return "", fmt.Errorf("%w: request: %w", ErrBranchHeadUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -73,7 +73,7 @@ func (c *httpBranchHeads) BranchHead(ctx context.Context, installationID int64, 
 		} `json:"commit"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&payload); err != nil {
-		return "", fmt.Errorf("%w: decode response: %v", ErrBranchHeadUnavailable, err)
+		return "", fmt.Errorf("%w: decode response: %w", ErrBranchHeadUnavailable, err)
 	}
 	if !isCanonicalCommitSHA(payload.Commit.SHA) {
 		return "", fmt.Errorf("%w: invalid commit SHA", ErrBranchHeadUnavailable)

@@ -68,6 +68,7 @@ func Run(t *testing.T, open Open) {
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
+		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
@@ -2969,6 +2970,48 @@ func testDeploymentLivePointer(t *testing.T, fx *Fixture) {
 	}
 	if old.Status != state.DeploySuperseded {
 		t.Errorf("old deployment status = %q, want %q", old.Status, state.DeploySuperseded)
+	}
+}
+
+func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	older, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, CommitSHA: strings.Repeat("a", 40),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(older GitHub revision): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(older): %v", err)
+	}
+	newer, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, CommitSHA: strings.Repeat("b", 40),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(newer GitHub revision): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, newer.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(newer): %v", err)
+	}
+	if newer.Revision <= older.Revision {
+		t.Fatalf("GitHub deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
+	}
+	if err := fx.Store.MarkGitHubDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+		t.Fatalf("stale GitHub promotion = %v, want ErrDeploymentSuperseded", err)
+	}
+	stale, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
+	if err != nil || stale.Status != state.DeploySuperseded {
+		t.Fatalf("stale GitHub deployment = %+v, %v; want superseded", stale, err)
+	}
+	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
+	if err != nil || live.ID != fx.Deployment.ID || live.Status != state.DeployLive {
+		t.Fatalf("live deployment after stale promotion = %+v, %v; want existing live deployment", live, err)
+	}
+	if err := fx.Store.MarkGitHubDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+		t.Fatalf("latest GitHub promotion: %v", err)
+	}
+	live, err = fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
+	if err != nil || live.ID != newer.ID || live.Status != state.DeployLive {
+		t.Fatalf("live deployment after latest promotion = %+v, %v; want latest GitHub revision", live, err)
 	}
 }
 
