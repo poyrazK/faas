@@ -349,7 +349,10 @@ type MemStore struct {
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
 	realtimeChannelRoutes           map[ManagedRealtimeChannelRoute]struct{}
 	realtimeChannelRouteCounts      map[string]int
-	realtimeChannelRouteOverflow    map[string]bool
+	realtimeChannelRouteOverflow    map[string]managedRealtimeChannelRouteOverflowState
+	realtimeChannelRouteSnapshots   map[string]int64
+	realtimeChannelRouteGeneration  int64
+	realtimeChannelRouteLocks       map[string]chan struct{}
 	tcpListeners                    map[string]TCPListener
 	managedRealtimeDrainOperations  map[string]ManagedRealtimeDrainOperation
 	managedRealtimeOwners           map[string]ManagedRealtimeConnectionOwner
@@ -1062,7 +1065,9 @@ func NewMemStore() *MemStore {
 		managedRealtimeEndpoints:        map[string]ManagedRealtimeEndpoint{},
 		realtimeChannelRoutes:           map[ManagedRealtimeChannelRoute]struct{}{},
 		realtimeChannelRouteCounts:      map[string]int{},
-		realtimeChannelRouteOverflow:    map[string]bool{},
+		realtimeChannelRouteOverflow:    map[string]managedRealtimeChannelRouteOverflowState{},
+		realtimeChannelRouteSnapshots:   map[string]int64{},
+		realtimeChannelRouteLocks:       map[string]chan struct{}{},
 		tcpListeners:                    map[string]TCPListener{},
 		managedRealtimeOwners:           map[string]ManagedRealtimeConnectionOwner{},
 		managedRealtimeDrainOperations:  map[string]ManagedRealtimeDrainOperation{},

@@ -131,8 +131,6 @@ type leasedRealtimeOwner struct {
 	ops                       *wire.OpsMetrics
 	channelRoutingEnabled     bool
 	channelRoutes             state.ManagedRealtimeChannelRouteStore
-	channelRoutesReadyMu      sync.RWMutex
-	channelRoutesReady        map[string]bool
 	clientFor                 func(state.ComputeNode) (realtimeNodeOperator, error)
 	leaseTTL                  time.Duration
 	publishWarnMu             sync.Mutex
@@ -149,7 +147,7 @@ func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, 
 	return &leasedRealtimeOwner{
 		registry: registry, nodes: nodes, localNodeID: localNodeID,
 		local: local, log: log, leaseTTL: managedRealtimeOwnerLeaseTTL,
-		clientFor: defaultRealtimeNodeOperator, channelRoutesReady: make(map[string]bool),
+		clientFor: defaultRealtimeNodeOperator,
 	}
 }
 
@@ -291,9 +289,14 @@ func (o *leasedRealtimeOwner) CloseConnection(ctx context.Context, endpointID, c
 func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connectionID, channel string) error {
 	return o.connectionOperation(ctx, endpointID, connectionID, false, func(lease state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
 		if o.channelRoutes != nil {
+			lock, err := o.channelRoutes.AcquireManagedRealtimeChannelRouteLock(ctx, lease.NodeID)
+			if err != nil {
+				return fmt.Errorf("realtime: lock channel route snapshot before subscribe: %w", err)
+			}
+			defer lock.Release()
 			if err := o.channelRoutes.AddManagedRealtimeChannelRoutes(ctx, []state.ManagedRealtimeChannelRoute{{
 				EndpointID: endpointID, Channel: channel, NodeID: lease.NodeID,
-			}}); err != nil && o.channelRoutingEnabled {
+			}}); err != nil {
 				// A new subscriber is never accepted while the shared routing
 				// hint cannot be committed; another apid may already have marked
 				// this node's snapshot complete.
@@ -445,51 +448,34 @@ dispatch:
 	return result, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
 }
 
-// publishRecipients narrows fanout only for nodes whose connection snapshot
-// completed on this apid. An unready node is always sent the message, while
+// publishRecipients narrows fanout only for nodes whose shared connection
+// snapshot is current. An unready node is always sent the message, while
 // stale positive route rows merely cause extra publishes.
 func (o *leasedRealtimeOwner) publishRecipients(ctx context.Context, endpointID, channel string, active []state.ComputeNode) []state.ComputeNode {
 	if !o.channelRoutingEnabled || o.channelRoutes == nil {
 		return active
 	}
-	nodeIDs, disabled, err := o.channelRoutes.ListManagedRealtimeChannelRouteNodeIDs(ctx, endpointID, channel)
-	if err != nil || disabled {
+	view, err := o.channelRoutes.ListManagedRealtimeChannelRouteView(ctx, endpointID, channel)
+	if err != nil || view.Disabled {
 		return active
 	}
-	targets := make(map[string]struct{}, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
+	targets := make(map[string]struct{}, len(view.NodeIDs))
+	for _, nodeID := range view.NodeIDs {
 		targets[nodeID] = struct{}{}
 	}
-	o.channelRoutesReadyMu.RLock()
-	defer o.channelRoutesReadyMu.RUnlock()
+	ready := make(map[string]struct{}, len(view.ReadyNodeIDs))
+	for _, nodeID := range view.ReadyNodeIDs {
+		ready[nodeID] = struct{}{}
+	}
 	recipients := make([]state.ComputeNode, 0, len(active))
 	for _, node := range active {
 		_, hasSubscriber := targets[node.ID]
-		if hasSubscriber || !o.channelRoutesReady[node.ID] {
+		_, snapshotReady := ready[node.ID]
+		if hasSubscriber || !snapshotReady {
 			recipients = append(recipients, node)
 		}
 	}
 	return recipients
-}
-
-func (o *leasedRealtimeOwner) setChannelRoutesReady(nodeID string, ready bool) {
-	o.channelRoutesReadyMu.Lock()
-	defer o.channelRoutesReadyMu.Unlock()
-	if ready {
-		o.channelRoutesReady[nodeID] = true
-	} else {
-		delete(o.channelRoutesReady, nodeID)
-	}
-}
-
-func (o *leasedRealtimeOwner) retainChannelRoutesReady(active map[string]struct{}) {
-	o.channelRoutesReadyMu.Lock()
-	defer o.channelRoutesReadyMu.Unlock()
-	for nodeID := range o.channelRoutesReady {
-		if _, ok := active[nodeID]; !ok {
-			delete(o.channelRoutesReady, nodeID)
-		}
-	}
 }
 
 func managedRealtimePublishNodeOutcome(err error) string {
