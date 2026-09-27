@@ -4345,3 +4345,45 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
   AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
 ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;
+
+-- name: RecordRequestIDJournal :one
+-- The request-ID journal is independent from sampled request telemetry. Only
+-- insert when the app is still owned by the authenticated account. The
+-- caller-generated record UUID makes an RPC retry idempotent without
+-- collapsing two customer requests that happen to reuse a public ID.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT sqlc.arg(id)::uuid,
+       a.account_id,
+       a.id,
+       sqlc.arg(request_id)::text,
+       NULLIF(sqlc.arg(trace_id)::text, ''),
+       sqlc.arg(received_at)::timestamptz,
+       sqlc.arg(expires_at)::timestamptz
+  FROM apps a
+ WHERE a.id = sqlc.arg(app_id)::uuid
+   AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
+-- name: GetRequestIDJournalByAppAndIdentifier :one
+-- Exact app/account-scoped lookup, latest first when callers reuse an ID.
+-- expires_at is checked as well as received_at so plan downgrades do not
+-- extend the original request-time retention window.
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND request_id = sqlc.arg(request_id)::text
+   AND received_at >= sqlc.arg(received_from)::timestamptz
+   AND received_at < sqlc.arg(received_until)::timestamptz
+   AND expires_at > sqlc.arg(now_at)::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1;

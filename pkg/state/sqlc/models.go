@@ -1906,6 +1906,16 @@ type ReleaseBundle struct {
 	AppliedAt    pgtype.Timestamptz
 }
 
+type RequestIDJournal struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type RequestTelemetry struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID

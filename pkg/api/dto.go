@@ -9660,15 +9660,17 @@ type AppOpenAPIPolicyPreviewRule struct {
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
-	// older debugger clients. TraceID is the public x-faas-request-id customers
-	// should use for support and lookup when it is available.
-	ID                  string                       `json:"id"`
-	DeploymentID        string                       `json:"deployment_id"`
-	Route               string                       `json:"route"`
-	Method              string                       `json:"method"`
-	Status              int                          `json:"status"`
-	LatencyMS           int                          `json:"latency_ms"`
-	Count               int                          `json:"count"`
+	// older debugger clients. RequestID is the public x-faas-request-id;
+	// TraceID remains the separate W3C distributed-tracing identifier.
+	ID                  string                       `json:"id,omitempty"`
+	RequestID           string                       `json:"request_id,omitempty"`
+	EvidenceStatus      string                       `json:"evidence_status,omitempty"`
+	DeploymentID        string                       `json:"deployment_id,omitempty"`
+	Route               string                       `json:"route,omitempty"`
+	Method              string                       `json:"method,omitempty"`
+	Status              int                          `json:"status,omitempty"`
+	LatencyMS           int                          `json:"latency_ms,omitempty"`
+	Count               int                          `json:"count,omitempty"`
 	ColdBoot            bool                         `json:"cold_boot"`
 	TraceID             *string                      `json:"trace_id"`
 	ReceivedAt          string                       `json:"received_at"`

@@ -307,6 +307,10 @@ type Querier interface {
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
+	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+	// expires_at is checked as well as received_at so plan downgrades do not
+	// extend the original request-time retention window.
+	GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error)
 	// Direct request drill-down for the customer debugger. Customers normally
 	// have the public x-faas-request-id stored as trace_id, while older clients
 	// may retain the internal telemetry-row UUID. Accept both without weakening
@@ -1024,6 +1028,11 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	// The request-ID journal is independent from sampled request telemetry. Only
+	// insert when the app is still owned by the authenticated account. The
+	// caller-generated record UUID makes an RPC retry idempotent without
+	// collapsing two customer requests that happen to reuse a public ID.
+	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
 	// apidsource.Enqueue and BEFORE writing the 201 response. On

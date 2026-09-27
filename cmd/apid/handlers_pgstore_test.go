@@ -213,6 +213,7 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	app := seedPGApp(t, e, "pg-debugger")
 	deploymentID := uuid.New()
 	now := time.Now().UTC().Truncate(time.Millisecond)
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	if err := e.store.InsertRequestTelemetry(context.Background(), sqlc.InsertRequestTelemetryParams{
 		AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
 		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
@@ -224,7 +225,7 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 		// Keep this row cold so the export regression test verifies that
 		// the default export path does not accidentally filter cold boots.
 		ColdBoot:     true,
-		TraceID:      pgtype.Text{},
+		TraceID:      pgtype.Text{String: traceID, Valid: true},
 		ReceivedAt:   pgtype.Timestamptz{Time: now, Valid: true},
 		Count:        1,
 		UaFamily:     "__unknown__",
@@ -232,6 +233,21 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 		Country:      "__unknown__",
 	}); err != nil {
 		t.Fatalf("InsertRequestTelemetry: %v", err)
+	}
+	journalStore := e.store.(state.RequestIDJournalStore)
+	publicRequestID := "client-visible-request-id"
+	if err := journalStore.RecordRequestIDJournal(context.Background(), state.RequestIDJournalEntry{
+		ID: uuid.NewString(), AccountID: e.acct.ID, AppID: app.ID, RequestID: publicRequestID,
+		TraceID: traceID, ReceivedAt: now, ExpiresAt: now.Add(7 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordRequestIDJournal: %v", err)
+	}
+	indexOnlyRequestID := "request-without-detailed-row"
+	if err := journalStore.RecordRequestIDJournal(context.Background(), state.RequestIDJournalEntry{
+		ID: uuid.NewString(), AccountID: e.acct.ID, AppID: app.ID, RequestID: indexOnlyRequestID,
+		ReceivedAt: now, ExpiresAt: now.Add(7 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordRequestIDJournal index-only: %v", err)
 	}
 
 	listRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests?since=24h", nil, nil)
@@ -280,6 +296,28 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	}
 	if got.ID != reqID || got.Route != "GET /debug" || got.LatencyMS != 87 {
 		t.Fatalf("debug request get = %+v, want id=%s route=GET /debug latency=87", got, reqID)
+	}
+	publicGetRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+publicRequestID, nil, nil)
+	if publicGetRec.Code != http.StatusOK {
+		t.Fatalf("public request-ID lookup status = %d: %s", publicGetRec.Code, publicGetRec.Body.String())
+	}
+	var publicGot api.DebugTelemetryRequestItem
+	if err := json.Unmarshal(publicGetRec.Body.Bytes(), &publicGot); err != nil {
+		t.Fatalf("decode public request-ID lookup: %v", err)
+	}
+	if publicGot.RequestID != publicRequestID || publicGot.ID != reqID || publicGot.TraceID == nil || *publicGot.TraceID != traceID {
+		t.Fatalf("public request-ID lookup = %+v, want request=%q row=%q trace=%q", publicGot, publicRequestID, reqID, traceID)
+	}
+	indexOnlyRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+indexOnlyRequestID, nil, nil)
+	if indexOnlyRec.Code != http.StatusOK {
+		t.Fatalf("index-only request-ID lookup status = %d: %s", indexOnlyRec.Code, indexOnlyRec.Body.String())
+	}
+	var indexOnly api.DebugTelemetryRequestItem
+	if err := json.Unmarshal(indexOnlyRec.Body.Bytes(), &indexOnly); err != nil {
+		t.Fatalf("decode index-only lookup: %v", err)
+	}
+	if indexOnly.RequestID != indexOnlyRequestID || indexOnly.EvidenceStatus != "request_id_only" || indexOnly.ReceivedAt == "" {
+		t.Fatalf("index-only lookup = %+v, want retained ID and explicit missing-detail status", indexOnly)
 	}
 
 	regRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/regressions?since=24h", nil, nil)

@@ -3737,6 +3737,59 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 	return i, err
 }
 
+const getRequestIDJournalByAppAndIdentifier = `-- name: GetRequestIDJournalByAppAndIdentifier :one
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = $1::uuid
+   AND app_id = $2::uuid
+   AND request_id = $3::text
+   AND received_at >= $4::timestamptz
+   AND received_at < $5::timestamptz
+   AND expires_at > $6::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1
+`
+
+type GetRequestIDJournalByAppAndIdentifierParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	RequestID     string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+	NowAt         pgtype.Timestamptz
+}
+
+type GetRequestIDJournalByAppAndIdentifierRow struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+// expires_at is checked as well as received_at so plan downgrades do not
+// extend the original request-time retention window.
+func (q *Queries) GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error) {
+	row := db.QueryRow(ctx, getRequestIDJournalByAppAndIdentifier,
+		arg.AccountID,
+		arg.AppID,
+		arg.RequestID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.NowAt,
+	)
+	var i GetRequestIDJournalByAppAndIdentifierRow
+	err := row.Scan(
+		&i.ID,
+		&i.RequestID,
+		&i.TraceID,
+		&i.ReceivedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getRequestTelemetryByAppAndIdentifier = `-- name: GetRequestTelemetryByAppAndIdentifier :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
@@ -11010,6 +11063,59 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT $1::uuid,
+       a.account_id,
+       a.id,
+       $2::text,
+       NULLIF($3::text, ''),
+       $4::timestamptz,
+       $5::timestamptz
+  FROM apps a
+ WHERE a.id = $6::uuid
+   AND a.account_id = $7::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id
+`
+
+type RecordRequestIDJournalParams struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    string
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+// The request-ID journal is independent from sampled request telemetry. Only
+// insert when the app is still owned by the authenticated account. The
+// caller-generated record UUID makes an RPC retry idempotent without
+// collapsing two customer requests that happen to reuse a public ID.
+func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, recordRequestIDJournal,
+		arg.ID,
+		arg.RequestID,
+		arg.TraceID,
+		arg.ReceivedAt,
+		arg.ExpiresAt,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one
