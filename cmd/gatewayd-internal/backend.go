@@ -887,6 +887,13 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
 		db.NotifyCorsPresetChanged,
+		// A deleted app, and every app of a purged account, leaves
+		// through these rather than app_changed. The route and app
+		// caches have no TTL, so without them a deleted app's host kept
+		// resolving to it — and after the purge freed the slug, a new
+		// owner's app at that host stayed unreachable on this node.
+		db.NotifyAppDelete,
+		db.NotifyAccountDeleted,
 	}
 	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
@@ -1115,6 +1122,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.FlushRoutes()
 			inv.InvalidateResponseCacheAll()
 		}
+	case db.NotifyAppDelete:
+		var p struct {
+			AppID string `json:"app_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err == nil && p.AppID != "" {
+			inv.ResetApp(p.AppID)
+			inv.InvalidateRoutesForApp(p.AppID)
+			inv.InvalidateResponseCacheByApp(p.AppID)
+		} else {
+			inv.FlushRoutes()
+			inv.InvalidateResponseCacheAll()
+		}
+	case db.NotifyAccountDeleted:
+		// The payload names only the account; its apps are already
+		// gone from Postgres. Account purges are a daily sweep, so a
+		// full flush is cheap.
+		inv.FlushRoutes()
+		inv.InvalidateResponseCacheAll()
 	case db.NotifyDomainChanged:
 		inv.FlushRoutes()
 	case db.NotifyDomainVerify:

@@ -787,7 +787,9 @@ const (
 	// / ADR-098). schedd's app-delete subscriber consumes it and
 	// evicts any in-flight wake for the deleted app via
 	// Engine.wakeCoord.Forget so followers unwind promptly
-	// instead of waiting for the wake-coord TTL.
+	// instead of waiting for the wake-coord TTL. gatewayd-internal
+	// consumes it (and NotifyAccountDeleted) to drop the app's cached
+	// host routes.
 	NotifyAppDelete = "app_delete"
 	// NotifyCliAuthCodeActivated fires when a dashboard /cli-auth
 	// POST successfully claims a pending code (binds it to an

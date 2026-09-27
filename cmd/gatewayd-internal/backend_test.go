@@ -1047,3 +1047,37 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 		t.Fatalf("app type = %q, want %q", got.Type, gateway.AppTypeApp)
 	}
 }
+
+// TestHandleInvalidation_AppDeleteAndAccountDeleted — an app delete and an
+// account purge were published only on app_delete / account_deleted,
+// which gatewayd did not subscribe to. The route and app caches have no
+// TTL, so a deleted app's host kept resolving to it, and once the purge
+// freed the slug a new owner's app at that host stayed unreachable.
+func TestHandleInvalidation_AppDeleteAndAccountDeleted(t *testing.T) {
+	f := &fakeInvalidator{}
+	log := testLogger()
+
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyAppDelete,
+		Payload: `{"slug":"shop","app_id":"app-9"}`,
+	}, log)
+	f.mu.Lock()
+	if len(f.resetApps) != 1 || f.resetApps[0] != "app-9" ||
+		len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != "app-9" ||
+		len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-9" || f.flushCnt != 0 {
+		t.Fatalf("app_delete: resetApps=%v routes=%v responseCache=%v flush=%d; want app-9 dropped everywhere, no full flush",
+			f.resetApps, f.routeInvalidations, f.responseCacheByApp, f.flushCnt)
+	}
+	f.mu.Unlock()
+
+	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyAppDelete, Payload: "not json"}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyAccountDeleted,
+		Payload: `{"account_id":"acct-1"}`,
+	}, log)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flushCnt != 2 || f.responseCacheAll != 2 {
+		t.Fatalf("malformed app_delete + account_deleted: flush=%d responseCacheAll=%d, want 2 and 2", f.flushCnt, f.responseCacheAll)
+	}
+}
