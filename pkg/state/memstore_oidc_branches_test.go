@@ -450,13 +450,17 @@ func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
 	}
 
 	first := seed("oidc-github-a-"+uuid.NewString()+"@example.com", "oidc-gh-a-"+uuid.NewString(), 101)
-	resolved, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
-		"repo:octocat/hello:environment:production")
-	if err != nil {
-		t.Fatalf("AccountByOIDCSubject(binding bootstrap): %v", err)
-	}
-	if resolved.ID != first.ID {
-		t.Fatalf("resolved account %q, want %q", resolved.ID, first.ID)
+	for _, subject := range []string{
+		"repo:octocat/hello:environment:production",
+		"repo:octocat@123456/hello@789012:environment:production",
+	} {
+		resolved, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer, subject)
+		if err != nil {
+			t.Fatalf("AccountByOIDCSubject(%q): %v", subject, err)
+		}
+		if resolved.ID != first.ID {
+			t.Fatalf("AccountByOIDCSubject(%q) resolved account %q, want %q", subject, resolved.ID, first.ID)
+		}
 	}
 
 	seed("oidc-github-b-"+uuid.NewString()+"@example.com", "oidc-gh-b-"+uuid.NewString(), 202)
