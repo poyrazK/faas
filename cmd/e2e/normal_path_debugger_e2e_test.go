@@ -197,6 +197,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	var analytics api.RequestAnalyticsResponse
 	serviceDependencyFound := false
 	outboundDependencyFound := false
+	dependencyRevisionFound := false
 	analyticsDeadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(analyticsDeadline) {
 		body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
@@ -218,15 +219,24 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 				if dependency.Type == "outbound_integration" && dependency.Kind == "https" && dependency.Name == "outbound.stripe" && dependency.Samples >= 1 {
 					outboundDependencyFound = true
 				}
+				for _, observation := range dependency.DeploymentObservations {
+					if observation.DeploymentID != sourceDeployment.ID {
+						continue
+					}
+					if observation.Samples < 1 || observation.Calls < 1 || observation.P50MS > observation.P95MS || observation.P95MS > observation.P99MS {
+						t.Fatalf("dependency deployment observation = %+v, want sampled metrics with ordered p50/p95/p99", observation)
+					}
+					dependencyRevisionFound = true
+				}
 			}
 		}
-		if serviceDependencyFound && outboundDependencyFound {
+		if serviceDependencyFound && outboundDependencyFound && dependencyRevisionFound {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !serviceDependencyFound || !outboundDependencyFound {
-		t.Fatalf("route analytics dependencies: service=%t outbound=%t routes=%+v", serviceDependencyFound, outboundDependencyFound, analytics.Routes)
+	if !serviceDependencyFound || !outboundDependencyFound || !dependencyRevisionFound {
+		t.Fatalf("route analytics dependencies: service=%t outbound=%t deployment-observation=%t routes=%+v", serviceDependencyFound, outboundDependencyFound, dependencyRevisionFound, analytics.Routes)
 	}
 	if analytics.Requests < 1 {
 		t.Fatalf("request analytics = %+v, want at least one persisted request", analytics)

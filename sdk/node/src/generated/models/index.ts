@@ -697,6 +697,7 @@ export type { RenameAppRequest } from './RenameAppRequest.js';
 export type { RepoResponse } from './RepoResponse.js';
 export type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';
 export type { RequestAnalyticsDependency } from './RequestAnalyticsDependency.js';
+export type { RequestAnalyticsDependencyDeploymentObservation } from './RequestAnalyticsDependencyDeploymentObservation.js';
 export type { RequestAnalyticsDeploymentCost } from './RequestAnalyticsDeploymentCost.js';
 export type { RequestAnalyticsDeploymentCostBreakdown } from './RequestAnalyticsDeploymentCostBreakdown.js';
 export type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';

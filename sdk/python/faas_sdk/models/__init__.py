@@ -1348,6 +1348,7 @@ from .request_analytics_compute_cost_allocation_method import RequestAnalyticsCo
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
 from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
 from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_dependency_deployment_observation import RequestAnalyticsDependencyDeploymentObservation
 from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
 from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
@@ -3000,6 +3001,7 @@ __all__ = (
     "RequestAnalyticsComputeCostBasis",
     "RequestAnalyticsComputeCostCurrency",
     "RequestAnalyticsDependency",
+    "RequestAnalyticsDependencyDeploymentObservation",
     "RequestAnalyticsDeploymentCost",
     "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",

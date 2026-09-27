@@ -35081,8 +35081,8 @@ components:
 
     RequestAnalyticsDependency:
       type: object
-      description: "Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count."
-      required: [type, name, samples, calls, error_calls, p95_ms, exclusive_p95_ms]
+      description: "Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count. Deployment observations compare the same route and dependency across immutable revisions when chronology and sample size permit."
+      required: [type, name, samples, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p95_ms]
       properties:
         type: { type: string, description: "Allowlisted dependency category." }
         kind: { type: string, description: "Allowlisted dependency kind when available." }
@@ -35090,8 +35090,37 @@ components:
         samples: { type: integer, format: int64, minimum: 0, description: "Number of retained span observations." }
         calls: { type: integer, format: int64, minimum: 0, description: "Observed span sample count weighted by the collapsed request-row count; not a full call count." }
         error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "Error calls divided by observed weighted calls." }
+        p50_ms: { type: integer, minimum: 0, description: "Weighted p50 inclusive span duration." }
         p95_ms: { type: integer, minimum: 0, description: "Weighted p95 inclusive span duration." }
+        p99_ms: { type: integer, minimum: 0, description: "Weighted p99 inclusive span duration." }
         exclusive_p95_ms: { type: integer, minimum: 0, description: "Weighted p95 span duration excluding overlapping direct child spans." }
+        deployment_observations:
+          type: array
+          description: "At most the five newest deployment observations for this route/dependency pair; comparisons are advisory and require at least 20 retained span observations on each deployment."
+          items: { $ref: '#/components/schemas/RequestAnalyticsDependencyDeploymentObservation' }
+
+    RequestAnalyticsDependencyDeploymentObservation:
+      type: object
+      description: "Sampled latency and error measurements for one route dependency under a single immutable deployment, with an advisory comparison to a prior sampled revision when possible."
+      required: [deployment_id, samples, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, exclusive_p95_ms, regression]
+      properties:
+        deployment_id: { type: string, description: "Immutable deployment owning these sampled dependency observations." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string, description: "RFC 3339 creation time used to order comparable revisions." }
+        samples: { type: integer, format: int64, minimum: 0, description: "Retained dependency span observations attached to this deployment." }
+        calls: { type: integer, format: int64, minimum: 0, description: "Observed span sample count weighted by collapsed request-row count." }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "Error share among this deployment's observed weighted calls." }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+        exclusive_p95_ms: { type: integer, minimum: 0 }
+        p95_change_pct: { type: number, format: double, description: "P95 percentage change from the preceding comparable deployment, when its baseline is non-zero." }
+        error_rate_change_pct: { type: number, format: double, description: "Error-rate change in percentage points from the preceding comparable deployment." }
+        compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID used as the preceding revision baseline." }
+        regression: { type: boolean, description: "True when p95 rose by at least 25% or error rate rose by at least 2 percentage points." }
 
     RequestAnalyticsComputeCost:
       type: object

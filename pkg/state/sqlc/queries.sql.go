@@ -7272,14 +7272,24 @@ func (q *Queries) ListRequestTelemetryByPlatformTenant(ctx context.Context, db D
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5
 `
 
@@ -7292,21 +7302,26 @@ type ListRequestTelemetryDependencySpansParams struct {
 }
 
 type ListRequestTelemetryDependencySpansRow struct {
-	ID           pgtype.UUID
-	Route        string
-	Method       string
-	Count        int32
-	Status       int32
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	SpansSummary []byte
+	ID                  pgtype.UUID
+	Route               string
+	Method              string
+	Count               int32
+	Status              int32
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	DeploymentID        string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
 }
 
-// Bounded read path for the historical debugger dependency view. The
+// Bounded read path for route-scoped dependency analytics. The
 // account_id predicate is defense in depth for callers that accidentally
 // pass an app id from another tenant; the app lookup remains the primary
-// IDOR boundary. The newest rows are preferred because spans_summary is
-// sampled evidence, not a complete request trace archive.
+// IDOR boundary. Evidence is newest-first within each route/deployment
+// partition, then interleaved so one high-volume revision cannot crowd all
+// prior deployments out of the bounded comparison window.
 func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryDependencySpans,
 		arg.AppID,
@@ -7331,6 +7346,10 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 			&i.TraceID,
 			&i.ReceivedAt,
 			&i.SpansSummary,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
 		); err != nil {
 			return nil, err
 		}

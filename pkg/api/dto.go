@@ -10128,16 +10128,44 @@ type RequestAnalyticsRoute struct {
 
 // RequestAnalyticsDependency is a route-scoped aggregate of classified,
 // retained dependency span evidence. Percentiles are weighted by the
-// collapsed request row count and should be read as sampled estimates.
+// collapsed request row count and should be read as sampled estimates;
+// deployment observations expose comparable per-revision samples.
 type RequestAnalyticsDependency struct {
-	Type           string `json:"type"`
-	Kind           string `json:"kind,omitempty"`
-	Name           string `json:"name"`
-	Samples        int64  `json:"samples"`
-	Calls          int64  `json:"calls"`
-	ErrorCalls     int64  `json:"error_calls"`
-	P95MS          int64  `json:"p95_ms"`
-	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
+	Type                   string                                            `json:"type"`
+	Kind                   string                                            `json:"kind,omitempty"`
+	Name                   string                                            `json:"name"`
+	Samples                int64                                             `json:"samples"`
+	Calls                  int64                                             `json:"calls"`
+	ErrorCalls             int64                                             `json:"error_calls"`
+	ErrorRatePct           float64                                           `json:"error_rate_pct"`
+	P50MS                  int64                                             `json:"p50_ms"`
+	P95MS                  int64                                             `json:"p95_ms"`
+	P99MS                  int64                                             `json:"p99_ms"`
+	ExclusiveP95MS         int64                                             `json:"exclusive_p95_ms"`
+	DeploymentObservations []RequestAnalyticsDependencyDeploymentObservation `json:"deployment_observations,omitempty"`
+}
+
+// RequestAnalyticsDependencyDeploymentObservation is one dependency's
+// sampled evidence for a route under a single immutable deployment. Regression
+// comparisons are advisory and are omitted when deployment ordering is
+// ambiguous or either side has fewer than the minimum retained span observations.
+type RequestAnalyticsDependencyDeploymentObservation struct {
+	DeploymentID        string   `json:"deployment_id"`
+	CommitSHA           string   `json:"commit_sha,omitempty"`
+	DeploymentTag       string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	Samples             int64    `json:"samples"`
+	Calls               int64    `json:"calls"`
+	ErrorCalls          int64    `json:"error_calls"`
+	ErrorRatePct        float64  `json:"error_rate_pct"`
+	P50MS               int64    `json:"p50_ms"`
+	P95MS               int64    `json:"p95_ms"`
+	P99MS               int64    `json:"p99_ms"`
+	ExclusiveP95MS      int64    `json:"exclusive_p95_ms"`
+	P95ChangePct        *float64 `json:"p95_change_pct,omitempty"`
+	ErrorRateChangePct  *float64 `json:"error_rate_change_pct,omitempty"`
+	ComparedTo          string   `json:"compared_to,omitempty"`
+	Regression          bool     `json:"regression"`
 }
 
 // RequestAnalyticsComputeCost describes the estimated compute value used by

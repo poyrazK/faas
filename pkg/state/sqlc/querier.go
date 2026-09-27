@@ -751,11 +751,12 @@ type Querier interface {
 	// owning account and the immutable request-time tenant snapshot; do not infer
 	// attribution by joining today's consumer/surface links.
 	ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error)
-	// Bounded read path for the historical debugger dependency view. The
+	// Bounded read path for route-scoped dependency analytics. The
 	// account_id predicate is defense in depth for callers that accidentally
 	// pass an app id from another tenant; the app lookup remains the primary
-	// IDOR boundary. The newest rows are preferred because spans_summary is
-	// sampled evidence, not a complete request trace archive.
+	// IDOR boundary. Evidence is newest-first within each route/deployment
+	// partition, then interleaved so one high-volume revision cannot crowd all
+	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
