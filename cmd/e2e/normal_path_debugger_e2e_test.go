@@ -91,7 +91,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 		t.Fatalf("debugger source request: status=%d body=%q", statusCode, body)
 	}
 
-	request := waitForNormalPathDebuggerRequest(t, f, sourceDeployment.ID, 20*time.Second)
+	request := waitForNormalPathDebuggerRequest(t, f, sourceDeployment.ID, traceID, 20*time.Second)
 	if request.Status != http.StatusOK || request.Method != http.MethodGet {
 		t.Fatalf("debugger request = %+v, want GET/200", request)
 	}
@@ -390,7 +390,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	}
 }
 
-func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploymentID string, timeout time.Duration) api.DebugTelemetryRequestItem {
+func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploymentID, expectedTraceID string, timeout time.Duration) api.DebugTelemetryRequestItem {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var last api.DebugTelemetryListResponse
@@ -404,7 +404,7 @@ func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploy
 			t.Fatalf("decode polled debugger requests: %v body=%s", err, body)
 		}
 		for _, request := range last.Requests {
-			if request.DeploymentID == deploymentID {
+			if request.DeploymentID == deploymentID && request.TraceID != nil && *request.TraceID == expectedTraceID {
 				return request
 			}
 		}

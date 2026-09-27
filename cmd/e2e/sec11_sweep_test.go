@@ -206,6 +206,10 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",      // harness convention; see harness.go:498
 		"FAAS_APP_ERRORS_ENABLED=false", // harness convention; see pkg/e2etest/harness.go:804 — ADR-096 / PR-B default-on kill-switch probes `faas-apid` unix user (config.go:144-149) which doesn't exist in the CI runner, so the gRPC listener never boots. Production deploys run as `faas-apid` via systemd and remain default-on; reader-path handlers (cmd/apid/handlers_app_errors.go) read from the SQL store regardless of the listener state.
+		// Security E2Es start APID with a hand-built environment instead of
+		// pkg/e2etest.testEnvCommon; keep the production-default spans writer
+		// off here too unless a test explicitly supplies its temp socket.
+		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
 		// Disable the optional recorder, but give the always-on listener a
 		// test-private socket for durable consumer usage. Telemetry-specific
 		// tests can override both entries via extra after this base environment.
