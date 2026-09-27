@@ -21581,6 +21581,11 @@ func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string) erro
 	if a.Status == AccountDeletedPending && a.DeletionRequestedAt != nil {
 		return nil
 	}
+	// Mirrors PgStore's `status in ('active','deleted_pending')`: a
+	// past_due or suspended account is not re-armed into deletion.
+	if a.Status != AccountActive && a.Status != AccountDeletedPending {
+		return ErrNotFound
+	}
 	a.Status = AccountDeletedPending
 	now := time.Now().UTC()
 	if a.DeletionRequestedAt == nil {

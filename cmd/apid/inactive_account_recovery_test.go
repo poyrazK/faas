@@ -168,3 +168,24 @@ func TestPastDueAccount_CannotDeploy(t *testing.T) {
 		t.Fatalf("deploy after paying = %d %s, want 202", rec.Code, rec.Body.String())
 	}
 }
+
+// TestDeleteAccount_PastDueGetsAReason — the store refuses to schedule a
+// past_due account's self-service deletion, and the handler reported that
+// refusal as a 503 "could not mark for deletion", which a customer
+// retries forever. It is a 409 that names the blocker.
+func TestDeleteAccount_PastDueGetsAReason(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/v1/account", nil)
+	r.Header.Set("Authorization", "Bearer "+env.key)
+	env.h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "outstanding payment") {
+		t.Fatalf("DELETE /v1/account on past_due = %d %s, want 409 naming the outstanding payment", rec.Code, rec.Body.String())
+	}
+	if got, _ := env.store.AccountByID(t.Context(), env.acct.ID); got.Status != state.AccountPastDue || got.DeletionRequestedAt != nil {
+		t.Fatalf("after refused delete: status=%s deletion_requested_at=%v", got.Status, got.DeletionRequestedAt)
+	}
+}

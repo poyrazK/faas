@@ -441,7 +441,6 @@ LookupDeploymentScopeExclusions
 LookupRuntimeSnapshot
 MTDSpendEurCents
 MarkAPIKeyRevoked
-MarkAccountDeletionPending
 MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion

@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -104,5 +105,38 @@ func testDunningDeletionIsScheduledAndPaidBack(t *testing.T, fx *Fixture) {
 	if acct.Status != state.AccountActive || acct.PastDueAt != nil || acct.DeletionRequestedAt != nil {
 		t.Fatalf("after payment: status %s, past_due_at %v, deletion_requested_at %v; want active with both cleared",
 			acct.Status, acct.PastDueAt, acct.DeletionRequestedAt)
+	}
+}
+
+// testSelfServiceDeletionOnlyFromActive pins MarkAccountDeletionPending's
+// status gate. Postgres only schedules an active (or already pending)
+// account; MemStore scheduled any status, so no test saw the production
+// refusal a past_due customer hit.
+func testSelfServiceDeletionOnlyFromActive(t *testing.T, fx *Fixture) {
+	s, ctx, id := fx.Store, fx.Ctx, fx.Account.ID
+	if err := s.MarkDunningStep(ctx, id, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatalf("MarkDunningStep(active→past_due): %v", err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, id); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("MarkAccountDeletionPending on past_due: err = %v, want ErrNotFound", err)
+	}
+	if acct, err := s.AccountByID(ctx, id); err != nil || acct.Status != state.AccountPastDue || acct.DeletionRequestedAt != nil {
+		t.Fatalf("after refused deletion: %+v, %v; want past_due with no deletion stamp", acct, err)
+	}
+	if err := s.UpdateAccountStatus(ctx, id, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, id); err != nil {
+		t.Fatalf("MarkAccountDeletionPending on active: %v", err)
+	}
+	first, err := s.AccountByID(ctx, id)
+	if err != nil || first.Status != state.AccountDeletedPending || first.DeletionRequestedAt == nil {
+		t.Fatalf("after deletion: %+v, %v; want deleted_pending with a stamp", first, err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, id); err != nil {
+		t.Fatalf("repeat MarkAccountDeletionPending: %v", err)
+	}
+	if again, _ := s.AccountByID(ctx, id); again.DeletionRequestedAt == nil || !again.DeletionRequestedAt.Equal(*first.DeletionRequestedAt) {
+		t.Fatalf("repeat call moved the grace anchor: %v → %v", first.DeletionRequestedAt, again.DeletionRequestedAt)
 	}
 }

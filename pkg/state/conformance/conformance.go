@@ -83,6 +83,7 @@ func Run(t *testing.T, open Open) {
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
+		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

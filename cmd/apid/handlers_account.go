@@ -213,7 +213,17 @@ func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct stat
 // the REST DELETE).
 func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string) (state.Account, *api.Problem) {
 	if acct.Status != state.AccountDeletedPending {
+		// The store only schedules an active account (a past_due one
+		// must not be re-armed into a self-service deletion). That
+		// refusal surfaced as a 503 "could not mark for deletion", which
+		// a customer retries forever; say what blocks it instead.
+		if acct.Status != state.AccountActive {
+			return acct, accountDeletionBlocked()
+		}
 		if err := s.store.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return acct, accountDeletionBlocked()
+			}
 			return acct, api.ErrCapacity("could not mark for deletion")
 		}
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
@@ -363,6 +373,12 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 		"via": via,
 	})
 	return fresh, nil
+}
+
+func accountDeletionBlocked() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeConflict,
+		"Account deletion blocked",
+		"an account with an outstanding payment cannot schedule its own deletion; resolve billing first: "+wire.DashboardBillingURL)
 }
 
 // dpaTemplate serves the DPA plaintext template. No auth — the DPA is
