@@ -2,7 +2,10 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -33,6 +36,60 @@ type ObjectS3Credential struct {
 	ManagedAppID  string
 	ManagedScope  string
 	ManagedPrefix string
+	// A rotation stage temporarily keeps the previous key valid while the
+	// binding's current key is delivered to replacement workloads. Stages are
+	// hidden from customer credential inventories.
+	RotationParentID  string
+	RotationWakeID    string
+	RotationStampedAt *time.Time
+}
+
+// ObjectS3CredentialRotationRequest switches the binding's current key and
+// its two sealed runtime secrets in one transaction. The previous key is
+// staged as a hidden credential until the rolling refresh finishes.
+type ObjectS3CredentialRotationRequest struct {
+	AccountID, BucketID, BindingID, WakeID string
+	AccessKeyID, KID                       string
+	SecretSealed                           []byte
+	Secrets                                []AppSecret
+}
+
+func validObjectS3CredentialRotationRequest(req ObjectS3CredentialRotationRequest) bool {
+	for _, id := range []string{req.AccountID, req.BucketID, req.BindingID, req.WakeID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return req.AccessKeyID != "" && req.KID != "" && len(req.SecretSealed) > 0 && len(req.Secrets) == 2
+}
+
+func validateObjectS3CredentialRotationSecrets(req ObjectS3CredentialRotationRequest, parent ObjectS3Credential) error {
+	if parent.ManagedAppID == "" || parent.ManagedPrefix == "" || parent.ManagedScope == "" {
+		return ErrConflict
+	}
+	want := map[string]bool{
+		parent.ManagedPrefix + "_ACCESS_KEY_ID":     true,
+		parent.ManagedPrefix + "_SECRET_ACCESS_KEY": true,
+	}
+	for _, secret := range req.Secrets {
+		if !want[secret.Key] || secret.AccountID != req.AccountID || secret.AppID != parent.ManagedAppID ||
+			secret.Scope != parent.ManagedScope || secret.ManagedObjectStorageCredentialID != req.BindingID ||
+			len(secret.Ciphertext) == 0 || strings.TrimSpace(secret.Kid) == "" || secret.ValueHash == "" {
+			return ErrInvalidArgument
+		}
+		delete(want, secret.Key)
+	}
+	if len(want) != 0 {
+		return ErrInvalidArgument
+	}
+	return nil
+}
+
+type ObjectS3CredentialRotationStore interface {
+	StageObjectS3CredentialRotation(context.Context, ObjectS3CredentialRotationRequest) (ObjectS3Credential, error)
+	PendingObjectS3CredentialRotation(context.Context, string, string, string) (string, error)
+	StampObjectS3CredentialRotation(context.Context, string, string) error
+	FinalizeObjectS3CredentialRotationsForApp(context.Context, string, string) error
 }
 
 // ObjectS3CredentialStore is kept separate from Store so unrelated daemon
@@ -59,8 +116,8 @@ type ObjectS3CredentialRekeyStore interface {
 // operations they actually use.
 type ObjectS3CredentialBindingStore interface {
 	ObjectS3CredentialStore
+	ObjectS3CredentialRotationStore
 	GetObjectS3Credential(context.Context, string, string, string) (ObjectS3Credential, error)
-	RotateObjectS3Credential(context.Context, string, string, string, string, []byte, string) (ObjectS3Credential, error)
 }
 
 func validObjectS3Credential(c ObjectS3Credential) bool {

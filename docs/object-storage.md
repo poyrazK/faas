@@ -237,9 +237,16 @@ API or stored in plaintext.
 
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
-`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
-and immediately invalidates the previous access key. Revocation invalidates
-the credential first, then removes the managed app secrets. Ordinary secret
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
+secret names stable. It updates the new key and its two sealed app secrets
+atomically. For a live app, the response sets `rotation_pending: true` while
+the previous key remains valid through a rolling runtime refresh. Gregale
+retires that key after old instances drain; `GET .../compute-bindings` shows
+`rotation_pending` until retirement. Retrying the rotate request while
+pending requeues the same refresh without creating another key. For an app
+with no live deployment or resident instances, rotation retires the previous
+key immediately. Revocation invalidates both keys first, then removes the
+managed app secrets. Ordinary secret
 PUT/DELETE calls cannot overwrite or remove a managed binding secret.
 
 ### Declare storage bindings in `gregale.yaml`

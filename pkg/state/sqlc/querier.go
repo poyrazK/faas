@@ -896,8 +896,15 @@ type Querier interface {
 	ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error)
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)
-	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationFinalizeForApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationFinalizeForAppParams) (int64, error)
+	ObjectS3CredentialRotationParentForUpdate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationParentForUpdateParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationPending(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationPendingParams) (string, error)
+	ObjectS3CredentialRotationReplace(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationReplaceParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStageParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationStampApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampAppParams) error
+	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
+	ObjectStorageManagedSecretRotate(ctx context.Context, db DBTX, arg ObjectStorageManagedSecretRotateParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
 	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error

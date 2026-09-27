@@ -300,6 +300,10 @@ first; `190-daemon-durability-primitives.md` picked the same number
 concurrently). The log above already contains several such pairs (157, 158, 167,
 168). A renumber plus a CI uniqueness gate is worth its own PR.
 
+## Object-storage binding decisions
+
+- [ADR-281: safe object-storage binding rotation](281-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)

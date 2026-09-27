@@ -2,8 +2,11 @@ package state
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -86,18 +89,119 @@ func (s *PgStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID
 	return objectS3CredentialFromSQL(row), nil
 }
 
-func (s *PgStore) RotateObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID, accessKeyID string, sealed []byte, kid string) (ObjectS3Credential, error) {
-	if accessKeyID == "" || len(sealed) == 0 || kid == "" {
+func (s *PgStore) PendingObjectS3CredentialRotation(ctx context.Context, accountID, bucketID, bindingID string) (string, error) {
+	wakeID, err := sqlc.New().ObjectS3CredentialRotationPending(ctx, s.pool, sqlc.ObjectS3CredentialRotationPendingParams{
+		AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID), RotationParentID: mustPgUUID(bindingID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return wakeID, mapErr(err)
+}
+
+func (s *PgStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {
+	if !validObjectS3CredentialRotationRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().ObjectS3CredentialRotate(ctx, s.pool, sqlc.ObjectS3CredentialRotateParams{
-		ID: mustPgUUID(credentialID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
-		AccessKeyID: accessKeyID, SecretSealed: sealed, Kid: kid,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	parent, err := q.ObjectS3CredentialRotationParentForUpdate(ctx, tx, sqlc.ObjectS3CredentialRotationParentForUpdateParams{
+		ID: mustPgUUID(req.BindingID), AccountID: mustPgUUID(req.AccountID), BucketID: mustPgUUID(req.BucketID),
 	})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
+	if err := validateObjectS3CredentialRotationSecrets(req, objectS3CredentialFromSQL(parent)); err != nil {
+		return ObjectS3Credential{}, err
+	}
+	if _, err := q.ObjectS3CredentialRotationPending(ctx, tx, sqlc.ObjectS3CredentialRotationPendingParams{
+		AccountID: mustPgUUID(req.AccountID), BucketID: mustPgUUID(req.BucketID), RotationParentID: mustPgUUID(req.BindingID),
+	}); err == nil {
+		return ObjectS3Credential{}, ErrConflict
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	row, err := q.ObjectS3CredentialRotationReplace(ctx, tx, sqlc.ObjectS3CredentialRotationReplaceParams{
+		ID: parent.ID, AccountID: parent.AccountID, BucketID: parent.BucketID,
+		AccessKeyID: req.AccessKeyID, SecretSealed: req.SecretSealed, Kid: req.KID,
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	_, err = q.ObjectS3CredentialRotationStage(ctx, tx, sqlc.ObjectS3CredentialRotationStageParams{
+		ID: mustPgUUID(uuid.NewString()), AccountID: parent.AccountID, BucketID: parent.BucketID,
+		AccessKeyID: parent.AccessKeyID, SecretSealed: parent.SecretSealed, Kid: parent.Kid,
+		Label: parent.Label, Permission: parent.Permission,
+		RotationParentID: parent.ID, RotationWakeID: mustPgUUID(req.WakeID),
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	for _, secret := range req.Secrets {
+		if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
+			return ObjectS3Credential{}, err
+		}
+		n, err := q.ObjectStorageManagedSecretRotate(ctx, tx, sqlc.ObjectStorageManagedSecretRotateParams{
+			AccountID: mustPgUUID(secret.AccountID), AppID: mustPgUUID(secret.AppID), Scope: secret.Scope,
+			ManagedObjectStorageCredentialID: mustPgUUID(secret.ManagedObjectStorageCredentialID), Key: secret.Key,
+			Ciphertext: secret.Ciphertext, Kid: pgtype.Text{String: secret.Kid, Valid: true},
+			ValueHash: pgtype.Text{String: secret.ValueHash, Valid: true},
+		})
+		if err != nil {
+			return ObjectS3Credential{}, mapErr(err)
+		}
+		if n != 1 {
+			return ObjectS3Credential{}, ErrConflict
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
 	return objectS3CredentialFromSQL(row), nil
+}
+
+func (s *PgStore) StampObjectS3CredentialRotation(ctx context.Context, appID, wakeID string) error {
+	if _, err := uuid.Parse(appID); err != nil {
+		return ErrInvalidArgument
+	}
+	if _, err := uuid.Parse(wakeID); err != nil {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	stamp, err := q.ObjectS3CredentialRotationStampStage(ctx, tx, sqlc.ObjectS3CredentialRotationStampStageParams{
+		ManagedAppID: mustPgUUID(appID), RotationWakeID: mustPgUUID(wakeID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	if err := q.ObjectS3CredentialRotationStampApp(ctx, tx, sqlc.ObjectS3CredentialRotationStampAppParams{
+		AppID: mustPgUUID(appID), ChangedAt: stamp,
+	}); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+func (s *PgStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context, appID, wakeID string) error {
+	if appID == "" || wakeID == "" {
+		return ErrInvalidArgument
+	}
+	_, err := sqlc.New().ObjectS3CredentialRotationFinalizeForApp(ctx, s.pool, sqlc.ObjectS3CredentialRotationFinalizeForAppParams{
+		ManagedAppID: mustPgUUID(appID), RotationWakeID: mustPgUUID(wakeID),
+	})
+	return mapErr(err)
 }
 
 func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
@@ -111,6 +215,8 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
 		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
+		RotationParentID: pgUUIDStringNullable(row.RotationParentID), RotationWakeID: pgUUIDStringNullable(row.RotationWakeID),
+		RotationStampedAt: optionalObjectS3Time(row.RotationStampedAt),
 	}
 	bucket := ObjectBucket{
 		ID: pgUUIDString(row.BucketID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
@@ -172,6 +278,8 @@ func objectS3CredentialFromSQL(row sqlc.ObjectStorageS3Credential) ObjectS3Crede
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
 		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
+		RotationParentID: pgUUIDStringNullable(row.RotationParentID), RotationWakeID: pgUUIDStringNullable(row.RotationWakeID),
+		RotationStampedAt: optionalObjectS3Time(row.RotationStampedAt),
 	}
 }
 

@@ -9581,6 +9581,9 @@ CREATE TABLE public.object_storage_s3_credentials (
     managed_app_id uuid,
     managed_scope text,
     managed_prefix text,
+    rotation_parent_id uuid,
+    rotation_wake_id uuid,
+    rotation_stamped_at timestamp with time zone,
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -9588,7 +9591,8 @@ CREATE TABLE public.object_storage_s3_credentials (
     CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
     CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
-    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL) OR (managed_app_id IS NOT NULL AND managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text AND managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text))
+    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL) OR (managed_app_id IS NOT NULL AND managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text AND managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text)),
+    CONSTRAINT object_storage_s3_credentials_rotation_shape_check CHECK (((rotation_parent_id IS NULL AND rotation_wake_id IS NULL AND rotation_stamped_at IS NULL) OR (rotation_parent_id IS NOT NULL AND rotation_wake_id IS NOT NULL AND managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL)))
 );
 
 CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
@@ -9599,8 +9603,12 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_rotation_parent_id_fkey FOREIGN KEY (rotation_parent_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
 CREATE INDEX object_storage_s3_credentials_bucket_active_idx ON public.object_storage_s3_credentials USING btree (account_id, bucket_id, created_at, id) WHERE (status = 'active'::text);
 CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.object_storage_s3_credentials USING btree (bucket_id, managed_app_id, managed_scope, managed_prefix) WHERE ((status = 'active'::text) AND (managed_app_id IS NOT NULL));
+CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.object_storage_s3_credentials USING btree (rotation_parent_id) WHERE ((rotation_parent_id IS NOT NULL) AND (status = 'active'::text));
 
 CREATE INDEX app_secrets_managed_object_storage_idx ON public.app_secrets USING btree (managed_object_storage_credential_id) WHERE (managed_object_storage_credential_id IS NOT NULL);
 CREATE INDEX app_secret_runtime_reload_observations_instance_idx ON public.app_secret_runtime_reload_observations USING btree (instance_id);
