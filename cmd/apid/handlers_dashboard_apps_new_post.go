@@ -219,6 +219,10 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) createDashboardWizardApp(ctx context.Context, acct state.Account, slug string) (state.App, *api.Problem) {
+	// POST /v1/apps requires a verified email; this dashboard twin did not.
+	if !acct.EmailVerified() {
+		return state.App{}, api.ErrEmailVerificationRequired()
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug}, limits)
 	if problem != nil {
