@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -75,6 +76,7 @@ export type AppManifest = {
    * Effective policy for known monitor/crawler requests.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
   /**
    * Monitor-facing health path.
    */

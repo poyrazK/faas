@@ -39,6 +39,7 @@ from ..models.service_binding_transport import ServiceBindingTransport, check_se
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
@@ -138,6 +139,10 @@ class CreateAppRequest:
     crawler_policy: CreateAppRequestCrawlerPolicy | Unset = "wake"
     """Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
     wake."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A
+    gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path. Empty/omitted uses /healthz."""
     health_path_wakes: bool | Unset = False
@@ -301,6 +306,10 @@ class CreateAppRequest:
         if not isinstance(self.crawler_policy, Unset):
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
         health_path = self.health_path
 
         health_path_wakes = self.health_path_wakes
@@ -408,6 +417,8 @@ class CreateAppRequest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
@@ -449,6 +460,7 @@ class CreateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
@@ -615,6 +627,13 @@ class CreateAppRequest:
         else:
             crawler_policy = check_create_app_request_crawler_policy(_crawler_policy)
 
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
         health_path = d.pop("health_path", UNSET)
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
@@ -693,6 +712,7 @@ class CreateAppRequest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,

@@ -52,6 +52,61 @@ func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	assertProblem(t, rec, 422, api.CodeValidation)
 }
 
+func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	config := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 2, Burst: 4}
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Manifest.PreAuthRateLimit == nil || *out.Manifest.PreAuthRateLimit != *config {
+		t.Fatalf("create response config = %+v", out.Manifest.PreAuthRateLimit)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "protected-app")
+	if err != nil || stored.Manifest.PreAuthRateLimit == nil || *stored.Manifest.PreAuthRateLimit != *config {
+		t.Fatalf("stored config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
+	}
+
+	enforced := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 2}
+	rec = e.do(t, "PATCH", "/v1/apps/protected-app", api.UpdateAppRequest{PreAuthRateLimit: enforced}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "protected-app")
+	if err != nil || stored.Manifest.PreAuthRateLimit == nil || *stored.Manifest.PreAuthRateLimit != *enforced {
+		t.Fatalf("patched config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
+	}
+
+	rec = e.do(t, "PATCH", "/v1/apps/protected-app", api.UpdateAppRequest{PreAuthRateLimit: &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitOff}}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "protected-app")
+	if err != nil || stored.Manifest.PreAuthRateLimit == nil || stored.Manifest.PreAuthRateLimit.Mode != api.PreAuthRateLimitOff {
+		t.Fatalf("disabled config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
+	}
+}
+
+func TestAppPreAuthRateLimitRejectsInvalidConfig(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	for _, config := range []*api.PreAuthRateLimitConfig{
+		{Mode: "", RequestsPerSecond: 1, Burst: 1},
+		{Mode: "challenge", RequestsPerSecond: 1, Burst: 1},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 0, Burst: 1},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 6, Burst: 1},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 21},
+	} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "invalid-preauth", PreAuthRateLimit: config}, nil)
+		if rec.Code != 400 {
+			t.Fatalf("config %+v: %d %s", config, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestAppRevisionPinTTL(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "skew-app", RevisionPinTTLSeconds: 3600}, nil)

@@ -115,6 +115,9 @@ type App struct {
 	// limiting, or capacity admission. Undeclared paths are answered directly
 	// by the gateway and never wake an application.
 	OnlyAllowDeclaredRoutes bool
+	// PreAuthRateLimit limits requests from one trusted source before
+	// consumer-key lookup. Empty/off preserves existing behavior.
+	PreAuthRateLimit *api.PreAuthRateLimitConfig
 	// DeclaredRoutes is an optional explicit route list. When non-empty it is
 	// preferred over the imported OpenAPI document by the matcher.
 	DeclaredRoutes []DeclaredRoute
@@ -892,6 +895,7 @@ type Handler struct {
 	backend        Backend
 	declaredRoutes DeclaredRouteMatcher
 	limiter        *Limiter
+	preAuthLimiter *preAuthSourceLimiter
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -1349,8 +1353,9 @@ func NewHandler(backend Backend) *Handler {
 // registry) and a custom slog logger.
 func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h := &Handler{
-		backend: backend,
-		limiter: NewLimiter(),
+		backend:        backend,
+		limiter:        NewLimiter(),
+		preAuthLimiter: newPreAuthSourceLimiter(),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -5706,8 +5711,13 @@ haveApp:
 			r = withAuditSourceIP(r, ip.String())
 		}
 	}
-	// ADR-120: resolve end-customer identity before any edge rewrite, body
-	// buffering, throttling, or wake work. This keeps invalid credentials from
+	if h.applyPreAuthRateLimit(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	// ADR-120: resolve end-customer identity before edge rewrite, body
+	// buffering, customer rule throttling, or wake work. The optional source
+	// limit above is deliberately earlier so a burst can avoid credential
+	// lookup work. This keeps invalid credentials from
 	// consuming downstream resources and makes the same stable consumer ID
 	// available to later rate-limit and metering stages.
 	if !h.enforceConsumerAuth(w, r, rec, app) {

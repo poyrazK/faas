@@ -1642,15 +1642,16 @@ type AppManifest struct {
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
-	RequestTimeoutS int              `json:"request_timeout_s,omitempty"`
-	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
-	Favicon         []byte           `json:"favicon,omitempty"`
-	RobotsTxt       string           `json:"robots_txt,omitempty"`
-	HeadWakes       bool             `json:"head_wakes,omitempty"`
-	CrawlerPolicy   string           `json:"crawler_policy,omitempty"`
-	HealthPath      string           `json:"health_path,omitempty"`
-	HealthPathWakes bool             `json:"health_path_wakes,omitempty"`
+	RequestTimeoutS  int                         `json:"request_timeout_s,omitempty"`
+	ServiceReplicas  *ServiceReplicas            `json:"service_replicas,omitempty"`
+	WorkerReplicas   *WorkerScaling              `json:"worker_replicas,omitempty"`
+	Favicon          []byte                      `json:"favicon,omitempty"`
+	RobotsTxt        string                      `json:"robots_txt,omitempty"`
+	HeadWakes        bool                        `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string                      `json:"crawler_policy,omitempty"`
+	PreAuthRateLimit *api.PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
+	HealthPath       string                      `json:"health_path,omitempty"`
+	HealthPathWakes  bool                        `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
@@ -1701,7 +1702,7 @@ func (m AppManifest) IsZero() bool {
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
 }
 

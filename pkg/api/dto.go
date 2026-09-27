@@ -262,6 +262,8 @@ type CreateAppRequest struct {
 	// to wake; cached serves an existing edge cache and never wakes; block
 	// returns 503 + Retry-After.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit opts into a bounded per-source ingress throttle.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath selects the monitor-facing health endpoint. Empty uses
 	// /healthz. The gateway answers this path from the last known wake state
 	// unless HealthPathWakes is enabled.
@@ -559,6 +561,8 @@ type UpdateAppRequest struct {
 	// CrawlerPolicy changes the known monitor/crawler wake policy. Nil is
 	// unchanged; an empty string restores the default wake policy.
 	CrawlerPolicy *string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit replaces the guard configuration; mode=off disables it.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath replaces the monitor-facing health endpoint. Nil is
 	// unchanged; an empty string restores /healthz.
 	HealthPath *string `json:"health_path,omitempty"`

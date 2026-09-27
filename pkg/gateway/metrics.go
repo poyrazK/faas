@@ -21,6 +21,7 @@
 //     through the bounded accountLabelSet primitive (cap=10k,
 //     overflow="__other__") — see SetQueueDepth below.
 //   - gateway_rate_limited_total{app, plan}          counter
+//   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
 //     consume failures that fell back to process-local counters; scope is a
 //     closed app|account|rule|other set)
@@ -218,6 +219,7 @@ type Metrics struct {
 	concurrencyQueueDepth *prometheus.GaugeVec
 	concurrencyQueueWait  *prometheus.HistogramVec
 	rateLimited           *prometheus.CounterVec
+	preAuthRateLimited    *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
@@ -1277,6 +1279,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_rate_limited_total",
 			Help: "Requests rejected by the per-app rate limiter.",
 		}, []string{"app", "plan"}),
+		preAuthRateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_pre_auth_rate_limit_total",
+			Help: "Pre-auth source limit decisions by app and outcome (would_block, blocked, or untrusted_source).",
+		}, []string{"app", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
 			Help: "Central rate-limit consumes that failed and fell back to process-local counters, labelled by closed scope (app|account|rule|other).",
@@ -1871,6 +1877,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
+	reg.MustRegister(m.preAuthRateLimited)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -2408,6 +2415,13 @@ func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 // ObserveRateLimit records a 429 outcome.
 func (m *Metrics) ObserveRateLimit(appID, plan string) {
 	m.rateLimited.WithLabelValues(appID, plan).Inc()
+}
+
+func (m *Metrics) ObservePreAuthRateLimit(appID, outcome string) {
+	if m == nil || m.preAuthRateLimited == nil {
+		return
+	}
+	m.preAuthRateLimited.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveRateLimitDegraded records a failed authoritative central consume
