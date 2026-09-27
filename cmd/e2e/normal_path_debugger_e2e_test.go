@@ -360,16 +360,15 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	}
 
 	mirrorRequests := 0
+	wantReplayPath := "/" + strings.TrimPrefix(request.Route, "/")
 	for _, capture := range f.vmmd.Requests() {
-		if capture.Init.Instance != sourceInstance.ID {
-			mirrorRequests++
-			wantReplayPath := "/" + strings.TrimPrefix(request.Route, "/")
-			if capture.Init.Method != request.Method || capture.Init.RequestUri != wantReplayPath {
-				t.Fatalf("debugger replay bridge request = method %q uri %q, want %q %q", capture.Init.Method, capture.Init.RequestUri, request.Method, wantReplayPath)
-			}
-			if len(capture.Body) != 0 {
-				t.Fatalf("debugger replay forwarded body=%q, want empty metadata-only body", capture.Body)
-			}
+		// VMMD also records unrelated health probes; count only the replay call.
+		if capture.Init.Instance == sourceInstance.ID || capture.Init.Method != request.Method || capture.Init.RequestUri != wantReplayPath {
+			continue
+		}
+		mirrorRequests++
+		if len(capture.Body) != 0 {
+			t.Fatalf("debugger replay forwarded body=%q, want empty metadata-only body", capture.Body)
 		}
 	}
 	if mirrorRequests != 1 {
