@@ -115,12 +115,13 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
-		       max_in_flight, request_timeout_ms, max_retries, owner_kind
+		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds, owner_kind
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID).
 		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
-			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries, &ownerKind)
+			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
+			&requestPolicy.ResponseCacheTTLSeconds, &ownerKind)
 	if err != nil {
 		return Decision{}, err
 	}

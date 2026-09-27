@@ -14,5 +14,9 @@ export type OutboundRequestPolicy = {
    * Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
    */
   max_retries?: number;
+  /**
+   * Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
+   */
+  response_cache_ttl_seconds?: number;
 };
 
