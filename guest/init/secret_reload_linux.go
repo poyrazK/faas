@@ -43,15 +43,19 @@ func (s *runtimeSecretsState) snapshot() map[string]string {
 // by future supervisor starts. Holding the lock across the atomic file publish
 // prevents a crash/restart from snapshotting stale env after the file changed.
 func (s *runtimeSecretsState) publish(path, revisionPath string, uid int, secrets map[string]string, revision string) error {
+	return s.publishForOwner(path, revisionPath, uid, 0, 0, secrets, revision)
+}
+
+func (s *runtimeSecretsState) publishForOwner(path, revisionPath string, uid, dirUID, dirGID int, secrets map[string]string, revision string) error {
 	if s == nil {
 		return errors.New("runtime secrets state is unavailable")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := writeRuntimeSecretsProjection(path, uid, secrets); err != nil {
+	if err := writeRuntimeSecretsProjectionForOwner(path, uid, dirUID, dirGID, secrets); err != nil {
 		return err
 	}
-	if err := writeRuntimeSecretRevisionProjection(revisionPath, uid, revision); err != nil {
+	if err := writeRuntimeSecretRevisionProjectionForOwner(revisionPath, uid, dirUID, dirGID, revision); err != nil {
 		return err
 	}
 	s.secrets = cloneRuntimeSecrets(secrets)

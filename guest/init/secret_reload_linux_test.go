@@ -105,13 +105,13 @@ func TestRuntimeSecretsStatePublishesRevokedKeyRemoval(t *testing.T) {
 	dir := t.TempDir()
 	projectionPath := filepath.Join(dir, "projection", "secrets.json")
 	revisionPath := filepath.Join(dir, "projection", "revision")
-	uid := os.Getuid()
+	uid, gid := os.Getuid(), os.Getgid()
 	secrets := newRuntimeSecretsState(map[string]string{"DB_URL": "old-credential"})
 	if runtimeSecretsEqual(secrets.snapshot(), map[string]string{}) {
 		t.Fatal("removing a granted key was treated as an unchanged projection")
 	}
 	revision := strings.Repeat("b", 64)
-	if err := secrets.publish(projectionPath, revisionPath, uid, map[string]string{}, revision); err != nil {
+	if err := secrets.publishForOwner(projectionPath, revisionPath, uid, uid, gid, map[string]string{}, revision); err != nil {
 		t.Fatalf("publish revoked projection: %v", err)
 	}
 	if got := secrets.snapshot(); len(got) != 0 {
