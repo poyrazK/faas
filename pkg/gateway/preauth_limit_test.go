@@ -1,5 +1,9 @@
 package gateway
 
+// adr: 040
+// The existing app and account rate-limit ceilings bound this opt-in
+// per-source guard, including its pre-wake 429 behavior.
+
 import (
 	"context"
 	"fmt"
