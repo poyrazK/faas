@@ -14,15 +14,19 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/servicecaller"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -129,6 +133,79 @@ func TestE2E_ServiceMesh_ForwardsToWarmTarget(t *testing.T) {
 		if strings.EqualFold(hdr.GetName(), "x-faas-caller-app") {
 			t.Errorf("caller header leaked to the guest: %s: %s", hdr.GetName(), hdr.GetValue())
 		}
+	}
+}
+
+// ADR-206/279: exercise the complete assertion trust path. The gateway mints
+// the assertion after resolving and authorizing the caller, publishes its
+// public key through apid, and forwards exactly one platform-owned assertion
+// over the VMMD guest bridge. A caller-provided assertion must not survive.
+func TestE2E_ServiceMesh_VerifiesForwardedCallerAssertion(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "service-caller.ed25519")
+	f := newNormalPathFixtureWithPlanAndEnv(t, "mesh-signed-caller", api.PlanHobby,
+		"FAAS_SERVICE_CALLER_ASSERTIONS=1",
+		"FAAS_SERVICE_CALLER_KEY_PATH="+keyPath,
+	)
+	if f == nil {
+		return
+	}
+	target := createServiceApp(t, f, "meshsignedtarget", nil)
+	_, instance := createNormalPathLiveDeployment(t, f, target.ID, "v1")
+	f.vmmd.SetVersion(instance.ID, "v1")
+
+	forged := make(http.Header)
+	forged.Add(gateway.ServiceCallerAssertionHeader, "forged.first.token")
+	forged.Add(gateway.ServiceCallerAssertionHeader, "forged.second.token")
+	status, _, body := serviceCall(t, f.h, f.app.ID, "meshsignedtarget", "/health", forged)
+	if status != http.StatusOK {
+		t.Fatalf("service status = %d, want 200; body=%s", status, body)
+	}
+
+	request := f.vmmd.LastRequest()
+	if request == nil {
+		t.Fatal("fake vmmd received no ForwardHTTPStream request")
+	}
+	var assertion string
+	assertionCount := 0
+	for _, header := range request.Headers {
+		if strings.EqualFold(header.GetName(), gateway.ServiceCallerAssertionHeader) {
+			assertion = header.GetValue()
+			assertionCount++
+		}
+	}
+	if assertionCount != 1 {
+		t.Fatalf("guest received %d caller assertion headers, want exactly one", assertionCount)
+	}
+	if assertion == "forged.first.token" || assertion == "forged.second.token" {
+		t.Fatalf("caller-supplied assertion reached guest: %q", assertion)
+	}
+
+	keys, err := servicecaller.FetchTrustedKeys(context.Background(), nil, f.h.APIDURL+"/v1/service-caller-keys")
+	if err != nil {
+		t.Fatalf("fetch published service-caller keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("published key count = %d, want the gateway's single test key", len(keys))
+	}
+	verified, err := servicecaller.Verify(assertion, keys, target.ID, time.Now())
+	if err != nil {
+		t.Fatalf("verify guest-bound assertion against published JWKS: %v", err)
+	}
+	if verified.CallerAppID != f.app.ID {
+		t.Errorf("verified caller = %q, want %q", verified.CallerAppID, f.app.ID)
+	}
+	if verified.TargetAppID != target.ID {
+		t.Errorf("verified target audience = %q, want %q", verified.TargetAppID, target.ID)
+	}
+	source, err := f.store.AppByID(f.ctx, f.app.ID)
+	if err != nil {
+		t.Fatalf("load caller app for account assertion: %v", err)
+	}
+	if verified.AccountID != source.AccountID {
+		t.Errorf("verified account = %q, want %q", verified.AccountID, source.AccountID)
+	}
+	if verified.ID == "" {
+		t.Error("verified assertion has no unique ID")
 	}
 }
 
