@@ -7,7 +7,7 @@ import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
+ * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
  */
 export type CreateDeploymentRequest = {
   /**
@@ -15,7 +15,7 @@ export type CreateDeploymentRequest = {
    */
   image?: string;
   /**
-   * Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image as-is.
+   * Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe, liveness_probe). nil/omitted = deploy the image as-is.
    */
   overrides?: (CreateDeploymentOverrides | null);
   /**

@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -145,6 +146,7 @@ func TestResponseCache_GetPastFresh_StaleWhileRevalidateEligible(t *testing.T) {
 
 type memorySharedResponseCache struct {
 	entries map[string]*cacheEntry
+	err     error
 }
 
 func (m *memorySharedResponseCache) Get(k CacheKey) (*cacheEntry, error) {
@@ -155,6 +157,9 @@ func (m *memorySharedResponseCache) Put(entry *cacheEntry) error {
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateByApp(appID string) error {
+	if m.err != nil {
+		return m.err
+	}
 	for k, entry := range m.entries {
 		if entry.key.AppID == appID {
 			delete(m.entries, k)
@@ -163,6 +168,9 @@ func (m *memorySharedResponseCache) InvalidateByApp(appID string) error {
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
+	if m.err != nil {
+		return m.err
+	}
 	for k, entry := range m.entries {
 		matched, err := pathGlobMatch(pathGlob, entry.key.NormalizedPath)
 		if err != nil {
@@ -175,6 +183,9 @@ func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) 
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateByAppTag(appID, tag string) error {
+	if m.err != nil {
+		return m.err
+	}
 	for k, entry := range m.entries {
 		if entry.key.AppID == appID && hasCacheTag(entry.tags, tag) {
 			delete(m.entries, k)
@@ -183,8 +194,35 @@ func (m *memorySharedResponseCache) InvalidateByAppTag(appID, tag string) error 
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateAll() error {
+	if m.err != nil {
+		return m.err
+	}
 	m.entries = map[string]*cacheEntry{}
 	return nil
+}
+
+func TestResponseCache_StrictPurgeReportsSharedStoreFailure(t *testing.T) {
+	wantErr := errors.New("shared cache unavailable")
+	shared := &memorySharedResponseCache{entries: map[string]*cacheEntry{}, err: wantErr}
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now).WithSharedStore(shared)
+	key := responseCacheSampleKey(44)
+	now := time.Now()
+	if !c.Put(key, 200, nil, []byte("body"), now.Add(time.Minute), now.Add(time.Minute), nil) {
+		t.Fatal("Put returned false")
+	}
+
+	if err := c.InvalidateByAppPath(key.AppID, ""); !errors.Is(err, wantErr) {
+		t.Fatalf("app-wide strict path purge error = %v, want %v", err, wantErr)
+	}
+	if c.Len() != 0 {
+		t.Fatalf("local cache entries after failed shared purge = %d, want 0", c.Len())
+	}
+	if _, ok := shared.entries[key.String()]; !ok {
+		t.Fatal("test setup expected the failed shared purge to leave its entry")
+	}
+	if err := c.InvalidateAllStrict(); !errors.Is(err, wantErr) {
+		t.Fatalf("strict full purge error = %v, want %v", err, wantErr)
+	}
 }
 func (m *memorySharedResponseCache) Close() error { return nil }
 

@@ -17,6 +17,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -2641,6 +2642,13 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 	if err != nil {
 		return debugReplayEnqueueResult{}, api.ErrCapacity("get debug replay request")
 	}
+	replayPath, ok := debugReplayRequestPath(row.Method, row.Route)
+	if !ok {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusConflict,
+			api.CodeDebugReplayUnsupported,
+			"Debug replay is unavailable",
+			"the request route is unavailable or cannot be replayed safely")
+	}
 	depID := uuidFromPg(row.DeploymentID)
 	requestedMirrorDeploymentID = strings.TrimSpace(requestedMirrorDeploymentID)
 	if requestedMirrorDeploymentID != "" {
@@ -2690,7 +2698,7 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		AccountID: acct.ID,
 		Source:    state.InvocationReplay,
 		Method:    row.Method,
-		Path:      row.Route,
+		Path:      replayPath,
 		Payload:   nil,
 		Headers:   headerBytes,
 		DueAt:     now,
@@ -2703,6 +2711,32 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		SourceDeploymentID: depID,
 		MirrorDeploymentID: rule.MirrorDeploymentID,
 	}, nil
+}
+
+// debugReplayRequestPath converts the method-prefixed route label stored by
+// request telemetry (for example, "GET /users/{id}") into the path expected
+// by an invocation. Older rows that already contain a path remain replayable.
+// Only origin-form paths are accepted: queries, fragments, authorities, and
+// overflow/unknown route labels must never become replay targets.
+func debugReplayRequestPath(method, route string) (string, bool) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	route = strings.TrimSpace(route)
+	if method == "" || route == "" {
+		return "", false
+	}
+	if prefix := method + " "; strings.HasPrefix(route, prefix) {
+		route = strings.TrimSpace(strings.TrimPrefix(route, prefix))
+	}
+	if !strings.HasPrefix(route, "/") || strings.HasPrefix(route, "//") || strings.ContainsAny(route, "?#") {
+		return "", false
+	}
+	parsed, err := url.ParseRequestURI(route)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path == "" ||
+		!strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
+		return "", false
+	}
+	return route, true
 }
 
 // selectDebugReplayMirrorRule keeps replay target selection constrained to an

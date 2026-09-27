@@ -4,7 +4,7 @@
 // a prompt to either OpenAI's or Anthropic's chat-completions API.
 // The customer picks a provider by setting one of OPENAI_API_KEY or
 // ANTHROPIC_API_KEY (not both). The model defaults to gpt-4o-mini
-// for OpenAI and claude-3-5-sonnet-latest for Anthropic, both
+// for OpenAI and claude-opus-5 for Anthropic, both
 // overridable via env.
 //
 // Required env vars (set via `gregale secrets set --app <slug> ...`):
@@ -14,7 +14,7 @@
 //	                   Set exactly ONE. Setting both is rejected at
 //	                   startup with an actionable hint.
 //	OPENAI_MODEL       — optional, defaults to "gpt-4o-mini"
-//	ANTHROPIC_MODEL    — optional, defaults to "claude-3-5-sonnet-latest"
+//	ANTHROPIC_MODEL    — optional, defaults to "claude-opus-5"
 //	SYSTEM_PROMPT      — optional, prefixed to every conversation.
 //	                   Keep it short — every byte costs tokens.
 //
@@ -42,7 +42,13 @@ import express from "express";
 const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
+
+// Models that accept server-side refusal fallbacks (`fallbacks: "default"`):
+// a declined request is re-served by Anthropic's recommended fallback model
+// in the same call instead of coming back empty. Other models reject the
+// parameter, so it is only sent for these.
+const ANTHROPIC_FALLBACK_MODELS = /^claude-(opus-5|fable-5-1)$/;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || "";
 
 function provider() {
@@ -121,19 +127,26 @@ async function callAnthropic(messages, model) {
   if (SYSTEM_PROMPT) {
     systemParts.unshift(SYSTEM_PROMPT);
   }
+  // Current Claude models think adaptively by default, and thinking shares
+  // max_tokens with the reply: a small cap can leave no room for text.
   const body = {
     model,
-    max_tokens: 1024,
+    max_tokens: 16000,
     system: systemParts.join("\n\n") || undefined,
     messages: chatMessages,
   };
+  const headers = {
+    "content-type": "application/json",
+    "x-api-key": ANTHROPIC_KEY,
+    "anthropic-version": "2023-06-01",
+  };
+  if (ANTHROPIC_FALLBACK_MODELS.test(model)) {
+    body.fallbacks = "default";
+    headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
+  }
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!r.ok) {
@@ -141,6 +154,10 @@ async function callAnthropic(messages, model) {
     throw new Error(`anthropic ${r.status}: ${text.slice(0, 512)}`);
   }
   const j = await r.json();
+  if (j.stop_reason === "refusal") {
+    // A declined request (after any fallback) carries no usable content.
+    throw new Error(`anthropic refused the request (${j.stop_details?.category || "unspecified"})`);
+  }
   const reply =
     (j.content || [])
       .filter((c) => c.type === "text")

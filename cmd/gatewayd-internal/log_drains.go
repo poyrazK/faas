@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -28,6 +30,10 @@ const (
 	appLogDrainHealthHealthy  = "healthy"
 	appLogDrainHealthDegraded = "degraded"
 	appLogDrainHealthInactive = "inactive"
+
+	// appLogDrainRequestTimeout matches logdrain's default per-request
+	// timeout, which only applies when the sender builds its own client.
+	appLogDrainRequestTimeout = 5 * time.Second
 )
 
 type appLogDrainStore interface {
@@ -84,6 +90,9 @@ type appLogDrainManager struct {
 	metrics   *gateway.Metrics
 	log       *slog.Logger
 	spoolRoot string
+	// httpClient delivers to customer-supplied drain URLs. It must carry
+	// the §11 dial-time egress guard; see newAppLogDrainHTTPClient.
+	httpClient *http.Client
 
 	mu                 sync.Mutex
 	workers            map[string]*appLogDrainWorker
@@ -104,10 +113,11 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 	}
 	return &appLogDrainManager{
 		store: store, resolver: resolver, unseal: unseal, metrics: metrics, log: log,
-		spoolRoot: envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
-		workers:   make(map[string]*appLogDrainWorker),
-		active:    make(map[string]int),
-		health:    make(map[string]state.AppLogDrainHealth),
+		spoolRoot:  envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
+		httpClient: newAppLogDrainHTTPClient(),
+		workers:    make(map[string]*appLogDrainWorker),
+		active:     make(map[string]int),
+		health:     make(map[string]state.AppLogDrainHealth),
 	}
 }
 
@@ -194,6 +204,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		TargetURL:    spec.TargetURL,
 		AuthHeader:   authHeader,
 		DurableQueue: durableQueue,
+		HTTPClient:   m.httpClient,
 		OnDropped: func(logdrain.Record) {
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
@@ -575,6 +586,28 @@ func appLogDrainErrorSummary(err error) string {
 
 func sameAppLogDrainSpec(a, b state.AppLogDrain) bool {
 	return a.ID == b.ID && a.AppID == b.AppID && a.AccountID == b.AccountID && a.Kind == b.Kind && a.TargetURL == b.TargetURL && a.Enabled == b.Enabled && bytes.Equal(a.AuthHeaderSealed, b.AuthHeaderSealed)
+}
+
+// newAppLogDrainHTTPClient builds the client that posts customer logs to a
+// customer-supplied URL from the node itself. apid only checks the URL's
+// addresses when the drain is saved (and accepts a host that does not resolve
+// yet), so the dial-time guard is the load-bearing SSRF check here, exactly
+// as for app webhooks, alert webhooks and realtime callbacks: without it a
+// drain host re-pointed at 127.0.0.1 or 169.254.169.254, or a 30x redirect
+// there, reached node-local services and the cloud metadata server — with
+// the drain's customer-chosen auth header attached. Redirects are not
+// followed; a drain endpoint must answer at its configured URL.
+func newAppLogDrainHTTPClient() *http.Client {
+	client := oci.NewEgressHTTPClient()
+	// Dev/test-only escape hatch, gated on FAAS_EGRESS_ALLOW_LOOPBACK=1.
+	if loopback := oci.NewEgressHTTPClientAllowLoopback(); loopback != nil {
+		client = loopback
+	}
+	client.Timeout = appLogDrainRequestTimeout
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return client
 }
 
 func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), error) {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -2923,6 +2924,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	}
 	for environmentID, env := range m.projectEnvironments {
 		if env.ProjectID == projectID {
+			for domain, customDomain := range m.domains {
+				if customDomain.EnvironmentID == environmentID {
+					delete(m.domains, domain)
+				}
+			}
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3110,6 +3116,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
 			delete(m.secrets, key)
+		}
+	}
+	for domain, customDomain := range m.domains {
+		if customDomain.EnvironmentID == environmentID {
+			delete(m.domains, domain)
 		}
 	}
 	delete(m.projectEnvironments, environmentID)
@@ -3729,6 +3740,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.Status == "" {
 		app.Status = AppActive
 	}
+	app.ScalingPolicyRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -3877,6 +3889,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	if app.Status == "" {
 		app.Status = AppActive
 	}
+	app.ScalingPolicyRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -4800,6 +4813,7 @@ func (m *MemStore) SetAppNodeID(_ context.Context, appID, nodeID string) error {
 		return ErrConflict
 	}
 	a.NodeID = nodeID
+	a.ScalingPolicyRevision++
 	m.apps[appID] = a
 	return nil
 }
@@ -4891,6 +4905,9 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	now := time.Now()
 	a.NodeID = toNodeID
+	if fromNodeID != toNodeID {
+		a.ScalingPolicyRevision++
+	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
 	return nil
@@ -5346,12 +5363,27 @@ func (m *MemStore) AuthDefaultFlippedAt(_ context.Context) (time.Time, error) {
 }
 
 func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (App, error) {
+	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
+		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
+		return App{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	if a.ScalingPolicyRevision <= 0 {
+		a.ScalingPolicyRevision = 1
+	}
+	oldScalingPolicy := a.ScalingPolicy
+	oldMinInstances := a.MinInstances
+	oldMaxConcurrency := a.MaxConcurrency
+	oldIdleTimeoutS := a.IdleTimeoutS
+	oldAutoscaleTargetRPS := a.AutoscaleTargetRPS
+	oldAutoscaleTargetCPUPct := a.AutoscaleTargetCPUPct
+	oldWorkloadClass := a.WorkloadClass
+	oldNodeID := a.NodeID
 	// ADR-119: cross-app unique-IP check. Mirrors the pgstore
 	// apps_static_egress_ip_key partial unique index. The
 	// index covers apps in the same account only (a future
@@ -5645,6 +5677,12 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			a.CORSDefaultOrigins = dst
 		}
 	}
+	if p.SetRequestRateLimitRPS {
+		a.RequestRateLimitRPS = positiveIntPointer(p.RequestRateLimitRPS)
+	}
+	if p.SetRequestRateLimitBurst {
+		a.RequestRateLimitBurst = positiveIntPointer(p.RequestRateLimitBurst)
+	}
 	// ADR-119: per-app static egress IP. SetStaticEgressIP
 	// distinguishes "don't touch" (false) from "explicit set or
 	// clear" (true). Apid gates the plan and the IPv4-only
@@ -5662,6 +5700,12 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			now := time.Now().UTC()
 			a.StaticEgressIPSetAt = &now
 		}
+	}
+	if a.MinInstances != oldMinInstances || a.MaxConcurrency != oldMaxConcurrency ||
+		a.IdleTimeoutS != oldIdleTimeoutS || a.AutoscaleTargetRPS != oldAutoscaleTargetRPS ||
+		a.AutoscaleTargetCPUPct != oldAutoscaleTargetCPUPct || !reflect.DeepEqual(a.ScalingPolicy, oldScalingPolicy) ||
+		a.WorkloadClass != oldWorkloadClass || a.NodeID != oldNodeID {
+		a.ScalingPolicyRevision++
 	}
 	m.apps[id] = a
 	if ramChanged {
@@ -5748,6 +5792,9 @@ func (m *MemStore) SetAppWorkloadClass(_ context.Context, appID string, class Wo
 	a, ok := m.apps[appID]
 	if !ok {
 		return App{}, ErrNotFound
+	}
+	if a.WorkloadClass != class {
+		a.ScalingPolicyRevision++
 	}
 	a.WorkloadClass = class
 	m.apps[appID] = a
@@ -8030,36 +8077,6 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 		m.deployments[siblingID] = other
 	}
 	m.reactivateCronsForAppLocked(d.AppID)
-	m.deployments[id] = d
-	return nil
-}
-
-// MarkDeploymentCancelled (ADR-124) — memstore mirror of
-// pgstore.MarkDeploymentCancelled. CAS guard via the
-// IsCancelEligible predicate, errrrors mirror pgstore sentinels.
-func (m *MemStore) MarkDeploymentCancelled(_ context.Context, id, principal string, reason CancelReason, when time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.deployments[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if d.Status == DeployLive {
-		return ErrCancelLiveForbidden
-	}
-	if !d.Status.IsCancelEligible() {
-		return ErrInvalidStateTransition
-	}
-	if !reason.IsValid() {
-		return ErrInvalidStateTransition
-	}
-	d.Status = DeployCancelled
-	d.CancelledAt = &when
-	d.CancelledByPrincipal = principal
-	d.CancelReason = string(reason)
-	if err := finalizeCancelledDeploymentState(&d, when, reason); err != nil {
-		return err
-	}
 	m.deployments[id] = d
 	return nil
 }
@@ -10458,7 +10475,7 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.AppID != appID || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
 	if m.defaultDomains == nil {
@@ -10471,7 +10488,8 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.defaultDomains[appID] == domain && !IsWildcardCustomDomain(domain), nil
+	d, ok := m.domains[domain]
+	return m.defaultDomains[appID] == domain && ok && d.AppID == appID && d.EnvironmentID == "" && d.Verified() && !IsWildcardCustomDomain(domain), nil
 }
 
 // DefaultCustomDomain returns the selected verified custom domain for an app.
@@ -10485,7 +10503,7 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 		return "", ErrNotFound
 	}
 	d, ok := m.domains[domain]
-	if !ok || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return "", ErrNotFound
 	}
 	return domain, nil
@@ -11795,6 +11813,50 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	out := m.dueInvocationsLocked(now)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListDueInvocationsAfter mirrors PgStore: (due_at, id) order, resumed
+// strictly after the cursor.
+func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, after InvocationDueCursor, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.dueInvocationsLocked(now)
+	out := all[:0]
+	for _, inv := range all {
+		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// dueInvocationsLocked returns the unsorted pending rows the legacy drain
+// owns that are due at now. Caller holds m.mu.
+func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 	var out []Invocation
 	for _, inv := range m.invocations {
 		if inv.State != InvocationPending {
@@ -11823,16 +11885,7 @@ func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit in
 		}
 		out = append(out, inv)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].DueAt.Equal(out[j].DueAt) {
-			return out[i].CreatedAt.Before(out[j].CreatedAt)
-		}
-		return out[i].DueAt.Before(out[j].DueAt)
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return out
 }
 
 // ClaimInvocation atomically transitions pending → dispatching and
@@ -17683,10 +17736,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.idem[accountID+"\x00"+key]
-	if !ok || time.Since(e.created) > 24*time.Hour {
+	if !ok || time.Since(e.created) > 24*time.Hour || e.status == 0 {
 		return 0, nil, ErrNotFound
 	}
 	return e.status, e.body, nil
+}
+
+// ReserveIdempotent mirrors PgStore.ReserveIdempotent.
+func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	age := time.Since(e.created)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
+		m.idem[id] = idemEntry{created: time.Now()}
+		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if e.status == 0 {
+		return IdempotencyReservation{InFlight: true}, nil
+	}
+	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {
@@ -17709,6 +17779,14 @@ func intOrZero(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+func positiveIntPointer(p *int) *int {
+	if p == nil || *p <= 0 {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // boolOrFalse is the *bool counterpart to intOrZero, used by both
@@ -20779,7 +20857,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 		if appID != "" && inv.AppID != appID {
 			continue
 		}
-		if inv.State == InvocationFailed {
+		// MemStore keeps no request telemetry; mirror PgStore's
+		// invocation half, which counts only completed invocations.
+		if inv.State != InvocationCompleted {
 			continue
 		}
 		if inv.CreatedAt.Before(since) {
@@ -20790,25 +20870,11 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 	return false, nil
 }
 
-// MTDSpendEurCents mirrors the pgstore SUM(eur_cents) over
-// account_spend_snapshot. Returns 0 when no rows exist.
-func (m *MemStore) MTDSpendEurCents(_ context.Context, accountID string) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	monthStart := time.Now().UTC().Add(-time.Duration(time.Now().UTC().Day()-1) * 24 * time.Hour)
-	// Snap to UTC midnight of day 1 — date_trunc equivalent.
-	monthStart = time.Date(monthStart.Year(), monthStart.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var total int64
-	for _, s := range m.accountSpendSnapshots {
-		if s.AccountID != accountID {
-			continue
-		}
-		if s.PeriodStart.Before(monthStart) {
-			continue
-		}
-		total += s.EurCents
-	}
-	return total, nil
+// MTDSpendEurCents mirrors PgStore.MTDSpendEurCents.
+func (m *MemStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
+	// Mirrors PgStore: the month-to-date overage, not the never-written
+	// account_spend_snapshot rows.
+	return m.CurrentMonthOverageCents(ctx, accountID)
 }
 
 // UpsertAccountSpendSnapshot is the memstore mirror of the pg
@@ -21275,10 +21341,14 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 		if inv.AccountID != accountID {
 			continue
 		}
-		if inv.State != InvocationFailed {
+		if inv.State != InvocationFailed && inv.State != InvocationDeadLetter {
 			continue
 		}
-		if inv.CreatedAt.Before(since) {
+		failedAt := inv.CreatedAt
+		if inv.CompletedAt != nil {
+			failedAt = *inv.CompletedAt
+		}
+		if failedAt.Before(since) {
 			continue
 		}
 		if appID != "" && inv.AppID != appID {

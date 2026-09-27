@@ -519,14 +519,21 @@ func NewLimiterWithCentralLRU(cap int, central CentralBackend, now func() time.T
 // ctx is propagated so the central-mode consume can be bounded by both the
 // caller deadline and centralConsultTimeout. Local mode ignores ctx.
 func (l *Limiter) Allow(ctx context.Context, appID string, plan api.Plan) bool {
+	return l.AllowAppWithLimits(ctx, appID, plan, 0, 0)
+}
+
+// AllowAppWithLimits applies optional app-wide request bucket overrides.
+// The app key and central key intentionally match Allow so changing policy
+// updates the existing bucket in place instead of resetting its token state.
+func (l *Limiter) AllowAppWithLimits(ctx context.Context, appID string, plan api.Plan, rpsOverride, burstOverride int) bool {
 	if l.noop {
 		return true
 	}
-	limits, ok := api.LimitsFor(plan)
-	if !ok {
+	rps, burst := api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
+	if rps <= 0 || burst <= 0 {
 		return false
 	}
-	return l.allowTokenWithCentralKey(ctx, appID, float64(limits.RateLimitRPS), float64(limits.RateLimitBurst),
+	return l.allowTokenWithCentralKey(ctx, appID, float64(rps), float64(burst),
 		"app:"+appID+":"+string(plan))
 }
 
@@ -630,9 +637,11 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 			l.elems[id] = l.ll.PushFront(b)
 		}
 	} else {
-		// A plan change updates the bucket's parameters without losing tokens.
-		b.rps, b.burst = rps, burst
+		// Refill under the old policy up to this instant, then install the
+		// new parameters. This preserves the balance across a live policy
+		// change without retroactively applying the new refill rate.
 		b.tokens += now.Sub(b.last).Seconds() * b.rps
+		b.rps, b.burst = rps, burst
 		if b.tokens > b.burst {
 			b.tokens = b.burst
 		}
@@ -853,6 +862,7 @@ func (l *Limiter) Peek(appID string, plan api.Plan) (limit, remaining, resetSeco
 	// value is currently cached. Peek does NOT write back — leaving the
 	// bucket unchanged is the non-mutating contract.
 	rps, burst := b.rps, b.burst
+	limit = int(burst)
 	tokens := b.tokens
 	last := b.last
 	now := l.now()

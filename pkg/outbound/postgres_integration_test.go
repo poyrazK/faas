@@ -79,6 +79,14 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	resolvedIntegration, err := resolver.Integration(ctx, integration.ID)
+	if err != nil {
+		t.Fatalf("resolve persisted integration: %v", err)
+	}
+	if resolvedIntegration.AccountID != account.ID || resolvedIntegration.Name != "payments" {
+		t.Fatalf("resolved integration identity = account %q name %q, want account %q name payments",
+			resolvedIntegration.AccountID, resolvedIntegration.Name, account.ID)
+	}
 	backend, err := outbound.NewPostgresBackend(pool)
 	if err != nil {
 		t.Fatal(err)

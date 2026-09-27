@@ -36,6 +36,8 @@ func TestHandlerAddsAutomaticDependencySpans(t *testing.T) {
 	defer server.Close()
 
 	integration := testIntegration(t, server.URL, "secret", []string{"app-1"}, 100, 1, 1)
+	integration.AccountID = "00000000-0000-0000-0000-000000000010"
+	integration.Name = "payments"
 	resolver, err := NewStaticResolver([]Integration{integration})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +66,7 @@ func TestHandlerAddsAutomaticDependencySpans(t *testing.T) {
 	var binding, client sdktrace.ReadOnlySpan
 	for _, span := range recorder.Ended() {
 		switch span.Name() {
-		case "gregale.outbound.integration":
+		case "outbound.payments":
 			binding = span
 		case "HTTP GET":
 			client = span
@@ -81,7 +83,9 @@ func TestHandlerAddsAutomaticDependencySpans(t *testing.T) {
 	}
 
 	attrs := spanAttributes(binding)
-	if attrs[integrationIDKey] != integration.ID || attrs[appIDKey] != "app-1" || attrs[originHostKey] == "" {
+	if attrs[integrationIDKey] != integration.ID || attrs[appIDKey] != "app-1" || attrs[originHostKey] == "" ||
+		attrs["gregale.dependency.type"] != "outbound_integration" || attrs["gregale.dependency.kind"] != "https" ||
+		attrs["gregale.internal.account_id"] != integration.AccountID {
 		t.Fatalf("binding attributes = %#v, want bounded integration metadata", attrs)
 	}
 	for _, span := range recorder.Ended() {
@@ -89,6 +93,21 @@ func TestHandlerAddsAutomaticDependencySpans(t *testing.T) {
 			if strings.Contains(attr.Value.AsString(), "api_key") || strings.Contains(attr.Value.AsString(), "secret") {
 				t.Fatalf("span %q leaked request secret in attribute %s=%q", span.Name(), attr.Key, attr.Value.AsString())
 			}
+		}
+	}
+}
+
+func TestOutboundDependencySpanNameBoundsIntegrationLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{name: "stripe", want: "outbound.stripe"},
+		{name: "", want: "outbound.integration"},
+		{name: "customer/private", want: "outbound.integration"},
+	} {
+		if got := dependencySpanName(Integration{Name: tc.name}); got != tc.want {
+			t.Errorf("dependencySpanName(%q) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

@@ -288,8 +288,8 @@ func tryKeyColon(line []byte, colon int) (string, []byte, bool) {
 // the input unchanged if the quote pair is mismatched or the key is too
 // short.
 func unquoteKey(b []byte) []byte {
-	if len(b) >= 2 && (b[0] == '"' && b[len(b)-1] == '"') ||
-		(b[0] == '\'' && b[len(b)-1] == '\'') {
+	if len(b) >= 2 && ((b[0] == '"' && b[len(b)-1] == '"') ||
+		(b[0] == '\'' && b[len(b)-1] == '\'')) {
 		return b[1 : len(b)-1]
 	}
 	return b
