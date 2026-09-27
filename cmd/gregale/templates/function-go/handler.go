@@ -45,6 +45,13 @@ type Response struct {
 	BodyB64 string            `json:"body_b64"`
 }
 
+// reply is the starter's response body.
+type reply struct {
+	OK     bool   `json:"ok"`
+	Path   string `json:"path"`
+	Method string `json:"method"`
+}
+
 func main() {
 	// 1. Read the envelope from stdin. The runner writes exactly one
 	// JSON object and closes stdin.
@@ -58,7 +65,13 @@ func main() {
 	}
 
 	// 2. Do the work. For the starter template, echo the path back.
-	body := []byte(`{"ok":true,"path":"` + env.Path + `","method":"` + env.Method + `"}`)
+	// Encode with encoding/json: request fields can contain quotes and
+	// backslashes, and splicing them into a JSON string by hand produces
+	// invalid (or field-injected) output.
+	body, err := json.Marshal(reply{OK: true, Path: env.Path, Method: env.Method})
+	if err != nil {
+		panic("function-go: encode reply: " + err.Error())
+	}
 	resp := Response{
 		Status: 200,
 		Headers: map[string]string{

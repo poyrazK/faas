@@ -16,6 +16,29 @@ import (
 	"time"
 )
 
+func TestCustomDomainEnvironmentRoundTrip(t *testing.T) {
+	request, err := json.Marshal(CreateCustomDomainRequest{
+		Domain: "staging.example.com", AppID: "shop-api", Environment: "staging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestBody map[string]string
+	if err := json.Unmarshal(request, &requestBody); err != nil {
+		t.Fatal(err)
+	}
+	if requestBody["environment"] != "staging" {
+		t.Fatalf("request body = %s, want environment=staging", request)
+	}
+	var response CustomDomainResponse
+	if err := json.Unmarshal([]byte(`{"domain":"staging.example.com","app_id":"app-1","environment":"staging","verified":true}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Environment != "staging" {
+		t.Fatalf("response environment = %q, want staging", response.Environment)
+	}
+}
+
 // This file is the SDK's test surface. Three concerns:
 //
 //  1. Wire-shape parity with the OpenAPI spec (response decoding,

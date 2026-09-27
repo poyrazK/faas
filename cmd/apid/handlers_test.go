@@ -386,7 +386,7 @@ func TestCreateDeployment_WorkflowDefinitionsPersist(t *testing.T) {
 //     field and decode it into the typed shape;
 //   - validate the override against the plan's EnvVarsMax +
 //     EnvValueMaxBytes caps;
-//   - persist the six override_* columns on the deployments row;
+//   - persist the override_* columns on the deployments row;
 //   - echo the override shape on the DeploymentResponse, NEVER
 //     including the plaintext env values (only the key set on
 //     override_env_keys).
@@ -412,6 +412,7 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 			TimeoutS:  2,
 			Retries:   3,
 		},
+		ReadinessProbe: &api.DeploymentReadinessProbe{Path: "/readyz"},
 	}
 	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@" + digest, Overrides: overrides}, nil)
@@ -451,6 +452,21 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 	}
 	if resp.OverrideHealthcheck == nil || resp.OverrideHealthcheck.Path != "/healthz" {
 		t.Errorf("OverrideHealthcheck = %+v, want path=/healthz", resp.OverrideHealthcheck)
+	}
+	if resp.OverrideReadinessProbe == nil || resp.OverrideReadinessProbe.Path != "/readyz" {
+		t.Errorf("OverrideReadinessProbe = %+v, want path=/readyz", resp.OverrideReadinessProbe)
+	}
+}
+
+func TestDeploymentResponse_EchoesMainDependencies(t *testing.T) {
+	dependencies := []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}
+	dep := state.Deployment{OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)}
+	response := (&server{}).deploymentResponse(dep, state.App{})
+	if !response.HasOverrides {
+		t.Fatal("HasOverrides = false, want true for persisted main dependencies")
+	}
+	if !reflect.DeepEqual(response.OverrideMainDependsOn, dependencies) {
+		t.Fatalf("OverrideMainDependsOn = %+v, want %+v", response.OverrideMainDependsOn, dependencies)
 	}
 }
 

@@ -236,6 +236,21 @@ type VMM interface {
 	WithEvents(p *events.Platform) VMM
 }
 
+// LiveAppCPULimitUpdater is an optional VMM capability for changing an
+// already-running app VM's host-side CPU quota. It stays optional so older
+// embedders and VMM test doubles can continue to implement the lifecycle
+// interface while production JailerVMM exposes the in-place cgroup operation.
+type LiveAppCPULimitUpdater interface {
+	UpdateCPULimit(context.Context, Lease, int) error
+}
+
+// LiveAppWorkloadCPULimitUpdater updates the nested main-workload cgroup used
+// by multi-workload guests. Single-workload guests inherit the host VM cap and
+// do not need this second control-plane write.
+type LiveAppWorkloadCPULimitUpdater interface {
+	UpdateAppWorkloadCPULimit(context.Context, Lease, int) error
+}
+
 // Paths locates the kernel and base images on disk (spec §8). Injected so tests
 // don't touch the filesystem.
 type Paths struct {
@@ -468,6 +483,9 @@ type Instance struct {
 	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
 	// can restart the monitor with the same configuration.
 	LivenessProbe json.RawMessage
+	// ReadinessProbe preserves the continuous primary-app traffic policy across
+	// migration pause/resume so the replacement monitor uses the same config.
+	ReadinessProbe json.RawMessage
 
 	// AllowlistHandleV4 / V6 are the nft handles of the
 	// per-netns allowlist accept rules captured at Wake time (or
@@ -704,6 +722,12 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
+	// older request cannot finish after a newer one and leave existing VMs at
+	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
+	// that began with an older app config but has not yet published as live.
+	appCPUPolicyUpdates sync.Mutex
+	appCPUPolicies      map[string]appCPUPolicy
 	// jobBoots covers the artifact restore and VMM boot interval before a job
 	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
 	// late boot can publish a VM after its task was already cancelled.
@@ -856,6 +880,10 @@ type Manager struct {
 	// local vmmd run, or a unit test); startLivenessLoop logs
 	// Warn and returns.
 	livenessStarter LivenessProbeStarter
+	// readinessStarter launches the reversible per-instance traffic probe.
+	readinessStarter ReadinessProbeStarter
+	// readinessLoopCancels is guarded by mu and owns each app probe's lifecycle.
+	readinessLoopCancels map[string]context.CancelFunc
 	// lifecycleCtx is vmmd's daemon context. Per-instance liveness loops
 	// must be children of this context, not of the short-lived Wake RPC
 	// context; the latter is normally canceled as soon as Wake returns.
@@ -1044,6 +1072,11 @@ type Manager struct {
 	hostPolicyMu sync.Mutex
 }
 
+type appCPUPolicy struct {
+	revision      int64
+	cpuMillicores int
+}
+
 // HostRenderer is the narrow seam the vmmd Manager uses to push
 // a fresh static-egress rule list into the host renderer
 // (cmd/vmmd/egress_watcher.go::liveHostPolicy). The interface
@@ -1073,17 +1106,19 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:               NewAllocator(),
-		run:                 run,
-		vmm:                 vmm,
-		paths:               paths,
-		fcVersion:           fcVersion,
-		log:                 log,
-		live:                make(map[string]*Instance),
-		jobBoots:            make(map[string]*jobBootFlight),
-		pendingProcessExits: make(map[string]int),
-		waking:              make(map[string]struct{}),
-		exportDirs:          make(map[string]string),
+		alloc:                NewAllocator(),
+		run:                  run,
+		vmm:                  vmm,
+		paths:                paths,
+		fcVersion:            fcVersion,
+		log:                  log,
+		live:                 make(map[string]*Instance),
+		readinessLoopCancels: make(map[string]context.CancelFunc),
+		appCPUPolicies:       make(map[string]appCPUPolicy),
+		jobBoots:             make(map[string]*jobBootFlight),
+		pendingProcessExits:  make(map[string]int),
+		waking:               make(map[string]struct{}),
+		exportDirs:           make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.
@@ -1660,6 +1695,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 	// the first destroy is still in flight.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	if lifecycle == nil {
@@ -3066,6 +3102,9 @@ type WakeRequest struct {
 	// plan defaults are used (fail-soft, matching the HealthcheckPath
 	// pattern at engine.go:3360).
 	LivenessProbe json.RawMessage
+	// ReadinessProbe is the optional continuous primary-app traffic probe,
+	// independent from the startup healthcheck and liveness restart policy.
+	ReadinessProbe json.RawMessage
 	// Runtime (issue #470 / PR #470-FU-B) is the runtime id
 	// ("node22", "python312", etc.) the app was woken for. Stored
 	// on the live Instance so the framework-ready receipt handler
@@ -3160,6 +3199,9 @@ type WakeRequest struct {
 	// one nested cgroup scope. Empty slice = legacy single-
 	// workload path (pre-PR-B callers). Additive per ADR-016.
 	Sidecars []WorkloadSpec
+	// MainDependsOn carries the deployment's primary workload startup gates.
+	// It is copied into the main entry in the guest workload roster.
+	MainDependsOn []api.WorkloadDependency
 }
 
 // ExecutionWakeRequest is the payload-free machine envelope for a disposable
@@ -3236,6 +3278,7 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 	// command dyno. The task receives the pinned main image and its scoped
 	// environment without starting or staging deployment sidecars.
 	wake.Sidecars = nil
+	wake.MainDependsOn = nil
 	return m.Wake(ctx, wake)
 }
 
@@ -3372,6 +3415,8 @@ type ColdBootRequest struct {
 	// the contract. Same symmetry rationale as Port /
 	// HealthcheckPath / EgressAllowlist above.
 	Sidecars []WorkloadSpec
+	// MainDependsOn is forwarded to the primary workload in the guest roster.
+	MainDependsOn []api.WorkloadDependency
 	// DeploymentID (issue #463 / ADR-069 / PR-B AC #1) is the
 	// deployments.id UUID forwarded verbatim to WakeRequest.DeploymentID.
 	// Mirrors the WakeRequest field's contract: empty = legacy
@@ -3417,7 +3462,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// sidecar wire so Wake threads each entry into the
 		// per-workload drive + cgroup + manifest stage. Empty
 		// = legacy single-workload path.
-		Sidecars: req.Sidecars,
+		Sidecars:      req.Sidecars,
+		MainDependsOn: req.MainDependsOn,
 		// Issue #463 / ADR-069 / PR-B AC #1: forward the
 		// deployment_id so Wake stamps it onto the live Instance
 		// and the vsock DGRAM sidecar-init-failed dispatch can
@@ -3626,6 +3672,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
+		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
+	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
@@ -4040,12 +4089,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if len(req.Sidecars) > 0 && !m.preparesWakeStateBeforeBoot() {
 		// Main workload manifest on drive1.
 		if err := m.vmm.StageWorkloadManifest(req.Instance, -1, WorkloadSpec{
-			Name:          WorkloadNameMain,
-			Type:          WorkloadNameMain,
-			RamMB:         req.MemSizeMiB,
-			CPUMillicores: req.CPUMillicores,
+			Name:  WorkloadNameMain,
+			Type:  WorkloadNameMain,
+			RamMB: req.MemSizeMiB,
+			// The VM's parent cgroup is the authoritative app-wide CPU
+			// ceiling. Leave the guest main-workload leaf unbounded so a
+			// live increase is not masked by this boot-time copy.
+			CPUMillicores: 0,
 			Port:          req.Port,
 			Essential:     true,
+			DependsOn:     append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 		}); err != nil {
 			return nil, fmt.Errorf("wake %s: stage main workload manifest: %w", req.Instance, err)
 		}
@@ -4067,8 +4120,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// with a roster pointing at non-existent drives.
 		mainSpec := WorkloadSpec{
 			Name: WorkloadNameMain, Type: WorkloadNameMain,
-			RamMB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores, Port: req.Port,
+			RamMB: req.MemSizeMiB, CPUMillicores: 0, Port: req.Port,
 			Essential: true,
+			DependsOn: append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 		}
 		if err := m.vmm.StageWorkloadRoster(req.Instance, mainSpec, req.Sidecars); err != nil {
 			return nil, fmt.Errorf("wake %s: stage workload roster: %w", req.Instance, err)
@@ -4185,7 +4239,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), ReadinessProbe: append(json.RawMessage(nil), req.ReadinessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4262,27 +4316,51 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	inst.PrivateNetworkHandleV4 = phV4
 	inst.PrivateNetworkHandleV6 = phV6
-	m.mu.Lock()
-	if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
-		delete(m.pendingProcessExits, req.Instance)
-		delete(m.waking, req.Instance)
+	for {
+		// A CPU policy can change while Wake is booting. Apply the latest
+		// manager-side desired value before publication, then compare its
+		// generation under the same lock used to publish into live. If a
+		// change raced the cgroup write, loop and apply the newer value. If
+		// it races publication instead, UpdateAppCPULimit sees this instance
+		// in live and includes it in its fan-out.
+		m.mu.Lock()
+		policy, hasPolicy := m.appCPUPolicies[req.AppID]
 		m.mu.Unlock()
-		err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
-		return nil, err
+		needsPolicyApply := lease.CPUMillicores != policy.cpuMillicores || hasWorkloadName(inst.WorkloadNames, WorkloadNameMain)
+		if hasPolicy && !req.ExecutionOnly && needsPolicyApply {
+			if err := m.applyAppCPULimit(ctx, inst, policy.cpuMillicores); err != nil {
+				return nil, fmt.Errorf("wake %s: apply current app CPU policy: %w", req.Instance, err)
+			}
+			lease.CPUMillicores = policy.cpuMillicores
+			inst.Lease.CPUMillicores = policy.cpuMillicores
+		}
+
+		m.mu.Lock()
+		currentPolicy, currentHasPolicy := m.appCPUPolicies[req.AppID]
+		if currentHasPolicy != hasPolicy || (hasPolicy && currentPolicy.revision != policy.revision) {
+			m.mu.Unlock()
+			continue
+		}
+		if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
+			delete(m.pendingProcessExits, req.Instance)
+			delete(m.waking, req.Instance)
+			m.mu.Unlock()
+			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
+			return nil, err
+		}
+		delete(m.waking, req.Instance)
+		m.live[req.Instance] = inst
+		// Issue #470 / PR #470-FU-B: maintain the CID→instance
+		// reverse index so the framework_ready DGRAM receipt path
+		// can resolve the peer CID to a live Instance in O(1)
+		// instead of a linear scan over the live map.
+		m.cidToID[GuestVsockCID(inst.Lease.Slot)] = req.Instance
+		if req.ExportDir != "" {
+			m.exportDirs[req.Instance] = req.ExportDir
+		}
+		m.mu.Unlock()
+		break
 	}
-	delete(m.waking, req.Instance)
-	m.live[req.Instance] = inst
-	// Issue #470 / PR #470-FU-B: maintain the CID→instance
-	// reverse index so the framework_ready DGRAM receipt path
-	// can resolve the peer CID to an instance in O(1) instead
-	// of a linear scan over the live map (review feedback on
-	// the early PR B; HIGH-3). Populated on BringUp and
-	// removed on Destroy / Park.
-	m.cidToID[GuestVsockCID(inst.Lease.Slot)] = req.Instance
-	if req.ExportDir != "" {
-		m.exportDirs[req.Instance] = req.ExportDir
-	}
-	m.mu.Unlock()
 	phases.mark("post_bring_up")
 	if !req.ExecutionOnly {
 		m.renderHostSMTPAllowlistRules(ctx, true)
@@ -4310,6 +4388,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// or explicit instance teardown.
 	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
+		m.startReadinessLoop(ctx, req.Instance, lease.Slot, req.ReadinessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}
 	return inst, nil
@@ -4727,6 +4806,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// race this teardown and report a second failure for the same instance.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
@@ -4863,6 +4943,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
@@ -4876,6 +4957,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: snapshot: %w", instance, err)
 }
@@ -4925,6 +5007,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return nil
 }
@@ -5035,6 +5118,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	// branch so an idempotent destroy also cleans up a stale registration.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	m.mu.Lock()
@@ -5551,6 +5635,108 @@ func dedupSortedPrefixes(in []netip.Prefix) []netip.Prefix {
 // emitted, chain-policy stays accept). When the prior allowlist
 // was non-empty, the prior rule's handle is still deleted so the
 // netns returns to the empty-allowlist state.
+func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMillicores int) error {
+	updater, ok := m.vmm.(LiveAppCPULimitUpdater)
+	if !ok {
+		return fmt.Errorf("VMM does not support live CPU policy")
+	}
+	if err := updater.UpdateCPULimit(ctx, inst.Lease, cpuMillicores); err != nil {
+		return err
+	}
+	if inst.Paused || !hasWorkloadName(inst.WorkloadNames, WorkloadNameMain) {
+		return nil
+	}
+	guestUpdater, ok := m.vmm.(LiveAppWorkloadCPULimitUpdater)
+	if !ok {
+		return fmt.Errorf("VMM does not support live guest workload CPU policy")
+	}
+	return guestUpdater.UpdateAppWorkloadCPULimit(ctx, inst.Lease, cpuMillicores)
+}
+
+func hasWorkloadName(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateAppCPULimit applies the app's new CPU ceiling to every VM currently
+// owned by this vmmd. The host cgroup is always updated; running multi-workload
+// guests also acknowledge the matching in-guest main leaf update. Paused warm
+// snapshots receive the host update now and reapply the desired policy during
+// Wake before publication. A partial failure is retried by the durable policy
+// reconciler.
+func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if appID == "" {
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: empty app_id")
+	}
+	if revision <= 0 {
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid revision %d", revision)
+	}
+	if !api.ValidAppCPUMillicores(cpuMillicores) {
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid cpu_millicores %d", cpuMillicores)
+	}
+	_, ok := m.vmm.(LiveAppCPULimitUpdater)
+	if !ok {
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: VMM does not support live CPU policy")
+	}
+	// Keep successive policy updates ordered. Without this outer lock, a slow
+	// write for revision N could land after a fast write for N+1 on the same
+	// instance and leave the host enforcing an obsolete ceiling.
+	m.appCPUPolicyUpdates.Lock()
+	defer m.appCPUPolicyUpdates.Unlock()
+
+	type target struct {
+		instance string
+		workload Instance
+	}
+	var targets []target
+	m.mu.Lock()
+	if m.appCPUPolicies == nil {
+		m.appCPUPolicies = make(map[string]appCPUPolicy)
+	}
+	policy := m.appCPUPolicies[appID]
+	if revision < policy.revision {
+		m.mu.Unlock()
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: stale revision %d (current %d)", revision, policy.revision)
+	}
+	if revision == policy.revision && policy.revision > 0 && policy.cpuMillicores != cpuMillicores {
+		m.mu.Unlock()
+		return fmt.Errorf("fcvm: UpdateAppCPULimit: conflicting CPU quota for revision %d", revision)
+	}
+	if revision > policy.revision {
+		policy.revision = revision
+		policy.cpuMillicores = cpuMillicores
+		m.appCPUPolicies[appID] = policy
+	}
+	for instance, live := range m.live {
+		if live.AppID == appID && !live.ExecutionOnly && !live.IsJob {
+			targets = append(targets, target{instance: instance, workload: *live})
+		}
+	}
+	m.mu.Unlock()
+
+	var applyErrors []error
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			applyErrors = append(applyErrors, err)
+			break
+		}
+		if err := m.applyAppCPULimit(ctx, &target.workload, cpuMillicores); err != nil {
+			applyErrors = append(applyErrors, fmt.Errorf("instance %s: %w", target.instance, err))
+			continue
+		}
+		m.mu.Lock()
+		if live := m.live[target.instance]; live != nil && live.AppID == appID {
+			live.Lease.CPUMillicores = cpuMillicores
+		}
+		m.mu.Unlock()
+	}
+	return errors.Join(applyErrors...)
+}
+
 func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressAllowlist: empty app_id")
@@ -6849,14 +7035,18 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	out := make([]WorkloadSpec, 0, 1+len(req.Sidecars))
 	// Workloads[0] is always the main workload.
 	out = append(out, WorkloadSpec{
-		Name:          WorkloadNameMain,
-		Type:          WorkloadNameMain,
-		StorageKey:    req.LayerKey,
-		DriveID:       DriveLayerMain,
-		RamMB:         req.MemSizeMiB,
-		CPUMillicores: req.CPUMillicores,
+		Name:       WorkloadNameMain,
+		Type:       WorkloadNameMain,
+		StorageKey: req.LayerKey,
+		DriveID:    DriveLayerMain,
+		RamMB:      req.MemSizeMiB,
+		// The app-wide VM parent cgroup is authoritative for main-workload
+		// CPU. A duplicate guest leaf ceiling would prevent live increases
+		// from taking effect until the next Wake.
+		CPUMillicores: 0,
 		Port:          req.Port,
 		Essential:     true,
+		DependsOn:     append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 	})
 	for _, sc := range req.Sidecars {
 		if sc.Name == WorkloadNameMain {
@@ -6886,6 +7076,36 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 		})
 	}
 	return out
+}
+
+func validateMainWorkloadDependencyTargets(dependencies []api.WorkloadDependency, sidecars []WorkloadSpec) error {
+	if len(dependencies) > api.WorkloadDependencyCapMax {
+		return fmt.Errorf("main has %d dependencies; max is %d", len(dependencies), api.WorkloadDependencyCapMax)
+	}
+	types := make(map[string]string, len(sidecars))
+	for _, sidecar := range sidecars {
+		types[sidecar.Name] = sidecar.Type
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if _, duplicate := seen[dependency.Name]; duplicate {
+			return fmt.Errorf("main depends on %q more than once", dependency.Name)
+		}
+		seen[dependency.Name] = struct{}{}
+		typeName, exists := types[dependency.Name]
+		if !exists {
+			return fmt.Errorf("main depends on unknown workload %q", dependency.Name)
+		}
+		if typeName != string(api.SidecarTypeSidecar) {
+			return fmt.Errorf("main dependency %q must target a long-running sidecar", dependency.Name)
+		}
+		switch dependency.Condition {
+		case "", api.WorkloadDependencyStarted, api.WorkloadDependencyHealthy, api.WorkloadDependencyCompletedSuccessfully:
+		default:
+			return fmt.Errorf("main dependency %q has invalid condition %q", dependency.Name, dependency.Condition)
+		}
+	}
+	return nil
 }
 
 func cloneWorkloadProbe(in *api.SidecarProbe) *api.SidecarProbe {

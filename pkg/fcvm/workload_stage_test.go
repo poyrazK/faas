@@ -55,15 +55,17 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	m := newTestManager(run, vmm)
 
 	r := req("app-with-sidecar")
+	r.CPUMillicores = 500
 	r.Sidecars = []WorkloadSpec{
 		{
-			Name:       "metrics",
-			Type:       "sidecar",
-			StorageKey: "apps/myapp/dep-1-metrics.ext4",
-			DriveID:    "layer-sidecar-0",
-			RamMB:      64,
-			Port:       9090,
-			Essential:  true,
+			Name:          "metrics",
+			Type:          "sidecar",
+			StorageKey:    "apps/myapp/dep-1-metrics.ext4",
+			DriveID:       "layer-sidecar-0",
+			RamMB:         64,
+			CPUMillicores: 250,
+			Port:          9090,
+			Essential:     true,
 		},
 	}
 
@@ -84,6 +86,9 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	if main.spec.RamMB != r.MemSizeMiB {
 		t.Errorf("main ram_mb = %d, want %d", main.spec.RamMB, r.MemSizeMiB)
 	}
+	if main.spec.CPUMillicores != 0 {
+		t.Errorf("main cpu_millicores = %d, want 0 so live app quota increases are not masked", main.spec.CPUMillicores)
+	}
 	if !main.spec.Essential {
 		t.Errorf("main essential = false, want true")
 	}
@@ -98,11 +103,17 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	if sc.spec.RamMB != 64 {
 		t.Errorf("sidecar ram_mb = %d, want 64", sc.spec.RamMB)
 	}
+	if sc.spec.CPUMillicores != 250 {
+		t.Errorf("sidecar cpu_millicores = %d, want its independent 250m policy", sc.spec.CPUMillicores)
+	}
 	if sc.spec.Port != 9090 {
 		t.Errorf("sidecar port = %d, want 9090", sc.spec.Port)
 	}
 	if !sc.spec.Essential {
 		t.Errorf("sidecar essential = false, want true")
+	}
+	if len(vmm.stagedRosters) != 1 || vmm.stagedRosters[0].main.CPUMillicores != 0 {
+		t.Errorf("staged workload roster main CPU = %+v, want app quota inherited from the VM parent", vmm.stagedRosters)
 	}
 }
 

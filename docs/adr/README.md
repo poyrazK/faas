@@ -54,15 +54,18 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 289 | [Realtime callback outbox capacity warning](289-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
-| 288 | [Realtime callback replay recovery observability](288-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
-| 287 | [Managed realtime callback replay supervision](287-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
-| 286 | [Managed realtime callback backlog observability](286-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
-| 285 | [Bounded parallel managed realtime callback replay](285-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
-| 284 | [Live managed realtime callback credential rotation](284-live-realtime-callback-auth-rotation.md) | accepted | Existing sockets use rotated credentials for new events while queued records retain their original tokens |
-| 283 | [Bounded managed realtime callback dead letters](283-bounded-realtime-callback-dead-letters.md) | accepted | Byte-bounded dead-letter retention, eviction metrics, alerts, and operator runbook |
-| 282 | [Persistent managed realtime callback outbox](282-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
-| 281 | [Managed realtime revocation and delivery outcomes](281-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 292 | [Realtime callback outbox capacity warning](292-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
+| 291 | [Realtime callback replay recovery observability](291-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
+| 290 | [Managed realtime callback replay supervision](290-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
+| 289 | [Managed realtime callback backlog observability](289-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
+| 288 | [Bounded parallel managed realtime callback replay](288-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
+| 287 | [Live managed realtime callback credential rotation](287-live-realtime-callback-auth-rotation.md) | accepted | Rotate callback credentials on active realtime connections without reconnecting clients |
+| 286 | [Bounded managed realtime callback dead letters](286-bounded-realtime-callback-dead-letters.md) | accepted | Retain callback dead letters within a byte cap and expose durable recovery state |
+| 285 | [Persistent managed realtime callback outbox](285-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
+| 284 | [Managed realtime revocation and delivery outcomes](284-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
+| 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
+| 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |
