@@ -40,7 +40,10 @@ func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
 
 	// Request envelope, CPU, egress, and scheduler settings are all mutable on
 	// the app row. None changes the immutable image/deployment identity.
-	timeoutS, concurrency, rps, burst, cpu := 25, 3, 5, 10, 500
+	// Keep request limits explicit but high enough that the routing probes
+	// below exercise traffic split rather than exhausting the test's bucket.
+	planLimits := api.MustLimitsFor(api.PlanPro)
+	timeoutS, concurrency, rps, burst, cpu := 25, 3, planLimits.RateLimitRPS-1, planLimits.RateLimitBurst-1, 500
 	egress := []string{"203.0.113.0/24"}
 	scaling := &api.ScalingPolicy{
 		ScaleOutCooldownS:   api.MinScaleOutCooldownS,
