@@ -124,7 +124,10 @@ func (s *PgStore) CreatePlatformTenantDelegatedHostname(ctx context.Context, acc
 		}
 		return PlatformTenantDelegatedHostnameResult{Hostname: existing, Action: "unchanged"}, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	// scanTenantHostname uses mapErr, which translates pgx.ErrNoRows to
+	// ErrNotFound. Treat that result as an absent hostname so a first
+	// delegated registration can proceed.
+	if !errors.Is(err, ErrNotFound) {
 		return PlatformTenantDelegatedHostnameResult{}, fmt.Errorf("read delegated hostname replay: %w", err)
 	}
 	if !policyConfigured || len(suffixes) == 0 || maxHostnames == 0 {
