@@ -3830,8 +3830,27 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
+		if idempotencyReplayable(cap.status) {
+			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
+		}
 	}
+}
+
+// idempotencyReplayable reports whether a response may be stored for
+// replay. A refusal that depends on account state or time — sign-in,
+// payment, verification or permission, a rate limit, temporary
+// unavailability — means the operation did not run, and the condition
+// can clear. The CLI derives deploy keys from the deploy's content, so a
+// cached refusal kept answering the same deploy for the whole 24 h replay
+// window: after paying, verifying the email, or waiting out the hourly
+// deploy limit, `gregale deploy` still got the old 402/403/429.
+func idempotencyReplayable(status int) bool {
+	switch status {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
+		http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return false
+	}
+	return true
 }
 
 // idempotencyAbandonAfter is how long an in-flight Idempotency-Key
@@ -3842,6 +3861,7 @@ const idempotencyAbandonAfter = 15 * time.Minute
 
 type idempotencyReserver interface {
 	ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (state.IdempotencyReservation, error)
+	ReleaseIdempotent(ctx context.Context, accountID, key string) error
 }
 
 // idempotentReserved claims the key before running next. Checking for a
@@ -3864,7 +3884,12 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 	default:
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		_ = s.store.PutIdempotent(context.WithoutCancel(r.Context()), acct.ID, key, cap.status, cap.body.Bytes())
+		ctx := context.WithoutCancel(r.Context())
+		if idempotencyReplayable(cap.status) {
+			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
+			return
+		}
+		_ = reserver.ReleaseIdempotent(ctx, acct.ID, key)
 	}
 }
 

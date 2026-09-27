@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,5 +97,59 @@ func TestIdempotent_AbandonedReservationIsTakenOver(t *testing.T) {
 	}
 	if res, _ := store.ReserveIdempotent(t.Context(), "acct", "k", 0); !res.Reserved {
 		t.Fatalf("reserve past abandonAfter = %+v, want reserved", res)
+	}
+}
+
+// TestIdempotent_GateRefusalIsNotReplayed — the CLI derives deploy keys
+// from the deploy's content, and every response was cached for 24 h. A
+// deploy refused while the account was past_due replayed that 402 after
+// the customer paid; the same held for the email-verification 403 and the
+// hourly deploy limit's 429.
+func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	do := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/apps/idem-gate/deployments", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "gregale-deploy-same-content")
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	create := httptest.NewRecorder()
+	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","runtime":"node22"}`))
+	cr.Header.Set("Authorization", "Bearer "+env.key)
+	cr.Header.Set("Content-Type", "application/json")
+	env.h.ServeHTTP(create, cr)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create app = %d %s", create.Code, create.Body)
+	}
+	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatal(err)
+	}
+	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`
+	if rec := do(deploy); rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("past_due deploy = %d, want 402", rec.Code)
+	}
+	if err := env.store.UpdateAccountStatus(t.Context(), env.acct.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(deploy)
+	if rec.Code != http.StatusAccepted || rec.Header().Get("Idempotent-Replayed") != "" {
+		t.Fatalf("same deploy after paying = %d replayed=%q, want a fresh 202", rec.Code, rec.Header().Get("Idempotent-Replayed"))
+	}
+	if again := do(deploy); again.Code != http.StatusAccepted || again.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("retry of the accepted deploy = %d replayed=%q, want the 202 replayed", again.Code, again.Header().Get("Idempotent-Replayed"))
+	}
+}
+
+func TestIdempotencyReplayable(t *testing.T) {
+	for status, want := range map[int]bool{
+		200: true, 201: true, 202: true, 400: true, 404: true, 409: true, 422: true, 500: true,
+		401: false, 402: false, 403: false, 429: false, 503: false,
+	} {
+		if got := idempotencyReplayable(status); got != want {
+			t.Errorf("idempotencyReplayable(%d) = %v, want %v", status, got, want)
+		}
 	}
 }

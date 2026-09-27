@@ -21983,6 +21983,16 @@ func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, 
 	return res, nil
 }
 
+// ReleaseIdempotent drops an in-flight reservation without storing a
+// response, so the next request with the key runs instead of waiting out
+// abandonAfter. A completed response is never touched.
+func (s *PgStore) ReleaseIdempotent(ctx context.Context, accountID, key string) error {
+	_, err := s.pool.Exec(ctx,
+		`delete from idempotency_keys where account_id = $1 and key = $2 and response_status = 0`,
+		accountID, key)
+	return err
+}
+
 // --- secrets -----------------------------------------------------------------
 //
 // Customer secrets (spec §11/G2). Ciphertext only — apid seals server-side

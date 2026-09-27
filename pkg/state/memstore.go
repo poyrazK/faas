@@ -17803,6 +17803,17 @@ func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, a
 	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
+// ReleaseIdempotent mirrors PgStore: drop an in-flight reservation only.
+func (m *MemStore) ReleaseIdempotent(_ context.Context, accountID, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	if e, ok := m.idem[id]; ok && e.status == 0 {
+		delete(m.idem, id)
+	}
+	return nil
+}
+
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

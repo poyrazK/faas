@@ -61,3 +61,29 @@ func TestPg_PutIdempotentRefreshesReplayWindow(t *testing.T) {
 		t.Fatalf("GetIdempotent after reuse = (%d, %q, %v), want the fresh 202 response", status, body, err)
 	}
 }
+
+// TestPg_ReleaseIdempotent — a refusal that is not cached must free its
+// reservation, or the next request with the key waits out abandonAfter as
+// "in progress". A completed response is left alone.
+func TestPg_ReleaseIdempotent(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, _, _ := seedLiveDeploy(t, s, ctx)
+	if res, err := s.ReserveIdempotent(ctx, acctID, "POST /v1/x\nrel", time.Hour); err != nil || !res.Reserved {
+		t.Fatalf("reserve = %+v err=%v", res, err)
+	}
+	if err := s.ReleaseIdempotent(ctx, acctID, "POST /v1/x\nrel"); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.ReserveIdempotent(ctx, acctID, "POST /v1/x\nrel", time.Hour); err != nil || !res.Reserved {
+		t.Fatalf("reserve after release = %+v err=%v, want reserved again", res, err)
+	}
+	if err := s.PutIdempotent(ctx, acctID, "POST /v1/x\nrel", 202, []byte("done")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseIdempotent(ctx, acctID, "POST /v1/x\nrel"); err != nil {
+		t.Fatal(err)
+	}
+	if status, body, err := s.GetIdempotent(ctx, acctID, "POST /v1/x\nrel"); err != nil || status != 202 || string(body) != "done" {
+		t.Fatalf("completed response after release = %d %q %v, want it kept", status, body, err)
+	}
+}
