@@ -185,11 +185,17 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				_, _ = fmt.Fprintln(w, ".TP")
 				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
 				writeRoffParagraph(w, s.Short)
+				if len(s.Examples) > 0 {
+					writeManExamples(w, s.Examples)
+				}
 				for _, child := range s.Subcommands {
 					_, _ = fmt.Fprintln(w, ".RS")
 					_, _ = fmt.Fprintln(w, ".TP")
 					_, _ = fmt.Fprintf(w, ".BR %s\n", child.Name)
 					writeRoffParagraph(w, child.Short)
+					if len(child.Examples) > 0 {
+						writeManExamples(w, child.Examples)
+					}
 					_, _ = fmt.Fprintln(w, ".RE")
 				}
 			}
@@ -217,13 +223,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	}
 	if len(c.Examples) > 0 {
 		manSection(w, "EXAMPLES", func(w io.Writer) {
-			_, _ = fmt.Fprintln(w, ".RS 4")
-			_, _ = fmt.Fprintln(w, ".nf")
-			for _, example := range c.Examples {
-				_, _ = fmt.Fprintln(w, escapeRoff(example))
-			}
-			_, _ = fmt.Fprintln(w, ".fi")
-			_, _ = fmt.Fprintln(w, ".RE")
+			writeManExamples(w, c.Examples)
 		})
 	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
@@ -236,6 +236,18 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, ".UE")
 	})
 	manFooter(w)
+}
+
+func writeManExamples(w io.Writer, examples []string) {
+	_, _ = fmt.Fprintln(w, ".RS 4")
+	_, _ = fmt.Fprintln(w, ".PP")
+	_, _ = fmt.Fprintln(w, "Examples:")
+	_, _ = fmt.Fprintln(w, ".nf")
+	for _, example := range examples {
+		_, _ = fmt.Fprintln(w, escapeRoff(example))
+	}
+	_, _ = fmt.Fprintln(w, ".fi")
+	_, _ = fmt.Fprintln(w, ".RE")
 }
 
 func writeManCommandArguments(w io.Writer, c cliCommand) {

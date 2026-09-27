@@ -185,6 +185,9 @@ func (c cliCommand) completionSlugWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Examples are runnable command lines shown with this subcommand's help
+	// and in the generated man and Markdown references.
+	Examples []string
 	// Positionals are documented in the leaf synopsis for verbs whose
 	// argument contract is narrower than the parent command's.
 	Positionals []string
@@ -558,13 +561,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "connect",
 		Short:   "Connect a third-party service (github | repo OWNER/NAME)",
 		Subcommands: []cliSub{
-			{Name: "github", Short: "Connect a GitHub account for repo deploys"},
+			{Name: "github", Short: "Connect a GitHub account for repo deploys", Examples: []string{"gregale connect github"}},
 			// Issue #961 / Mega-B PR-1: `connect repo <owner>/<name>`
 			// opens the dashboard's /dashboard/apps/new?repo=... wizard
 			// (PR-3 wires the server side). The CLI stays out of the
 			// OAuth dance — the cookie-session dashboard is the
 			// install-token trust root.
-			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app"},
+			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app", Examples: []string{"gregale connect repo acme/my-api"}, Positionals: []string{"<owner>/<name>"}},
 		},
 	},
 	{
@@ -572,16 +575,16 @@ var cliCommands = []cliCommand{
 		DocSlug: "github",
 		Short:   "Manage an app's GitHub installation and repository binding",
 		Subcommands: []cliSub{
-			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
-			{Name: "sync", Short: "Reconcile repository access with GitHub"},
-			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>"},
-			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
+			{Name: "status", Short: "Show the GitHub connection health for <slug>", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Examples: []string{"gregale github bind my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "comma-separated branch=scope mappings", Value: "MAPPINGS"},
@@ -596,7 +599,7 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
-			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Flags: []cliFlag{
+			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "confirm removing the repository binding"},
 			}},
 		},
@@ -833,6 +836,10 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
 		Short:   "List deployments or manage stable named URLs for immutable revisions",
+		Examples: []string{
+			"gregale deployments --app my-api --limit 10",
+			"gregale deployments --app my-api --wide",
+		},
 		Subcommands: []cliSub{{
 			Name:  "alias",
 			Short: "Manage stable named URLs for immutable deployments",
@@ -863,11 +870,15 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
 		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
+		Examples: []string{
+			"gregale deployment summary v42 --app my-api",
+			"gregale deployment wait v42 --app my-api",
+		},
 		Subcommands: []cliSub{
-			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
@@ -886,11 +897,21 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
 		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
+		Examples: []string{
+			"gregale deploys status 00000000000000000000000000000001",
+			"gregale deploys show v42 --app my-api --status",
+		},
 		Subcommands: []cliSub{
 			// ADR-117 companion read surface and ADR-124 deployment
 			// operations. Keep this list in lock-step with cmdDeploys.
-			{Name: "show", Short: "Print the closed 6-stage post-stream summary"},
-			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance"},
+			{Name: "show", Short: "Print the closed 6-stage post-stream summary", Examples: []string{"gregale deploys show 00000000000000000000000000000001", "gregale deploys show v42 --app my-api --status"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+				{Name: "status", Short: "include terminal status and timing"},
+				{Name: "url", Short: "print only the deployment preview URL"},
+			}},
+			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance", Examples: []string{"gregale deploys status 00000000000000000000000000000001", "gregale deploys status v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+			}},
 			{Name: "cancel", Short: "Cancel one pending deployment"},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority"},
 			{Name: "clear", Short: "Hide one deployment from the list"},
@@ -1084,7 +1105,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "preview",
 		Short:   "Manage preview environments for pull requests",
 		Subcommands: []cliSub{
-			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
+			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Examples: []string{"gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open", "gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Req: true, Value: "OWNER/NAME"},
 				{Name: "ref", Short: "branch, tag, or commit SHA", Req: true, Value: "REF"},
@@ -1096,16 +1117,16 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable retry key", Value: "KEY"},
 				{Name: "open", Short: "open the preview URL after a successful create"},
 			}},
-			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
+			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Examples: []string{"gregale preview list --app my-api", "gregale preview list"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
-			{Name: "show", Short: "Inspect a preview and its latest deployment"},
-			{Name: "wait", Short: "Wait for a preview deployment to become ready", Flags: []cliFlag{
+			{Name: "show", Short: "Inspect a preview and its latest deployment", Examples: []string{"gregale preview show pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
+			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
-			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
+			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
 		},
 	},
 	{
@@ -1247,14 +1268,19 @@ var cliCommands = []cliCommand{
 				{Name: "protected", Short: "protect the new environment"},
 				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
 			}},
-			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
+			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --scope staging"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 			}},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 			}},
-			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
+			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)", Examples: []string{"gregale env diff --app my-api", "gregale env diff --app my-api --json"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
+			}},
 		},
 	},
 	{
@@ -1710,6 +1736,7 @@ var cliCommands = []cliCommand{
 		Name:        "rollback",
 		DocSlug:     "rollback",
 		Short:       "Re-promote the previous deployment",
+		Examples:    []string{"gregale rollback my-api", "gregale rollback my-api --to v41"},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
@@ -1807,11 +1834,29 @@ var cliCommands = []cliCommand{
 		DocSlug: "secrets",
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List sealed secrets", Flags: []cliFlag{{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"}}},
-			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
-			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
+			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"},
+			}},
+			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart"}, Positionals: []string{"[<KEY=VALUE>...]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
+				{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "restart", Short: "restart the app and apply updated secrets now"},
+			}},
+			{Name: "unset", Short: "Remove a sealed secret", Examples: []string{"gregale secrets unset --app my-api OLD_API_KEY", "gregale secrets unset --app my-api OLD_API_KEY --scope staging"}, Positionals: []string{"<KEY>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"},
+			}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "from-stdin", Short: "read one KEY=VALUE pair from stdin"},
+				{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "restart", Short: "restart the app and apply the rotated secret now"},
+				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"},
+				{Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"},
+			}},
 		},
 	},
 	{

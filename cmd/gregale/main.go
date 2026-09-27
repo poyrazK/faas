@@ -648,7 +648,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// public help paths aligned with their actual dispatchers.
 	switch command.Name {
 	case "rollback":
-		PrintUsage(w, rollbackUsage, command.DocSlug)
+		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		if len(command.Examples) > 0 {
+			_, _ = fmt.Fprintln(w, "\nExamples:")
+			printCLIExamples(w, command.Examples)
+		}
+		_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 		return
 	case "rollouts":
 		PrintUsage(w, rolloutsUsage, command.DocSlug)
@@ -686,9 +691,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	}
 	if len(command.Examples) > 0 {
 		_, _ = fmt.Fprintln(w, "\nExamples:")
-		for _, example := range command.Examples {
-			_, _ = fmt.Fprintf(w, "  %s\n", example)
-		}
+		printCLIExamples(w, command.Examples)
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
@@ -721,6 +724,10 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(sub.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, sub.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
@@ -736,7 +743,17 @@ func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(leaf.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, leaf.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func printCLIExamples(w io.Writer, examples []string) {
+	for _, example := range examples {
+		_, _ = fmt.Fprintf(w, "  %s\n", example)
+	}
 }
 
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
