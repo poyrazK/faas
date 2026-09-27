@@ -33,9 +33,13 @@ import (
 // serviceCall issues an internal service-proxy request on the loopback control
 // listener. callerAppID is empty to exercise the unauthenticated path.
 func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, extraHeaders ...http.Header) (int, http.Header, string) {
+	return serviceCallWithMethod(t, h, callerAppID, service, http.MethodGet, path, extraHeaders...)
+}
+
+func serviceCallWithMethod(t *testing.T, h *e2etest.Harness, callerAppID, service, method, path string, extraHeaders ...http.Header) (int, http.Header, string) {
 	t.Helper()
 	url := h.GatewayControlURL + "/v1/internal/services/" + service + path
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		t.Fatalf("build service request: %v", err)
 	}
@@ -369,5 +373,61 @@ func TestE2E_ServiceMesh_TargetCallerAllowlistDeniesBeforeWake(t *testing.T) {
 	}
 	if got := len(f.vmmd.ColdBootCalls()); got != coldBootCount {
 		t.Errorf("VMMD cold-booted %d instances, want unchanged count %d", got, coldBootCount)
+	}
+}
+
+// ADR-266: scoped target grants must survive API persistence and be enforced
+// by the real gateway before it looks up endpoints or wakes the target.
+func TestE2E_ServiceMesh_EnforcesTargetMethodPathScopes(t *testing.T) {
+	f := newNormalPathFixture(t, "mesh-scoped-caller")
+	if f == nil {
+		return
+	}
+	target := createServiceApp(t, f, "meshscopedtarget", map[string]any{
+		"allowed_service_call_scopes": map[string]any{
+			f.app.Slug: map[string]any{
+				"methods":       []string{http.MethodGet},
+				"path_prefixes": []string{"/v1/orders"},
+			},
+		},
+	})
+
+	forwardCount := f.vmmd.ForwardCount()
+	restoreCount := len(f.vmmd.RestoreCalls())
+	coldBootCount := len(f.vmmd.ColdBootCalls())
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "outside path prefix", method: http.MethodGet, path: "/v1/admin"},
+		{name: "prefix is not a string prefix", method: http.MethodGet, path: "/v1/orders-archive"},
+		{name: "outside method scope", method: http.MethodPost, path: "/v1/orders"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, body := serviceCallWithMethod(t, f.h, f.app.ID, target.Slug, tc.method, tc.path)
+			if status != http.StatusForbidden || !strings.Contains(body, "target service does not allow this caller method and path") {
+				t.Fatalf("status = %d, want target-scope 403; body=%s", status, body)
+			}
+		})
+	}
+	if got := f.vmmd.ForwardCount(); got != forwardCount {
+		t.Errorf("out-of-scope calls forwarded %d requests, want unchanged count %d", got, forwardCount)
+	}
+	if got := len(f.vmmd.RestoreCalls()); got != restoreCount {
+		t.Errorf("out-of-scope calls restored %d instances, want unchanged count %d", got, restoreCount)
+	}
+	if got := len(f.vmmd.ColdBootCalls()); got != coldBootCount {
+		t.Errorf("out-of-scope calls cold-booted %d instances, want unchanged count %d", got, coldBootCount)
+	}
+
+	_, instance := createNormalPathLiveDeployment(t, f, target.ID, "v1")
+	f.vmmd.SetVersion(instance.ID, "v1")
+	status, _, body := serviceCallWithMethod(t, f.h, f.app.ID, target.Slug, http.MethodGet, "/v1/orders/42")
+	if status != http.StatusOK {
+		t.Fatalf("in-scope descendant request status = %d, want 200; body=%s", status, body)
+	}
+	if request := f.vmmd.LastRequest(); request == nil || request.GetRequestUri() != "/v1/orders/42" {
+		t.Errorf("guest request = %v, want URI /v1/orders/42", request)
 	}
 }
