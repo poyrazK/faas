@@ -460,7 +460,19 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if dependencyCallEligible {
 				failed := serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header())
-				p.metrics.ObserveServiceDependencyEdge(dependencyHealthCaller.AppID, dependencyHealthTarget.AppID, failed, p.now().Sub(dependencyStarted))
+				if failed && status < http.StatusInternalServerError {
+					// Native gRPC can fail in its terminal trailer while the HTTP
+					// status remains 200. Keep the span status aligned with the
+					// final dependency outcome recorded in the edge metric.
+					dependencySpan.SetStatus(codes.Error, "service dependency failed")
+				}
+				p.metrics.ObserveServiceDependencyEdge(
+					dependencyHealthCaller.AppID,
+					dependencyHealthTarget.AppID,
+					failed,
+					p.now().Sub(dependencyStarted),
+					traceIDFromContext(dependencyCtx),
+				)
 				if dependencyHealthCaller.DeploymentID != "" {
 					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
 				}
@@ -577,9 +589,14 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		callerInfo.DeploymentID = callerDeploymentID
 	}
 	dependencyHealthCaller = callerInfo
+	if callerInfo.AppID != "" {
+		// This identity is sourced from the tenant authorizer and stamped only
+		// after authorization, so trace search cannot trust a guest header.
+		dependencySpan.SetAttributes(attribute.String("gregale.service.caller_app_id", callerInfo.AppID))
+	}
 	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
 		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
-		boundedCtx, cancel, _ := reqbudget.WithRemaining(r.Context(), callTimeout, callTimeout, "service_proxy", target.AppID)
+		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
 		defer cancel()
 		dependencyCtx = boundedCtx
 		r = r.WithContext(boundedCtx)
