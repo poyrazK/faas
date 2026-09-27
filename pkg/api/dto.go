@@ -3501,6 +3501,7 @@ type RotateOrgAPIKeyResponse struct {
 type CustomDomainResponse struct {
 	Domain         string   `json:"domain"`
 	AppID          string   `json:"app_id"`
+	Environment    string   `json:"environment,omitempty"`
 	ChallengeToken string   `json:"challenge_token,omitempty"`
 	Verified       bool     `json:"verified"`
 	VerifiedAt     string   `json:"verified_at,omitempty"`
@@ -3522,8 +3523,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for
@@ -9658,15 +9660,17 @@ type AppOpenAPIPolicyPreviewRule struct {
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
-	// older debugger clients. TraceID is the public x-faas-request-id customers
-	// should use for support and lookup when it is available.
-	ID                  string                       `json:"id"`
-	DeploymentID        string                       `json:"deployment_id"`
-	Route               string                       `json:"route"`
-	Method              string                       `json:"method"`
-	Status              int                          `json:"status"`
-	LatencyMS           int                          `json:"latency_ms"`
-	Count               int                          `json:"count"`
+	// older debugger clients. RequestID is the public x-faas-request-id;
+	// TraceID remains the separate W3C distributed-tracing identifier.
+	ID                  string                       `json:"id,omitempty"`
+	RequestID           string                       `json:"request_id,omitempty"`
+	EvidenceStatus      string                       `json:"evidence_status,omitempty"`
+	DeploymentID        string                       `json:"deployment_id,omitempty"`
+	Route               string                       `json:"route,omitempty"`
+	Method              string                       `json:"method,omitempty"`
+	Status              int                          `json:"status,omitempty"`
+	LatencyMS           int                          `json:"latency_ms,omitempty"`
+	Count               int                          `json:"count,omitempty"`
 	ColdBoot            bool                         `json:"cold_boot"`
 	TraceID             *string                      `json:"trace_id"`
 	ReceivedAt          string                       `json:"received_at"`
@@ -10251,16 +10255,44 @@ type RequestAnalyticsRoute struct {
 
 // RequestAnalyticsDependency is a route-scoped aggregate of classified,
 // retained dependency span evidence. Percentiles are weighted by the
-// collapsed request row count and should be read as sampled estimates.
+// collapsed request row count and should be read as sampled estimates;
+// deployment observations expose comparable per-revision samples.
 type RequestAnalyticsDependency struct {
-	Type           string `json:"type"`
-	Kind           string `json:"kind,omitempty"`
-	Name           string `json:"name"`
-	Samples        int64  `json:"samples"`
-	Calls          int64  `json:"calls"`
-	ErrorCalls     int64  `json:"error_calls"`
-	P95MS          int64  `json:"p95_ms"`
-	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
+	Type                   string                                            `json:"type"`
+	Kind                   string                                            `json:"kind,omitempty"`
+	Name                   string                                            `json:"name"`
+	Samples                int64                                             `json:"samples"`
+	Calls                  int64                                             `json:"calls"`
+	ErrorCalls             int64                                             `json:"error_calls"`
+	ErrorRatePct           float64                                           `json:"error_rate_pct"`
+	P50MS                  int64                                             `json:"p50_ms"`
+	P95MS                  int64                                             `json:"p95_ms"`
+	P99MS                  int64                                             `json:"p99_ms"`
+	ExclusiveP95MS         int64                                             `json:"exclusive_p95_ms"`
+	DeploymentObservations []RequestAnalyticsDependencyDeploymentObservation `json:"deployment_observations,omitempty"`
+}
+
+// RequestAnalyticsDependencyDeploymentObservation is one dependency's
+// sampled evidence for a route under a single immutable deployment. Regression
+// comparisons are advisory and are omitted when deployment ordering is
+// ambiguous or either side has fewer than the minimum retained span observations.
+type RequestAnalyticsDependencyDeploymentObservation struct {
+	DeploymentID        string   `json:"deployment_id"`
+	CommitSHA           string   `json:"commit_sha,omitempty"`
+	DeploymentTag       string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	Samples             int64    `json:"samples"`
+	Calls               int64    `json:"calls"`
+	ErrorCalls          int64    `json:"error_calls"`
+	ErrorRatePct        float64  `json:"error_rate_pct"`
+	P50MS               int64    `json:"p50_ms"`
+	P95MS               int64    `json:"p95_ms"`
+	P99MS               int64    `json:"p99_ms"`
+	ExclusiveP95MS      int64    `json:"exclusive_p95_ms"`
+	P95ChangePct        *float64 `json:"p95_change_pct,omitempty"`
+	ErrorRateChangePct  *float64 `json:"error_rate_change_pct,omitempty"`
+	ComparedTo          string   `json:"compared_to,omitempty"`
+	Regression          bool     `json:"regression"`
 }
 
 // RequestAnalyticsComputeCost describes the estimated compute value used by

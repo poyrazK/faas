@@ -787,6 +787,7 @@ type CustomDomain struct {
 	CertExpiresAt    pgtype.Timestamptz
 	CertLastError    pgtype.Text
 	DnsLastCheckedAt pgtype.Timestamptz
+	EnvironmentID    pgtype.UUID
 }
 
 type DataUpstream struct {
@@ -1843,6 +1844,16 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectEnvironment struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+	Protected bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCleanupJob struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -1893,6 +1904,16 @@ type ReleaseBundle struct {
 	DaemonHashes []byte
 	CreatedAt    pgtype.Timestamptz
 	AppliedAt    pgtype.Timestamptz
+}
+
+type RequestIDJournal struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type RequestTelemetry struct {

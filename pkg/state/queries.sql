@@ -361,18 +361,18 @@ update deployments set status = 'live' where id = $1;
 -- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at;
+returning domain, app_id, challenge_token, verified_at, environment_id;
 
 -- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1;
 
 -- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain;
 
 -- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain;
 
@@ -1982,19 +1982,30 @@ ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryDependencySpans :many
--- Bounded read path for the historical debugger dependency view. The
+-- Bounded read path for route-scoped dependency analytics. The
 -- account_id predicate is defense in depth for callers that accidentally
 -- pass an app id from another tenant; the app lookup remains the primary
--- IDOR boundary. The newest rows are preferred because spans_summary is
--- sampled evidence, not a complete request trace archive.
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+-- IDOR boundary. Evidence is newest-first within each route/deployment
+-- partition, then interleaved so one high-volume revision cannot crowd all
+-- prior deployments out of the bounded comparison window.
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5;
 
 -- name: RequestTelemetryCoverage :one
@@ -4345,3 +4356,45 @@ ON CONFLICT (singleton) DO UPDATE SET
 -- name: SafeReleaseWorkerLeaseReady :one
 SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
               WHERE singleton = true AND expires_at > now()) AS ready;
+
+-- name: RecordRequestIDJournal :one
+-- The request-ID journal is independent from sampled request telemetry. Only
+-- insert when the app is still owned by the authenticated account. The
+-- caller-generated record UUID makes an RPC retry idempotent without
+-- collapsing two customer requests that happen to reuse a public ID.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT sqlc.arg(id)::uuid,
+       a.account_id,
+       a.id,
+       sqlc.arg(request_id)::text,
+       NULLIF(sqlc.arg(trace_id)::text, ''),
+       sqlc.arg(received_at)::timestamptz,
+       sqlc.arg(expires_at)::timestamptz
+  FROM apps a
+ WHERE a.id = sqlc.arg(app_id)::uuid
+   AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
+-- name: GetRequestIDJournalByAppAndIdentifier :one
+-- Exact app/account-scoped lookup, latest first when callers reuse an ID.
+-- expires_at is checked as well as received_at so plan downgrades do not
+-- extend the original request-time retention window.
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND request_id = sqlc.arg(request_id)::text
+   AND received_at >= sqlc.arg(received_from)::timestamptz
+   AND received_at < sqlc.arg(received_until)::timestamptz
+   AND expires_at > sqlc.arg(now_at)::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1;

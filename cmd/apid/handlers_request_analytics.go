@@ -39,9 +39,13 @@ const requestAnalyticsGroupLimit = 50
 const requestAnalyticsDependencyRowLimit = 2000
 const requestAnalyticsDependencyGroupLimit = 64
 const requestAnalyticsDependencyOutputLimit = 10
+const requestAnalyticsDependencyDeploymentOutputLimit = 5
 const requestAnalyticsDeploymentLimit = 50
 const requestAnalyticsDeploymentCPURegressionMinRequests = int64(20)
 const requestAnalyticsDeploymentCPURegressionThresholdPct = 25.0
+const requestAnalyticsDependencyRegressionMinSamples = int64(20)
+const requestAnalyticsDependencyP95RegressionThresholdPct = 25.0
+const requestAnalyticsDependencyErrorRateRegressionThresholdPct = 2.0
 
 const requestAnalyticsRouteMaxLength = 256
 
@@ -573,6 +577,18 @@ type requestAnalyticsDependencyAggregate struct {
 	calls          int64
 	errors         int64
 	observations   []requestAnalyticsDependencySample
+	deployments    map[string]*requestAnalyticsDependencyDeploymentAggregate
+}
+
+type requestAnalyticsDependencyDeploymentAggregate struct {
+	deploymentID        string
+	commitSHA           string
+	deploymentTag       string
+	deploymentCreatedAt string
+	samples             int64
+	calls               int64
+	errors              int64
+	observations        []requestAnalyticsDependencySample
 }
 
 type requestAnalyticsRouteDependencyAggregate struct {
@@ -634,23 +650,43 @@ func buildRequestAnalyticsRouteDependencies(rows []sqlc.ListRequestTelemetryDepe
 					dependencyType: segment.Type,
 					dependencyKind: segment.Kind,
 					name:           segment.Name,
+					deployments:    make(map[string]*requestAnalyticsDependencyDeploymentAggregate),
 				}
 				routeAggregate.groups[segmentKey] = dependency
+			}
+			deployment := dependency.deployments[row.DeploymentID]
+			if deployment == nil {
+				deployment = &requestAnalyticsDependencyDeploymentAggregate{deploymentID: row.DeploymentID}
+				dependency.deployments[row.DeploymentID] = deployment
+			}
+			if row.CommitSha != "" {
+				deployment.commitSHA = row.CommitSha
+			}
+			if row.DeploymentTag != "" {
+				deployment.deploymentTag = row.DeploymentTag
+			}
+			if row.DeploymentCreatedAt != "" {
+				deployment.deploymentCreatedAt = row.DeploymentCreatedAt
 			}
 			duration := minDebugDependencyDuration(span.DurationNanos)
 			exclusive := minDebugDependencyDuration(exclusives[index])
 			isError := strings.EqualFold(span.Status, "error")
 			dependency.samples++
 			dependency.calls += weight
+			deployment.samples++
+			deployment.calls += weight
 			if isError {
 				dependency.errors += weight
+				deployment.errors += weight
 			}
-			dependency.observations = append(dependency.observations, requestAnalyticsDependencySample{
+			observation := requestAnalyticsDependencySample{
 				durationNanos:  duration,
 				exclusiveNanos: exclusive,
 				weight:         weight,
 				isError:        isError,
-			})
+			}
+			dependency.observations = append(dependency.observations, observation)
+			deployment.observations = append(deployment.observations, observation)
 		}
 		if hasDependency {
 			routeAggregate.requests += weight
@@ -661,17 +697,46 @@ func buildRequestAnalyticsRouteDependencies(rows []sqlc.ListRequestTelemetryDepe
 	for key, aggregate := range aggregates {
 		dependencies := make([]api.RequestAnalyticsDependency, 0, len(aggregate.groups))
 		for _, dependency := range aggregate.groups {
+			p50 := requestAnalyticsDependencyPercentile(dependency.observations, 0.50, false)
 			p95 := requestAnalyticsDependencyPercentile(dependency.observations, 0.95, false)
+			p99 := requestAnalyticsDependencyPercentile(dependency.observations, 0.99, false)
 			exclusiveP95 := requestAnalyticsDependencyPercentile(dependency.observations, 0.95, true)
+			deploymentObservations := make([]api.RequestAnalyticsDependencyDeploymentObservation, 0, len(dependency.deployments))
+			for _, deployment := range dependency.deployments {
+				deploymentObservations = append(deploymentObservations, api.RequestAnalyticsDependencyDeploymentObservation{
+					DeploymentID:        deployment.deploymentID,
+					CommitSHA:           deployment.commitSHA,
+					DeploymentTag:       deployment.deploymentTag,
+					DeploymentCreatedAt: deployment.deploymentCreatedAt,
+					Samples:             deployment.samples,
+					Calls:               deployment.calls,
+					ErrorCalls:          deployment.errors,
+					ErrorRatePct:        requestErrorRatePct(deployment.calls, deployment.errors),
+					P50MS:               requestAnalyticsDependencyPercentile(deployment.observations, 0.50, false),
+					P95MS:               requestAnalyticsDependencyPercentile(deployment.observations, 0.95, false),
+					P99MS:               requestAnalyticsDependencyPercentile(deployment.observations, 0.99, false),
+					ExclusiveP95MS:      requestAnalyticsDependencyPercentile(deployment.observations, 0.95, true),
+				})
+			}
+			annotateDependencyDeploymentRegressions(deploymentObservations)
+			sortRequestAnalyticsDependencyDeployments(deploymentObservations)
+			if len(deploymentObservations) > requestAnalyticsDependencyDeploymentOutputLimit {
+				deploymentObservations = deploymentObservations[:requestAnalyticsDependencyDeploymentOutputLimit]
+				truncated = true
+			}
 			dependencies = append(dependencies, api.RequestAnalyticsDependency{
-				Type:           dependency.dependencyType,
-				Kind:           dependency.dependencyKind,
-				Name:           dependency.name,
-				Samples:        dependency.samples,
-				Calls:          dependency.calls,
-				ErrorCalls:     dependency.errors,
-				P95MS:          p95,
-				ExclusiveP95MS: exclusiveP95,
+				Type:                   dependency.dependencyType,
+				Kind:                   dependency.dependencyKind,
+				Name:                   dependency.name,
+				Samples:                dependency.samples,
+				Calls:                  dependency.calls,
+				ErrorCalls:             dependency.errors,
+				ErrorRatePct:           requestErrorRatePct(dependency.calls, dependency.errors),
+				P50MS:                  p50,
+				P95MS:                  p95,
+				P99MS:                  p99,
+				ExclusiveP95MS:         exclusiveP95,
+				DeploymentObservations: deploymentObservations,
 			})
 		}
 		sort.SliceStable(dependencies, func(i, j int) bool {
@@ -700,6 +765,95 @@ func buildRequestAnalyticsRouteDependencies(rows []sqlc.ListRequestTelemetryDepe
 		}
 	}
 	return results, truncated
+}
+
+// annotateDependencyDeploymentRegressions compares each deployment with the
+// preceding comparable, uniquely ordered deployment for this route and
+// dependency. Comparisons are advisory and require at least 20 retained span
+// observations on both sides; timestamp ties deliberately break the chain.
+func annotateDependencyDeploymentRegressions(deployments []api.RequestAnalyticsDependencyDeploymentObservation) {
+	type measuredDeployment struct {
+		index     int
+		createdAt time.Time
+	}
+	measured := make([]measuredDeployment, 0, len(deployments))
+	for i := range deployments {
+		deployment := &deployments[i]
+		if deployment.Samples < requestAnalyticsDependencyRegressionMinSamples {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, deployment.DeploymentCreatedAt)
+		if err != nil {
+			continue
+		}
+		measured = append(measured, measuredDeployment{index: i, createdAt: createdAt})
+	}
+	sort.Slice(measured, func(i, j int) bool {
+		if measured[i].createdAt.Equal(measured[j].createdAt) {
+			return deployments[measured[i].index].DeploymentID < deployments[measured[j].index].DeploymentID
+		}
+		return measured[i].createdAt.Before(measured[j].createdAt)
+	})
+
+	var previous *measuredDeployment
+	for i := 0; i < len(measured); {
+		groupEnd := i + 1
+		for groupEnd < len(measured) && measured[groupEnd].createdAt.Equal(measured[i].createdAt) {
+			groupEnd++
+		}
+		if groupEnd-i != 1 {
+			previous = nil
+			i = groupEnd
+			continue
+		}
+		current := measured[i]
+		currentDeployment := &deployments[current.index]
+		if previous != nil {
+			previousDeployment := deployments[previous.index]
+			currentDeployment.ComparedTo = requestAnalyticsDependencyRevision(previousDeployment)
+			if previousDeployment.P95MS > 0 {
+				changePct := (float64(currentDeployment.P95MS-previousDeployment.P95MS) / float64(previousDeployment.P95MS)) * 100
+				currentDeployment.P95ChangePct = &changePct
+				if changePct >= requestAnalyticsDependencyP95RegressionThresholdPct {
+					currentDeployment.Regression = true
+				}
+			}
+			errorRateChangePct := currentDeployment.ErrorRatePct - previousDeployment.ErrorRatePct
+			currentDeployment.ErrorRateChangePct = &errorRateChangePct
+			if errorRateChangePct >= requestAnalyticsDependencyErrorRateRegressionThresholdPct {
+				currentDeployment.Regression = true
+			}
+		}
+		previous = &measured[i]
+		i++
+	}
+}
+
+func requestAnalyticsDependencyRevision(deployment api.RequestAnalyticsDependencyDeploymentObservation) string {
+	if deployment.DeploymentTag != "" {
+		return deployment.DeploymentTag
+	}
+	if deployment.CommitSHA != "" {
+		return deployment.CommitSHA
+	}
+	return deployment.DeploymentID
+}
+
+func sortRequestAnalyticsDependencyDeployments(deployments []api.RequestAnalyticsDependencyDeploymentObservation) {
+	sort.SliceStable(deployments, func(i, j int) bool {
+		left, leftErr := time.Parse(time.RFC3339Nano, deployments[i].DeploymentCreatedAt)
+		right, rightErr := time.Parse(time.RFC3339Nano, deployments[j].DeploymentCreatedAt)
+		if leftErr == nil && rightErr == nil && !left.Equal(right) {
+			return left.After(right)
+		}
+		if (leftErr == nil) != (rightErr == nil) {
+			return leftErr == nil
+		}
+		if deployments[i].DeploymentCreatedAt != deployments[j].DeploymentCreatedAt {
+			return deployments[i].DeploymentCreatedAt > deployments[j].DeploymentCreatedAt
+		}
+		return deployments[i].DeploymentID < deployments[j].DeploymentID
+	})
 }
 
 func requestAnalyticsDependencyPercentile(samples []requestAnalyticsDependencySample, quantile float64, exclusive bool) int64 {

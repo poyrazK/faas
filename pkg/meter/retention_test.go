@@ -178,6 +178,37 @@ func TestRetentionSQL_HasBoundedDeleteShape(t *testing.T) {
 	}
 }
 
+// adr: 127 pins expiry of the minimal public request-ID journal independently
+// from sampled request telemetry retention.
+func TestRetentionOnceRequestIDJournalUsesBoundedExpiryDelete(t *testing.T) {
+	r := &recordingExecer{rowsFn: func(int) int64 { return 12 }}
+	got, err := RetentionOnceRequestIDJournal(context.Background(), r)
+	if err != nil {
+		t.Fatalf("RetentionOnceRequestIDJournal: %v", err)
+	}
+	if got != 12 {
+		t.Fatalf("rows deleted = %d, want 12", got)
+	}
+	calls := r.callsCopy()
+	if len(calls) != 1 {
+		t.Fatalf("exec calls = %d, want one short-read batch", len(calls))
+	}
+	for _, want := range []string{
+		"DELETE FROM public.request_id_journal",
+		"WHERE ctid IN (",
+		"expires_at <= now()",
+		"ORDER BY expires_at",
+		"LIMIT $1",
+	} {
+		if !strings.Contains(calls[0].SQL, want) {
+			t.Errorf("request-ID journal retention SQL missing %q: %s", want, calls[0].SQL)
+		}
+	}
+	if calls[0].Args[0] != RetentionBatchSize {
+		t.Fatalf("batch limit = %v, want %d", calls[0].Args[0], RetentionBatchSize)
+	}
+}
+
 func TestRetentionLoop_StopsOnContextCancel(t *testing.T) {
 	r := &recordingExecer{}
 	ctx, cancel := context.WithCancel(context.Background())

@@ -52,7 +52,7 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 		}
 		gotQuery = r.URL.Query()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"since":"15m","complete":true,"requests":[{"id":"row-1","deployment_id":"dep-1","route":"/checkout","method":"POST","status":500,"latency_ms":123,"count":2,"cold_boot":true,"trace_id":"req_28372","received_at":"2026-09-22T11:59:00Z"}]}`)
+		_, _ = fmt.Fprint(w, `{"since":"15m","complete":true,"requests":[{"id":"row-1","deployment_id":"dep-1","route":"/checkout","method":"POST","status":500,"latency_ms":123,"count":2,"cold_boot":true,"request_id":"req_28372","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","received_at":"2026-09-22T11:59:00Z"}]}`)
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -73,7 +73,7 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 			t.Errorf("query %s = %q, want %q", key, got, want)
 		}
 	}
-	for _, want := range []string{"http", "status=500", `route="/checkout"`, "request=req_28372", "count=2", "cold_boot=true"} {
+	for _, want := range []string{"http", "status=500", `route="/checkout"`, "request=req_28372", "trace=4bf92f3577b34da6a3ce929d0e0e4736", "count=2", "cold_boot=true"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("output %q missing %q", stdout.String(), want)
 		}
@@ -115,7 +115,7 @@ func TestCmdLogsRequestLookupEmitsCanonicalJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"id":"row-1","deployment_id":"dep-1","route":"/checkout","method":"POST","status":500,"latency_ms":123,"count":1,"cold_boot":false,"trace_id":"req_28372","received_at":"2026-09-22T11:59:00Z"}`)
+		_, _ = fmt.Fprint(w, `{"id":"row-1","deployment_id":"dep-1","route":"/checkout","method":"POST","status":500,"latency_ms":123,"count":1,"cold_boot":false,"request_id":"req_28372","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","received_at":"2026-09-22T11:59:00Z"}`)
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -136,7 +136,7 @@ func TestCmdLogsRequestLookupEmitsCanonicalJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &event); err != nil {
 		t.Fatalf("decode NDJSON event: %v; output=%q", err, stdout.String())
 	}
-	if event.Source != api.LogSourceHTTP || event.RequestID != "req_28372" || event.Status != 500 || event.Route != "/checkout" {
+	if event.Source != api.LogSourceHTTP || event.RequestID != "req_28372" || event.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || event.Status != 500 || event.Route != "/checkout" {
 		t.Fatalf("event = %+v", event)
 	}
 }

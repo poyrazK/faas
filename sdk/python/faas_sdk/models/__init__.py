@@ -1186,6 +1186,9 @@ from .project_environment_config_diff_response import ProjectEnvironmentConfigDi
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
 from .project_environment_diff_response import ProjectEnvironmentDiffResponse
+from .project_environment_domain_diff_response import ProjectEnvironmentDomainDiffResponse
+from .project_environment_domain_diff_response_kind import ProjectEnvironmentDomainDiffResponseKind
+from .project_environment_domain_response import ProjectEnvironmentDomainResponse
 from .project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
 from .project_environment_edge_policy_diff_response_kind import ProjectEnvironmentEdgePolicyDiffResponseKind
 from .project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
@@ -1350,6 +1353,7 @@ from .request_analytics_compute_cost_allocation_method import RequestAnalyticsCo
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
 from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
 from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_dependency_deployment_observation import RequestAnalyticsDependencyDeploymentObservation
 from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
 from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
@@ -2858,6 +2862,9 @@ __all__ = (
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
     "ProjectEnvironmentDiffResponse",
+    "ProjectEnvironmentDomainDiffResponse",
+    "ProjectEnvironmentDomainDiffResponseKind",
+    "ProjectEnvironmentDomainResponse",
     "ProjectEnvironmentEdgePolicyDiffResponse",
     "ProjectEnvironmentEdgePolicyDiffResponseKind",
     "ProjectEnvironmentEdgePolicyResponse",
@@ -3004,6 +3011,7 @@ __all__ = (
     "RequestAnalyticsComputeCostBasis",
     "RequestAnalyticsComputeCostCurrency",
     "RequestAnalyticsDependency",
+    "RequestAnalyticsDependencyDeploymentObservation",
     "RequestAnalyticsDeploymentCost",
     "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",

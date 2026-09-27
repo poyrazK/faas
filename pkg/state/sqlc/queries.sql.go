@@ -1087,7 +1087,7 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 const createCustomDomain = `-- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at
+returning domain, app_id, challenge_token, verified_at, environment_id
 `
 
 type CreateCustomDomainParams struct {
@@ -1101,6 +1101,7 @@ type CreateCustomDomainRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error) {
@@ -1111,6 +1112,7 @@ func (q *Queries) CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCus
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -1965,7 +1967,7 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 }
 
 const domainByName = `-- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1
 `
 
@@ -1974,6 +1976,7 @@ type DomainByNameRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error) {
@@ -1984,6 +1987,7 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.AppID,
 		&i.ChallengeToken,
 		&i.VerifiedAt,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -3729,6 +3733,59 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.AcknowledgedAt,
 		&i.DismissedUntil,
 		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const getRequestIDJournalByAppAndIdentifier = `-- name: GetRequestIDJournalByAppAndIdentifier :one
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = $1::uuid
+   AND app_id = $2::uuid
+   AND request_id = $3::text
+   AND received_at >= $4::timestamptz
+   AND received_at < $5::timestamptz
+   AND expires_at > $6::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1
+`
+
+type GetRequestIDJournalByAppAndIdentifierParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	RequestID     string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+	NowAt         pgtype.Timestamptz
+}
+
+type GetRequestIDJournalByAppAndIdentifierRow struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+// expires_at is checked as well as received_at so plan downgrades do not
+// extend the original request-time retention window.
+func (q *Queries) GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error) {
+	row := db.QueryRow(ctx, getRequestIDJournalByAppAndIdentifier,
+		arg.AccountID,
+		arg.AppID,
+		arg.RequestID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.NowAt,
+	)
+	var i GetRequestIDJournalByAppAndIdentifierRow
+	err := row.Scan(
+		&i.ID,
+		&i.RequestID,
+		&i.TraceID,
+		&i.ReceivedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -5941,7 +5998,7 @@ func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg Li
 }
 
 const listDomainsForAccount = `-- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain
 `
@@ -5951,6 +6008,7 @@ type ListDomainsForAccountRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error) {
@@ -5967,6 +6025,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -5979,7 +6038,7 @@ func (q *Queries) ListDomainsForAccount(ctx context.Context, db DBTX, accountID 
 }
 
 const listDomainsForApp = `-- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain
 `
 
@@ -5988,6 +6047,7 @@ type ListDomainsForAppRow struct {
 	AppID          pgtype.UUID
 	ChallengeToken string
 	VerifiedAt     pgtype.Timestamptz
+	EnvironmentID  pgtype.UUID
 }
 
 func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error) {
@@ -6004,6 +6064,7 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 			&i.AppID,
 			&i.ChallengeToken,
 			&i.VerifiedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -7330,14 +7391,24 @@ func (q *Queries) ListRequestTelemetryByPlatformTenant(ctx context.Context, db D
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5
 `
 
@@ -7350,21 +7421,26 @@ type ListRequestTelemetryDependencySpansParams struct {
 }
 
 type ListRequestTelemetryDependencySpansRow struct {
-	ID           pgtype.UUID
-	Route        string
-	Method       string
-	Count        int32
-	Status       int32
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	SpansSummary []byte
+	ID                  pgtype.UUID
+	Route               string
+	Method              string
+	Count               int32
+	Status              int32
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	DeploymentID        string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
 }
 
-// Bounded read path for the historical debugger dependency view. The
+// Bounded read path for route-scoped dependency analytics. The
 // account_id predicate is defense in depth for callers that accidentally
 // pass an app id from another tenant; the app lookup remains the primary
-// IDOR boundary. The newest rows are preferred because spans_summary is
-// sampled evidence, not a complete request trace archive.
+// IDOR boundary. Evidence is newest-first within each route/deployment
+// partition, then interleaved so one high-volume revision cannot crowd all
+// prior deployments out of the bounded comparison window.
 func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryDependencySpans,
 		arg.AppID,
@@ -7389,6 +7465,10 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 			&i.TraceID,
 			&i.ReceivedAt,
 			&i.SpansSummary,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -10983,6 +11063,59 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT $1::uuid,
+       a.account_id,
+       a.id,
+       $2::text,
+       NULLIF($3::text, ''),
+       $4::timestamptz,
+       $5::timestamptz
+  FROM apps a
+ WHERE a.id = $6::uuid
+   AND a.account_id = $7::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id
+`
+
+type RecordRequestIDJournalParams struct {
+	ID         pgtype.UUID
+	RequestID  string
+	TraceID    string
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+// The request-ID journal is independent from sampled request telemetry. Only
+// insert when the app is still owned by the authenticated account. The
+// caller-generated record UUID makes an RPC retry idempotent without
+// collapsing two customer requests that happen to reuse a public ID.
+func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, recordRequestIDJournal,
+		arg.ID,
+		arg.RequestID,
+		arg.TraceID,
+		arg.ReceivedAt,
+		arg.ExpiresAt,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one

@@ -232,6 +232,32 @@ func RetentionOnceRequestTelemetry(ctx context.Context, db retentionExecer) (int
 	return total, ErrRetentionBatchCap
 }
 
+const retentionRequestIDJournalBatchSQL = `DELETE FROM public.request_id_journal
+                                          WHERE ctid IN (
+                                              SELECT ctid FROM public.request_id_journal
+                                              WHERE expires_at <= now()
+                                              ORDER BY expires_at
+                                              LIMIT $1
+                                          )`
+
+// RetentionOnceRequestIDJournal purges expired exact-ID mappings in bounded
+// batches. Expiry is fixed when the request arrives, so plan downgrades cannot
+// extend a mapping's original retention window.
+func RetentionOnceRequestIDJournal(ctx context.Context, db retentionExecer) (int64, error) {
+	var total int64
+	for i := 0; i < MaxRetentionBatches; i++ {
+		tag, err := db.Exec(ctx, retentionRequestIDJournalBatchSQL, RetentionBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("request ID journal retention delete (batch %d, deleted so far %d): %w", i, total, err)
+		}
+		total += tag
+		if tag < RetentionBatchSize {
+			return total, nil
+		}
+	}
+	return total, ErrRetentionBatchCap
+}
+
 // retentionDropExpiredPartitionsSQL is a single-statement
 // partition-drop pass (PR-B ADR-127). Enumerates monthly
 // partitions of request_telemetry whose upper bound is older than
@@ -345,6 +371,21 @@ func RetentionLoopRequestTelemetry(ctx context.Context, db retentionExecer, inte
 			if _, dropErr := DropExpiredRequestTelemetryPartitions(ctx, db); dropErr != nil {
 				if log != nil {
 					log.Warn("request telemetry partition drop tick failed", "err", dropErr)
+				}
+			}
+			journalRows, journalErr := RetentionOnceRequestIDJournal(ctx, db)
+			switch {
+			case journalErr == nil:
+				if journalRows > 0 && log != nil {
+					log.Info("request ID journal retention tick ok", "rows_deleted", journalRows)
+				}
+			case errors.Is(journalErr, ErrRetentionBatchCap):
+				if log != nil {
+					log.Warn("request ID journal retention hit batch cap; will resume next tick", "rows_deleted", journalRows, "err", journalErr)
+				}
+			default:
+				if log != nil {
+					log.Error("request ID journal retention failed", "err", journalErr)
 				}
 			}
 		}

@@ -2281,6 +2281,7 @@ CREATE TABLE public.custom_domains (
     cert_expires_at timestamp with time zone,
     cert_last_error text,
     dns_last_checked_at timestamp with time zone,
+    environment_id uuid,
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
@@ -6632,6 +6633,8 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 
 CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
 
+CREATE INDEX custom_domains_environment_app_idx ON public.custom_domains USING btree (environment_id, app_id) WHERE (environment_id IS NOT NULL);
+
 
 --
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
@@ -10499,6 +10502,31 @@ ALTER TABLE ONLY public.deployment_aliases
 
 CREATE INDEX deployment_aliases_deployment_idx ON public.deployment_aliases USING btree (deployment_id);
 
+-- Project environment registry (migration 20260915130000001).
+CREATE TABLE IF NOT EXISTS public.project_environments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    slug text NOT NULL,
+    protected boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
+);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_slug_uniq UNIQUE (project_id, slug);
+CREATE INDEX IF NOT EXISTS project_environments_account_project_idx
+    ON public.project_environments (account_id, project_id, slug);
+ALTER TABLE ONLY public.custom_domains
+    ADD CONSTRAINT custom_domains_environment_id_fkey
+    FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
 
 --
 
@@ -10541,3 +10569,27 @@ CREATE TABLE public.safe_release_worker_lease (
     CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton),
     CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
 );
+
+-- Exact public request-ID mappings are stored independently from sampled
+-- request_telemetry rows and expire on the request-time plan retention cap.
+CREATE TABLE IF NOT EXISTS request_id_journal (
+    id          uuid        PRIMARY KEY,
+    account_id  uuid        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id      uuid        NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    request_id  text        NOT NULL,
+    trace_id    text,
+    received_at timestamptz NOT NULL,
+    expires_at  timestamptz NOT NULL,
+    CONSTRAINT request_id_journal_request_id_size_chk
+        CHECK (octet_length(request_id) BETWEEN 1 AND 128),
+    CONSTRAINT request_id_journal_request_id_control_chk
+        CHECK (request_id !~ '[[:cntrl:]]'),
+    CONSTRAINT request_id_journal_trace_id_format_chk
+        CHECK (trace_id IS NULL OR trace_id ~ '^[0-9a-f]{32}$'),
+    CONSTRAINT request_id_journal_expiry_chk
+        CHECK (expires_at > received_at)
+);
+CREATE INDEX IF NOT EXISTS request_id_journal_app_request_received_idx
+    ON request_id_journal (app_id, request_id, received_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS request_id_journal_expires_idx
+    ON request_id_journal (expires_at);
