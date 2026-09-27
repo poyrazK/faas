@@ -304,6 +304,8 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 
 - [ADR-281: safe object-storage binding rotation](281-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
 - [ADR-282: atomic object-storage binding creation](282-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
+- [ADR-283: runtime freshness for object-storage binding creation](283-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
+- [ADR-284: atomic object-storage binding revocation](284-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
 ## Snapshot restore optimization decisions
 

@@ -56,8 +56,8 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	return objectS3CredentialFromSQL(row), nil
 }
 
-// CreateObjectS3ComputeBinding makes the credential and all six runtime
-// secrets visible at the same commit boundary.
+// CreateObjectS3ComputeBinding makes the credential, six runtime secrets,
+// freshness stamp and snapshot invalidation visible at one commit boundary.
 func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
 	if !validObjectS3ComputeBindingCreateRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
@@ -107,6 +107,12 @@ func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3
 			return ObjectS3Credential{}, mapErr(err)
 		}
 	}
+	if err := q.ObjectS3BindingStampRuntime(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
@@ -134,6 +140,50 @@ func (s *PgStore) RevokeObjectS3Credential(ctx context.Context, accountID, bucke
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RevokeObjectS3ComputeBinding atomically revokes the binding and every
+// rotation stage, removes its managed secrets, and marks the app's runtime
+// configuration and snapshots stale.
+func (s *PgStore) RevokeObjectS3ComputeBinding(ctx context.Context, accountID, bucketID, bindingID string) (bool, error) {
+	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
+		return false, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	parent, err := q.ObjectS3BindingRevokeLock(ctx, tx, sqlc.ObjectS3BindingRevokeLockParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	revoked, err := q.ObjectS3CredentialRevoke(ctx, tx, sqlc.ObjectS3CredentialRevokeParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	secrets, err := q.ObjectS3BindingDeleteSecrets(ctx, tx, mustPgUUID(bindingID))
+	if err != nil {
+		return false, mapErr(err)
+	}
+	changed := revoked > 0 || secrets > 0
+	if changed {
+		if err := q.ObjectS3BindingStampRuntime(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+		if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, mapErr(err)
+	}
+	return changed, nil
 }
 
 func (s *PgStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {

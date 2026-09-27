@@ -97,6 +97,15 @@ func validObjectS3CredentialRotationRequest(req ObjectS3CredentialRotationReques
 	return req.AccessKeyID != "" && req.KID != "" && len(req.SecretSealed) > 0 && len(req.Secrets) == 2
 }
 
+func validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID string) bool {
+	for _, id := range []string{accountID, bucketID, bindingID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func validateObjectS3CredentialRotationSecrets(req ObjectS3CredentialRotationRequest, parent ObjectS3Credential) error {
 	if parent.ManagedAppID == "" || parent.ManagedPrefix == "" || parent.ManagedScope == "" {
 		return ErrConflict
@@ -152,6 +161,7 @@ type ObjectS3CredentialBindingStore interface {
 	ObjectS3CredentialStore
 	ObjectS3CredentialRotationStore
 	CreateObjectS3ComputeBinding(context.Context, ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error)
+	RevokeObjectS3ComputeBinding(context.Context, string, string, string) (bool, error)
 	GetObjectS3Credential(context.Context, string, string, string) (ObjectS3Credential, error)
 }
 
