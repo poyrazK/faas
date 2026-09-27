@@ -51,8 +51,14 @@ func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
 func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, error) {
 	for {
 		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
-		if !errors.Is(err, ErrCallbackOutboxFull) || ctx.Done() == nil {
-			return claimed, err
+		if err == nil {
+			return claimed, nil
+		}
+		if !errors.Is(err, ErrCallbackOutboxFull) {
+			return false, errors.Join(ErrCallbackOutboxAdmission, err)
+		}
+		if ctx.Done() == nil {
+			return false, errors.Join(ErrCallbackOutboxAdmission, err)
 		}
 
 		timer := time.NewTimer(h.DurableQueue.retryInterval)
@@ -64,7 +70,7 @@ func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, erro
 				default:
 				}
 			}
-			return false, errors.Join(ErrCallbackOutboxFull, ctx.Err())
+			return false, errors.Join(ErrCallbackOutboxAdmission, ErrCallbackOutboxFull, ctx.Err())
 		case <-timer.C:
 		}
 	}

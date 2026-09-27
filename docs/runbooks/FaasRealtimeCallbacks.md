@@ -22,6 +22,14 @@ progress. Restore callback receiver or node storage health. A live connection
 whose message could not be persisted is closed with WebSocket code 1013 so the
 client can reconnect and retry according to its application protocol.
 
+`FaasRealtimeCallbackOutboxAdmissionFailed` means the outbox rejected an event
+because of a storage or admission error other than capacity exhaustion. Check
+`realtimed_callback_outbox_admission_errors_total`, realtimed logs, free disk
+space and inodes, directory ownership, and filesystem sync errors. A live
+connection whose message could not be saved is closed with WebSocket code 1013.
+Restore node-local outbox storage health; clients can then reconnect and retry
+according to their application protocol.
+
 `FaasRealtimeCallbackOutboxNearCapacity` means pending callback data has stayed
 above 80% of the outbox byte limit for five minutes. Check
 `realtimed_callback_pending_bytes` and

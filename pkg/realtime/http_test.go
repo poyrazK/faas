@@ -223,8 +223,26 @@ func TestHTTPHooksReturnsOutboxFullWhenCapacityDoesNotRecoverBeforeDeadline(t *t
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	err := (HTTPHooks{Client: server.Client(), DurableQueue: queue}).Message(ctx, event)
-	if !errors.Is(err, ErrCallbackOutboxFull) || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Message error = %v, want outbox full and deadline exceeded", err)
+	if !errors.Is(err, ErrCallbackOutboxAdmission) || !errors.Is(err, ErrCallbackOutboxFull) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Message error = %v, want admission failure, outbox full, and deadline exceeded", err)
+	}
+}
+
+func TestHTTPHooksMarksOutboxPersistenceFailureAsAdmissionFailure(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	queue.root += "-unavailable"
+	event := testCallbackEvent()
+	event.CallbackURL = "https://example.com"
+
+	err := (HTTPHooks{DurableQueue: queue}).Message(context.Background(), event)
+	if !errors.Is(err, ErrCallbackOutboxAdmission) {
+		t.Fatalf("Message error = %v, want ErrCallbackOutboxAdmission", err)
+	}
+	if errors.Is(err, ErrCallbackOutboxFull) {
+		t.Fatalf("Message error = %v, unexpectedly wraps ErrCallbackOutboxFull", err)
+	}
+	if got := queue.Stats().Pending; got != 0 {
+		t.Fatalf("pending callbacks = %d, want no event admitted", got)
 	}
 }
 

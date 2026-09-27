@@ -1,4 +1,4 @@
-# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, and ADR-290).
+# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, ADR-290, and ADR-291).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -6,6 +6,35 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - interval: 30s
+    name: "callback outbox admission failure pages"
+    input_series:
+      - series: 'realtimed_callback_outbox_admission_errors_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0+1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackOutboxAdmissionFailed
+        exp_alerts:
+          - exp_labels:
+              job: realtimed
+              instance: compute-a:9107
+              severity: page
+              component: realtimed
+              family: realtime_callbacks
+            exp_annotations:
+              summary: "Realtime callback could not be saved to the outbox"
+              description: "The node failed to admit a callback to its durable outbox for a reason other than capacity exhaustion. Check local storage health and permissions; a live WebSocket is closed with code 1013 when its message cannot be saved."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+  - interval: 30s
+    name: "no callback outbox admission failure stays quiet"
+    input_series:
+      - series: 'realtimed_callback_outbox_admission_errors_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0x11'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackOutboxAdmissionFailed
+
   - interval: 30s
     name: "callback outbox rejection pages"
     input_series:

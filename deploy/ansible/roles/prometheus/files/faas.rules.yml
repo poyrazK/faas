@@ -71,6 +71,18 @@ groups:
           description: "The node rejected a callback event because its durable outbox remained full until the admission deadline. A live WebSocket was closed with code 1013 when a message event was rejected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
+      - alert: FaasRealtimeCallbackOutboxAdmissionFailed
+        expr: increase(realtimed_callback_outbox_admission_errors_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback could not be saved to the outbox"
+          description: "The node failed to admit a callback to its durable outbox for a reason other than capacity exhaustion. Check local storage health and permissions; a live WebSocket is closed with code 1013 when its message cannot be saved."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
       - alert: FaasRealtimeCallbackDeadLettersPresent
         expr: realtimed_callback_dead_letters > 0
         for: 5m

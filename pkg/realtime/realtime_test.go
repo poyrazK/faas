@@ -208,6 +208,82 @@ func TestManagerClosesSocketWhenCallbackOutboxStaysFull(t *testing.T) {
 	}
 }
 
+func TestManagerClosesSocketWhenCallbackOutboxPersistenceFails(t *testing.T) {
+	var messageRequests atomic.Uint64
+	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/message" {
+			messageRequests.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callbackServer.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	queue.root += "-unavailable"
+	manager := NewManager(Config{CallbackTimeout: time.Second}, HTTPHooks{
+		Client:       callbackServer.Client(),
+		DurableQueue: queue,
+		MaxAttempts:  1,
+	})
+	defer manager.Close()
+	endpoint := Endpoint{
+		ID:             "outbox-write-failure",
+		CallbackURL:    callbackServer.URL,
+		ConnectPath:    "/connect",
+		MessagePath:    "/message",
+		DisconnectPath: "/disconnect",
+	}
+	if err := manager.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+	server := httptest.NewServer(manager.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	if err := client.WriteMessage(websocket.TextMessage, []byte("first")); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("second")); err != nil {
+		t.Fatalf("write second message: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = client.ReadMessage()
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseTryAgainLater {
+		t.Fatalf("connection close = %v, want websocket code %d", err, websocket.CloseTryAgainLater)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for len(manager.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(manager.Snapshot()) != 0 {
+		t.Fatal("connection remained registered after outbox persistence failure")
+	}
+	stats := manager.Stats()
+	if stats.ReceivedMessages != 1 {
+		t.Fatalf("received messages = %d, want only the first message before closing", stats.ReceivedMessages)
+	}
+	if stats.CallbackOutboxAdmissionErrors == 0 {
+		t.Fatal("outbox admission failure was not counted")
+	}
+	if stats.CallbackOutboxFull != 0 {
+		t.Fatalf("outbox-full count = %d, want persistence failure classified separately", stats.CallbackOutboxFull)
+	}
+	if got := messageRequests.Load(); got != 0 {
+		t.Fatalf("message callbacks reached receiver = %d, want 0", got)
+	}
+	if got := queue.Stats().Pending; got != 0 {
+		t.Fatalf("pending callbacks = %d, want no unpersisted message", got)
+	}
+}
+
 func TestManagerUpdatesCallbackAuthForExistingConnections(t *testing.T) {
 	hooks := &testHooks{accept: true}
 	m := NewManager(Config{MaxConnectionAge: time.Second}, hooks)

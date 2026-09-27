@@ -251,6 +251,7 @@ type Stats struct {
 	DroppedMessages                    uint64  `json:"dropped_messages"`
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
+	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
 	CallbackPending                    uint64  `json:"callback_pending"`
 	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
 	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
@@ -314,16 +315,17 @@ type Manager struct {
 
 	upgrader websocket.Upgrader
 
-	acceptedConnections atomic.Uint64
-	rejectedConnections atomic.Uint64
-	receivedMessages    atomic.Uint64
-	receivedBytes       atomic.Uint64
-	sentMessages        atomic.Uint64
-	sentBytes           atomic.Uint64
-	droppedMessages     atomic.Uint64
-	callbackErrors      atomic.Uint64
-	callbackOutboxFull  atomic.Uint64
-	authOutcomes        authOutcomeCounters
+	acceptedConnections           atomic.Uint64
+	rejectedConnections           atomic.Uint64
+	receivedMessages              atomic.Uint64
+	receivedBytes                 atomic.Uint64
+	sentMessages                  atomic.Uint64
+	sentBytes                     atomic.Uint64
+	droppedMessages               atomic.Uint64
+	callbackErrors                atomic.Uint64
+	callbackOutboxFull            atomic.Uint64
+	callbackOutboxAdmissionErrors atomic.Uint64
+	authOutcomes                  authOutcomeCounters
 }
 
 // NewManager creates a managed realtime owner. Call Close during daemon
@@ -792,9 +794,14 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		cancel()
 		if callbackErr != nil {
 			m.callbackErrors.Add(1)
-			if errors.Is(callbackErr, ErrCallbackOutboxFull) {
-				m.callbackOutboxFull.Add(1)
-				_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
+			if errors.Is(callbackErr, ErrCallbackOutboxAdmission) {
+				if errors.Is(callbackErr, ErrCallbackOutboxFull) {
+					m.callbackOutboxFull.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
+				} else {
+					m.callbackOutboxAdmissionErrors.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback could not be persisted")
+				}
 				return
 			}
 		}
@@ -883,8 +890,12 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
-		if errors.Is(err, ErrCallbackOutboxFull) {
-			m.callbackOutboxFull.Add(1)
+		if errors.Is(err, ErrCallbackOutboxAdmission) {
+			if errors.Is(err, ErrCallbackOutboxFull) {
+				m.callbackOutboxFull.Add(1)
+			} else {
+				m.callbackOutboxAdmissionErrors.Add(1)
+			}
 		}
 	}
 }
@@ -1098,16 +1109,17 @@ func (m *Manager) Stats() Stats {
 		current = 0
 	}
 	stats := Stats{
-		CurrentConnections:  uint64(current),
-		AcceptedConnections: m.acceptedConnections.Load(),
-		RejectedConnections: m.rejectedConnections.Load(),
-		ReceivedMessages:    m.receivedMessages.Load(),
-		ReceivedBytes:       m.receivedBytes.Load(),
-		SentMessages:        m.sentMessages.Load(),
-		SentBytes:           m.sentBytes.Load(),
-		DroppedMessages:     m.droppedMessages.Load(),
-		CallbackErrors:      m.callbackErrors.Load(),
-		CallbackOutboxFull:  m.callbackOutboxFull.Load(),
+		CurrentConnections:            uint64(current),
+		AcceptedConnections:           m.acceptedConnections.Load(),
+		RejectedConnections:           m.rejectedConnections.Load(),
+		ReceivedMessages:              m.receivedMessages.Load(),
+		ReceivedBytes:                 m.receivedBytes.Load(),
+		SentMessages:                  m.sentMessages.Load(),
+		SentBytes:                     m.sentBytes.Load(),
+		DroppedMessages:               m.droppedMessages.Load(),
+		CallbackErrors:                m.callbackErrors.Load(),
+		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
+		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()

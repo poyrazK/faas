@@ -28,8 +28,9 @@ const (
 )
 
 var (
-	ErrCallbackOutboxFull = errors.New("realtime: callback outbox is full")
-	ErrCallbackOutboxItem = errors.New("realtime: callback outbox item is not claimable")
+	ErrCallbackOutboxFull      = errors.New("realtime: callback outbox is full")
+	ErrCallbackOutboxAdmission = errors.New("realtime: callback outbox admission failed")
+	ErrCallbackOutboxItem      = errors.New("realtime: callback outbox item is not claimable")
 )
 
 // CallbackOutboxConfig controls the node-local callback spool.
