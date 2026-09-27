@@ -1264,8 +1264,9 @@ for line in sys.stdin:
         }
     except Exception as exc:
         traceback.print_exc()
-        message = str(exc)
-        if len(message) > 256: message = message[:256] + "\u2026"
+        # Python slices str by code point, so this never splits a character.
+        detail = str(exc)
+        message = detail if len(detail) <= 256 else detail[:256] + "\u2026"
         error_body = json.dumps({"error": "handler_error", "message": message, "invocation_id": invocation_id})
         envelope = {
             "status": 500,
