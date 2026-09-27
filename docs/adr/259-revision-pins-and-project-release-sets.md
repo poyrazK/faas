@@ -1,6 +1,6 @@
 # ADR-259 · Expiring revision pins and project release sets
 
-- **Status:** implemented for HTTP ingress, durable invocations, and managed service calls
+- **Status:** implemented for HTTP ingress, durable invocations, managed service calls, and graph-aware environment promotion
 - **Date:** 2026-09-25
 - **Decision:** An app may opt into `revision_pin_ttl_seconds` (maximum seven
   days). When a stable, canary, or service rollout replaces a live deployment,
@@ -48,12 +48,17 @@
   graph does not make its members eligible for routing. Environment state
   includes the active set and workload app IDs alongside the existing live
   deployment inventory so clients can compare those selections.
-  These reads do not change activation, environment hostname routing, or
-  promotion semantics. The existing workload-by-workload promotion flow cannot
-  yet select and atomically activate or restore a release graph. Its preview
-  therefore blocks promotions when either environment has an active set;
-  environments without active sets keep the existing promotion behavior until
-  graph-aware execution is available.
+  These reads do not change activation or environment hostname routing.
+  Promotion previews use the exact members of active source and target graphs.
+  When the target has an active graph, deployments are prepared while that
+  graph remains the ingress pointer; one compare-and-publish transaction
+  activates the complete promoted graph and records its ID on the durable
+  promotion. Rollback publishes the saved prior membership as a new immutable
+  graph and refuses to overwrite a target graph that changed after promotion.
+  A graph-backed source with no active target graph remains blocked because
+  per-workload cutover has no stable pointer to protect traffic from a partial
+  rollout. Environments with no active graphs keep the existing promotion
+  behavior.
 - **Durable work:** Async invoke, delayed tasks, queues, inbox messages, and
   asynchronous edge routes capture the selected release or direct revision
   when enqueued. The scheduler and gateway revalidate it before delivery.

@@ -119,29 +119,73 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	if toReleaseSet.ID != "" {
 		plan.ToReleaseSet = &toReleaseSet
 	}
-	// This promotion flow copies per-workload live deployments. It cannot yet
-	// select the source graph's exact members or atomically activate/restore a
-	// target graph. Do not claim a graph-backed environment is promotable until
-	// the execution path can preserve those release-set semantics.
-	if fromReleaseSet.ID != "" {
+	// A target release graph provides the stable routing pointer needed to
+	// prepare workload deployments without exposing a partial project rollout.
+	// Source graphs are read by exact membership below; a graph-backed source
+	// without a target pointer remains blocked because per-workload cutover would
+	// otherwise expose a mixed release.
+	if fromReleaseSet.ID != "" && toReleaseSet.ID == "" {
 		blockingReasons = append(blockingReasons, fmt.Sprintf(
-			"source environment %q has active release set %s; release-graph promotion is not available yet",
-			fromEnvironment, fromReleaseSet.ID))
+			"source environment %q has active release set %s but target environment %q has no active release set; atomic graph promotion requires an existing target release graph",
+			fromEnvironment, fromReleaseSet.ID, toEnvironment))
+	}
+	sourceGraphDeployments := map[string]state.Deployment{}
+	targetGraphDeployments := map[string]state.Deployment{}
+	if fromReleaseSet.ID != "" {
+		members, graphErr := projectEnvironmentReleaseGraphDeployments(ctx, s.store, fromReleaseSet, apps, fromEnvironment)
+		if graphErr != nil {
+			if errors.Is(graphErr, state.ErrConflict) {
+				blockingReasons = append(blockingReasons, fmt.Sprintf("source release graph %s does not cover the current project workloads", fromReleaseSet.ID))
+			} else {
+				return plan, api.ErrCapacity("could not inspect source release graph members")
+			}
+		} else {
+			sourceGraphDeployments = members
+		}
 	}
 	if toReleaseSet.ID != "" {
-		blockingReasons = append(blockingReasons, fmt.Sprintf(
-			"target environment %q has active release set %s; release-graph promotion is not available yet",
-			toEnvironment, toReleaseSet.ID))
+		members, graphErr := projectEnvironmentReleaseGraphDeployments(ctx, s.store, toReleaseSet, apps, toEnvironment)
+		if graphErr != nil {
+			if errors.Is(graphErr, state.ErrConflict) {
+				blockingReasons = append(blockingReasons, fmt.Sprintf("target release graph %s does not cover the current project workloads", toReleaseSet.ID))
+			} else {
+				return plan, api.ErrCapacity("could not inspect target release graph members")
+			}
+		} else {
+			targetGraphDeployments = members
+		}
 	}
 	for _, app := range apps {
 		plan.Apps[app.Slug] = app
-		source, sourceErr := s.store.LiveDeploymentForScope(ctx, app.ID, fromEnvironment)
-		if sourceErr != nil && !errors.Is(sourceErr, state.ErrNotFound) {
-			return plan, api.ErrCapacity("could not inspect source environment deployments")
+		var source, target state.Deployment
+		var sourceErr, targetErr error
+		if fromReleaseSet.ID != "" {
+			var hasSource bool
+			source, hasSource = sourceGraphDeployments[app.ID]
+			if hasSource {
+				sourceErr = nil
+			} else {
+				sourceErr = state.ErrNotFound
+			}
+		} else {
+			source, sourceErr = s.store.LiveDeploymentForScope(ctx, app.ID, fromEnvironment)
+			if sourceErr != nil && !errors.Is(sourceErr, state.ErrNotFound) {
+				return plan, api.ErrCapacity("could not inspect source environment deployments")
+			}
 		}
-		target, targetErr := s.store.LiveDeploymentForScope(ctx, app.ID, toEnvironment)
-		if targetErr != nil && !errors.Is(targetErr, state.ErrNotFound) {
-			return plan, api.ErrCapacity("could not inspect target environment deployments")
+		if toReleaseSet.ID != "" {
+			var hasTarget bool
+			target, hasTarget = targetGraphDeployments[app.ID]
+			if hasTarget {
+				targetErr = nil
+			} else {
+				targetErr = state.ErrNotFound
+			}
+		} else {
+			target, targetErr = s.store.LiveDeploymentForScope(ctx, app.ID, toEnvironment)
+			if targetErr != nil && !errors.Is(targetErr, state.ErrNotFound) {
+				return plan, api.ErrCapacity("could not inspect target environment deployments")
+			}
 		}
 		if targetErr == nil {
 			plan.Targets[app.Slug] = target
@@ -178,6 +222,36 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		PromotionHash:  promotionHash, PromotionToken: promotionToken,
 	}
 	return plan, nil
+}
+
+func projectEnvironmentReleaseGraphDeployments(ctx context.Context, store state.Store, release state.ProjectReleaseSet, apps []state.App, environment string) (map[string]state.Deployment, error) {
+	if len(release.Members) != len(apps) {
+		return nil, state.ErrConflict
+	}
+	appsByID := make(map[string]state.App, len(apps))
+	for _, app := range apps {
+		appsByID[app.ID] = app
+	}
+	deployments := make(map[string]state.Deployment, len(apps))
+	seen := make(map[string]struct{}, len(apps))
+	for _, member := range release.Members {
+		if _, duplicate := seen[member.AppID]; duplicate {
+			return nil, state.ErrConflict
+		}
+		seen[member.AppID] = struct{}{}
+		if _, ok := appsByID[member.AppID]; !ok {
+			return nil, state.ErrConflict
+		}
+		deployment, err := store.DeploymentByID(ctx, member.DeploymentID)
+		if err != nil {
+			return nil, err
+		}
+		if deployment.AppID != member.AppID || deployment.Scope != environment || deployment.Status != state.DeployLive || deployment.DeletedAt != nil {
+			return nil, state.ErrConflict
+		}
+		deployments[member.AppID] = deployment
+	}
+	return deployments, nil
 }
 
 func (s *server) activeProjectEnvironmentReleaseSet(ctx context.Context, accountID, projectID, environment string) (state.ProjectReleaseSet, *api.Problem) {
@@ -314,7 +388,9 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		PromotionHash: plan.Preview.PromotionHash, IdempotencyKey: idempotencyKey, Status: "running",
-		VerificationStatus: "pending",
+		VerificationStatus:         "pending",
+		SourceReleaseSetID:         projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet),
+		PreviousTargetReleaseSetID: projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet),
 	}, projectEnvironmentPromotionWorkloads(plan))
 	if err != nil {
 		if !errors.Is(err, state.ErrConflict) {
@@ -444,6 +520,9 @@ func (s *server) applyProjectEnvironmentPromotionRollback(ctx context.Context, a
 	for _, app := range apps {
 		appsBySlug[app.Slug] = app
 	}
+	if promotion.PreviousTargetReleaseSetID != "" {
+		return s.applyProjectEnvironmentPromotionGraphRollback(ctx, acct, promotion, workloads, appsBySlug)
+	}
 	for _, workload := range workloads {
 		if workload.RollbackStatus == "restored" || workload.RollbackStatus == "cleared" ||
 			workload.RollbackStatus == "unchanged" || workload.RollbackStatus == "skipped" {
@@ -468,6 +547,62 @@ func (s *server) applyProjectEnvironmentPromotionRollback(ctx context.Context, a
 	now := time.Now().UTC()
 	if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rolled_back", "", &now); err != nil {
 		return fmt.Errorf("could not complete environment promotion rollback: %w", err)
+	}
+	return nil
+}
+
+func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, apps map[string]state.App) error {
+	fail := func(cause error) error {
+		message := projectEnvironmentRollbackFailureMessage(cause)
+		now := time.Now().UTC()
+		if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rollback_failed", message, &now); err != nil {
+			return fmt.Errorf("could not record release-graph rollback failure: %w", err)
+		}
+		return cause
+	}
+	reader, ok := s.store.(state.ProjectReleaseSetReader)
+	if !ok {
+		return fail(errors.New("could not inspect previous target release graph"))
+	}
+	previous, err := reader.ProjectReleaseSetByID(ctx, acct.ID, promotion.ProjectID, promotion.ToEnvironment, promotion.PreviousTargetReleaseSetID)
+	if err != nil {
+		return fail(fmt.Errorf("could not load previous target release graph: %w", err))
+	}
+	expected := make(map[string]string, len(workloads))
+	for _, workload := range workloads {
+		app, ok := apps[workload.WorkloadSlug]
+		if !ok || workload.PreviousTargetDeploymentID == "" {
+			return fail(fmt.Errorf("%w: previous target graph is incomplete", state.ErrConflict))
+		}
+		expected[app.ID] = workload.PreviousTargetDeploymentID
+	}
+	if len(expected) != len(previous.Members) {
+		return fail(fmt.Errorf("%w: previous target graph no longer matches promotion checkpoints", state.ErrConflict))
+	}
+	for _, member := range previous.Members {
+		if expected[member.AppID] != member.DeploymentID {
+			return fail(fmt.Errorf("%w: previous target graph no longer matches promotion checkpoints", state.ErrConflict))
+		}
+	}
+	publisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+	if !ok {
+		return fail(errors.New("atomic release graph rollback is unavailable"))
+	}
+	if _, err := publisher.RollbackProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, previous.TTLSeconds, previous.Members); err != nil {
+		return fail(fmt.Errorf("could not atomically restore previous target release graph: %w", err))
+	}
+	for _, workload := range workloads {
+		if workload.RollbackStatus == "restored" {
+			continue
+		}
+		if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, acct.ID, promotion.ID,
+			workload.ID, "restored", workload.PreviousTargetDeploymentID, ""); err != nil {
+			return fmt.Errorf("could not update graph rollback checkpoint: %w", err)
+		}
+	}
+	now := time.Now().UTC()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rolled_back", "", &now); err != nil {
+		return fmt.Errorf("could not complete graph rollback: %w", err)
 	}
 	return nil
 }
@@ -572,8 +707,19 @@ func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionT
 	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
 		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
 		wire.FromReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet) ||
-		wire.ToReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) ||
-		wire.PromotionHash != plan.Preview.PromotionHash {
+		wire.FromReleaseSetID != promotion.SourceReleaseSetID {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Promotion configuration is stale", "the environment configuration changed; start a new promotion")
+	}
+	if promotion.PreviousTargetReleaseSetID != "" {
+		graphPublished := projectEnvironmentPromotionReleaseGraphMatches(promotion, workloads, plan)
+		if wire.ToReleaseSetID != promotion.PreviousTargetReleaseSetID || wire.PromotionHash != promotion.PromotionHash ||
+			(!graphPublished && projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) != promotion.PreviousTargetReleaseSetID) ||
+			(!graphPublished && plan.Preview.PromotionHash != wire.PromotionHash) {
+			return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+				"Promotion configuration is stale", "the environment configuration or release graph changed; start a new promotion")
+		}
+	} else if wire.ToReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) || wire.PromotionHash != plan.Preview.PromotionHash {
 		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion configuration is stale", "the environment configuration changed; start a new promotion")
 	}
@@ -603,6 +749,30 @@ func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionT
 		}
 	}
 	return nil
+}
+
+func projectEnvironmentPromotionReleaseGraphMatches(promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) bool {
+	if promotion.TargetReleaseSetID == "" || plan.ToReleaseSet == nil || plan.ToReleaseSet.ID != promotion.TargetReleaseSetID ||
+		len(plan.ToReleaseSet.Members) != len(workloads) {
+		return false
+	}
+	expected := make(map[string]string, len(workloads))
+	for _, workload := range workloads {
+		app, ok := plan.Apps[workload.WorkloadSlug]
+		if !ok || workload.TargetDeploymentID == "" {
+			return false
+		}
+		expected[app.ID] = workload.TargetDeploymentID
+	}
+	if len(expected) != len(plan.ToReleaseSet.Members) {
+		return false
+	}
+	for _, member := range plan.ToReleaseSet.Members {
+		if expected[member.AppID] != member.DeploymentID {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) (api.ProjectEnvironmentPromotionResponse, *api.Problem) {
@@ -641,6 +811,37 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 		if _, err := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", promoted.ID, ""); err != nil {
 			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
 		}
+	}
+	if promotion.PreviousTargetReleaseSetID != "" {
+		_, graphWorkloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+		if err != nil {
+			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not load graph promotion checkpoints")
+		}
+		members, err := projectEnvironmentPromotionReleaseMembers(graphWorkloads, plan.Apps)
+		if err != nil {
+			return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Promotion graph is incomplete", "every project workload must have a prepared target deployment before atomic cutover")
+		}
+		if plan.ToReleaseSet == nil || plan.ToReleaseSet.TTLSeconds <= 0 {
+			return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Promotion target graph is stale", "preview the target environment again before promoting")
+		}
+		publisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+		if !ok {
+			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("atomic release graph promotion is unavailable")
+		}
+		release, err := publisher.PublishProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, plan.ToReleaseSet.TTLSeconds, members)
+		if err != nil {
+			if errors.Is(err, state.ErrConflict) {
+				message := "The target release graph changed while promotion deployments were being prepared; no partial graph cutover was applied."
+				completed := time.Now().UTC()
+				_, _ = s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "failed", message, &completed)
+				return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+					"Promotion target changed", message).WithHint("Preview the current source and target graphs before starting a new promotion.")
+			}
+			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not atomically activate the promoted release graph")
+		}
+		promotion.TargetReleaseSetID = release.ID
 	}
 
 	verificationStarted := time.Now().UTC()
@@ -684,6 +885,23 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 	return projectEnvironmentPromotionResponse(updated, finalWorkloads), nil
 }
 
+func projectEnvironmentPromotionReleaseMembers(workloads []state.ProjectEnvironmentPromotionWorkload, apps map[string]state.App) ([]state.ProjectReleaseMember, error) {
+	members := make([]state.ProjectReleaseMember, 0, len(workloads))
+	seen := make(map[string]struct{}, len(workloads))
+	for _, workload := range workloads {
+		app, ok := apps[workload.WorkloadSlug]
+		if !ok || workload.TargetDeploymentID == "" || (workload.Status != "promoted" && workload.Status != "unchanged") {
+			return nil, state.ErrConflict
+		}
+		if _, duplicate := seen[app.ID]; duplicate {
+			return nil, state.ErrConflict
+		}
+		seen[app.ID] = struct{}{}
+		members = append(members, state.ProjectReleaseMember{AppID: app.ID, DeploymentID: workload.TargetDeploymentID})
+	}
+	return members, nil
+}
+
 func projectEnvironmentVerificationMessage(err error) string {
 	message := err.Error()
 	if strings.HasPrefix(message, "could not ") {
@@ -696,6 +914,11 @@ func (s *server) verifyProjectEnvironmentPromotion(ctx context.Context, acct sta
 	_, workloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 	if err != nil {
 		return fmt.Errorf("could not load promotion verification checkpoints: %w", err)
+	}
+	if promotion.PreviousTargetReleaseSetID != "" {
+		if err := verifyProjectEnvironmentPromotionReleaseGraph(ctx, s.store, promotion, workloads, plan.Apps); err != nil {
+			return err
+		}
 	}
 	for _, workload := range workloads {
 		app, ok := plan.Apps[workload.WorkloadSlug]
@@ -731,6 +954,37 @@ func (s *server) verifyProjectEnvironmentPromotion(ctx context.Context, acct sta
 	if _, err := s.store.UpdateProjectEnvironmentPromotionVerification(ctx, acct.ID, promotion.ID,
 		"verified", "", nil, &completed); err != nil {
 		return fmt.Errorf("could not complete environment promotion verification: %w", err)
+	}
+	return nil
+}
+
+func verifyProjectEnvironmentPromotionReleaseGraph(ctx context.Context, store state.Store, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, apps map[string]state.App) error {
+	reader, ok := store.(state.ProjectReleaseSetReader)
+	if !ok {
+		return errors.New("could not inspect active target release graph")
+	}
+	active, err := reader.ActiveProjectReleaseSet(ctx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
+	if err != nil {
+		return fmt.Errorf("could not inspect active target release graph: %w", err)
+	}
+	if active.ID != promotion.TargetReleaseSetID {
+		return fmt.Errorf("target release graph changed before promotion verification")
+	}
+	expected := make(map[string]string, len(workloads))
+	for _, workload := range workloads {
+		app, ok := apps[workload.WorkloadSlug]
+		if !ok || workload.TargetDeploymentID == "" {
+			return fmt.Errorf("workload %q is missing from the promoted release graph", workload.WorkloadSlug)
+		}
+		expected[app.ID] = workload.TargetDeploymentID
+	}
+	if len(expected) != len(active.Members) {
+		return fmt.Errorf("active target release graph does not match the promotion workloads")
+	}
+	for _, member := range active.Members {
+		if expected[member.AppID] != member.DeploymentID {
+			return fmt.Errorf("active target release graph does not match the promotion workloads")
+		}
 	}
 	return nil
 }

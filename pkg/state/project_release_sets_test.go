@@ -192,3 +192,67 @@ func TestProjectReleaseSetActivatesDarkDeploymentWithoutTrafficShift(t *testing.
 		t.Fatalf("new graph target = %q/%q, %v", id, dep, err)
 	}
 }
+
+func TestMemStoreProjectEnvironmentPromotionReleaseGraphRejectsStaleTarget(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "graph-promotion-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "graph-promote-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "api-" + uuid.NewString()[:8],
+		Status: AppActive, Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLive := func(digest string) Deployment {
+		t.Helper()
+		deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: digest, Status: DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	previous := createLive("sha256:previous")
+	previousGraph, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: previous.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	promotion, _, err := store.CreateProjectEnvironmentPromotion(ctx, ProjectEnvironmentPromotion{
+		AccountID: account.ID, ProjectID: project.ID, ProjectSlug: project.Slug,
+		FromEnvironment: "staging", ToEnvironment: "production",
+		PromotionHash:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		IdempotencyKey: "promotion-" + uuid.NewString(), Status: "running",
+		PreviousTargetReleaseSetID: previousGraph.ID,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := createLive("sha256:external")
+	externalGraph, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: external.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := createLive("sha256:prepared")
+	publisher := ProjectEnvironmentPromotionReleaseSetStore(store)
+	if _, err := publisher.PublishProjectEnvironmentPromotionReleaseSet(ctx, account.ID, promotion.ID, 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: prepared.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale graph publish error=%v, want conflict", err)
+	}
+	active, err := store.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production")
+	if err != nil || active.ID != externalGraph.ID {
+		t.Fatalf("stale promotion replaced target graph: active=%+v err=%v", active, err)
+	}
+}
