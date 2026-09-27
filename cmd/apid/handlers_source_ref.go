@@ -357,7 +357,10 @@ func isSourceRefSHA(ref string) bool {
 		return false
 	}
 	for _, r := range ref {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
 			return false
 		}
 	}

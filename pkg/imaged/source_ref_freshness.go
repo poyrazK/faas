@@ -75,7 +75,11 @@ func canonicalCommitSHA(sha string) bool {
 		return false
 	}
 	for _, r := range sha {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
 			return false
 		}
 	}
