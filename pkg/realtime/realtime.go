@@ -266,6 +266,11 @@ type connection struct {
 	closeReason string
 }
 
+type channelKey struct {
+	endpointID string
+	channel    string
+}
+
 type endpointState struct {
 	Endpoint
 	// reserved counts this endpoint's live connections. It is a pointer
@@ -287,10 +292,14 @@ type Manager struct {
 	cancel context.CancelFunc
 
 	endpoints sync.Map // map[string]*endpointState
-	mu        sync.RWMutex
-	conns     map[string]*connection
-	reserved  atomic.Int64
-	closed    atomic.Bool
+	// mu protects all three connection indexes. Subscription changes also take
+	// connection.mu after mu so Snapshot sees the same channel membership.
+	mu            sync.RWMutex
+	conns         map[string]*connection
+	endpointConns map[string]map[string]*connection
+	subscribers   map[channelKey]map[string]struct{}
+	reserved      atomic.Int64
+	closed        atomic.Bool
 
 	upgrader websocket.Upgrader
 
@@ -314,11 +323,13 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		cfg:    cfg,
-		hooks:  hooks,
-		ctx:    ctx,
-		cancel: cancel,
-		conns:  make(map[string]*connection),
+		cfg:           cfg,
+		hooks:         hooks,
+		ctx:           ctx,
+		cancel:        cancel,
+		conns:         make(map[string]*connection),
+		endpointConns: make(map[string]map[string]*connection),
+		subscribers:   make(map[channelKey]map[string]struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -609,6 +620,12 @@ func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websock
 	}
 	m.mu.Lock()
 	m.conns[id] = conn
+	endpointConns := m.endpointConns[endpoint.ID]
+	if endpointConns == nil {
+		endpointConns = make(map[string]*connection)
+		m.endpointConns[endpoint.ID] = endpointConns
+	}
+	endpointConns[id] = conn
 	m.mu.Unlock()
 	m.acceptedConnections.Add(1)
 	return conn
@@ -740,7 +757,22 @@ func (c *connection) write(msg Message) error {
 func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	m.mu.Lock()
 	if current, ok := m.conns[c.info.ID]; ok && current == c {
+		c.mu.Lock()
+		for channel := range c.channels {
+			key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+			members := m.subscribers[key]
+			delete(members, c.info.ID)
+			if len(members) == 0 {
+				delete(m.subscribers, key)
+			}
+		}
+		c.mu.Unlock()
 		delete(m.conns, c.info.ID)
+		endpointConns := m.endpointConns[c.info.EndpointID]
+		delete(endpointConns, c.info.ID)
+		if len(endpointConns) == 0 {
+			delete(m.endpointConns, c.info.EndpointID)
+		}
 	}
 	m.mu.Unlock()
 	c.closeOne.Do(func() {
@@ -841,7 +873,9 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	if !validChannel(channel) {
 		return ErrInvalidChannel
 	}
-	c, ok := m.connection(connectionID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.conns[connectionID]
 	if !ok {
 		return ErrConnectionNotFound
 	}
@@ -851,7 +885,16 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	default:
 	}
 	c.mu.Lock()
-	c.channels[channel] = struct{}{}
+	if _, subscribed := c.channels[channel]; !subscribed {
+		c.channels[channel] = struct{}{}
+		key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+		members := m.subscribers[key]
+		if members == nil {
+			members = make(map[string]struct{})
+			m.subscribers[key] = members
+		}
+		members[connectionID] = struct{}{}
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -861,7 +904,9 @@ func (m *Manager) Unsubscribe(connectionID, channel string) error {
 	if !validChannel(channel) {
 		return ErrInvalidChannel
 	}
-	c, ok := m.connection(connectionID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.conns[connectionID]
 	if !ok {
 		return ErrConnectionNotFound
 	}
@@ -871,7 +916,15 @@ func (m *Manager) Unsubscribe(connectionID, channel string) error {
 	default:
 	}
 	c.mu.Lock()
-	delete(c.channels, channel)
+	if _, subscribed := c.channels[channel]; subscribed {
+		delete(c.channels, channel)
+		key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+		members := m.subscribers[key]
+		delete(members, connectionID)
+		if len(members) == 0 {
+			delete(m.subscribers, key)
+		}
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -889,22 +942,18 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		maxMessageBytes = value.(*endpointState).MaxMessageBytes
 	}
 	m.mu.RLock()
-	connections := make([]string, 0, len(m.conns))
-	endpointHasConnection := false
-	for id, c := range m.conns {
-		if c.info.EndpointID != endpointID {
-			continue
-		}
-		if !endpointRegistered && !endpointHasConnection {
+	endpointConns := m.endpointConns[endpointID]
+	endpointHasConnection := len(endpointConns) > 0
+	if !endpointRegistered {
+		for _, c := range endpointConns {
 			maxMessageBytes = c.endpoint.MaxMessageBytes
+			break
 		}
-		endpointHasConnection = true
-		c.mu.RLock()
-		_, subscribed := c.channels[channel]
-		c.mu.RUnlock()
-		if subscribed {
-			connections = append(connections, id)
-		}
+	}
+	members := m.subscribers[channelKey{endpointID: endpointID, channel: channel}]
+	connections := make([]string, 0, len(members))
+	for id := range members {
+		connections = append(connections, id)
 	}
 	m.mu.RUnlock()
 	// Removing an endpoint only stops new handshakes; existing sockets retain

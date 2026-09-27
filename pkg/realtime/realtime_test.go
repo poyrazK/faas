@@ -132,6 +132,19 @@ func TestManagerConnectionLifecycleAndPublish(t *testing.T) {
 	if stats.CurrentConnections != 1 || stats.AcceptedConnections != 1 || stats.ReceivedMessages != 1 || stats.ReceivedBytes != uint64(len("hello")) || stats.SentMessages != 2 {
 		t.Fatalf("stats = %+v", stats)
 	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(m.Snapshot()); got != 0 {
+		t.Fatalf("connections after close = %d, want 0", got)
+	}
+	if queued, err := m.Publish(context.Background(), "notifications", "alerts", Message{Data: []byte("after close")}); err != nil || queued != 0 {
+		t.Fatalf("publish after close = (%d, %v), want (0, nil)", queued, err)
+	}
 }
 
 func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
