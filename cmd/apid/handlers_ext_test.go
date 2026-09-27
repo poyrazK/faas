@@ -1135,6 +1135,13 @@ func TestListApps_ProjectsUndeployedWithoutMaskingDeployedApps(t *testing.T) {
 	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
 		t.Fatalf("mark deployment live: %v", err)
 	}
+	stale := mustSeedDeployment(t, e, "historical-only-list")
+	if err := e.store.MarkDeploymentLive(t.Context(), stale.ID); err != nil {
+		t.Fatalf("mark historical deployment live: %v", err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(t.Context(), stale.ID); err != nil {
+		t.Fatalf("supersede historical deployment: %v", err)
+	}
 
 	rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1145,14 +1152,54 @@ func TestListApps_ProjectsUndeployedWithoutMaskingDeployedApps(t *testing.T) {
 		t.Fatalf("decode apps: %v", err)
 	}
 	statuses := make(map[string]string, len(apps))
+	availability := make(map[string]api.AppDeploymentAvailability, len(apps))
 	for _, app := range apps {
 		statuses[app.Slug] = app.Status
+		availability[app.Slug] = app.DeploymentAvailability
 	}
 	if statuses["never-deployed-list"] != api.AppStatusUndeployed {
 		t.Errorf("undeployed status = %q, want %q", statuses["never-deployed-list"], api.AppStatusUndeployed)
 	}
 	if statuses["runnable-list"] != string(state.AppActive) {
 		t.Errorf("deployed status = %q, want active", statuses["runnable-list"])
+	}
+	if availability["never-deployed-list"] != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("never-deployed availability = %q, want no_live_deployment", availability["never-deployed-list"])
+	}
+	if availability["runnable-list"] != api.AppDeploymentAvailabilityLive {
+		t.Errorf("runnable availability = %q, want live", availability["runnable-list"])
+	}
+	if statuses["historical-only-list"] != string(state.AppActive) {
+		t.Errorf("historical-only lifecycle status = %q, want active", statuses["historical-only-list"])
+	}
+	if availability["historical-only-list"] != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("historical-only availability = %q, want no_live_deployment", availability["historical-only-list"])
+	}
+}
+
+func TestGetAppReportsMissingLiveDeploymentDespiteSuccessfulHistory(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "historical-only-get")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(t.Context(), dep.ID); err != nil {
+		t.Fatalf("supersede deployment: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/historical-only-get", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get app: %d %s", rec.Code, rec.Body)
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &app); err != nil {
+		t.Fatalf("decode app: %v", err)
+	}
+	if app.Status != string(state.AppActive) {
+		t.Errorf("lifecycle status = %q, want active", app.Status)
+	}
+	if app.DeploymentAvailability != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("deployment availability = %q, want no_live_deployment", app.DeploymentAvailability)
 	}
 }
 

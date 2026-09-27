@@ -7663,6 +7663,29 @@ func (m *MemStore) ListLatestDeploymentPerApp(_ context.Context, accountID strin
 	return latest, nil
 }
 
+func (m *MemStore) ListAppsWithLiveDeployment(_ context.Context, accountID string) (map[string]bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	owned := make(map[string]struct{})
+	for _, app := range m.apps {
+		if app.AccountID == accountID && app.Status != AppDeleted {
+			owned[app.ID] = struct{}{}
+		}
+	}
+
+	appIDs := make(map[string]bool)
+	for _, deployment := range m.deployments {
+		if deployment.Status != DeployLive {
+			continue
+		}
+		if _, ok := owned[deployment.AppID]; ok {
+			appIDs[deployment.AppID] = true
+		}
+	}
+	return appIDs, nil
+}
+
 func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
 	if limit <= 0 {
 		return nil, nil

@@ -58,6 +58,14 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+	} else if errors.Is(err, state.ErrNotFound) {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+	} else {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
 		resp.Status = api.AppStatusUndeployed
 	} else if err != nil {

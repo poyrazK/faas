@@ -119,15 +119,29 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
+	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
+	if hasLive {
+		return api.AppDeploymentAvailabilityLive
+	}
+	return api.AppDeploymentAvailabilityMissing
 }
 
 func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Account) {

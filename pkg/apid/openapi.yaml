@@ -22992,6 +22992,10 @@ components:
           enum: [active, evicted_cold, deleted, undeployed]
           description: "Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy."
           example: "active"
+        deployment_availability:
+          type: string
+          enum: [live, no_live_deployment]
+          description: "Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from the app lifecycle status and does not assert that a historical artifact is safe to restore."
         build_cache_hit_rate_pct:
           type: number
           format: double

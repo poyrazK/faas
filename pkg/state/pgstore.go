@@ -7977,6 +7977,34 @@ func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID stri
 	return latest, nil
 }
 
+// ListAppsWithLiveDeployment returns the account's non-deleted app IDs that
+// have at least one current live deployment. The app list uses this bulk
+// projection to avoid N+1 LiveDeployment lookups.
+func (s *PgStore) ListAppsWithLiveDeployment(ctx context.Context, accountID string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct d.app_id::text
+		 from deployments d join apps a on a.id = d.app_id
+		 where a.account_id = $1 and a.status <> 'deleted' and d.status = 'live'`,
+		accountID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list apps with live deployments: %w", err)
+	}
+	defer rows.Close()
+
+	appIDs := make(map[string]bool)
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			return nil, fmt.Errorf("state: scan app with live deployment: %w", err)
+		}
+		appIDs[appID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list apps with live deployments: %w", err)
+	}
+	return appIDs, nil
+}
+
 func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
 	if limit <= 0 {
 		return nil, nil

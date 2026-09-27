@@ -1247,6 +1247,16 @@ type AppConfiguredResources struct {
 // transitions keep their existing closed vocabulary.
 const AppStatusUndeployed = "undeployed"
 
+// AppDeploymentAvailability describes whether the app currently has a live
+// deployment. It is projected on app list and detail reads separately from
+// Status: an app can be lifecycle-active while having no runnable deployment.
+type AppDeploymentAvailability string
+
+const (
+	AppDeploymentAvailabilityLive    AppDeploymentAvailability = "live"
+	AppDeploymentAvailabilityMissing AppDeploymentAvailability = "no_live_deployment"
+)
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID   string `json:"id"`
@@ -1288,6 +1298,10 @@ type AppResponse struct {
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
 	Status       string `json:"status"`
+	// DeploymentAvailability is set on app list/detail reads. It remains
+	// separate from Status because the persisted app lifecycle may be active
+	// even when no deployment can serve requests or be woken.
+	DeploymentAvailability AppDeploymentAvailability `json:"deployment_availability,omitempty"`
 	// BuildCacheHitRatePct is the trailing 30-day share of cache-eligible
 	// deployments served from the builder cache. It is zero when no build has
 	// reached a cache decision in the window.

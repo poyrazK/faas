@@ -159,6 +159,7 @@ from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
+from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_runtime import AppResponseRuntime
@@ -1857,6 +1858,7 @@ __all__ = (
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
+    "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
     "AppResponseRuntime",
