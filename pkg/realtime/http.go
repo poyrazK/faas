@@ -399,6 +399,8 @@ func (m *Manager) internalHandler() http.Handler {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/internal/")
 		switch {
+		case path == "endpoints" && r.Method == http.MethodGet:
+			writeJSON(w, http.StatusOK, m.EndpointIDs())
 		case path == "endpoints" && r.Method == http.MethodPost:
 			m.handleEndpointCreate(w, r)
 		case strings.HasPrefix(path, "endpoints/"):

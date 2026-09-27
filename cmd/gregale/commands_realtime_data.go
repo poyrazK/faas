@@ -21,6 +21,9 @@ type realtimeCLIResult struct {
 	ConnectionID string `json:"connection_id,omitempty"`
 	Channel      string `json:"channel,omitempty"`
 	Queued       *int   `json:"queued,omitempty"`
+	Partial      *bool  `json:"partial,omitempty"`
+	NodesQueried *int   `json:"nodes_queried,omitempty"`
+	NodesDown    *int   `json:"nodes_unavailable,omitempty"`
 }
 
 func cmdRealtimeSend(args []string) int {
@@ -141,11 +144,18 @@ func cmdRealtimePublish(args []string) int {
 		return printErr("Could not publish realtime message", err)
 	}
 	queued := response.Queued
-	result := realtimeCLIResult{Operation: "publish", AppSlug: fs.Arg(0), EndpointID: fs.Arg(1), Channel: fs.Arg(2), Queued: &queued}
+	partial, nodesQueried, nodesDown := response.Partial, response.NodesQueried, response.NodesUnavailable
+	result := realtimeCLIResult{
+		Operation: "publish", AppSlug: fs.Arg(0), EndpointID: fs.Arg(1), Channel: fs.Arg(2),
+		Queued: &queued, Partial: &partial, NodesQueried: &nodesQueried, NodesDown: &nodesDown,
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
 	PrintOK(osStdout, "Realtime message published to %d connection(s).", response.Queued)
+	if response.Partial {
+		PrintWarn(osStderr, "Publish was partial: %d realtime node(s) did not accept it. Retrying may send duplicates to reached nodes.", response.NodesUnavailable)
+	}
 	return 0
 }
 

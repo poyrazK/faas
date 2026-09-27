@@ -1,11 +1,14 @@
 package realtime
 
+// adr: 281
+
 import (
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,7 +204,82 @@ func TestManagerAllowsIdleConnectionUntilFirstHeartbeat(t *testing.T) {
 	}
 }
 
-func TestManagerPublishRetainsEndpointLimitAfterRemoval(t *testing.T) {
+func TestManagerKeepsIdleConnectionAcrossPongs(t *testing.T) {
+	m := NewManager(Config{Heartbeat: 200 * time.Millisecond, PongWait: 150 * time.Millisecond, MaxConnectionAge: 3 * time.Second}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "idle"}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+"idle", nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var pings atomic.Int32
+	client.SetPingHandler(func(data string) error {
+		pings.Add(1)
+		return client.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
+	})
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, _, err := client.ReadMessage(); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for pings.Load() < 2 && time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("client closed before second heartbeat: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if pings.Load() < 2 || len(m.Snapshot()) != 1 {
+		t.Fatalf("idle connection did not survive two heartbeats: pings=%d connections=%d", pings.Load(), len(m.Snapshot()))
+	}
+}
+
+func TestManagerReregisterPreservesEndpointConnectionLimit(t *testing.T) {
+	m := NewManager(Config{MaxConnections: 10, Heartbeat: time.Hour}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	url := "ws" + server.URL[len("http"):] + ManagedPathPrefix + "limited"
+	first, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+		t.Fatal(err)
+	}
+	second, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if second != nil {
+		_ = second.Close()
+	}
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second connection = (%v, %v), want 429", err, response)
+	}
+}
+
+func TestManagerRemovalClosesExistingConnections(t *testing.T) {
 	m := NewManager(Config{MaxMessageBytes: 16, Heartbeat: time.Hour}, nil)
 	defer m.Close()
 	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxMessageBytes: 4}); err != nil {
@@ -227,12 +305,21 @@ func TestManagerPublishRetainsEndpointLimitAfterRemoval(t *testing.T) {
 	if len(connections) != 1 {
 		t.Fatalf("connections = %d, want 1", len(connections))
 	}
-	if err := m.Subscribe(connections[0].ID, "alerts"); err != nil {
-		t.Fatalf("subscribe: %v", err)
-	}
 	m.RemoveEndpoint("limited")
-	if _, err := m.Publish(context.Background(), "limited", "alerts", Message{Data: []byte("12345")}); err == nil {
-		t.Fatal("publish over removed endpoint's limit unexpectedly succeeded")
+	if _, err := m.Publish(context.Background(), "limited", "alerts", Message{Data: []byte("ok")}); !errors.Is(err, ErrEndpointNotFound) {
+		t.Fatalf("publish after removal = %v, want endpoint not found", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	_, _, err = client.ReadMessage()
+	if err == nil {
+		t.Fatal("removed endpoint left client socket readable")
+	}
+	deadline = time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(m.Snapshot()); got != 0 {
+		t.Fatalf("remaining connections = %d, want 0", got)
 	}
 }
 

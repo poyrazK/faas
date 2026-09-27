@@ -16444,7 +16444,7 @@ paths:
             schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
       responses:
         '200':
-          description: Number of owner queues that accepted the message.
+          description: Queued recipients and whether every active realtime node accepted the publish.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
@@ -38358,6 +38358,9 @@ components:
       required: [queued]
       properties:
         queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
+        partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
+        nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
+        nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
 
     AppLogDrainResponse:
       type: object

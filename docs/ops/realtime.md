@@ -12,6 +12,14 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+Disabling or deleting an endpoint stops new handshakes and closes its existing
+managed sockets on every node reached by the control-plane operation. The
+control plane compares the credential-free registration inventory on active
+nodes with durable endpoint rows every 30 seconds, so a node that missed a
+delete is cleaned up after it becomes reachable again. A delete response
+records customer intent; operators should check node reachability when
+immediate fleet-wide revocation matters.
+
 Register an endpoint (normally from an authorized control-plane process), then
 connect clients to `wss://<app-host>/__gregale/realtime/<endpoint-id>`:
 
@@ -150,8 +158,11 @@ with a bounded backoff before reporting a callback error. In multi-node mode, ap
 leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed
-for connection operations (`503`) and are skipped when another node accepts a
-publish.
+for connection operations (`503`). If another node accepts a publish, the
+response includes `partial: true`, `nodes_queried`, and `nodes_unavailable`
+when some nodes did not accept it. `queued` counts in-memory output queues,
+not client acknowledgements; retrying a partial publish may duplicate a
+message on nodes that already accepted it.
 
 Inspect health and counters from the `faas` group:
 
@@ -219,7 +230,12 @@ disconnect events are fsynced before delivery and replayed after a realtimed
 restart; delivery is at-least-once, and poison events are retained under the
 outbox's `dead/` directory after the bounded retry budget. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
-application to process an event.
+application to process an event. Pending callbacks for one connection replay in
+WebSocket sequence order, with disconnect after the final message. The default
+`/run/faas` spool is lost on host reboot; set
+`FAAS_REALTIME_CALLBACK_OUTBOX` to a persistent mount if reboot survival is
+required. Callback handlers should deduplicate by event ID because delivery
+remains at-least-once.
 
 `/internal/stats` includes callback-pending, callback-pending-bytes, and
 callback-dead-letter counters alongside the connection and delivery counters.

@@ -230,6 +230,14 @@ type ConnectionInventory struct {
 	NodesUnavailable int
 }
 
+// EndpointInventory contains node-local registrations observed by the
+// control plane. It contains IDs only; credentials never leave the node.
+type EndpointInventory struct {
+	IDs              []string
+	NodesQueried     int
+	NodesUnavailable int
+}
+
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
@@ -249,9 +257,9 @@ type Stats struct {
 
 type connection struct {
 	info ConnectionInfo
-	// endpoint is retained with the connection so removing or replacing an
-	// endpoint does not strand lifecycle callbacks for already-open sockets.
+	// endpoint is retained so lifecycle callbacks can finish after revocation.
 	endpoint Endpoint
+	state    *endpointState
 	ws       *websocket.Conn
 	m        *Manager
 
@@ -267,8 +275,10 @@ type connection struct {
 }
 
 type endpointState struct {
-	Endpoint
+	config   atomic.Pointer[Endpoint]
+	gate     sync.Mutex
 	reserved atomic.Int64
+	revoked  atomic.Bool
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -282,11 +292,12 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	endpoints sync.Map // map[string]*endpointState
-	mu        sync.RWMutex
-	conns     map[string]*connection
-	reserved  atomic.Int64
-	closed    atomic.Bool
+	endpoints   sync.Map // map[string]*endpointState
+	endpointsMu sync.Mutex
+	mu          sync.RWMutex
+	conns       map[string]*connection
+	reserved    atomic.Int64
+	closed      atomic.Bool
 
 	upgrader websocket.Upgrader
 
@@ -402,16 +413,65 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	if e.CheckOrigin == nil && len(e.AllowedOrigins) > 0 {
 		e.CheckOrigin = checkAllowedOrigins(e.AllowedOrigins)
 	}
-	m.endpoints.Store(e.ID, &endpointState{Endpoint: e})
+	m.endpointsMu.Lock()
+	defer m.endpointsMu.Unlock()
+	if existing, ok := m.endpoints.Load(e.ID); ok {
+		// Reconciliation updates the immutable policy snapshot without
+		// resetting the count held by connections admitted under an older one.
+		existing.(*endpointState).config.Store(&e)
+		return nil
+	}
+	state := &endpointState{}
+	state.config.Store(&e)
+	m.endpoints.Store(e.ID, state)
 	return nil
 }
 
-// RemoveEndpoint stops new connections for an endpoint. Existing connections
-// are left alive until their owner or application explicitly closes them.
+// RemoveEndpoint revokes admission and closes existing sockets. A deletion or
+// disable is a security boundary, including for clients already connected.
 func (m *Manager) RemoveEndpoint(id string) {
-	if m != nil {
-		m.endpoints.Delete(id)
+	if m == nil {
+		return
 	}
+	m.endpointsMu.Lock()
+	value, ok := m.endpoints.Load(id)
+	if ok {
+		state := value.(*endpointState)
+		state.gate.Lock()
+		state.revoked.Store(true)
+		m.endpoints.Delete(id)
+		state.gate.Unlock()
+	}
+	m.endpointsMu.Unlock()
+	m.mu.RLock()
+	connections := make([]*connection, 0)
+	for _, c := range m.conns {
+		if ok && c.state == value.(*endpointState) {
+			connections = append(connections, c)
+		}
+	}
+	m.mu.RUnlock()
+	for _, c := range connections {
+		// Revocation must not wait for a slow client's control-frame write.
+		// Closing the transport unblocks the read pump and persists its
+		// disconnect callback through the normal lifecycle path.
+		c.terminate(websocket.ClosePolicyViolation, "endpoint removed")
+	}
+}
+
+// EndpointIDs returns the node-local registration inventory without exposing
+// credentials or policy. The control plane compares it to durable intent.
+func (m *Manager) EndpointIDs() []string {
+	if m == nil {
+		return nil
+	}
+	ids := make([]string, 0)
+	m.endpoints.Range(func(key, _ any) bool {
+		ids = append(ids, key.(string))
+		return true
+	})
+	sort.Strings(ids)
+	return ids
 }
 
 // Handler returns the HTTP handler mounted at ManagedPathPrefix.
@@ -440,7 +500,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := value.(*endpointState)
-	endpoint := state.Endpoint
+	endpoint := *state.config.Load()
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
 	switch endpoint.ClientAuth.Mode {
@@ -502,11 +562,22 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.rejectedConnections.Add(1)
 		return
 	}
-	conn := m.addConnection(endpoint, principal, ws)
+	state.gate.Lock()
+	if state.revoked.Load() {
+		state.gate.Unlock()
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed"), time.Now().Add(m.cfg.WriteWait))
+		_ = ws.Close()
+		return
+	}
+	conn := m.addConnection(state, endpoint, principal, ws)
+	state.gate.Unlock()
 	m.runConnection(r.Context(), conn)
 }
 
 func (m *Manager) tryReserve(state *endpointState) bool {
+	if state.revoked.Load() {
+		return false
+	}
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
@@ -515,7 +586,7 @@ func (m *Manager) tryReserve(state *endpointState) bool {
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
-				if endpointCurrent >= int64(state.MaxConnections) {
+				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
 					m.reserved.Add(-1)
 					return false
 				}
@@ -570,7 +641,7 @@ func endpointIDFromPath(path string) (string, bool) {
 	return rest, true
 }
 
-func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websocket.Conn) *connection {
+func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
@@ -586,6 +657,7 @@ func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websock
 		},
 		ws:       ws,
 		endpoint: endpoint,
+		state:    state,
 		m:        m,
 		outbound: make(chan Message, m.cfg.OutboundQueue),
 		done:     make(chan struct{}),
@@ -633,7 +705,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	// 30s and 10s respectively).
 	_ = c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 	c.ws.SetPongHandler(func(string) error {
-		return c.ws.SetReadDeadline(time.Now().Add(m.cfg.PongWait))
+		// The next ping arrives after Heartbeat; PongWait alone would
+		// disconnect a healthy idle client between heartbeats.
+		return c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 	})
 
 	for {
@@ -772,6 +846,14 @@ func (c *connection) close(code int, reason string) error {
 	return err
 }
 
+func (c *connection) terminate(code int, reason string) {
+	c.closeOne.Do(func() {
+		c.recordClose(code, reason)
+		close(c.done)
+		_ = c.ws.Close()
+	})
+}
+
 func (c *connection) recordClose(code int, reason string) {
 	c.mu.Lock()
 	if c.closeCode == 0 {
@@ -868,21 +950,17 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		return 0, ErrInvalidChannel
 	}
 	value, endpointRegistered := m.endpoints.Load(endpointID)
-	maxMessageBytes := m.cfg.MaxMessageBytes
-	if endpointRegistered {
-		maxMessageBytes = value.(*endpointState).MaxMessageBytes
+	if !endpointRegistered || value.(*endpointState).revoked.Load() {
+		return 0, ErrEndpointNotFound
 	}
+	state := value.(*endpointState)
+	maxMessageBytes := state.config.Load().MaxMessageBytes
 	m.mu.RLock()
 	connections := make([]string, 0, len(m.conns))
-	endpointHasConnection := false
 	for id, c := range m.conns {
-		if c.info.EndpointID != endpointID {
+		if c.state != state {
 			continue
 		}
-		if !endpointRegistered && !endpointHasConnection {
-			maxMessageBytes = c.endpoint.MaxMessageBytes
-		}
-		endpointHasConnection = true
 		c.mu.RLock()
 		_, subscribed := c.channels[channel]
 		c.mu.RUnlock()
@@ -891,12 +969,6 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		}
 	}
 	m.mu.RUnlock()
-	// Removing an endpoint only stops new handshakes; existing sockets retain
-	// their endpoint configuration and remain publishable until closed. An
-	// unknown endpoint with no live sockets is still reported as not found.
-	if !endpointRegistered && !endpointHasConnection {
-		return 0, ErrEndpointNotFound
-	}
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return 0, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
@@ -923,6 +995,9 @@ func (m *Manager) connection(id string) (*connection, bool) {
 	m.mu.RLock()
 	c, ok := m.conns[id]
 	m.mu.RUnlock()
+	if ok && c.state.revoked.Load() {
+		return nil, false
+	}
 	return c, ok
 }
 

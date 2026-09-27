@@ -1,5 +1,7 @@
 package realtime
 
+// adr: 281
+
 import (
 	"context"
 	"errors"
@@ -66,6 +68,34 @@ func TestCallbackOutboxPersistsPendingEventAndPrivateFields(t *testing.T) {
 		replayed.CallbackURL != event.CallbackURL || replayed.CallbackPath != event.CallbackPath ||
 		replayed.CallbackAuthToken != event.CallbackAuthToken {
 		t.Fatalf("replayed event = %+v, want private callback fields preserved", replayed)
+	}
+}
+
+func TestCallbackOutboxPreservesConnectionSequence(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	first := testCallbackEvent()
+	first.ID, first.Sequence = "evt_z", 1
+	second := testCallbackEvent()
+	second.ID, second.Sequence = "evt_a", 2
+	disconnect := testCallbackEvent()
+	disconnect.ID, disconnect.Type, disconnect.Sequence = "evt_0", EventDisconnect, 2
+	if claimed, err := queue.EnqueueAndClaim(first); err != nil || !claimed {
+		t.Fatalf("first event claim = (%v, %v)", claimed, err)
+	}
+	queue.Release(first.ID)
+	for _, event := range []Event{second, disconnect} {
+		if claimed, err := queue.EnqueueAndClaim(event); err != nil || claimed {
+			t.Fatalf("later event %s claim = (%v, %v), want persisted but blocked", event.ID, claimed, err)
+		}
+	}
+	for _, want := range []string{first.ID, second.ID, disconnect.ID} {
+		event, ok, err := queue.ClaimNext()
+		if err != nil || !ok || event.ID != want {
+			t.Fatalf("ClaimNext = (%s, %v, %v), want %s", event.ID, ok, err, want)
+		}
+		if err := queue.Ack(event.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

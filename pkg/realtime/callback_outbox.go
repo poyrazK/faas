@@ -199,6 +199,9 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 		if _, inFlight := q.inFlight[event.ID]; inFlight {
 			return false, nil
 		}
+		if q.hasPriorEvent(event) {
+			return false, nil
+		}
 		q.inFlight[event.ID] = struct{}{}
 		return true, nil
 	}
@@ -211,24 +214,73 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	}
 	q.items[event.ID] = &callbackOutboxItem{record: record, path: path, size: int64(len(payload))}
 	q.bytes += int64(len(payload))
+	if q.hasPriorEvent(event) {
+		// The replay loop will deliver this after earlier events for the
+		// connection are acknowledged or dead-lettered.
+		return false, nil
+	}
 	q.inFlight[event.ID] = struct{}{}
 	return true, nil
 }
 
-// ClaimNext returns the oldest eligible pending event and reserves it for the
-// caller. Ordering is deterministic by event ID; retry timing is persisted so
-// one failed callback cannot be retried in a tight loop.
+// callbackEventBefore orders callbacks for one connection by their WebSocket
+// receive sequence. A disconnect shares the last message's sequence and must
+// follow that message. Event ID is only a final deterministic tie-breaker.
+func callbackEventBefore(a, b Event) bool {
+	if a.Sequence != b.Sequence {
+		return a.Sequence < b.Sequence
+	}
+	if a.Type != b.Type {
+		return a.Type == EventMessage
+	}
+	if !a.At.Equal(b.At) {
+		return a.At.Before(b.At)
+	}
+	return a.ID < b.ID
+}
+
+// hasPriorEvent is called with q.mu held.
+func (q *CallbackOutbox) hasPriorEvent(event Event) bool {
+	for id, item := range q.items {
+		if id != event.ID && item.record.Event.ConnectionID == event.ConnectionID &&
+			callbackEventBefore(item.record.Event, event) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClaimNext reserves the oldest eligible event while preserving each
+// connection's sequence. A failed earlier callback blocks later callbacks for
+// that connection until it is acknowledged or dead-lettered.
 func (q *CallbackOutbox) ClaimNext() (Event, bool, error) {
 	if q == nil {
 		return Event{}, false, ErrCallbackOutboxItem
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	ids := make([]string, 0, len(q.items))
-	for id := range q.items {
+	firstByConnection := make(map[string]string)
+	for id, item := range q.items {
+		key := item.record.Event.ConnectionID
+		if key == "" {
+			key = id
+		}
+		if prior, ok := firstByConnection[key]; !ok ||
+			callbackEventBefore(item.record.Event, q.items[prior].record.Event) {
+			firstByConnection[key] = id
+		}
+	}
+	ids := make([]string, 0, len(firstByConnection))
+	for _, id := range firstByConnection {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := q.items[ids[i]].record.Event, q.items[ids[j]].record.Event
+		if !a.At.Equal(b.At) {
+			return a.At.Before(b.At)
+		}
+		return ids[i] < ids[j]
+	})
 	now := time.Now().UTC()
 	for _, id := range ids {
 		if _, inFlight := q.inFlight[id]; inFlight {

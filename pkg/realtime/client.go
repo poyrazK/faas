@@ -91,6 +91,23 @@ func (c *Client) RemoveEndpoint(ctx context.Context, endpointID string) error {
 	return c.do(ctx, http.MethodDelete, "/internal/endpoints/"+pathPart(endpointID), nil, nil)
 }
 
+// Endpoints lists the node-local registration IDs for desired-state repair.
+func (c *Client) Endpoints(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := c.do(ctx, http.MethodGet, "/internal/endpoints", nil, &ids)
+	return ids, err
+}
+
+// ListEndpointInventory adapts the local client to the control-plane repair
+// interface used by both single-box and split-node deployments.
+func (c *Client) ListEndpointInventory(ctx context.Context) (EndpointInventory, error) {
+	ids, err := c.Endpoints(ctx)
+	if err != nil {
+		return EndpointInventory{NodesUnavailable: 1}, err
+	}
+	return EndpointInventory{IDs: ids, NodesQueried: 1}, nil
+}
+
 // Send queues a message to one live connection.
 func (c *Client) Send(ctx context.Context, connectionID string, message Message) error {
 	return c.do(ctx, http.MethodPost, "/internal/connections/"+pathPart(connectionID)+":send", messageRequest{

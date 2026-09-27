@@ -1,5 +1,7 @@
 package realtime
 
+// adr: 281
+
 import (
 	"context"
 	"io"
@@ -18,6 +20,10 @@ func TestClientManagementAPI(t *testing.T) {
 	if err := client.RegisterEndpoint(context.Background(), Endpoint{ID: "notifications"}); err != nil {
 		t.Fatalf("register endpoint: %v", err)
 	}
+	endpoints, err := client.Endpoints(context.Background())
+	if err != nil || len(endpoints) != 1 || endpoints[0] != "notifications" {
+		t.Fatalf("endpoint inventory = (%v, %v), want notifications", endpoints, err)
+	}
 	if err := client.Subscribe(context.Background(), "missing", "alerts"); err == nil {
 		t.Fatal("subscribe missing connection unexpectedly succeeded")
 	}
@@ -34,6 +40,13 @@ func TestClientManagementAPI(t *testing.T) {
 	}
 	if len(connections) != 0 {
 		t.Fatalf("connections = %d, want 0", len(connections))
+	}
+	if err := client.RemoveEndpoint(context.Background(), "notifications"); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err = client.Endpoints(context.Background())
+	if err != nil || len(endpoints) != 0 {
+		t.Fatalf("endpoint inventory after removal = (%v, %v), want empty", endpoints, err)
 	}
 }
 
