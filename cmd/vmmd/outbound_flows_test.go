@@ -1,9 +1,24 @@
 package main
 
 import (
+	"net/netip"
 	"testing"
 	"time"
 )
+
+func TestGuestFlowSourceUsesConfiguredBridgeAndExcludesHostAddresses(t *testing.T) {
+	bridge := netip.MustParsePrefix("10.101.0.0/16")
+	for _, source := range []string{"10.101.0.2", "10.101.40.5"} {
+		if !guestFlowSource(bridge, source) {
+			t.Fatalf("guest address %s was excluded", source)
+		}
+	}
+	for _, source := range []string{"10.101.0.0", "10.101.0.1", "10.100.0.2", "127.0.0.1", "bad"} {
+		if guestFlowSource(bridge, source) {
+			t.Fatalf("host or unrelated address %s was included", source)
+		}
+	}
+}
 
 func TestParseConntrackNewOriginalTuple(t *testing.T) {
 	tests := []struct {

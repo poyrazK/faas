@@ -32,6 +32,32 @@ a provider report. IDs remain after instance, deployment, or app deletion;
 account deletion removes the rows. The scheduler's hourly retention sweep
 deletes rows older than 30 days by default.
 
+The instance runtime publication also records a historical private-IP lease.
+For a captured source IP and node, compare the event timestamp with the
+control-plane ownership interval:
+
+```sql
+SELECT instance_id, account_id, org_id, app_id, deployment_id,
+       active_from, active_until
+FROM outbound_flow_ip_leases
+WHERE node_id = '00000000-0000-0000-0000-000000000000'::uuid
+  AND host_ip = '10.100.0.5'::inet
+  AND active_from <= '2026-09-27T12:00:00Z'::timestamptz
+  AND (active_until IS NULL OR
+       active_until > '2026-09-27T12:00:00Z'::timestamptz)
+ORDER BY active_from, id;
+```
+
+Exactly one row supports the historical ownership join. Zero means unknown;
+multiple rows mean ambiguous ownership and must not be used to blame a
+customer. The ledger survives instance/app/deployment/node deletion, is
+removed on account erasure, and closed rows expire after 30 days. Its times
+come from control-plane publication and teardown, so they are not exact
+packet-level lease boundaries. At installation, already-live leases begin at
+the migration time; older ownership is not reconstructed. The collector also
+keeps retired leases in memory for two minutes to resolve delayed conntrack
+events after a VM stops or its address is reused.
+
 For each node that could have used the reported public IP, check capture
 coverage over the same UTC window. `public_ip` on a sample is a copy of the
 node assignment at insertion; a static app egress IP can differ, so use the
@@ -51,6 +77,7 @@ WITH bounds AS (
            lead(queue_dropped_total) OVER w AS next_queue_dropped,
            lead(database_dropped_total) OVER w AS next_database_dropped,
            lead(unparsed_total) OVER w AS next_unparsed,
+           lead(unattributed_total) OVER w AS next_unattributed,
            lead(stderr_total) OVER w AS next_stderr
     FROM outbound_flow_capture_samples s, bounds b
     WHERE s.node_id = b.node_id
@@ -71,6 +98,7 @@ WITH bounds AS (
                    OR o.queue_dropped_total IS DISTINCT FROM o.next_queue_dropped
                    OR o.database_dropped_total IS DISTINCT FROM o.next_database_dropped
                    OR o.unparsed_total IS DISTINCT FROM o.next_unparsed
+                   OR o.unattributed_total IS DISTINCT FROM o.next_unattributed
                    OR o.stderr_total IS DISTINCT FROM o.next_stderr)
            ) AS suspect_segments
     FROM bounds b LEFT JOIN ordered o ON true
@@ -82,7 +110,8 @@ FROM checked;
 
 `observed_coverage = false` means the sampled record cannot support an
 unbroken window. It catches missing boundary heartbeats, intervals over ten
-seconds, listener downtime, session changes, and increased loss counters.
+seconds, listener downtime, session changes, increased loss counters, and
+guest-source events with no resolvable owner.
 Inspect the underlying sample rows (`sampled_at`, `received_at`, `reason`,
 `listening`, and counters) to localize the gap. Samples are emitted every five
 seconds and on state or loss changes. They survive node deletion and expire
@@ -95,7 +124,8 @@ only TCP/UDP conntrack `NEW` events while running. Startup traffic before a
 lease is published, a delayed event older than a reused IP's new lease,
 untracked traffic, kernel event loss, collector restart, queue overflow, and
 database failure can leave gaps. `vmmd` writes `outbound flow capture
-coverage_gap` warnings for collector errors, unparsed events, queue overflow,
+coverage_gap` warnings for collector errors, unparsed or unattributed guest
+events, queue overflow,
 and failed writes; those losses also advance the cumulative counters in the
 coverage samples when the database is reachable. A database outage may
 prevent the sample itself from being written, in which case the missing

@@ -1784,6 +1784,7 @@ type OutboundFlowCaptureSample struct {
 	QueueDroppedTotal    int64
 	DatabaseDroppedTotal int64
 	UnparsedTotal        int64
+	UnattributedTotal    int64
 	StderrTotal          int64
 }
 
@@ -1805,6 +1806,20 @@ type OutboundFlowEvent struct {
 	Protocol        string
 	EgressIp        *netip.Addr
 	EgressIpSource  string
+}
+
+type OutboundFlowIpLease struct {
+	ID           pgtype.UUID
+	NodeID       pgtype.UUID
+	HostIp       netip.Addr
+	InstanceID   pgtype.UUID
+	AccountID    pgtype.UUID
+	OrgID        pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ActiveFrom   pgtype.Timestamptz
+	ActiveUntil  pgtype.Timestamptz
+	RecordedAt   pgtype.Timestamptz
 }
 
 type PaddleOverageDedupe struct {

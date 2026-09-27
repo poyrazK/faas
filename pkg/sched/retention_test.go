@@ -256,12 +256,19 @@ func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 
 type outboundCoverageRetentionStore struct {
 	state.Store
-	cutoff time.Time
-	limit  int
+	cutoff      time.Time
+	limit       int
+	leaseCutoff time.Time
+	leaseLimit  int
 }
 
 func (s *outboundCoverageRetentionStore) DeleteOutboundFlowCaptureSamplesBefore(_ context.Context, cutoff time.Time, limit int) (int64, error) {
 	s.cutoff, s.limit = cutoff, limit
+	return 0, nil
+}
+
+func (s *outboundCoverageRetentionStore) DeleteOutboundFlowIPLeasesBefore(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	s.leaseCutoff, s.leaseLimit = cutoff, limit
 	return 0, nil
 }
 
@@ -273,6 +280,9 @@ func TestRetentionSweepsOutboundCaptureCoverage(t *testing.T) {
 	}
 	if !store.cutoff.Equal(now.Add(-api.DefaultInstanceRetention)) || store.limit != outboundFlowRetentionBatch {
 		t.Fatalf("coverage retention cutoff=%s batch=%d", store.cutoff, store.limit)
+	}
+	if !store.leaseCutoff.Equal(now.Add(-api.DefaultInstanceRetention)) || store.leaseLimit != outboundFlowRetentionBatch {
+		t.Fatalf("lease retention cutoff=%s batch=%d", store.leaseCutoff, store.leaseLimit)
 	}
 }
 

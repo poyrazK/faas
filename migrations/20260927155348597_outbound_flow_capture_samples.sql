@@ -15,6 +15,7 @@ CREATE TABLE outbound_flow_capture_samples (
     queue_dropped_total bigint NOT NULL CHECK (queue_dropped_total >= 0),
     database_dropped_total bigint NOT NULL CHECK (database_dropped_total >= 0),
     unparsed_total bigint NOT NULL CHECK (unparsed_total >= 0),
+    unattributed_total bigint NOT NULL CHECK (unattributed_total >= 0),
     stderr_total bigint NOT NULL CHECK (stderr_total >= 0)
 );
 CREATE INDEX outbound_flow_capture_samples_node_time_idx

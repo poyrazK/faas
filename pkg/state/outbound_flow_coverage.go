@@ -23,6 +23,7 @@ type OutboundFlowCaptureSample struct {
 	QueueDroppedTotal    int64
 	DatabaseDroppedTotal int64
 	UnparsedTotal        int64
+	UnattributedTotal    int64
 	StderrTotal          int64
 }
 
@@ -51,7 +52,7 @@ func (s *PgStore) InsertOutboundFlowCaptureSample(ctx context.Context, sample Ou
 	}
 	if sample.SampledAt.IsZero() || len(sample.Reason) < 1 || len(sample.Reason) > 64 ||
 		sample.QueueDroppedTotal < 0 || sample.DatabaseDroppedTotal < 0 ||
-		sample.UnparsedTotal < 0 || sample.StderrTotal < 0 {
+		sample.UnparsedTotal < 0 || sample.UnattributedTotal < 0 || sample.StderrTotal < 0 {
 		return fmt.Errorf("outbound flow coverage: invalid sample")
 	}
 	_, err = sqlc.New().InsertOutboundFlowCaptureSample(ctx, s.pool, sqlc.InsertOutboundFlowCaptureSampleParams{
@@ -60,7 +61,8 @@ func (s *PgStore) InsertOutboundFlowCaptureSample(ctx context.Context, sample Ou
 		Listening: sample.Listening, Reason: sample.Reason,
 		QueueDroppedTotal:    sample.QueueDroppedTotal,
 		DatabaseDroppedTotal: sample.DatabaseDroppedTotal,
-		UnparsedTotal:        sample.UnparsedTotal, StderrTotal: sample.StderrTotal,
+		UnparsedTotal:        sample.UnparsedTotal, UnattributedTotal: sample.UnattributedTotal,
+		StderrTotal: sample.StderrTotal,
 	})
 	if err != nil {
 		return fmt.Errorf("outbound flow coverage: insert sample: %w", err)

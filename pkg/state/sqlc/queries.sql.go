@@ -4362,14 +4362,15 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 const insertOutboundFlowCaptureSample = `-- name: InsertOutboundFlowCaptureSample :execrows
 INSERT INTO outbound_flow_capture_samples (
     id, session_id, node_id, public_ip, sampled_at, listening, reason,
-    queue_dropped_total, database_dropped_total, unparsed_total, stderr_total
+    queue_dropped_total, database_dropped_total, unparsed_total,
+    unattributed_total, stderr_total
 ) VALUES (
     $1::uuid, $2::uuid, $3::uuid,
     (SELECT public_ip FROM compute_nodes WHERE id = $3::uuid),
     $4::timestamptz, $5::boolean,
     $6::text, $7::bigint,
     $8::bigint, $9::bigint,
-    $10::bigint
+    $10::bigint, $11::bigint
 )
 ON CONFLICT (id) DO NOTHING
 `
@@ -4384,6 +4385,7 @@ type InsertOutboundFlowCaptureSampleParams struct {
 	QueueDroppedTotal    int64
 	DatabaseDroppedTotal int64
 	UnparsedTotal        int64
+	UnattributedTotal    int64
 	StderrTotal          int64
 }
 
@@ -4398,6 +4400,7 @@ func (q *Queries) InsertOutboundFlowCaptureSample(ctx context.Context, db DBTX, 
 		arg.QueueDroppedTotal,
 		arg.DatabaseDroppedTotal,
 		arg.UnparsedTotal,
+		arg.UnattributedTotal,
 		arg.StderrTotal,
 	)
 	if err != nil {

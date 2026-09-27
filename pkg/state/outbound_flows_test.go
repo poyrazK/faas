@@ -71,7 +71,7 @@ func TestPgOutboundFlowCaptureSamplesRetainKnownLossAndExpire(t *testing.T) {
 		return state.OutboundFlowCaptureSample{
 			ID: uuid.NewString(), SessionID: sessionID, NodeID: nodeID,
 			SampledAt: at, Listening: listening, Reason: "heartbeat",
-			QueueDroppedTotal: dropped,
+			QueueDroppedTotal: dropped, UnattributedTotal: dropped,
 		}
 	}
 	old := makeSample(now.Add(-48*time.Hour), true, 0)
@@ -82,15 +82,95 @@ func TestPgOutboundFlowCaptureSamplesRetainKnownLossAndExpire(t *testing.T) {
 		}
 	}
 	var count int
-	var dropped int64
-	if err := pool.QueryRow(ctx, `SELECT count(*), max(queue_dropped_total) FROM outbound_flow_capture_samples WHERE session_id = $1`, sessionID).Scan(&count, &dropped); err != nil {
+	var dropped, unattributed int64
+	if err := pool.QueryRow(ctx, `SELECT count(*), max(queue_dropped_total), max(unattributed_total) FROM outbound_flow_capture_samples WHERE session_id = $1`, sessionID).Scan(&count, &dropped, &unattributed); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 || dropped != 4 {
-		t.Fatalf("coverage rows=%d lost=%d", count, dropped)
+	if count != 2 || dropped != 4 || unattributed != 4 {
+		t.Fatalf("coverage rows=%d lost=%d unattributed=%d", count, dropped, unattributed)
 	}
 	deleted, err := s.DeleteOutboundFlowCaptureSamplesBefore(ctx, now.Add(-24*time.Hour), 100)
 	if err != nil || deleted != 1 {
 		t.Fatalf("coverage retention: deleted=%d err=%v", deleted, err)
+	}
+}
+
+func TestPgOutboundFlowIPLeasesSurviveInstanceDeletionAndReuse(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	firstAccount, firstApp, firstDeployment := seedLiveDeploy(t, s, ctx, "flow-lease-first", "flow-lease-first")
+	secondAccount, secondApp, secondDeployment := seedLiveDeploy(t, s, ctx, "flow-lease-second", "flow-lease-second")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	first, err := s.CreateInstance(ctx, firstApp, firstDeployment, string(state.StateColdBooting), 512, nodeID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetInstanceRuntime(ctx, first.ID, "fc-first", "10.100.0.5", 20001); err != nil {
+		t.Fatal(err)
+	}
+	var owner string
+	if err := pool.QueryRow(ctx, `SELECT account_id::text FROM outbound_flow_ip_leases WHERE instance_id = $1 AND active_until IS NULL`, first.ID).Scan(&owner); err != nil || owner != firstAccount {
+		t.Fatalf("first open lease owner=%q err=%v", owner, err)
+	}
+	if err := s.UpdateInstanceStateIf(ctx, first.ID, string(state.StateColdBooting), string(state.StateRunning)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateInstanceStateIf(ctx, first.ID, string(state.StateRunning), string(state.StateDraining)); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT account_id::text FROM outbound_flow_ip_leases WHERE instance_id = $1 AND active_until IS NULL`, first.ID).Scan(&owner); err != nil || owner != firstAccount {
+		t.Fatalf("draining lease owner=%q err=%v", owner, err)
+	}
+	if err := s.UpdateInstanceStateIf(ctx, first.ID, string(state.StateDraining), string(state.StateStopped)); err != nil {
+		t.Fatal(err)
+	}
+	// STOPPED retains host_ip. A state-only retry is not a new network lease
+	// until SetInstanceRuntime publishes the next boot's identity.
+	if err := s.UpdateInstanceStateIf(ctx, first.ID, string(state.StateStopped), string(state.StateColdBooting)); err != nil {
+		t.Fatal(err)
+	}
+	var openCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbound_flow_ip_leases WHERE instance_id = $1 AND active_until IS NULL`, first.ID).Scan(&openCount); err != nil || openCount != 0 {
+		t.Fatalf("stale host IP reopened a lease: count=%d err=%v", openCount, err)
+	}
+	if err := s.DeleteInstance(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateInstance(ctx, secondApp, secondDeployment, string(state.StateColdBooting), 512, nodeID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetInstanceRuntime(ctx, second.ID, "fc-second", "10.100.0.5", 20002); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(ctx, `SELECT instance_id::text, account_id::text, active_until IS NOT NULL
+		FROM outbound_flow_ip_leases WHERE node_id = $1 AND host_ip = '10.100.0.5'::inet ORDER BY active_from, id`, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type lease struct {
+		instance, account string
+		closed            bool
+	}
+	var leases []lease
+	for rows.Next() {
+		var row lease
+		if err := rows.Scan(&row.instance, &row.account, &row.closed); err != nil {
+			t.Fatal(err)
+		}
+		leases = append(leases, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 2 || leases[0] != (lease{first.ID, firstAccount, true}) || leases[1] != (lease{second.ID, secondAccount, false}) {
+		t.Fatalf("historical leases = %#v", leases)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE outbound_flow_ip_leases SET active_from = now() - interval '48 hours', active_until = now() - interval '47 hours' WHERE instance_id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.DeleteOutboundFlowIPLeasesBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	if err != nil || removed != 1 {
+		t.Fatalf("lease retention removed=%d err=%v", removed, err)
 	}
 }

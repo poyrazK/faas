@@ -315,7 +315,7 @@ type runDeps struct {
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
 	// Nil in runDeps{} tests; production streams host conntrack NEW events.
-	startFlowCapture func(context.Context, flowOwnerLookup, flowCaptureSink, string, *slog.Logger) <-chan struct{}
+	startFlowCapture func(context.Context, flowOwnerLookup, flowCaptureSink, string, netip.Prefix, *slog.Logger) <-chan struct{}
 	// detectOverlayIP — best-effort, default shelles out to
 	// `tailscale ip -4`. nil means "skip overlay detection"
 	// (WireGuard-mode operators set [compute_node].overlay_ip
@@ -412,11 +412,11 @@ func defaultDeps() runDeps {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
 		openStore: state.NewPgStore,
-		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, log *slog.Logger) <-chan struct{} {
+		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, bridge netip.Prefix, log *slog.Logger) <-chan struct{} {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				runOutboundFlowCapture(ctx, owners, sink, nodeID, log)
+				runOutboundFlowCapture(ctx, owners, sink, nodeID, bridge, log)
 			}()
 			return done
 		},
@@ -1496,7 +1496,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if nodeID != "" && deps.startFlowCapture != nil {
 		if flowStore, ok := store.(*state.PgStore); ok {
 			captureCtx, stopCapture := context.WithCancel(ctx)
-			captureDone := deps.startFlowCapture(captureCtx, mgr, flowStore, nodeID, log)
+			captureDone := deps.startFlowCapture(captureCtx, mgr, flowStore, nodeID, parsedBridge, log)
 			defer func() {
 				stopCapture()
 				if captureDone == nil {

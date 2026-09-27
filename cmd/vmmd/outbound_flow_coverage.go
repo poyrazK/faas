@@ -32,6 +32,7 @@ type flowCaptureCoverage struct {
 	queueDropped    atomic.Int64
 	databaseDropped atomic.Int64
 	unparsed        atomic.Int64
+	unattributed    atomic.Int64
 	stderr          atomic.Int64
 }
 
@@ -52,7 +53,8 @@ func (c *flowCaptureCoverage) sample(reason string) state.OutboundFlowCaptureSam
 		SampledAt: time.Now().UTC(), Listening: c.listening.Load(), Reason: reason,
 		QueueDroppedTotal:    c.queueDropped.Load(),
 		DatabaseDroppedTotal: c.databaseDropped.Load(),
-		UnparsedTotal:        c.unparsed.Load(), StderrTotal: c.stderr.Load(),
+		UnparsedTotal:        c.unparsed.Load(), UnattributedTotal: c.unattributed.Load(),
+		StderrTotal: c.stderr.Load(),
 	}
 }
 
@@ -87,6 +89,15 @@ func (c *flowCaptureCoverage) unparsedEvent() {
 	if n == 1 || n%1000 == 0 {
 		c.enqueue("unparsed_event")
 	}
+}
+
+func (c *flowCaptureCoverage) unattributedEvent() bool {
+	n := c.unattributed.Add(1)
+	if n == 1 || n%1000 == 0 {
+		c.enqueue("unattributed_guest_source")
+		return true
+	}
+	return false
 }
 
 func (c *flowCaptureCoverage) stderrEvent() {

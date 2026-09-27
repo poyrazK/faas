@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -121,7 +122,7 @@ func parseConntrackNew(line string) (conntrackTuple, bool) {
 // from the legacy 10-second, 32-summary capacity snapshot. Failure never
 // blocks guest traffic. Every loss path emits a coverage_gap log record so
 // operators cannot interpret missing rows as proof of no activity.
-func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, log *slog.Logger) {
+func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, bridge netip.Prefix, log *slog.Logger) {
 	if owners == nil || sink == nil || nodeID == "" {
 		return
 	}
@@ -144,7 +145,7 @@ func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink fl
 		<-coverage.done
 	}()
 	for ctx.Err() == nil {
-		err := captureOutboundFlowProcess(ctx, owners, nodeID, queue, log, coverage)
+		err := captureOutboundFlowProcess(ctx, owners, nodeID, bridge, queue, log, coverage)
 		if ctx.Err() != nil {
 			return
 		}
@@ -157,7 +158,7 @@ func runOutboundFlowCapture(ctx context.Context, owners flowOwnerLookup, sink fl
 	}
 }
 
-func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nodeID string, queue chan<- state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) error {
+func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nodeID string, bridge netip.Prefix, queue chan<- state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) error {
 	cmd := exec.CommandContext(ctx, flowConntrackBin, "-E", "-e", "NEW", "-o", "timestamp,extended", "-b", "1048576")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -178,9 +179,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		scan := bufio.NewScanner(stderr)
 		for scan.Scan() {
 			line := scan.Text()
-			if len(line) > 256 {
-				line = line[:256]
-			}
+			line = safetext.Truncate(line, 256)
 			log.Warn("outbound flow capture coverage_gap", "reason", "conntrack_stderr", "detail", line)
 			coverage.stderrEvent()
 		}
@@ -206,6 +205,13 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		owner, ok := owners.LookupFlowOwner(tuple.sourceIP, tuple.eventAt)
 		if !ok {
 			// Host-generated and incoming connections are not guest egress.
+			// A source inside the VM bridge (excluding the bridge address)
+			// should have an owner; make its absence visible as a gap.
+			if guestFlowSource(bridge, tuple.sourceIP) {
+				if coverage.unattributedEvent() {
+					log.Warn("outbound flow capture coverage_gap", "reason", "unattributed_guest_source", "source_ip", tuple.sourceIP, "count", coverage.unattributed.Load())
+				}
+			}
 			continue
 		}
 		event := state.OutboundFlowEvent{
@@ -235,6 +241,15 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		return waitErr
 	}
 	return errors.New("conntrack event stream ended")
+}
+
+func guestFlowSource(bridge netip.Prefix, source string) bool {
+	addr, err := netip.ParseAddr(source)
+	if err != nil || !bridge.IsValid() || !bridge.Contains(addr) {
+		return false
+	}
+	base := bridge.Masked().Addr()
+	return addr != base && addr != base.Next()
 }
 
 func writeOutboundFlows(ctx context.Context, sink flowEventSink, queue <-chan state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) {

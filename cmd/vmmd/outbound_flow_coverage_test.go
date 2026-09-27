@@ -41,6 +41,7 @@ func TestFlowCaptureCoverageHeartbeatsAndLossCounters(t *testing.T) {
 	c.queueDrop()
 	c.databaseDrop(3, "database_write_failed")
 	c.unparsedEvent()
+	c.unattributedEvent()
 	c.stderrEvent()
 	deadline := time.After(time.Second)
 	for {
@@ -69,7 +70,8 @@ func TestFlowCaptureCoverageHeartbeatsAndLossCounters(t *testing.T) {
 	samples := sink.snapshot()
 	last := samples[len(samples)-1]
 	if last.Reason != "shutdown" || last.Listening || last.QueueDroppedTotal != 1 ||
-		last.DatabaseDroppedTotal != 3 || last.UnparsedTotal != 1 || last.StderrTotal != 1 {
+		last.DatabaseDroppedTotal != 3 || last.UnparsedTotal != 1 ||
+		last.UnattributedTotal != 1 || last.StderrTotal != 1 {
 		t.Fatalf("final coverage sample = %#v", last)
 	}
 	for _, sample := range samples {
