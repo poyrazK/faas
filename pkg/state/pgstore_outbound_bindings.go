@@ -39,17 +39,19 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 	var id, accountID, appID pgtype.UUID
 	var dailyRequestLimit pgtype.Int8
+	var bindingDailyRequestLimit pgtype.Int8
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
 	var binding OutboundAppBinding
 	if err := row.Scan(&id, &accountID, &appID, &binding.Name, &binding.Origin,
 		&binding.AllowedMethods, &binding.AllowedPathPrefixes, &binding.Enabled,
 		&binding.CredentialSource, &binding.CredentialConfigured, &binding.CreatedAt,
-		&binding.RouteMethods, &binding.RoutePathPrefixes, &binding.OwnerKind, &dailyRequestLimit, &accountPlan,
+		&binding.RouteMethods, &binding.RoutePathPrefixes, &binding.OwnerKind, &dailyRequestLimit, &bindingDailyRequestLimit, &accountPlan,
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS); err != nil {
 		return OutboundAppBinding{}, mapErr(err)
 	}
 	binding.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
+	binding.BindingDailyRequestLimit = effectiveOutboundDailyRequestLimit(bindingDailyRequestLimit, accountPlan)
 	binding.RequestPolicy = requestPolicy
 	if binding.OwnerKind == "customer" {
 		var ok bool
@@ -118,7 +120,7 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 		        AND cardinality(integration.allowed_path_prefixes) > 0), integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
-		       integration.owner_kind, integration.daily_request_limit, account.plan,
+		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
@@ -325,7 +327,7 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 		       integration.enabled, integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
-		       integration.owner_kind, integration.daily_request_limit, account.plan,
+		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
@@ -384,6 +386,76 @@ func (s *PgStore) UpdateOutboundBindingPolicy(ctx context.Context, accountID, ap
 		return mapErr(err)
 	}
 	return mapErr(tx.Commit(ctx))
+}
+
+func (s *PgStore) SetOutboundBindingDailyRequestLimit(ctx context.Context, accountID, appID, integrationID string, limit *int64) error {
+	account, app, integration := mustPgUUID(accountID), mustPgUUID(appID), mustPgUUID(integrationID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var plan string
+	err = tx.QueryRow(ctx, `
+		SELECT account.plan
+		  FROM outbound_app_bindings binding
+		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
+		  JOIN accounts account ON account.id = binding.account_id
+		  JOIN apps app ON app.id = binding.app_id
+		 WHERE binding.account_id = $1 AND binding.app_id = $2 AND binding.integration_id = $3
+		   AND integration.account_id = $1 AND integration.provider_auth_mode = 'managed'
+		   AND integration.enabled AND app.account_id = $1 AND app.status <> 'deleted'
+		 FOR SHARE OF account FOR UPDATE OF binding`, account, app, integration).Scan(&plan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	if limit != nil {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok || *limit < 1 || *limit > maximum {
+			return ErrInvalidArgument
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbound_app_bindings SET daily_request_limit = $4
+		 WHERE account_id = $1 AND app_id = $2 AND integration_id = $3`, account, app, integration, limit); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+func (s *PgStore) GetOutboundBindingUsage(ctx context.Context, accountID, appID, integrationID string) (OutboundBindingUsage, error) {
+	var usage OutboundBindingUsage
+	var dailyRequestLimit int64
+	var plan string
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(binding.daily_request_limit, 0),
+		       CASE WHEN counter.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+		            THEN counter.daily_request_count ELSE 0 END,
+		       to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD'),
+		       ((date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day') AT TIME ZONE 'UTC'),
+		       account.plan
+		  FROM outbound_app_bindings binding
+		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
+		  JOIN accounts account ON account.id = binding.account_id
+		  JOIN apps app ON app.id = binding.app_id
+		  LEFT JOIN outbound_app_binding_usage counter
+		    ON counter.integration_id = binding.integration_id AND counter.app_id = binding.app_id
+		 WHERE binding.account_id = $1 AND binding.app_id = $2 AND binding.integration_id = $3
+		   AND integration.account_id = $1 AND integration.provider_auth_mode = 'managed'
+		   AND app.account_id = $1 AND app.status <> 'deleted'`,
+		mustPgUUID(accountID), mustPgUUID(appID), mustPgUUID(integrationID)).
+		Scan(&dailyRequestLimit, &usage.DailyRequestCount, &usage.UsageDate, &usage.ResetsAt, &plan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OutboundBindingUsage{}, ErrNotFound
+	}
+	if err != nil {
+		return OutboundBindingUsage{}, mapErr(err)
+	}
+	usage.DailyRequestLimit = effectiveOutboundDailyRequestLimit(pgtype.Int8{Int64: dailyRequestLimit, Valid: dailyRequestLimit > 0}, plan)
+	return usage, nil
 }
 
 func (s *PgStore) SetOutboundCredential(ctx context.Context, accountID, integrationID string, sealed []byte) error {

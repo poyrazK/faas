@@ -174,14 +174,51 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	if err != nil || !bindings.CredentialConfigured || bindings.AppID != app.ID {
 		t.Fatalf("BindOutboundIntegration = %+v, %v", bindings, err)
 	}
+	bindingLimit := int64(500)
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, account.ID, app.ID, created.ID, &bindingLimit); err != nil {
+		t.Fatalf("SetOutboundBindingDailyRequestLimit: %v", err)
+	}
+	bindings, err = m.BindOutboundIntegration(ctx, account.ID, app.ID, created.ID)
+	if err != nil || bindings.BindingDailyRequestLimit == nil {
+		t.Fatalf("binding after setting budget = %+v, %v", bindings, err)
+	}
+	*bindings.BindingDailyRequestLimit = 1
+	bindings, err = m.BindOutboundIntegration(ctx, account.ID, app.ID, created.ID)
+	if err != nil || bindings.BindingDailyRequestLimit == nil || *bindings.BindingDailyRequestLimit != bindingLimit {
+		t.Fatalf("binding budget was not copied or persisted: %+v, %v", bindings, err)
+	}
 	bindings.RouteMethods[0] = "DELETE"
 	bindings, err = m.BindOutboundIntegration(ctx, account.ID, app.ID, created.ID)
-	if err != nil || bindings.RouteMethods[0] != "GET" {
-		t.Fatalf("idempotent bind leaked a mutable slice: %+v, %v", bindings, err)
+	if err != nil || bindings.RouteMethods[0] != "GET" || bindings.BindingDailyRequestLimit == nil || *bindings.BindingDailyRequestLimit != bindingLimit {
+		t.Fatalf("idempotent bind leaked mutable state: %+v, %v", bindings, err)
+	}
+	bindingUsage, err := m.GetOutboundBindingUsage(ctx, account.ID, app.ID, created.ID)
+	if err != nil || bindingUsage.DailyRequestCount != 0 || bindingUsage.DailyRequestLimit == nil ||
+		*bindingUsage.DailyRequestLimit != bindingLimit || bindingUsage.UsageDate == "" || time.Until(bindingUsage.ResetsAt) <= 0 {
+		t.Fatalf("GetOutboundBindingUsage = %+v, %v", bindingUsage, err)
+	}
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, uuid.NewString(), app.ID, created.ID, &bindingLimit); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-account binding budget = %v, want ErrNotFound", err)
+	}
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, account.ID, uuid.NewString(), created.ID, &bindingLimit); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing binding budget = %v, want ErrNotFound", err)
+	}
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, account.ID, app.ID, created.ID, &tooHigh); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("over-plan binding budget = %v, want ErrInvalidArgument", err)
+	}
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, account.ID, app.ID, created.ID, nil); err != nil {
+		t.Fatalf("clear binding budget: %v", err)
+	}
+	if bindingUsage, err = m.GetOutboundBindingUsage(ctx, account.ID, app.ID, created.ID); err != nil || bindingUsage.DailyRequestLimit != nil {
+		t.Fatalf("binding usage after clearing budget = %+v, %v", bindingUsage, err)
+	}
+	bindingLimit = 500
+	if err := m.SetOutboundBindingDailyRequestLimit(ctx, account.ID, app.ID, created.ID, &bindingLimit); err != nil {
+		t.Fatalf("restore binding budget: %v", err)
 	}
 
 	listed, err := m.ListOutboundAppBindings(ctx, account.ID, app.ID)
-	if err != nil || len(listed) != 1 || listed[0].CredentialConfigured != true {
+	if err != nil || len(listed) != 1 || listed[0].CredentialConfigured != true || listed[0].BindingDailyRequestLimit == nil || *listed[0].BindingDailyRequestLimit != bindingLimit {
 		t.Fatalf("ListOutboundAppBindings = %+v, %v", listed, err)
 	}
 	if err := m.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, created.ID, []string{"GET"}, []string{"/v1/items"}); err != nil {
@@ -208,6 +245,9 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	}
 	if err := m.UnbindOutboundIntegration(ctx, account.ID, app.ID, created.ID); err != nil {
 		t.Fatalf("UnbindOutboundIntegration: %v", err)
+	}
+	if _, err := m.GetOutboundBindingUsage(ctx, account.ID, app.ID, created.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("binding usage after unbind = %v, want ErrNotFound", err)
 	}
 	if err := m.UnbindOutboundIntegration(ctx, account.ID, app.ID, created.ID); err != nil {
 		t.Fatalf("repeat unbind: %v", err)

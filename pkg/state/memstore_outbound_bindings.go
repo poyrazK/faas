@@ -23,6 +23,10 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 
 func copyOutboundBinding(in OutboundAppBinding) OutboundAppBinding {
 	in.OutboundIntegrationOffer = copyOutboundOffer(in.OutboundIntegrationOffer)
+	if in.BindingDailyRequestLimit != nil {
+		limit := *in.BindingDailyRequestLimit
+		in.BindingDailyRequestLimit = &limit
+	}
 	in.RouteMethods = append([]string(nil), in.RouteMethods...)
 	in.RoutePathPrefixes = append([]string(nil), in.RoutePathPrefixes...)
 	return in
@@ -41,6 +45,19 @@ func effectiveMemOutboundOffer(offer OutboundIntegrationOffer, plan api.Plan) Ou
 		}
 	}
 	return copyOutboundOffer(offer)
+}
+
+func effectiveMemOutboundBindingLimit(limit *int64, plan api.Plan) *int64 {
+	if limit == nil {
+		return nil
+	}
+	effective := *limit
+	if maximum, ok := api.OutboundRequestsPerDayMaxForPlan(plan); ok && effective > maximum {
+		effective = maximum
+	} else if effective > api.MaxOutboundRequestsPerDay {
+		effective = api.MaxOutboundRequestsPerDay
+	}
+	return &effective
 }
 
 func (m *MemStore) SetOutboundDailyRequestLimit(_ context.Context, accountID, integrationID string, limit *int64) error {
@@ -301,6 +318,52 @@ func (m *MemStore) UpdateOutboundBindingPolicy(_ context.Context, accountID, app
 	binding.RoutePathPrefixes = append([]string(nil), paths...)
 	m.outboundAppBindings[key] = binding
 	return nil
+}
+
+func (m *MemStore) SetOutboundBindingDailyRequestLimit(_ context.Context, accountID, appID, integrationID string, limit *int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := appID + "|" + integrationID
+	binding, bindingOK := m.outboundAppBindings[key]
+	app, appOK := m.apps[appID]
+	offer, offerOK := m.outboundIntegrationOffers[integrationID]
+	account, accountOK := m.accounts[accountID]
+	if !bindingOK || binding.AccountID != accountID || !appOK || app.AccountID != accountID || app.Status == AppDeleted ||
+		!offerOK || offer.AccountID != accountID || !offer.Enabled || !accountOK {
+		return ErrNotFound
+	}
+	if limit != nil {
+		maximum, planKnown := api.OutboundRequestsPerDayMaxForPlan(account.Plan)
+		if !planKnown || *limit < 1 || *limit > maximum {
+			return ErrInvalidArgument
+		}
+		value := *limit
+		binding.BindingDailyRequestLimit = &value
+	} else {
+		binding.BindingDailyRequestLimit = nil
+	}
+	m.outboundAppBindings[key] = binding
+	return nil
+}
+
+func (m *MemStore) GetOutboundBindingUsage(_ context.Context, accountID, appID, integrationID string) (OutboundBindingUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := appID + "|" + integrationID
+	binding, bindingOK := m.outboundAppBindings[key]
+	app, appOK := m.apps[appID]
+	account, accountOK := m.accounts[accountID]
+	if !bindingOK || binding.AccountID != accountID || !appOK || app.AccountID != accountID || app.Status == AppDeleted || !accountOK {
+		return OutboundBindingUsage{}, ErrNotFound
+	}
+	utcNow := time.Now().UTC()
+	resetAt := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+	return OutboundBindingUsage{
+		DailyRequestCount: 0,
+		DailyRequestLimit: effectiveMemOutboundBindingLimit(binding.BindingDailyRequestLimit, account.Plan),
+		UsageDate:         utcNow.Format("2006-01-02"),
+		ResetsAt:          resetAt,
+	}, nil
 }
 
 func (m *MemStore) UnbindOutboundIntegration(_ context.Context, accountID, appID, integrationID string) error {
