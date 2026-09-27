@@ -142,6 +142,50 @@ func (s *PgStore) RevokeObjectS3Credential(ctx context.Context, accountID, bucke
 	return nil
 }
 
+// RevokeObjectS3ComputeBinding atomically revokes the binding and every
+// rotation stage, removes its managed secrets, and marks the app's runtime
+// configuration and snapshots stale.
+func (s *PgStore) RevokeObjectS3ComputeBinding(ctx context.Context, accountID, bucketID, bindingID string) (bool, error) {
+	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
+		return false, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	parent, err := q.ObjectS3BindingRevokeLock(ctx, tx, sqlc.ObjectS3BindingRevokeLockParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	revoked, err := q.ObjectS3CredentialRevoke(ctx, tx, sqlc.ObjectS3CredentialRevokeParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	secrets, err := q.ObjectS3BindingDeleteSecrets(ctx, tx, mustPgUUID(bindingID))
+	if err != nil {
+		return false, mapErr(err)
+	}
+	changed := revoked > 0 || secrets > 0
+	if changed {
+		if err := q.ObjectS3BindingStampRuntime(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+		if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, mapErr(err)
+	}
+	return changed, nil
+}
+
 func (s *PgStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
 	row, err := sqlc.New().ObjectS3CredentialGet(ctx, s.pool, sqlc.ObjectS3CredentialGetParams{
 		ID: mustPgUUID(credentialID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),

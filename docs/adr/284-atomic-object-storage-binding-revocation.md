@@ -1,0 +1,8 @@
+# ADR-284 · Atomic object-storage binding revocation
+
+- **Status:** accepted
+- **Date:** 2026-09-27
+- **Decision:** Revoke a managed S3 compute binding, revoke any active rotation stage, delete all six managed app secrets, stamp the app runtime-config change, and stale its existing snapshots in one store transaction. After commit, send the identity-only runtime-config notification used by other secret changes. Apply this operation to direct binding revocation, managed credential revocation, bucket deletion, project-environment cleanup, and clone rollback.
+- **Why:** Separate credential revocation and secret deletion left a partial-failure window: either the old key could remain usable after its settings were removed, or the app could retain credentials after its key was revoked. A pending rotation also has a second active credential that must be revoked with the binding. Existing snapshots must not restore a workload configured with the revoked key.
+- **Consequences:** Both keys stop authenticating as part of the same commit that removes the managed secrets and invalidates snapshots. Running processes are not forcibly restarted; their current configuration follows the existing runtime-change notification and wake behavior. Notification delivery remains best effort because the committed rows are authoritative.
+- **Rejected alternatives:** Revoking first and deleting secrets afterward preserves an observable failure window. Updating snapshots after commit can leave a committed revocation with a snapshot that still appears restorable. Revoking only the current credential leaves an active rotation stage usable.

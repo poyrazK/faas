@@ -174,12 +174,11 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, plan.app, "binding_created", target, "")
 	bucketID := bucket.ID
 	*cleanup = append(*cleanup, func(ctx context.Context) error {
-		revokeErr := store.RevokeObjectS3Credential(ctx, acct.ID, bucketID, credentialID)
-		if errors.Is(revokeErr, state.ErrNotFound) {
-			revokeErr = nil
+		changed, err := store.RevokeObjectS3ComputeBinding(ctx, acct.ID, bucketID, credentialID)
+		if err == nil && changed {
+			s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, plan.app, "binding_revoked", target, "")
 		}
-		secretErr := s.store.DeleteManagedObjectStorageSecrets(ctx, credentialID)
-		return errors.Join(revokeErr, secretErr)
+		return err
 	})
 	return credential.ID, len(values), nil
 }

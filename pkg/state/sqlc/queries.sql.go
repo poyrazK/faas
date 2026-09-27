@@ -9523,6 +9523,18 @@ func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg Objec
 	return result.RowsAffected(), nil
 }
 
+const objectS3BindingDeleteSecrets = `-- name: ObjectS3BindingDeleteSecrets :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1
+`
+
+func (q *Queries) ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, objectS3BindingDeleteSecrets, managedObjectStorageCredentialID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectS3BindingLockApp = `-- name: ObjectS3BindingLockApp :one
 SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
 WHERE a.id=$1::uuid AND a.account_id=$2::uuid
@@ -9541,6 +9553,45 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE
+`
+
+type ObjectS3BindingRevokeLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg ObjectS3BindingRevokeLockParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3BindingRevokeLock, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+	)
+	return i, err
 }
 
 const objectS3BindingSecretCount = `-- name: ObjectS3BindingSecretCount :one
