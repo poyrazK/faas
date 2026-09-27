@@ -1158,12 +1158,14 @@ CREATE TABLE public.accounts (
     key_grace_window_days integer,
     egress_allowlist_extra integer DEFAULT 0 NOT NULL,
     email_verified_at timestamp with time zone,
+    suspended_reason text,
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
     CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
     CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
+    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
+    CONSTRAINT accounts_suspended_reason_check CHECK (((suspended_reason IS NULL) OR ((suspended_reason = 'free_quota'::text) AND (status = 'suspended'::text))))
 );
 
 

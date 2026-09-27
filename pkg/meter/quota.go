@@ -91,13 +91,14 @@ func EnforceQuota(
 	}
 	switch res.Action {
 	case "stop":
-		// Free hard stop. Flip the account, fan out, park instances.
-		transitioned := false
-		if account.Status != state.AccountSuspended {
-			if err := store.UpdateAccountStatus(ctx, account.ID, state.AccountSuspended); err != nil {
-				return act, fmt.Errorf("meter: suspend %s: %w", account.ID, err)
-			}
-			transitioned = true
+		// Free hard stop. Flip the account, fan out, park instances. Only
+		// an active account is suspended, and the suspension is recorded
+		// as a quota stop so the next month (or an upgrade) lifts it.
+		transitioned, err := store.SuspendAccountForFreeQuota(ctx, account.ID)
+		if err != nil {
+			return act, fmt.Errorf("meter: suspend %s: %w", account.ID, err)
+		}
+		if transitioned {
 			log.Info("meter: free-tier hard stop", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
 		}
 		if transitioned {
@@ -185,6 +186,22 @@ func EnforceQuota(
 				"account", account.ID, "err", err)
 		}
 		log.Info("meter: paid-tier quota warning", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
+	}
+	// The Free hard stop is per month: once the account is under its
+	// included usage again — a new month, or an upgrade to a paid plan —
+	// the quota suspension lifts. Nothing lifted it before, so a Free
+	// account that hit its quota once stayed suspended for good, even
+	// after paying for an upgrade. Only a quota stop is lifted here;
+	// dunning and operator suspensions are untouched.
+	if res.Action != "stop" && account.Status == state.AccountSuspended {
+		restored, err := store.RestoreFreeQuotaSuspension(ctx, account.ID)
+		if err != nil {
+			return act, fmt.Errorf("meter: lift free quota stop %s: %w", account.ID, err)
+		}
+		if restored {
+			notifyAccountAppLifecycle(ctx, store, notif, account.ID, "account_reactivated", log)
+			log.Info("meter: free-tier hard stop lifted", "account", account.ID, "plan", account.Plan, "used_gb", usedGB)
+		}
 	}
 	return act, nil
 }

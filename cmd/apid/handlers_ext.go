@@ -5070,7 +5070,15 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// customer is still over quota from a prior cycle) emits a
 		// fresh warning — otherwise the stamp from the previous day
 		// would suppress it (spec §4.7).
-		if acct.Status == state.AccountPastDue {
+		//
+		// A dunning suspension (suspended with past_due_at still set) is
+		// lifted too: the suspension email tells the customer that paying
+		// — `gregale billing retry` — restores service, but only past_due
+		// was restored, so a customer who paid stayed suspended and the
+		// dunning timer went on to schedule the account for deletion.
+		// Operator suspensions carry no past_due_at and stay in place.
+		if acct.Status == state.AccountPastDue ||
+			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) {
 			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 				s.log.Warn("apid: payment_succeeded restore",
 					"account", acct.ID, "err", err)

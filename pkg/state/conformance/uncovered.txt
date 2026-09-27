@@ -13,7 +13,6 @@ APIKeyByHash
 AbortMigratingInstance
 AbortServiceRollout
 AccountByEmail
-AccountByID
 AccountByKeyHash
 AccountByOIDCSubject
 AccountByProviderCustomerID
@@ -456,7 +455,6 @@ MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
-MarkDunningStep
 MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
 MarkMFAEnrolled
@@ -622,7 +620,6 @@ TriggerRecordIDByItemIdentifier
 UpdateAccountBillingInfo
 UpdateAccountPlan
 UpdateAccountProviderCustomerID
-UpdateAccountStatus
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule

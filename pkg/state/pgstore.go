@@ -798,20 +798,70 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
+	tag, err := tx.Exec(ctx, `
+		update accounts
+		   set status = $2,
+		       past_due_at = case when $2 = 'past_due' then past_due_at else null end,
+		       suspended_reason = null
+		 where id = $1`, id, string(status))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := syncPersonalOrgStatus(ctx, tx, id, status); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func syncPersonalOrgStatus(ctx context.Context, tx pgx.Tx, accountID string, status AccountStatus) error {
 	if _, err := tx.Exec(ctx, `
 		update orgs
 		   set status = $2, updated_at = now()
-		 where personal_org = true and personal_owner_account_id = $1`, id, string(status)); err != nil {
+		 where personal_org = true and personal_owner_account_id = $1`, accountID, string(status)); err != nil {
 		return fmt.Errorf("state: sync personal org status: %w", err)
 	}
-	return tx.Commit(ctx)
+	return nil
+}
+
+// SuspendAccountForFreeQuota applies the Free plan's monthly hard stop.
+// Only an active account is suspended, so a dunning or operator suspension
+// is never relabelled as a quota stop that the next month would lift.
+func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error) {
+	return s.flipAccountForFreeQuota(ctx, id, `
+		update accounts
+		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
+		 where id = $1 and status = 'active'`, AccountSuspended)
+}
+
+// RestoreFreeQuotaSuspension lifts only a suspension that
+// SuspendAccountForFreeQuota applied.
+func (s *PgStore) RestoreFreeQuotaSuspension(ctx context.Context, id string) (bool, error) {
+	return s.flipAccountForFreeQuota(ctx, id, `
+		update accounts
+		   set status = 'active', suspended_reason = null
+		 where id = $1 and status = 'suspended' and suspended_reason = 'free_quota'`, AccountActive)
+}
+
+func (s *PgStore) flipAccountForFreeQuota(ctx context.Context, id, query string, to AccountStatus) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, query, id)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if err := syncPersonalOrgStatus(ctx, tx, id, to); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 // UpdateAccountProviderCustomerID records the Stripe `cus_…` ID on the
@@ -26045,7 +26095,8 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 	tag, err := s.pool.Exec(ctx,
 		`update accounts
 		    set status = $2,
-		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end
+		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end,
+		        suspended_reason = null
 		  where id = $1 and status = $4`,
 		id, string(to), stamp, string(from))
 	if err != nil {

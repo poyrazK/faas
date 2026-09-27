@@ -168,6 +168,7 @@ type MemStore struct {
 	outboundCredentials       map[string][]byte
 	mu                        sync.Mutex
 	accounts                  map[string]Account
+	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
 	keyByHash                 map[string]APIKey
@@ -960,6 +961,7 @@ func NewMemStore() *MemStore {
 		outboundAppBindings:       map[string]OutboundAppBinding{},
 		outboundCredentials:       map[string][]byte{},
 		accounts:                  map[string]Account{},
+		freeQuotaSuspended:        map[string]bool{},
 		accountDeployRates:        map[string]accountDeployRateRow{},
 		keys:                      map[string]APIKey{},
 		keyByHash:                 map[string]APIKey{},
@@ -1731,7 +1733,16 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 		return ErrNotFound
 	}
 	a.Status = status
+	if status != AccountPastDue {
+		a.PastDueAt = nil
+	}
+	delete(m.freeQuotaSuspended, id)
 	m.accounts[id] = a
+	m.syncPersonalOrgStatusLocked(id, status)
+	return nil
+}
+
+func (m *MemStore) syncPersonalOrgStatusLocked(id string, status AccountStatus) {
 	now := time.Now().UTC()
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
@@ -1740,7 +1751,37 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 			m.orgs[orgID] = org
 		}
 	}
-	return nil
+}
+
+// SuspendAccountForFreeQuota mirrors PgStore.SuspendAccountForFreeQuota.
+func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok || a.Status != AccountActive {
+		return false, nil
+	}
+	a.Status = AccountSuspended
+	a.PastDueAt = nil
+	m.accounts[id] = a
+	m.freeQuotaSuspended[id] = true
+	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
+	return true, nil
+}
+
+// RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
+func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok || a.Status != AccountSuspended || !m.freeQuotaSuspended[id] {
+		return false, nil
+	}
+	a.Status = AccountActive
+	m.accounts[id] = a
+	delete(m.freeQuotaSuspended, id)
+	m.syncPersonalOrgStatusLocked(id, AccountActive)
+	return true, nil
 }
 
 // --- MFA (IAM-2, issue #186) -------------------------------------------------
@@ -21778,6 +21819,7 @@ func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to Accoun
 		now := time.Now().UTC()
 		a.PastDueAt = &now
 	}
+	delete(m.freeQuotaSuspended, id)
 	m.accounts[id] = a
 	return nil
 }

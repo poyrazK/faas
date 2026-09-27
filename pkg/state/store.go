@@ -928,7 +928,19 @@ type Store interface {
 	AccountByEmail(ctx context.Context, email string) (Account, error)
 	AccountByKeyHash(ctx context.Context, hash []byte) (Account, error)
 	UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error
+	// UpdateAccountStatus is the status writer for transitions outside the
+	// dunning ladder (payment recovery, operator action). It takes the
+	// account out of the ladder: past_due_at and suspended_reason are
+	// cleared, so a later payment failure starts a fresh grace period and
+	// an operator suspension is never advanced to deletion by dunning.
 	UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error
+	// SuspendAccountForFreeQuota applies the Free plan's monthly hard stop
+	// to an active account; it reports whether the account transitioned.
+	SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error)
+	// RestoreFreeQuotaSuspension lifts a suspension applied by
+	// SuspendAccountForFreeQuota and nothing else; it reports whether the
+	// account transitioned back to active.
+	RestoreFreeQuotaSuspension(ctx context.Context, id string) (bool, error)
 
 	// MFA (issue #186 / IAM-2).
 	// ConsumeRecoveryCode atomically matches `presented` against the
