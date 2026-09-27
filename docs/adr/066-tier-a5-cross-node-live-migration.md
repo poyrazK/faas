@@ -503,4 +503,3 @@ Decisions:
 Not addressed here: every byte still round-trips through the OCI registry
 even though source and destination share a private network. A direct
 node-to-node transfer is the structural fix for handoff latency.
-

@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -24,15 +27,80 @@ func main() { wire.Daemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
 	ops := wire.NewOpsMetrics("outboundd")
-	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "outboundd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	var retainedSpansAcc *gateway.SpansAccumulator
+	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl
+	if os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		retainedSpansAcc = gateway.NewSpansAccumulator()
+		target := outboundSpansWriterTarget(os.Getenv)
+		var dialErr error
+		retainedSpansWriter, dialErr = apidgrpc.DialSpansWriter(ctx, target, nil)
+		if dialErr != nil {
+			return fmt.Errorf("outboundd: dial apid spans writer at %q: %w", target, dialErr)
+		}
+	}
+
+	var traceShutdown func(context.Context) error
+	var traceErr error
+	if retainedSpansAcc != nil {
+		traceShutdown, traceErr = trace.InitTracerWithRegistryAndExporters(
+			ctx, "outboundd", wire.Version, log, ops.Registry(), ops.MetricPrefix(),
+			gateway.NewRetainedServiceSpansExporter(retainedSpansAcc, log),
+		)
+	} else {
+		traceShutdown, traceErr = trace.InitTracerWithRegistry(ctx, "outboundd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	}
 	if traceErr != nil {
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
+		}
 		return fmt.Errorf("outboundd: init tracing: %w", traceErr)
+	}
+	var retainedFlushCancel context.CancelFunc
+	var retainedFlushDone chan struct{}
+	if retainedSpansAcc != nil && retainedSpansWriter != nil {
+		flushInterval := 30 * time.Second
+		if value := os.Getenv("FAAS_OTEL_FLUSH_INTERVAL"); value != "" {
+			if parsed, parseErr := time.ParseDuration(value); parseErr == nil && parsed > 0 {
+				flushInterval = parsed
+			} else {
+				log.Warn("outboundd: invalid OTel flush interval; using default", "value", value)
+			}
+		}
+		flushCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		retainedFlushCancel = cancel
+		retainedFlushDone = make(chan struct{})
+		go func() {
+			defer close(retainedFlushDone)
+			if err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
+				Interval: flushInterval,
+				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
+					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				},
+				Log: log,
+				MaxSpansPerTrace: func(string) int {
+					return api.MustLimitsFor(api.PlanScale).DebugTelemetrySpansPerTrace
+				},
+			}); err != nil {
+				log.Error("outboundd: retained spans flush loop exited", "err", err)
+			}
+		}()
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("outboundd: trace shutdown failed", "err", err)
+		}
+		cancel()
+		if retainedFlushCancel != nil {
+			retainedFlushCancel()
+			select {
+			case <-retainedFlushDone:
+			case <-time.After(6 * time.Second):
+				log.Warn("outboundd: timed out draining retained spans")
+			}
+		}
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
 		}
 	}()
 	wire.BootStamps(ctx, "outboundd", ops)
@@ -166,4 +234,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func outboundSpansWriterTarget(getenv func(string) string) string {
+	if getenv != nil {
+		if target := getenv("FAAS_APID_OTEL_SPANS_WRITER_SOCKET"); target != "" {
+			return target
+		}
+	}
+	return "/run/faas/otel_spans_writer.sock"
 }

@@ -32,6 +32,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var origin string
 	var accountID uuid.UUID
+	var name string
 	var plan string
 	var providerAuthMode string
 	var credentialSource string
@@ -43,7 +44,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var burst, maxInFlight, timeoutMS int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
-		SELECT integration.account_id, account.plan, integration.origin, integration.token_hash,
+		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
 		       integration.request_timeout_ms, integration.enabled, integration.provider_auth_mode,
 		       integration.credential_source, integration.allowed_methods,
@@ -52,7 +53,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
-		Scan(&accountID, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
+		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -143,7 +144,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	if err := rows.Err(); err != nil {
 		return Integration{}, err
 	}
-	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
+	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, AppIDs: apps,
 		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		DailyRequestLimit:         dailyRequestLimit,

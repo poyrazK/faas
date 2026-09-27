@@ -65,3 +65,20 @@ func TestPGBackend_ResponseCacheMetricsRefreshAfterInvalidation(t *testing.T) {
 		t.Fatalf("global purge bytes gauge = %v, want 0", got)
 	}
 }
+
+func TestPGBackend_ResetCorsPresetsPurgesResponseCache(t *testing.T) {
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now)
+	b := NewPGBackend(nil, nil, nil).WithResponseCache(cache)
+	if !cache.Put(CacheKey{AppID: "app-1", NormalizedPath: "/products/1"}, 200, nil,
+		[]byte("cached response with old CORS headers"), time.Now().Add(time.Minute), time.Now().Add(2*time.Minute), nil) {
+		t.Fatal("cache.Put rejected test entry")
+	}
+	if cache.Len() != 1 {
+		t.Fatalf("cache entries before preset reset = %d, want 1", cache.Len())
+	}
+
+	b.ResetCorsPresets("account-1")
+	if cache.Len() != 0 {
+		t.Fatalf("cache entries after preset reset = %d, want 0", cache.Len())
+	}
+}

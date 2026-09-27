@@ -145,7 +145,7 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 		  and a.project_id is not distinct from root.project_id
 		  and a.preview_pr_number = $4
 		left join lateral (
-			select status from deployments
+			select id, status from deployments
 			where app_id = a.id and kind = 'preview' and commit_sha = $2
 			order by created_at desc, id desc limit 1
 		) d on true
