@@ -185,6 +185,9 @@ func (c cliCommand) completionSlugWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Examples are runnable command lines shown with this subcommand's help
+	// and in the generated man and Markdown references.
+	Examples []string
 	// Positionals are documented in the leaf synopsis for verbs whose
 	// argument contract is narrower than the parent command's.
 	Positionals []string
@@ -867,7 +870,7 @@ var cliCommands = []cliCommand{
 			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
@@ -1250,8 +1253,10 @@ var cliCommands = []cliCommand{
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 			}},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
@@ -1808,7 +1813,12 @@ var cliCommands = []cliCommand{
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List sealed secrets", Flags: []cliFlag{{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"}}},
-			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
+			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
+				{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "restart", Short: "restart the app and apply updated secrets now"},
+			}},
 			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
 			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},

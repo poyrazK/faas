@@ -1127,6 +1127,13 @@ Wait until a deployment is live (or safe rollout completes)
 | `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
 
+Examples:
+
+```sh
+gregale deployment wait 00000000000000000000000000000001
+gregale deployment wait 00000000000000000000000000000001 --rollout --progress
+```
+
 ### deployment set-min-instances
 
 Set the per-deployment cold-wake floor
@@ -1642,8 +1649,17 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
+
+Examples:
+
+```sh
+printf 'LOG_LEVEL=info\n' | gregale env push --app my-api --from-stdin
+gregale env push --app my-api --restart
+```
 
 ### env diff
 
@@ -2550,8 +2566,17 @@ Set a sealed secret
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply updated secrets now |  |
+
+Examples:
+
+```sh
+gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
+gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+```
 
 ### secrets unset
 

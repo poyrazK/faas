@@ -45,14 +45,7 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			mdFlagTable(w, c.Flags)
 		}
 		if len(c.Examples) > 0 {
-			_, _ = fmt.Fprintln(w, "Examples:")
-			_, _ = fmt.Fprintln(w)
-			_, _ = fmt.Fprintln(w, "```sh")
-			for _, example := range c.Examples {
-				_, _ = fmt.Fprintln(w, example)
-			}
-			_, _ = fmt.Fprintln(w, "```")
-			_, _ = fmt.Fprintln(w)
+			writeMarkdownExamples(w, c.Examples)
 		}
 		for _, s := range c.Subcommands {
 			_, _ = fmt.Fprintf(w, "### %s %s\n\n%s\n\n", c.Name, s.Name, mdText(s.Short))
@@ -67,15 +60,32 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			if len(s.Flags) > 0 {
 				mdFlagTable(w, s.Flags)
 			}
+			if len(s.Examples) > 0 {
+				writeMarkdownExamples(w, s.Examples)
+			}
 			for _, child := range s.Subcommands {
 				_, _ = fmt.Fprintf(w, "#### %s %s %s\n\n%s\n\n", c.Name, s.Name, child.Name, mdText(child.Short))
 				_, _ = fmt.Fprintf(w, "`gregale %s %s %s [flags]`\n\n", c.Name, s.Name, child.Name)
 				if len(child.Flags) > 0 {
 					mdFlagTable(w, child.Flags)
 				}
+				if len(child.Examples) > 0 {
+					writeMarkdownExamples(w, child.Examples)
+				}
 			}
 		}
 	}
+}
+
+func writeMarkdownExamples(w io.Writer, examples []string) {
+	_, _ = fmt.Fprintln(w, "Examples:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "```sh")
+	for _, example := range examples {
+		_, _ = fmt.Fprintln(w, example)
+	}
+	_, _ = fmt.Fprintln(w, "```")
+	_, _ = fmt.Fprintln(w)
 }
 
 func mdSynopsis(c cliCommand) string {
