@@ -42,7 +42,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_MAX_HEADER_BYTES` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_READ_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_TELEMETRY_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
-| `FAAS_APID_REQUEST_TELEMETRY_TARGET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_APID_REQUEST_TELEMETRY_TARGET` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |

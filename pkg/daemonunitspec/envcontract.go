@@ -121,7 +121,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_REQUEST_MAX_HEADER_BYTES", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_REQUEST_READ_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_REQUEST_TELEMETRY_SOCKET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
-	{Name: "FAAS_APID_REQUEST_TELEMETRY_TARGET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
+	{Name: "FAAS_APID_REQUEST_TELEMETRY_TARGET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_APID_REQUEST_WRITE_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ROLE", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_API_CONTRACT_DIFF_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDropin, Note: "public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs"},
