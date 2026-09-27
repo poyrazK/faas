@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+    from ..models.workload_dependency import WorkloadDependency
 
 
 T = TypeVar("T", bound="CreateDeploymentOverrides")
@@ -38,6 +39,8 @@ class CreateDeploymentOverrides:
     - `healthcheck` configures startup readiness admission.
     - `readiness_probe` is an optional recurring traffic gate, independent of
       the one-shot startup check and VM liveness policy.
+    - `main_depends_on` gates the primary workload on named long-running
+      companions; init companions already run before the primary workload.
 
     """
 
@@ -57,6 +60,9 @@ class CreateDeploymentOverrides:
     readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
     """Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing;
     successful probes restore it without restarting the VM."""
+    main_depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Companions that must reach the specified lifecycle condition before the primary workload starts. Targets
+    must be declared long-running companions; init companions already gate startup."""
     liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
     """Liveness-probe override (issue #554 / ADR-078). The host (cmd/vmmd)
     polls the guest's vsock 1028 STREAM on every `interval_s`; after
@@ -116,6 +122,13 @@ class CreateDeploymentOverrides:
         else:
             readiness_probe = self.readiness_probe
 
+        main_depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.main_depends_on, Unset):
+            main_depends_on = []
+            for main_depends_on_item_data in self.main_depends_on:
+                main_depends_on_item = main_depends_on_item_data.to_dict()
+                main_depends_on.append(main_depends_on_item)
+
         liveness_probe: dict[str, Any] | None | Unset
         if isinstance(self.liveness_probe, Unset):
             liveness_probe = UNSET
@@ -147,6 +160,8 @@ class CreateDeploymentOverrides:
             field_dict["healthcheck"] = healthcheck
         if readiness_probe is not UNSET:
             field_dict["readiness_probe"] = readiness_probe
+        if main_depends_on is not UNSET:
+            field_dict["main_depends_on"] = main_depends_on
         if liveness_probe is not UNSET:
             field_dict["liveness_probe"] = liveness_probe
         if scope is not UNSET:
@@ -161,6 +176,7 @@ class CreateDeploymentOverrides:
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+        from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint", UNSET))
@@ -217,6 +233,15 @@ class CreateDeploymentOverrides:
 
         readiness_probe = _parse_readiness_probe(d.pop("readiness_probe", UNSET))
 
+        _main_depends_on = d.pop("main_depends_on", UNSET)
+        main_depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _main_depends_on is not UNSET:
+            main_depends_on = []
+            for main_depends_on_item_data in _main_depends_on:
+                main_depends_on_item = WorkloadDependency.from_dict(main_depends_on_item_data)
+
+                main_depends_on.append(main_depends_on_item)
+
         def _parse_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
             if data is None:
                 return data
@@ -251,6 +276,7 @@ class CreateDeploymentOverrides:
             port=port,
             healthcheck=healthcheck,
             readiness_probe=readiness_probe,
+            main_depends_on=main_depends_on,
             liveness_probe=liveness_probe,
             scope=scope,
         )

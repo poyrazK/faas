@@ -172,7 +172,8 @@ export class QueuesService {
   /**
    * Enqueue a row on the per-app FIFO queue.
    * Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-   * Scale 100). The drain re-checks at dispatch tick.
+   * Scale 100). The drain re-checks at dispatch tick. API keys require
+   * `queues:send`, `deploy:write`, or `admin`.
    *
    * @returns QueueSendResponse The enqueued row.
    * @throws ApiError
@@ -233,7 +234,8 @@ export class QueuesService {
    * the target application's existing invocation queue. Delivery is
    * at-least-once and uses the queue's normal retry, tracing, dead-letter,
    * replay, wake, and capacity behavior. This is a straightforward
-   * application inbox, not a general-purpose streaming log.
+   * application inbox, not a general-purpose streaming log. API keys
+   * require `events:publish`, `deploy:write`, or `admin`.
    *
    * @returns SendAppMessageResponse The message was durably queued.
    * @throws ApiError

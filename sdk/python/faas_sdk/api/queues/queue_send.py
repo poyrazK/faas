@@ -98,7 +98,8 @@ def sync_detailed(
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -143,7 +144,8 @@ def sync(
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -183,7 +185,8 @@ async def asyncio_detailed(
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -226,7 +229,8 @@ async def asyncio(
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):

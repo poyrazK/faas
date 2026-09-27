@@ -680,6 +680,7 @@ from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_preview_subscription import EventPreviewSubscription
 from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
+from .event_schema import EventSchema
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -1136,6 +1137,7 @@ from .preview_environment_status_response import PreviewEnvironmentStatusRespons
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
 from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
+from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -1299,6 +1301,7 @@ from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
+from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
@@ -1343,6 +1346,8 @@ from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refund_account_invoice_body import RefundAccountInvoiceBody
+from .register_event_schema_request import RegisterEventSchemaRequest
+from .register_event_schema_response import RegisterEventSchemaResponse
 from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -1451,6 +1456,7 @@ from .security_quarantine_recovery_response import SecurityQuarantineRecoveryRes
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
 from .send_app_message_request import SendAppMessageRequest
 from .send_app_message_request_data_content_type import SendAppMessageRequestDataContentType
+from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_binding_policy import ServiceBindingPolicy
@@ -2366,6 +2372,7 @@ __all__ = (
     "EventDeliveryResponseState",
     "EventPreviewSubscription",
     "EventPreviewSubscriptionFilter",
+    "EventSchema",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
@@ -2813,6 +2820,7 @@ __all__ = (
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
     "PreviewEventRequest",
+    "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
     "PreviewProductionChangesResponse",
@@ -2956,6 +2964,7 @@ __all__ = (
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
     "PublishEventRequest",
+    "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
     "PublishProjectReleaseSetRequest",
@@ -3001,6 +3010,8 @@ __all__ = (
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "RefundAccountInvoiceBody",
+    "RegisterEventSchemaRequest",
+    "RegisterEventSchemaResponse",
     "RekeyProgress",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -3102,6 +3113,7 @@ __all__ = (
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
     "SendAppMessageRequest",
+    "SendAppMessageRequestDatacontenttype",
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",

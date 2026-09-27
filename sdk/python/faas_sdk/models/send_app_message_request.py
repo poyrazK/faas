@@ -10,6 +10,10 @@ from ..models.send_app_message_request_data_content_type import (
     SendAppMessageRequestDataContentType,
     check_send_app_message_request_data_content_type,
 )
+from ..models.send_app_message_request_datacontenttype import (
+    SendAppMessageRequestDatacontenttype,
+    check_send_app_message_request_datacontenttype,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -31,7 +35,8 @@ class SendAppMessageRequest:
     source: str | Unset = "gregale.send"
     time: datetime.datetime | Unset = UNSET
     """Server time when omitted."""
-    data_content_type: SendAppMessageRequestDataContentType | Unset = "application/json"
+    datacontenttype: SendAppMessageRequestDatacontenttype | Unset = "application/json"
+    data_content_type: SendAppMessageRequestDataContentType | Unset = UNSET
     queue_name: str | Unset = UNSET
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
@@ -55,6 +60,10 @@ class SendAppMessageRequest:
         time: str | Unset = UNSET
         if not isinstance(self.time, Unset):
             time = self.time.isoformat()
+
+        datacontenttype: str | Unset = UNSET
+        if not isinstance(self.datacontenttype, Unset):
+            datacontenttype = self.datacontenttype
 
         data_content_type: str | Unset = UNSET
         if not isinstance(self.data_content_type, Unset):
@@ -80,6 +89,8 @@ class SendAppMessageRequest:
             field_dict["source"] = source
         if time is not UNSET:
             field_dict["time"] = time
+        if datacontenttype is not UNSET:
+            field_dict["datacontenttype"] = datacontenttype
         if data_content_type is not UNSET:
             field_dict["data_content_type"] = data_content_type
         if queue_name is not UNSET:
@@ -109,6 +120,13 @@ class SendAppMessageRequest:
         else:
             time = datetime.datetime.fromisoformat(_time)
 
+        _datacontenttype = d.pop("datacontenttype", UNSET)
+        datacontenttype: SendAppMessageRequestDatacontenttype | Unset
+        if isinstance(_datacontenttype, Unset):
+            datacontenttype = UNSET
+        else:
+            datacontenttype = check_send_app_message_request_datacontenttype(_datacontenttype)
+
         _data_content_type = d.pop("data_content_type", UNSET)
         data_content_type: SendAppMessageRequestDataContentType | Unset
         if isinstance(_data_content_type, Unset):
@@ -131,6 +149,7 @@ class SendAppMessageRequest:
             id=id,
             source=source,
             time=time,
+            datacontenttype=datacontenttype,
             data_content_type=data_content_type,
             queue_name=queue_name,
             retry_policy=retry_policy,

@@ -10,6 +10,10 @@ from ..models.preview_event_request_data_content_type import (
     PreviewEventRequestDataContentType,
     check_preview_event_request_data_content_type,
 )
+from ..models.preview_event_request_datacontenttype import (
+    PreviewEventRequestDatacontenttype,
+    check_preview_event_request_datacontenttype,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="PreviewEventRequest")
@@ -27,7 +31,10 @@ class PreviewEventRequest:
     """Optional event id used when filters inspect the CloudEvents id."""
     time: datetime.datetime | Unset = UNSET
     """Event occurrence time; omitted values use the current time."""
-    data_content_type: PreviewEventRequestDataContentType | Unset = "application/json"
+    datacontenttype: PreviewEventRequestDatacontenttype | Unset = "application/json"
+    data_content_type: PreviewEventRequestDataContentType | Unset = UNSET
+    schemaversion: str | Unset = UNSET
+    """Validated against the registered JSON Schema when one exists."""
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source
@@ -42,9 +49,15 @@ class PreviewEventRequest:
         if not isinstance(self.time, Unset):
             time = self.time.isoformat()
 
+        datacontenttype: str | Unset = UNSET
+        if not isinstance(self.datacontenttype, Unset):
+            datacontenttype = self.datacontenttype
+
         data_content_type: str | Unset = UNSET
         if not isinstance(self.data_content_type, Unset):
             data_content_type = self.data_content_type
+
+        schemaversion = self.schemaversion
 
         field_dict: dict[str, Any] = {}
 
@@ -59,8 +72,12 @@ class PreviewEventRequest:
             field_dict["id"] = id
         if time is not UNSET:
             field_dict["time"] = time
+        if datacontenttype is not UNSET:
+            field_dict["datacontenttype"] = datacontenttype
         if data_content_type is not UNSET:
             field_dict["data_content_type"] = data_content_type
+        if schemaversion is not UNSET:
+            field_dict["schemaversion"] = schemaversion
 
         return field_dict
 
@@ -82,6 +99,13 @@ class PreviewEventRequest:
         else:
             time = datetime.datetime.fromisoformat(_time)
 
+        _datacontenttype = d.pop("datacontenttype", UNSET)
+        datacontenttype: PreviewEventRequestDatacontenttype | Unset
+        if isinstance(_datacontenttype, Unset):
+            datacontenttype = UNSET
+        else:
+            datacontenttype = check_preview_event_request_datacontenttype(_datacontenttype)
+
         _data_content_type = d.pop("data_content_type", UNSET)
         data_content_type: PreviewEventRequestDataContentType | Unset
         if isinstance(_data_content_type, Unset):
@@ -89,13 +113,17 @@ class PreviewEventRequest:
         else:
             data_content_type = check_preview_event_request_data_content_type(_data_content_type)
 
+        schemaversion = d.pop("schemaversion", UNSET)
+
         preview_event_request = cls(
             source=source,
             type_=type_,
             data=data,
             id=id,
             time=time,
+            datacontenttype=datacontenttype,
             data_content_type=data_content_type,
+            schemaversion=schemaversion,
         )
 
         return preview_event_request

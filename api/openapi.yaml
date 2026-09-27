@@ -2097,8 +2097,8 @@ paths:
       description: Requires apps:read or admin.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { name: source, in: query, required: true, schema: { type: string } }
-        - { name: type, in: query, required: true, schema: { type: string } }
+        - { name: source, in: query, required: true, description: Event producer source., schema: { type: string } }
+        - { name: type, in: query, required: true, description: Event type within the source., schema: { type: string } }
       responses:
         '200':
           description: Immutable schema versions ordered by version.
@@ -27251,6 +27251,7 @@ components:
         account_id: { type: string, format: uuid }
 
     RegisterEventSchemaRequest:
+      description: Immutable event schema registration request.
       type: object
       additionalProperties: false
       required: [source, type, version, schema]
@@ -27261,6 +27262,7 @@ components:
         schema: { description: Draft 2020-12 JSON Schema, at most 64 KiB, without external references. }
 
     RegisterEventSchemaResponse:
+      description: Receipt for an immutable event schema version.
       type: object
       required: [source, type, version, created]
       properties:
@@ -27270,6 +27272,7 @@ components:
         created: { type: boolean }
 
     EventSchema:
+      description: One registered account-scoped event schema version.
       type: object
       required: [account_id, source, type, version, schema, created_at]
       properties:

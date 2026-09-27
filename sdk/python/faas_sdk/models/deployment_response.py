@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
     from ..models.workflow_spec import WorkflowSpec
+    from ..models.workload_dependency import WorkloadDependency
 
 
 T = TypeVar("T", bound="DeploymentResponse")
@@ -139,6 +140,8 @@ class DeploymentResponse:
     override_readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
     """Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing
     and restored after recovery; the VM is not restarted."""
+    override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."""
     override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
     """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
     default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
@@ -389,6 +392,13 @@ class DeploymentResponse:
         else:
             override_readiness_probe = self.override_readiness_probe
 
+        override_main_depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.override_main_depends_on, Unset):
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in self.override_main_depends_on:
+                override_main_depends_on_item = override_main_depends_on_item_data.to_dict()
+                override_main_depends_on.append(override_main_depends_on_item)
+
         override_liveness_probe: dict[str, Any] | None | Unset
         if isinstance(self.override_liveness_probe, Unset):
             override_liveness_probe = UNSET
@@ -620,6 +630,8 @@ class DeploymentResponse:
             field_dict["override_healthcheck"] = override_healthcheck
         if override_readiness_probe is not UNSET:
             field_dict["override_readiness_probe"] = override_readiness_probe
+        if override_main_depends_on is not UNSET:
+            field_dict["override_main_depends_on"] = override_main_depends_on
         if override_liveness_probe is not UNSET:
             field_dict["override_liveness_probe"] = override_liveness_probe
         if min_instances is not UNSET:
@@ -695,6 +707,7 @@ class DeploymentResponse:
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
         from ..models.workflow_spec import WorkflowSpec
+        from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -866,6 +879,15 @@ class DeploymentResponse:
             return cast(DeploymentReadinessProbe | None | Unset, data)
 
         override_readiness_probe = _parse_override_readiness_probe(d.pop("override_readiness_probe", UNSET))
+
+        _override_main_depends_on = d.pop("override_main_depends_on", UNSET)
+        override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _override_main_depends_on is not UNSET:
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in _override_main_depends_on:
+                override_main_depends_on_item = WorkloadDependency.from_dict(override_main_depends_on_item_data)
+
+                override_main_depends_on.append(override_main_depends_on_item)
 
         def _parse_override_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
             if data is None:
@@ -1262,6 +1284,7 @@ class DeploymentResponse:
             override_port=override_port,
             override_healthcheck=override_healthcheck,
             override_readiness_probe=override_readiness_probe,
+            override_main_depends_on=override_main_depends_on,
             override_liveness_probe=override_liveness_probe,
             min_instances=min_instances,
             scan=scan,
