@@ -1116,6 +1116,7 @@ type Querier interface {
 	// Publication is insert-only; retirement is the sole mutable transition.
 	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
+	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
@@ -1137,6 +1138,7 @@ type Querier interface {
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
+	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all

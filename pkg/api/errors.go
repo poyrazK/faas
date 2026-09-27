@@ -502,8 +502,9 @@ const (
 	// CodeForbidden / CodeValidation so the dashboard / CLI can
 	// surface "switch providers to use this surface" instead of a
 	// generic error. Maps to HTTP 501.
-	CodeBillingNotImplemented = "billing_not_implemented"
-	CodeCapacity              = "capacity_unavailable"
+	CodeBillingNotImplemented  = "billing_not_implemented"
+	CodeCapacity               = "capacity_unavailable"
+	CodeSafeReleaseUnavailable = "safe_release_unavailable"
 	// CodeWakeInProgress is a successful asynchronous admission response from
 	// the public gateway. It is returned with HTTP 202 when a cold fallback
 	// outlives the function request budget but the coalesced wake is still
@@ -1846,7 +1847,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -2433,6 +2434,12 @@ func ErrAppConcurrencyReachedAt(l Limits, effectiveMax, observed int) *Problem {
 func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
+		WithDocs("https://gregale.dev/status")
+}
+
+func ErrSafeReleaseUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSafeReleaseUnavailable,
+		"Safe release unavailable", "Canary progression or rollout recovery is not ready. Retry shortly or contact your operator.").
 		WithDocs("https://gregale.dev/status")
 }
 

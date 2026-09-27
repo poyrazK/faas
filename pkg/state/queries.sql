@@ -4334,3 +4334,14 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
   AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
 ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;
+
+-- name: StampSafeReleaseWorkerLease :exec
+INSERT INTO safe_release_worker_lease (singleton, healthy_at, expires_at)
+VALUES (true, now(), now() + (sqlc.arg(ttl_seconds)::bigint * interval '1 second'))
+ON CONFLICT (singleton) DO UPDATE SET
+    healthy_at = EXCLUDED.healthy_at,
+    expires_at = EXCLUDED.expires_at;
+
+-- name: SafeReleaseWorkerLeaseReady :one
+SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
+              WHERE singleton = true AND expires_at > now()) AS ready;

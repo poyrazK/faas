@@ -27,12 +27,31 @@ listener; the canary token can only advance a step, and the action token can
 only recover or request rollback. Both routes resolve the actual deployment's
 account before applying the normal plan/state gates and audit write.
 
+Apply the `safe_release_worker_lease` migration before upgrading either
+daemon. New canary requests return `503 safe_release_unavailable` until both
+meterd release ticks have succeeded and meterd renews the database lease.
+They also return that code when either tick fails, the lease expires, or the
+database check fails. A meterd restart may therefore pause new canaries for
+roughly one tick interval. Check the lease before creating a test rollout:
+
+```sql
+SELECT healthy_at, expires_at, expires_at > now() AS ready
+FROM safe_release_worker_lease;
+```
+
+For a canary, imaged also requires a verified public hosting smoke result
+before moving the live pointer. Configure `FAAS_API_HOSTING_SMOKE_URL` on
+the compute host and verify the candidate's health path responds through the
+public route. A missing or skipped verifier fails the candidate and leaves
+the predecessor live.
+
 Restart APID first in staging, confirm public readiness, then restart meterd.
 Confirm neither journal contains a Safe Deploy token/listener error. Test at
 least two different customer accounts: each canary must reach its terminal
 stage through the service loop, while a customer bearer from account A must
-still receive 404 for account B's deployment. Confirm that the following
-metrics are present before creating a test rollout:
+still receive 404 for account B's deployment.
+
+Confirm the following metrics are present before creating a test rollout:
 
 ```bash
 curl -fsS http://127.0.0.1:9091/metrics \
@@ -165,6 +184,8 @@ expected rollout duration.
 Remove both Safe Deploy tokens from the meterd secret file and restart meterd.
 After meterd has stopped, remove the pair from APID's sealed environment and
 restart APID to unmount the operator mutations as well.
+The lease expires within 30 seconds of the last renewal, so APID rejects new
+canaries while this switch is active.
 This stops automatic progression and alert actions; it does not change the
 traffic already assigned to a deployment. Recover an in-flight rollout
 manually after inspecting its audit trail:

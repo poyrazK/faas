@@ -668,6 +668,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, sErr)
 		return
 	}
+	if !s.admitCanaryDeployment(w, r, dep) {
+		return
+	}
 	// Capture the current predecessor for audit. It remains live until the
 	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)

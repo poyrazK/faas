@@ -10533,3 +10533,11 @@ CREATE INDEX IF NOT EXISTS project_release_members_deployment_idx
 
 
 CREATE INDEX project_release_sets_history_idx ON project_release_sets (project_id, environment_slug, created_at DESC, id DESC);
+CREATE TABLE public.safe_release_worker_lease (
+    singleton boolean DEFAULT true NOT NULL,
+    healthy_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT safe_release_worker_lease_expiry CHECK ((expires_at > healthy_at)),
+    CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton),
+    CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
+);

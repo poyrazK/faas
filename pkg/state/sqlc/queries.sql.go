@@ -12686,6 +12686,18 @@ func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg Runtim
 	return result.RowsAffected(), nil
 }
 
+const safeReleaseWorkerLeaseReady = `-- name: SafeReleaseWorkerLeaseReady :one
+SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
+              WHERE singleton = true AND expires_at > now()) AS ready
+`
+
+func (q *Queries) SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, safeReleaseWorkerLeaseReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
 const setAppManifest = `-- name: SetAppManifest :exec
 update apps set manifest = $2 where id = $1
 `
@@ -12866,6 +12878,19 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
+	return err
+}
+
+const stampSafeReleaseWorkerLease = `-- name: StampSafeReleaseWorkerLease :exec
+INSERT INTO safe_release_worker_lease (singleton, healthy_at, expires_at)
+VALUES (true, now(), now() + ($1::bigint * interval '1 second'))
+ON CONFLICT (singleton) DO UPDATE SET
+    healthy_at = EXCLUDED.healthy_at,
+    expires_at = EXCLUDED.expires_at
+`
+
+func (q *Queries) StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error {
+	_, err := db.Exec(ctx, stampSafeReleaseWorkerLease, ttlSeconds)
 	return err
 }
 

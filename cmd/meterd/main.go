@@ -1181,6 +1181,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPartitionCreate(gatedPartitionCreate).
 		WithCanaryProgression(canaryProg).
 		WithSafeDeploy(safeDeployOrch)
+	if canaryProg != nil && safeDeployOrch != nil {
+		go safeReleaseWorkerLeaseLoop(ctx, loop, store, log)
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 
