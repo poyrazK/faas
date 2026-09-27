@@ -338,7 +338,7 @@ func SetRecoverRolloutStuckAfter(d time.Duration) {
 // deployment_cancel_not_cancellable code (ADR-124).
 var ErrInvalidStateTransition = errors.New("state: invalid status transition")
 
-// ErrDeploymentSuperseded means an automatic GitHub deployment lost the
+// ErrDeploymentSuperseded means an automatic Git-driven deployment lost the
 // per-app, per-scope revision race. Its row has been marked superseded and
 // must not be promoted by a delayed readiness notification.
 var ErrDeploymentSuperseded = errors.New("state: deployment superseded by a newer accepted revision")
@@ -2791,10 +2791,10 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-	// MarkGitHubDeploymentLiveIfLatest applies the ordinary live cutover only
-	// while no newer same-scope deployment intent exists. Explicit operator
-	// rollback keeps using MarkDeploymentLive.
-	MarkGitHubDeploymentLiveIfLatest(ctx context.Context, id string) error
+	// MarkGitDrivenDeploymentLiveIfLatest applies the ordinary live cutover
+	// for GitHub and PR preview deployments only while no newer same-scope
+	// deployment intent exists. Explicit rollback uses MarkDeploymentLive.
+	MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
 	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On

@@ -3260,8 +3260,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
 	var promoteErr error
-	if dep.Kind == state.DeploymentKindGitHub {
-		promoteErr = h.store.MarkGitHubDeploymentLiveIfLatest(ctx, dep.ID)
+	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
+		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}

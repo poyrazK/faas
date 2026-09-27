@@ -63,6 +63,12 @@ no per-PR cert provisioning, no DNS work.
 A reopened PR during the grace period bumps the row back to
 **Open** and the URL starts serving again on the next push.
 
+Before applying a PR webhook, Gregale verifies the current PR state and head
+with GitHub. Delayed updates for an older head and delayed close events after
+reopening are ignored. If two preview builds overlap, the older build cannot
+take traffic after a newer preview deployment has been accepted. See
+[ADR-286](adr/286-pr-preview-freshness.md).
+
 ## Quota
 
 Each preview workload consumes **one slot** of the separate

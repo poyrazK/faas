@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Context, suffix string) {
+func checkGitDrivenPromotionFence(t *testing.T, store state.Store, ctx context.Context, suffix string, kind state.DeploymentKind) {
 	t.Helper()
 	account, err := store.CreateAccount(ctx, "github-fence-"+suffix+"@example.test", api.PlanPro)
 	if err != nil {
@@ -27,7 +27,7 @@ func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Cont
 	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
 		t.Fatal(err)
 	}
-	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub,
+	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
 		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Cont
 	if err := store.UpdateDeploymentStatus(ctx, older.ID, state.DeployBuilding, ""); err != nil {
 		t.Fatal(err)
 	}
-	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub,
+	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
 		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Cont
 	if newer.Revision <= older.Revision {
 		t.Fatalf("revisions older=%d newer=%d", older.Revision, newer.Revision)
 	}
-	if err := store.MarkGitHubDeploymentLiveIfLatest(ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+	if err := store.MarkGitDrivenDeploymentLiveIfLatest(ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
 		t.Fatalf("older promotion = %v, want superseded", err)
 	}
 	oldRow, err := store.DeploymentByID(ctx, older.ID)
@@ -54,7 +54,7 @@ func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Cont
 	if err != nil || stableRow.Status != state.DeployLive {
 		t.Fatalf("stable row = (%+v, %v), want live until replacement", stableRow, err)
 	}
-	if err := store.MarkGitHubDeploymentLiveIfLatest(ctx, newer.ID); err != nil {
+	if err := store.MarkGitDrivenDeploymentLiveIfLatest(ctx, newer.ID); err != nil {
 		t.Fatalf("newest promotion: %v", err)
 	}
 	newRow, err := store.DeploymentByID(ctx, newer.ID)
@@ -69,12 +69,21 @@ func checkGitHubPromotionFence(t *testing.T, store state.Store, ctx context.Cont
 }
 
 func TestMemStoreGitHubPromotionFence(t *testing.T) {
-	checkGitHubPromotionFence(t, state.NewMemStore(), context.Background(), "mem")
+	checkGitDrivenPromotionFence(t, state.NewMemStore(), context.Background(), "mem", state.DeploymentKindGitHub)
 }
 
 func TestPgStoreGitHubPromotionFence(t *testing.T) {
 	store, ctx := pgStore(t)
-	checkGitHubPromotionFence(t, store, ctx, "pg")
+	checkGitDrivenPromotionFence(t, store, ctx, "pg", state.DeploymentKindGitHub)
+}
+
+func TestMemStorePreviewPromotionFence(t *testing.T) {
+	checkGitDrivenPromotionFence(t, state.NewMemStore(), context.Background(), "preview-mem", state.DeploymentKindPreview)
+}
+
+func TestPgStorePreviewPromotionFence(t *testing.T) {
+	store, ctx := pgStore(t)
+	checkGitDrivenPromotionFence(t, store, ctx, "preview-pg", state.DeploymentKindPreview)
 }
 
 func TestMemStoreGitHubPromotionFenceIsScoped(t *testing.T) {
@@ -95,7 +104,7 @@ func TestMemStoreGitHubPromotionFenceIsScoped(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub, Scope: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkGitHubDeploymentLiveIfLatest(ctx, production.ID); err != nil {
+	if err := store.MarkGitDrivenDeploymentLiveIfLatest(ctx, production.ID); err != nil {
 		t.Fatalf("newer staging intent blocked production: %v", err)
 	}
 }

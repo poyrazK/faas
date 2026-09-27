@@ -166,6 +166,7 @@ type Service struct {
 	Enqueuer                         BuildEnqueuer
 	ChangedFiles                     ChangedFilesClient
 	BranchHeads                      BranchHeadClient
+	PullRequests                     PullRequestCurrentClient
 	WriteCheck                       WriteCheck
 	WriteAppCheck                    WriteAppCheckFunc
 	WriteScopedAppCheck              WriteScopedAppCheckFunc
@@ -1353,6 +1354,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		result := reconcile.Result{WasIgnored: true}
 		return result, ErrIgnored
 	}
+	if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: verify current PR state: %w", currentErr)
+	} else if !current {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
 
 	// 5. Derive the preview slug + provision the preview apps row.
 	//    Idempotent on (account_id, slug) — a 2nd synchronize
@@ -1463,6 +1469,15 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			key := strings.ToLower(workload.Name)
 			workloads[key] = workload
 			available[key] = struct{}{}
+		}
+	}
+	// Source fetching and scanning can take longer than a PR head update.
+	// Recheck before the first preview mutation or build reservation.
+	if sourceReady {
+		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
+		} else if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}
 	var created state.App

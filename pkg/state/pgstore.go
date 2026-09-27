@@ -8616,11 +8616,11 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return s.markDeploymentLive(ctx, id, false)
 }
 
-func (s *PgStore) MarkGitHubDeploymentLiveIfLatest(ctx context.Context, id string) error {
+func (s *PgStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
 	return s.markDeploymentLive(ctx, id, true)
 }
 
-func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub bool) error {
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
@@ -8657,8 +8657,8 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
-	if fenceGitHub {
-		if dep.Kind != DeploymentKindGitHub || dep.Revision <= 0 {
+	if fenceGitDriven {
+		if (dep.Kind != DeploymentKindGitHub && dep.Kind != DeploymentKindPreview) || dep.Revision <= 0 {
 			return ErrInvalidStateTransition
 		}
 		if dep.Status == DeploySuperseded {
@@ -8676,10 +8676,10 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub
 			}
 			if newer {
 				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
-					return fmt.Errorf("state: supersede stale GitHub deployment: %w", err)
+					return fmt.Errorf("state: supersede stale Git-driven deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
-					return fmt.Errorf("state: commit stale GitHub deployment: %w", err)
+					return fmt.Errorf("state: commit stale Git-driven deployment: %w", err)
 				}
 				return ErrDeploymentSuperseded
 			}
