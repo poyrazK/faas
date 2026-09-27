@@ -25,9 +25,10 @@ var (
 )
 
 const (
-	ReasonRate        = "rate_limit"
-	ReasonConcurrency = "concurrency_limit"
-	ReasonDailyLimit  = "daily_request_limit"
+	ReasonRate           = "rate_limit"
+	ReasonConcurrency    = "concurrency_limit"
+	ReasonDailyLimit     = "daily_request_limit"
+	ReasonAppNotAttached = "app_not_attached"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -41,23 +42,24 @@ const (
 // SHA-256 digest for application-auth integrations; managed integrations use
 // workload identity and may leave it zero. Raw bearer tokens are never logged.
 type Integration struct {
-	ID                  string
-	Origin              *url.URL
-	TokenHash           [32]byte
-	AppIDs              map[string]struct{}
-	OperatorAppIDs      map[string]struct{}
-	CustomerAppRoutes   map[string]RoutePolicy
-	RatePerSecond       float64
-	Burst               int
-	MaxInFlight         int
-	DailyRequestLimit   *int64
-	RequestTimeout      time.Duration
-	ProviderAuthMode    string
-	CredentialSource    string
-	OwnerKind           string
-	AllowedMethods      []string
-	AllowedPathPrefixes []string
-	Enabled             bool
+	ID                        string
+	Origin                    *url.URL
+	TokenHash                 [32]byte
+	AppIDs                    map[string]struct{}
+	OperatorAppIDs            map[string]struct{}
+	CustomerAppRoutes         map[string]RoutePolicy
+	RatePerSecond             float64
+	Burst                     int
+	MaxInFlight               int
+	DailyRequestLimit         *int64
+	BindingDailyRequestLimits map[string]*int64
+	RequestTimeout            time.Duration
+	ProviderAuthMode          string
+	CredentialSource          string
+	OwnerKind                 string
+	AllowedMethods            []string
+	AllowedPathPrefixes       []string
+	Enabled                   bool
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -112,6 +114,11 @@ func (i Integration) Validate() error {
 	if i.DailyRequestLimit != nil && (*i.DailyRequestLimit < 1 || *i.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
 		return fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
 	}
+	for appID, limit := range i.BindingDailyRequestLimits {
+		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
+			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
+		}
+	}
 	// An operator may provision an integration with no initial app. Customer
 	// attachments live in apid-owned outbound_app_bindings and are loaded by
 	// the resolver at request time.
@@ -164,7 +171,11 @@ type AdmissionSpec struct {
 	Burst             int
 	MaxInFlight       int
 	DailyRequestLimit *int64
-	LeaseTTL          time.Duration
+	// BindingAppID scopes the optional customer binding budget. It is set
+	// from verified workload identity, never from a guest-controlled header.
+	BindingAppID             string
+	BindingDailyRequestLimit *int64
+	LeaseTTL                 time.Duration
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
@@ -206,6 +217,7 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		copyItem.OperatorAppIDs = copyStringSet(item.OperatorAppIDs)
 		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
 		copyItem.DailyRequestLimit = copyInt64Pointer(item.DailyRequestLimit)
+		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
 		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
 		r.items[item.ID] = copyItem
@@ -229,6 +241,7 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.OperatorAppIDs = copyStringSet(i.OperatorAppIDs)
 	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
 	i.DailyRequestLimit = copyInt64Pointer(i.DailyRequestLimit)
+	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
 	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
 	return i, nil
@@ -240,6 +253,17 @@ func copyInt64Pointer(in *int64) *int64 {
 	}
 	out := *in
 	return &out
+}
+
+func copyInt64PointerMap(in map[string]*int64) map[string]*int64 {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]*int64, len(in))
+	for key, value := range in {
+		out[key] = copyInt64Pointer(value)
+	}
+	return out
 }
 
 func cloneURL(in *url.URL) *url.URL {

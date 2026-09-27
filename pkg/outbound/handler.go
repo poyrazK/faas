@@ -203,11 +203,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
 	}
+	bindingAppID := ""
+	var bindingDailyRequestLimit *int64
+	if integration.OwnerKind == IntegrationOwnerCustomer {
+		bindingAppID = appID
+		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
+	}
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
-		DailyRequestLimit: integration.DailyRequestLimit,
-		LeaseTTL:          integration.RequestTimeout,
+		DailyRequestLimit:        integration.DailyRequestLimit,
+		BindingAppID:             bindingAppID,
+		BindingDailyRequestLimit: copyInt64Pointer(bindingDailyRequestLimit),
+		LeaseTTL:                 integration.RequestTimeout,
 	})
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
@@ -218,6 +226,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !decision.Granted {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "rejected")
 		h.Metrics.ObserveRejection(metricIntegrationID, decision.Reason)
+		if decision.Reason == ReasonAppNotAttached {
+			writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+			return
+		}
 		retry := retryAfterSeconds(decision.RetryAfter)
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)

@@ -2,11 +2,13 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -35,6 +37,12 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if spec.DailyRequestLimit != nil && (*spec.DailyRequestLimit < 1 || *spec.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
 		return Decision{}, fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
 	}
+	if spec.BindingDailyRequestLimit != nil && (*spec.BindingDailyRequestLimit < 1 || *spec.BindingDailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return Decision{}, fmt.Errorf("%w: binding daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
+		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
+	}
 	integrationID, err := uuid.Parse(spec.IntegrationID)
 	if err != nil {
 		return Decision{}, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
@@ -53,9 +61,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return Decision{}, err
 	}
-	// Lock the account first, then the integration, matching customer policy
-	// writes. A completed policy update is therefore visible to every gateway
-	// admission, even if its resolver read happened just before the update.
+	// Lock the account first. Customer admissions then lock their binding before
+	// the integration row, matching binding-policy writes and preventing a stale
+	// resolver snapshot from bypassing a completed policy update.
 	var plan, ownerKind string
 	var storedDailyRequestLimit int64
 	var requestPolicy api.OutboundRequestPolicy
@@ -68,6 +76,43 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err != nil {
 		return Decision{}, err
 	}
+	var observedOwnerKind string
+	if err := tx.QueryRow(ctx, `SELECT owner_kind FROM outbound_integrations WHERE id = $1`, integrationID).Scan(&observedOwnerKind); err != nil {
+		return Decision{}, err
+	}
+	var bindingAppID uuid.UUID
+	var bindingDailyRequestLimit *int64
+	if observedOwnerKind == "customer" {
+		if spec.BindingAppID == "" {
+			return Decision{}, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
+		}
+		bindingAppID, err = uuid.Parse(spec.BindingAppID)
+		if err != nil {
+			return Decision{}, fmt.Errorf("%w: binding app id must be a UUID", ErrInvalidIntegration)
+		}
+		var storedBindingDailyRequestLimit int64
+		err = tx.QueryRow(ctx, `
+			SELECT COALESCE(daily_request_limit, 0)
+			  FROM outbound_app_bindings
+			 WHERE integration_id = $1 AND app_id = $2
+			 FOR SHARE`, integrationID, bindingAppID).Scan(&storedBindingDailyRequestLimit)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Decision{Reason: ReasonAppNotAttached}, nil
+		}
+		if err != nil {
+			return Decision{}, err
+		}
+		if storedBindingDailyRequestLimit > 0 {
+			maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+			if !ok {
+				return Decision{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+			}
+			if storedBindingDailyRequestLimit > maximum {
+				storedBindingDailyRequestLimit = maximum
+			}
+			bindingDailyRequestLimit = &storedBindingDailyRequestLimit
+		}
+	}
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
 		       max_in_flight, request_timeout_ms, owner_kind
@@ -78,6 +123,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &ownerKind)
 	if err != nil {
 		return Decision{}, err
+	}
+	if ownerKind != observedOwnerKind {
+		return Decision{}, fmt.Errorf("%w: outbound integration owner changed during admission", ErrInvalidIntegration)
 	}
 	var dailyRequestLimit *int64
 	if storedDailyRequestLimit > 0 {
@@ -123,6 +171,21 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if !usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
 		usageDate = today
 		dailyRequestCount = 0
+	}
+	var bindingDailyRequestCount int64
+	if ownerKind == "customer" {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO outbound_app_binding_usage (integration_id, app_id, daily_usage_date, daily_request_count)
+			VALUES ($1, $2, $3, 0)
+			ON CONFLICT (integration_id, app_id) DO UPDATE
+			   SET daily_usage_date = EXCLUDED.daily_usage_date,
+			       daily_request_count = CASE
+			           WHEN outbound_app_binding_usage.daily_usage_date <> EXCLUDED.daily_usage_date THEN 0
+			           ELSE outbound_app_binding_usage.daily_request_count
+			       END
+			RETURNING daily_request_count`, integrationID, bindingAppID, today).Scan(&bindingDailyRequestCount); err != nil {
+			return Decision{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2`, integrationID, now); err != nil {
 		return Decision{}, err
@@ -181,6 +244,16 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
+	if bindingDailyRequestLimit != nil && bindingDailyRequestCount >= *bindingDailyRequestLimit {
+		retry := today.Add(24 * time.Hour).Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Decision{}, err
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
+	}
 	tokens--
 	dailyRequestCount++
 	leaseID := uuid.New()
@@ -191,6 +264,17 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5
 		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount); err != nil {
 		return Decision{}, err
+	}
+	if ownerKind == "customer" {
+		result, err := tx.Exec(ctx, `UPDATE outbound_app_binding_usage
+			SET daily_request_count = daily_request_count + 1
+			WHERE integration_id = $1 AND app_id = $2 AND daily_usage_date = $3`, integrationID, bindingAppID, today)
+		if err != nil {
+			return Decision{}, err
+		}
+		if result.RowsAffected() != 1 {
+			return Decision{}, fmt.Errorf("outbound binding usage row disappeared during admission")
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Decision{}, err
