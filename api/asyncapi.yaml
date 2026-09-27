@@ -601,16 +601,28 @@ components:
           type: string
           format: date-time
           description: Event occurrence time; Gregale stamps it when omitted.
-        data_content_type:
+        datacontenttype:
           type: string
           enum: [application/json]
           default: application/json
+        data_content_type:
+          type: string
+          enum: [application/json]
+          deprecated: true
         data:
           description: JSON event payload.
-        account_id:
+        schemaversion:
+          type: string
+          maxLength: 64
+          description: Required once a JSON Schema is registered for this source and type.
+        accountid:
           type: string
           format: uuid
           description: Optional tenancy assertion; must match the bearer account.
+        account_id:
+          type: string
+          format: uuid
+          deprecated: true
     WorkflowEventHeaders:
       type: object
       description: Optional request headers for workflow event delivery.
@@ -658,7 +670,8 @@ components:
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
         time: { type: string, format: date-time }
-        data_content_type: { type: string, enum: [application/json], default: application/json }
+        datacontenttype: { type: string, enum: [application/json], default: application/json }
+        data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value. }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         retry_policy:

@@ -2016,6 +2016,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500':
           description: The router could not read the current subscription set.
@@ -2031,7 +2032,11 @@ paths:
       description: |
         Persists a canonical CloudEvents-shaped envelope for later content
         matching and delivery. The authenticated account owns the event;
-        account_id is server-stamped and a supplied value must match it.
+        accountid is server-stamped and a supplied value must match it.
+        Event identity is unique per account and source; reusing an id with
+        different type, schema version, or data returns 409. Older snake_case input attribute
+        names remain accepted during migration. API keys require
+        `events:publish`, `deploy:write`, or `admin`.
         Matching and delivery are asynchronous follow-up work.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -2050,8 +2055,58 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/event-schemas:
+    post:
+      tags: [events]
+      operationId: registerEventSchema
+      summary: Register an immutable event JSON Schema version.
+      description: |
+        Requires deploy:write or admin. The first schema registered for a
+        source/type pair makes schemaversion mandatory on future publishes.
+        Repeating an identical version is safe; changing a version returns 409.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterEventSchemaRequest' }
+      responses:
+        '201':
+          description: Schema version registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterEventSchemaResponse' }
+        '200':
+          description: Identical schema version already registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterEventSchemaResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [events]
+      operationId: listEventSchemas
+      summary: List registered versions for one event source and type.
+      description: Requires apps:read or admin.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, schema: { type: string } }
+        - { name: type, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Immutable schema versions ordered by version.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EventSchema' }
 
   /v1/executions:
     get:
@@ -16743,7 +16798,8 @@ paths:
       summary: Enqueue a row on the per-app FIFO queue.
       description: |
         Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-        Scale 100). The drain re-checks at dispatch tick.
+        Scale 100). The drain re-checks at dispatch tick. API keys require
+        `queues:send`, `deploy:write`, or `admin`.
       x-faas-queue-leases: false
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -16775,7 +16831,8 @@ paths:
         the target application's existing invocation queue. Delivery is
         at-least-once and uses the queue's normal retry, tracing, dead-letter,
         replay, wake, and capacity behavior. This is a straightforward
-        application inbox, not a general-purpose streaming log.
+        application inbox, not a general-purpose streaming log. API keys
+        require `events:publish`, `deploy:write`, or `admin`.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -22830,7 +22887,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -27079,12 +27136,20 @@ components:
           type: string
           format: date-time
           description: Event occurrence time; omitted values use the current time.
-        data_content_type:
+        datacontenttype:
           type: string
           enum: [application/json]
           default: application/json
+        data_content_type:
+          type: string
+          enum: [application/json]
+          deprecated: true
         data:
           description: JSON event payload evaluated by subscription filters.
+        schemaversion:
+          type: string
+          maxLength: 64
+          description: Validated against the registered JSON Schema when one exists.
 
     EventPreviewSubscription:
       description: A bounded sample of an enabled subscription considered by the event router.
@@ -27152,16 +27217,28 @@ components:
           type: string
           format: date-time
           description: Event occurrence time; omitted values are stamped at ingress.
-        data_content_type:
+        datacontenttype:
           type: string
           enum: [application/json]
           default: application/json
+        data_content_type:
+          type: string
+          enum: [application/json]
+          deprecated: true
         data:
           description: JSON event payload.
-        account_id:
+        schemaversion:
+          type: string
+          maxLength: 64
+          description: Required once a JSON Schema is registered for this source and type.
+        accountid:
           type: string
           format: uuid
           description: Optional tenancy assertion; must match the bearer account.
+        account_id:
+          type: string
+          format: uuid
+          deprecated: true
 
     PublishEventResponse:
       description: Durable acceptance receipt for a published internal event.
@@ -27173,6 +27250,36 @@ components:
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
 
+    RegisterEventSchemaRequest:
+      type: object
+      additionalProperties: false
+      required: [source, type, version, schema]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 256 }
+        type: { type: string, minLength: 1, maxLength: 256 }
+        version: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
+        schema: { description: Draft 2020-12 JSON Schema, at most 64 KiB, without external references. }
+
+    RegisterEventSchemaResponse:
+      type: object
+      required: [source, type, version, created]
+      properties:
+        source: { type: string }
+        type: { type: string }
+        version: { type: string }
+        created: { type: boolean }
+
+    EventSchema:
+      type: object
+      required: [account_id, source, type, version, schema, created_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        source: { type: string }
+        type: { type: string }
+        version: { type: string }
+        schema: { description: Immutable Draft 2020-12 JSON Schema. }
+        created_at: { type: string, format: date-time }
+
     SendAppMessageRequest:
       description: A CloudEvents-compatible application-inbox message.
       type: object
@@ -27183,7 +27290,8 @@ components:
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
         time: { type: string, format: date-time, description: Server time when omitted. }
-        data_content_type: { type: string, enum: [application/json], default: application/json }
+        datacontenttype: { type: string, enum: [application/json], default: application/json }
+        data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value delivered inside the CloudEvents envelope. }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
@@ -32723,7 +32831,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -32804,7 +32912,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -32831,7 +32939,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 

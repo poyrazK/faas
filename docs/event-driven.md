@@ -531,6 +531,43 @@ gregale events publish --id evt-123 --source billing.stripe --type invoice.paid 
   --data '{"amount":150}'
 ```
 
+Gregale identifies an event by account, source, and id. Repeating that
+identity with the same type, schema version, and JSON data is safe. Changing
+the content returns `409 Conflict` within the 30-day identity retention
+window. Fanout work is stored with the event, so delivery resumes after a
+scheduler outage regardless of its duration or backlog size.
+Published and inbox envelopes use CloudEvents `datacontenttype` and the
+`accountid` extension. The API accepts the older `data_content_type` and
+`account_id` request spellings for existing clients.
+
+An API key with `events:publish` can publish and send to an app inbox;
+`queues:send` permits queue sends. Existing `deploy:write` keys continue to
+work on these routes.
+
+For a versioned event contract, register an immutable Draft 2020-12 JSON
+Schema with `POST /v1/event-schemas` using a deploy key:
+
+```json
+{
+  "source": "billing.stripe",
+  "type": "invoice.paid",
+  "version": "v1",
+  "schema": {
+    "type": "object",
+    "required": ["amount"],
+    "properties": {"amount": {"type": "number"}}
+  }
+}
+```
+
+Once the first version exists, producers must include
+`"schemaversion":"v1"` in each matching publish. Gregale validates the
+event data before accepting it; an unknown version or invalid payload
+returns `422`. Schema versions cannot be changed in place. Use
+`GET /v1/event-schemas?source=billing.stripe&type=invoice.paid` to inspect
+registered versions. Sources beginning with `gregale.` are reserved for
+platform events. Schemas cannot fetch external references.
+
 Before publishing, check which enabled subscriptions would receive a sample.
 Preview uses the router's matcher but does not persist the event or enqueue
 invocations:

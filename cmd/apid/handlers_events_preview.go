@@ -42,9 +42,13 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 		Time:            occurredAt,
 		DataContentType: req.DataContentType,
 		Data:            req.Data,
+		SchemaVersion:   req.SchemaVersion,
 	}).Normalize(acct.ID, time.Now().UTC())
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if !s.validateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
 

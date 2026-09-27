@@ -284,7 +284,7 @@ func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
 		UPDATE workflow_runs
 		SET status = 'running',
 		    started_at = COALESCE(started_at, now()),
-		    updated_at = now()
+		    updated_at = now(), lease_until = now() + interval '5 minutes'
 		WHERE id = (
 			SELECT id FROM workflow_runs
 			WHERE status = 'pending' AND scheduled_for <= now()
@@ -320,8 +320,8 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 	err = tx.QueryRow(ctx, `
 		SELECT id, status FROM workflow_runs
 		WHERE (status IN ('pending', 'awaiting_event') AND scheduled_for <= now())
-		   OR (status = 'running' AND updated_at <= now() - ($1::bigint * interval '1 millisecond'))
-		ORDER BY CASE WHEN status = 'running' THEN updated_at ELSE scheduled_for END ASC, id ASC
+		   OR (status = 'running' AND COALESCE(lease_until, updated_at + ($1::bigint * interval '1 millisecond')) <= now())
+		ORDER BY CASE WHEN status = 'running' THEN COALESCE(lease_until, updated_at + ($1::bigint * interval '1 millisecond')) ELSE scheduled_for END ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`, int64(WorkflowRunStaleAfter/time.Millisecond)).Scan(&id, &priorStatus)
@@ -336,7 +336,7 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 		UPDATE workflow_runs
 		SET status = 'running',
 		    started_at = COALESCE(started_at, now()),
-		    updated_at = now()
+		    updated_at = now(), lease_until = now() + interval '5 minutes'
 		WHERE id = $1
 		RETURNING %s
 	`, workflowRunSelectCols)
@@ -358,6 +358,24 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 		return nil, fmt.Errorf("pgstore: commit workflow claim: %w", err)
 	}
 	return r, nil
+}
+
+// ExtendWorkflowRunLease gives the active executor its declared timeout plus
+// five minutes for cancellation and completion writes. Only a running run can
+// be extended; a stale or terminal worker cannot revive it.
+func (s *PgStore) ExtendWorkflowRunLease(ctx context.Context, runID string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return ErrWorkflowInvalidInput
+	}
+	result, err := s.pool.Exec(ctx, `UPDATE workflow_runs SET lease_until = now() + ($2::bigint * interval '1 millisecond') + interval '5 minutes'
+		WHERE id = $1 AND status = 'running'`, runID, int64(timeout/time.Millisecond))
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrWorkflowNotRunning
+	}
+	return nil
 }
 
 // ScheduleWorkflowRun updates the run's scheduler state and next due time.

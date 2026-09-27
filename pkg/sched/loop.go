@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -110,42 +111,45 @@ type Loop struct {
 	// handler arm that must not run on the select goroutine: the
 	// snapshot_prime VM work that used to have its own slot pool, plus
 	// the four reconcile arms that used to escape with an unbounded
-	// `go func`. Lazily built by workPool() so a Loop constructed
+	// `go func`, plus slow workflow, trigger, and event dispatch ticks.
+	// Lazily built by workPool() so a Loop constructed
 	// without Run (tests) still dispatches.
-	work                  *workPool
-	workOnce              sync.Once
-	now                   func() time.Time
-	flowCounts            FlowCounter
-	ops                   *wire.OpsMetrics                        // issue #171 shared registry; nil safe
-	audit                 *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
-	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
-	liveness              *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
-	retention             *Retention                              // §17 retention sweep; nil means "no retention" (tests can opt out)
-	deadLetterRetention   *DeadLetterRetention                    // unified Failed Events projection retention
-	invocationsRetention  *InvocationsRetention                   // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
-	triggersRetention     *TriggersRetention                      // ADR-134 PR-E: trigger_records retention sweep; nil opts out
-	heartbeat             *Heartbeat                              // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
-	diskDrift             *DiskDrift                              // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
-	migratingWatchdog     *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
-	deadNodeReconciler    *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
-	instanceDivergence    *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
-	instStats             InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
-	instanceActivity      InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
-	scaleup               *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
-	scaleupMu             sync.Mutex                              // serializes asynchronous scale-up ticks
-	scaleupRunning        bool                                    // true while one scale-up tick is in flight
-	targets               *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
-	floor                 *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
-	prewarm               *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
-	recentLoad            *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
-	livenessWindow        *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
-	appDelete             *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
-	privateNetwork        *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
-	privateNetworkPolicy  *PrivateNetworkPolicySubscriber         // durable network policy convergence handler; nil = no-op dispatch
-	privateNetworkPeering *PrivateNetworkPeeringSubscriber        // durable peering withdrawal/replay handler; nil = no-op dispatch
-	privateNetworkDelete  *PrivateNetworkFabricDeletionSubscriber // durable node-fabric teardown handler; nil = no-op dispatch
-	reaperAggressive      bool                                    // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
-	reaperParkCap         int                                     // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
+	work                   *workPool
+	workOnce               sync.Once
+	workflowDispatchCursor atomic.Uint32
+	eventFanoutLastPrune   time.Time
+	now                    func() time.Time
+	flowCounts             FlowCounter
+	ops                    *wire.OpsMetrics                        // issue #171 shared registry; nil safe
+	audit                  *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
+	watchdog               *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	liveness               *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
+	retention              *Retention                              // §17 retention sweep; nil means "no retention" (tests can opt out)
+	deadLetterRetention    *DeadLetterRetention                    // unified Failed Events projection retention
+	invocationsRetention   *InvocationsRetention                   // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
+	triggersRetention      *TriggersRetention                      // ADR-134 PR-E: trigger_records retention sweep; nil opts out
+	heartbeat              *Heartbeat                              // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
+	diskDrift              *DiskDrift                              // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
+	migratingWatchdog      *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
+	deadNodeReconciler     *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
+	instanceDivergence     *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
+	instStats              InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	instanceActivity       InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
+	scaleup                *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
+	scaleupMu              sync.Mutex                              // serializes asynchronous scale-up ticks
+	scaleupRunning         bool                                    // true while one scale-up tick is in flight
+	targets                *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
+	floor                  *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
+	prewarm                *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
+	recentLoad             *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
+	livenessWindow         *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
+	appDelete              *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
+	privateNetwork         *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
+	privateNetworkPolicy   *PrivateNetworkPolicySubscriber         // durable network policy convergence handler; nil = no-op dispatch
+	privateNetworkPeering  *PrivateNetworkPeeringSubscriber        // durable peering withdrawal/replay handler; nil = no-op dispatch
+	privateNetworkDelete   *PrivateNetworkFabricDeletionSubscriber // durable node-fabric teardown handler; nil = no-op dispatch
+	reaperAggressive       bool                                    // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
+	reaperParkCap          int                                     // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
 	// lastFloorByApp (issue #557 closure / ADR-072): per-app
 	// effective floor from the previous reaper tick, used to emit
 	// `instances.parked_min_instances_released` when the floor
@@ -1088,11 +1092,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	// next-tick latency for batches that land mid-cycle.
 	triggerT := time.NewTicker(time.Second)
 	defer triggerT.Stop()
-	// Event fanout has an advisory LISTEN fast path, plus a short ledger
-	// sweep so a schedd restart or reconnect cannot strand recent publishes.
+	// Event fanout has an advisory LISTEN wake and a durable outbox sweep.
 	eventFanoutT := time.NewTicker(5 * time.Second)
 	defer eventFanoutT.Stop()
-	l.runEventFanoutSweep(ctx)
+	l.dispatchEventFanoutSweep(ctx)
 	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
 	defer serviceRolloutRecoveryT.Stop()
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
@@ -1239,9 +1242,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			// safety cadence; WakeupTriggers advances the
 			// effective interval when a broker ack/nack wakes the
 			// schedd mid-cycle (commits #16).
-			l.runTriggerTick(ctx)
+			l.dispatchTriggerTick(ctx)
 		case <-eventFanoutT.C:
-			l.runEventFanoutSweep(ctx)
+			l.dispatchEventFanoutSweep(ctx)
 		case <-serviceRolloutRecoveryT.C:
 			l.runServiceRolloutRecovery(ctx)
 		case <-primeRecoveryT.C:
@@ -1250,7 +1253,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			// Same arm as the 1s ticker. The wake channel is
 			// buffered-size-1 so a burst of broker deliveries
 			// coalesces to a single tick.
-			l.runTriggerTick(ctx)
+			l.dispatchTriggerTick(ctx)
 		}
 	}
 }
@@ -2249,9 +2252,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// NotifyCronRunNow's handler arm above.
 		l.drainPendingOperatorIntents(ctx)
 	case db.NotifyEventPublished:
-		if err := l.routePublishedEvent(ctx, n.Payload); err != nil {
-			l.log.Warn("sched: event fanout failed", "err", err)
-		}
+		l.dispatchEventFanoutSweep(ctx)
 	}
 }
 
@@ -3672,12 +3673,24 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 }
 
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
-	if l.workflowOrch == nil {
-		l.workflowOrch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
-	}
-	if err := l.workflowOrch.DispatchTick(ctx); err != nil {
-		l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
-	}
+	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
+	l.submitWork(workWorkflowDispatch, key, func() {
+		orch := l.workflowOrch
+		if orch == nil {
+			orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+		}
+		if err := orch.DispatchTick(ctx); err != nil && l.log != nil {
+			l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
+		}
+	})
+}
+
+func (l *Loop) dispatchTriggerTick(ctx context.Context) {
+	l.submitWork(workTriggerDispatch, "tick", func() { l.runTriggerTick(ctx) })
+}
+
+func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
+	l.submitWork(workEventFanout, "tick", func() { l.runEventFanoutSweep(ctx) })
 }
 
 func (l *Loop) runWorkflowRetention(ctx context.Context) {

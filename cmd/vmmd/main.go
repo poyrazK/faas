@@ -1201,10 +1201,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			envelope, err := (events.Envelope{
 				ID: req.ID, Source: req.Source, Type: req.Type,
 				Time: occurredAt, DataContentType: req.DataContentType,
-				Data: req.Data, AccountID: req.AccountID,
+				Data: req.Data, AccountID: req.AccountID, SchemaVersion: req.SchemaVersion,
 			}).Normalize(accountID, time.Now().UTC())
 			if err != nil {
 				return fmt.Errorf("validate in-guest event publish: %w", err)
+			}
+			if strings.HasPrefix(envelope.Source, "gregale.") {
+				return errors.New("gregale.* event sources are reserved for platform events")
+			}
+			registry, ok := store.(state.EventSchemaStore)
+			if !ok {
+				return errors.New("event schema registry is unavailable")
+			}
+			if err := state.ValidatePublishedEventSchema(publishCtx, registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data); err != nil {
+				return fmt.Errorf("validate in-guest event schema: %w", err)
 			}
 			payload, err := json.Marshal(envelope)
 			if err != nil {
@@ -1213,9 +1223,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err := store.AppendEvent(publishCtx, "vmmd", "event.published", &accountID, payload); err != nil {
 				return fmt.Errorf("persist in-guest event publish: %w", err)
 			}
-			// The ledger is authoritative; a lost advisory is recovered by
-			// schedd's event fanout sweep just like the public ingress path.
-			if err := db.Notify(publishCtx, pool, db.NotifyEventPublished, string(payload)); err != nil {
+			// The ledger insert also creates durable fanout work; this small
+			// advisory only wakes schedd ahead of its periodic sweep.
+			if err := db.Notify(publishCtx, pool, db.NotifyEventPublished, "1"); err != nil {
 				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
 			}
 			return nil

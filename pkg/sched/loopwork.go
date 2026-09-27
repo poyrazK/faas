@@ -50,11 +50,15 @@ const (
 	workJobCancel           workKind = "job_cancel"
 	workJobDispatch         workKind = "job_dispatch"
 	workPrimeRecovery       workKind = "prime_recovery"
+	workWorkflowDispatch    workKind = "workflow_dispatch"
+	workTriggerDispatch     workKind = "trigger_dispatch"
+	workEventFanout         workKind = "event_fanout"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
+	workWorkflowDispatch, workTriggerDispatch, workEventFanout,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -87,7 +91,10 @@ type workSpec struct {
 // while waiting, and the eight-slot cap prevents a fleet-wide gateway issue
 // from turning one stuck rollout into one unbounded goroutine.
 // The fleet-wide prime recovery sweep gets one slot: its constant key
-// coalesces ticks, and a dropped tick is retried the next minute.
+// coalesces ticks, and a dropped tick is retried the next minute. Workflow
+// dispatch gets four slots for independent runs; trigger polling and event
+// fanout get one slot each because their tick work is already bounded and
+// durable state makes the next tick a safe retry.
 var workSpecs = map[workKind]workSpec{
 	workPrime:               {slots: maxConcurrentPrimes, overflow: overflowInline},
 	workRestart:             {slots: 8, overflow: overflowDrop},
@@ -96,6 +103,9 @@ var workSpecs = map[workKind]workSpec{
 	workJobCancel:           {slots: 8, overflow: overflowDrop},
 	workJobDispatch:         {slots: 1, overflow: overflowDrop},
 	workPrimeRecovery:       {slots: 1, overflow: overflowDrop},
+	workWorkflowDispatch:    {slots: 4, overflow: overflowDrop},
+	workTriggerDispatch:     {slots: 1, overflow: overflowDrop},
+	workEventFanout:         {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

@@ -374,6 +374,10 @@ const (
 	// compatibility with keys minted before the narrow scopes existed.
 	ScopeDelayedTasksRead  = "delayed_tasks:read"
 	ScopeDelayedTasksWrite = "delayed_tasks:write"
+	// Producer keys can publish events or send queue messages without code
+	// deployment authority. Existing deploy:write keys remain valid.
+	ScopeEventsPublish = "events:publish"
+	ScopeQueuesSend    = "queues:send"
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
@@ -411,6 +415,8 @@ var validScopes = map[string]struct{}{
 	ScopeMetricsWrite:             {},
 	ScopeDelayedTasksRead:         {},
 	ScopeDelayedTasksWrite:        {},
+	ScopeEventsPublish:            {},
+	ScopeQueuesSend:               {},
 	ScopeStorageManage:            {},
 	ScopeStorageRead:              {},
 	ScopeStorageWrite:             {},
@@ -519,6 +525,8 @@ var (
 	// Write includes read so a producer can inspect or cancel work it created.
 	ScopesDelayedTasksReadSurface  = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopeDelayedTasksRead, ScopeDelayedTasksWrite}
 	ScopesDelayedTasksWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite}
+	ScopesEventsPublishSurface     = []string{ScopeAdmin, ScopeDeployWrite, ScopeEventsPublish}
+	ScopesQueuesSendSurface        = []string{ScopeAdmin, ScopeDeployWrite, ScopeQueuesSend}
 
 	// ScopesRegistryCredentialsReadSurface: GET on
 	// /v1/apps/{slug}/registry-credentials (issue #461 / ADR-062).

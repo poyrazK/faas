@@ -35,9 +35,9 @@ type discoveredRouteCloudEvent struct {
 	Source          string                   `json:"source"`
 	Type            string                   `json:"type"`
 	Time            time.Time                `json:"time"`
-	DataContentType string                   `json:"data_content_type"`
+	DataContentType string                   `json:"datacontenttype"`
 	Data            discoveredRouteEventData `json:"data"`
-	AccountID       string                   `json:"account_id"`
+	AccountID       string                   `json:"accountid"`
 }
 
 type discoveredRouteNotice struct {

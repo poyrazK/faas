@@ -13,8 +13,8 @@ import (
 
 // Envelope is the canonical structured event accepted by the internal event
 // router (EPIC #1278, Workstream B). It follows the CloudEvents context
-// attributes while retaining Gregale's account_id tenancy extension and the
-// public API's snake_case data_content_type spelling.
+// attributes with Gregale's accountid tenancy extension. The decoder accepts
+// the previous snake_case spellings for persisted historical envelopes.
 //
 // The API boundary fills SpecVersion, Time, DataContentType, and AccountID;
 // callers must provide ID, Source, Type, and a valid JSON Data value.
@@ -24,9 +24,10 @@ type Envelope struct {
 	Source          string          `json:"source"`
 	Type            string          `json:"type"`
 	Time            time.Time       `json:"time"`
-	DataContentType string          `json:"data_content_type"`
+	DataContentType string          `json:"datacontenttype"`
 	Data            json.RawMessage `json:"data"`
-	AccountID       string          `json:"account_id"`
+	AccountID       string          `json:"accountid"`
+	SchemaVersion   string          `json:"schemaversion,omitempty"`
 	// Traceparent, Tracestate, and Baggage are platform-stamped CloudEvents
 	// extensions. They are not accepted from the public DTO directly; apid
 	// stamps the authenticated publish request's context before persisting the
@@ -34,6 +35,34 @@ type Envelope struct {
 	Traceparent string `json:"traceparent,omitempty"`
 	Tracestate  string `json:"tracestate,omitempty"`
 	Baggage     string `json:"baggage,omitempty"`
+}
+
+func (e *Envelope) UnmarshalJSON(data []byte) error {
+	type wire Envelope
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+		LegacyAccountID   string `json:"account_id"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return errors.New("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	if decoded.LegacyAccountID != "" {
+		if value.AccountID != "" && value.AccountID != decoded.LegacyAccountID {
+			return errors.New("conflicting accountid spellings")
+		}
+		value.AccountID = decoded.LegacyAccountID
+	}
+	*e = Envelope(value)
+	return nil
 }
 
 const (
@@ -93,6 +122,9 @@ func (e Envelope) Validate() error {
 	}
 	if e.Type == "" || len(e.Type) > maxEnvelopeString {
 		return errors.New("type is required and must be at most 256 characters")
+	}
+	if len(e.SchemaVersion) > 64 {
+		return errors.New("schemaversion must be at most 64 characters")
 	}
 	if e.DataContentType != JSONDataContentType {
 		return fmt.Errorf("data_content_type must be %q", JSONDataContentType)
