@@ -1624,6 +1624,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			local = localRealtimeNodeOperator{owner: srv.realtimeOwner, client: srv.realtimeClient}
 		}
 		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
+		resolver.ops = ops
 		// The fleet adapter owns both public operations and endpoint
 		// reconciliation. It retains the local Unix fast path when present.
 		srv.realtimeOwner = resolver

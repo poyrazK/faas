@@ -14,10 +14,17 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const managedRealtimeOwnerLeaseTTL = 30 * time.Second
 const maxConcurrentRealtimePublishes = 8
+const managedRealtimePartialPublishLogInterval = time.Minute
+
+const (
+	managedRealtimePublishOp     = "managed_realtime_publish"
+	managedRealtimePublishNodeOp = "managed_realtime_publish_node"
+)
 
 var errManagedRealtimeOwnerUnavailable = errors.New("realtime: owner node unavailable")
 
@@ -109,11 +116,14 @@ type leasedRealtimeOwner struct {
 		ActiveComputeNodes(context.Context) ([]state.ComputeNode, error)
 		ComputeNodeByID(context.Context, string) (state.ComputeNode, error)
 	}
-	localNodeID string
-	local       realtimeNodeOperator
-	log         *slog.Logger
-	clientFor   func(state.ComputeNode) (realtimeNodeOperator, error)
-	leaseTTL    time.Duration
+	localNodeID               string
+	local                     realtimeNodeOperator
+	log                       *slog.Logger
+	ops                       *wire.OpsMetrics
+	clientFor                 func(state.ComputeNode) (realtimeNodeOperator, error)
+	leaseTTL                  time.Duration
+	publishWarnMu             sync.Mutex
+	lastPartialPublishWarning time.Time
 }
 
 func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -277,11 +287,18 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 // tolerated when at least one active node accepted the request; if every node
 // is unavailable the caller receives a 503 through the normal owner mapping.
 func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
+	started := time.Now()
 	if o.nodes == nil {
+		o.observePublish("unavailable", started)
 		return 0, errManagedRealtimeOwnerUnavailable
 	}
 	nodes, err := o.nodes.ActiveComputeNodes(ctx)
 	if err != nil {
+		outcome := "unavailable"
+		if ctx.Err() != nil {
+			outcome = "canceled"
+		}
+		o.observePublish(outcome, started)
 		return 0, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
 	// Keep one result per node so aggregation and error selection stay in
@@ -290,6 +307,7 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 		attempted bool
 		count     int
 		err       error
+		duration  time.Duration
 	}
 	results := make([]publishResult, len(nodes))
 	jobs := make(chan int)
@@ -300,16 +318,20 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 			defer workers.Done()
 			for i := range jobs {
 				results[i].attempted = true
+				nodeStarted := time.Now()
 				if err := ctx.Err(); err != nil {
 					results[i].err = err
+					results[i].duration = time.Since(nodeStarted)
 					continue
 				}
 				op, err := o.nodeOperator(nodes[i])
 				if err != nil {
 					results[i].err = err
+					results[i].duration = time.Since(nodeStarted)
 					continue
 				}
 				results[i].count, results[i].err = op.Publish(ctx, endpointID, channel, message)
+				results[i].duration = time.Since(nodeStarted)
 			}
 		}()
 	}
@@ -325,34 +347,96 @@ dispatch:
 	workers.Wait()
 
 	queued, reached := 0, 0
+	attempted, endpointMissing, failed, canceled := 0, 0, 0, 0
 	var lastErr error
 	for _, result := range results {
 		if !result.attempted {
 			continue
 		}
-		if err := result.err; err != nil {
-			var managementErr *realtime.ManagementError
-			if errors.As(err, &managementErr) && managementErr.StatusCode == http.StatusNotFound {
-				// Endpoint registration can lag node activation; continue
-				// without turning a healthy partial broadcast into a 503.
-				continue
-			}
-			lastErr = err
+		attempted++
+		nodeOutcome := managedRealtimePublishNodeOutcome(result.err)
+		if o.ops != nil {
+			o.ops.ObserveCode(managedRealtimePublishNodeOp, nodeOutcome, result.duration)
+		}
+		switch nodeOutcome {
+		case "endpoint_missing":
+			endpointMissing++
+			// Endpoint registration can lag node activation; continue
+			// without turning a healthy partial broadcast into a 503.
+			continue
+		case "canceled":
+			canceled++
+			lastErr = result.err
+			continue
+		case "error":
+			failed++
+			lastErr = result.err
 			continue
 		}
 		reached++
 		queued += result.count
 	}
 	if reached > 0 {
+		outcome := "ok"
+		if attempted < len(nodes) || endpointMissing > 0 || failed > 0 || canceled > 0 {
+			outcome = "partial"
+			o.warnPartialPublish(len(nodes), attempted, reached, endpointMissing, failed, canceled, queued, time.Since(started))
+		}
+		o.observePublish(outcome, started)
 		return queued, nil
 	}
+	outcome := "unavailable"
 	if ctx.Err() != nil {
 		lastErr = ctx.Err()
+		outcome = "canceled"
 	}
+	o.observePublish(outcome, started)
 	if lastErr == nil {
 		lastErr = errors.New("no active realtime nodes accepted publish")
 	}
 	return 0, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+}
+
+func managedRealtimePublishNodeOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "canceled"
+	}
+	var managementErr *realtime.ManagementError
+	if errors.As(err, &managementErr) && managementErr.StatusCode == http.StatusNotFound {
+		return "endpoint_missing"
+	}
+	return "error"
+}
+
+func (o *leasedRealtimeOwner) observePublish(outcome string, started time.Time) {
+	if o.ops != nil {
+		o.ops.ObserveCode(managedRealtimePublishOp, outcome, time.Since(started))
+	}
+}
+
+func (o *leasedRealtimeOwner) warnPartialPublish(total, attempted, accepted, endpointMissing, failed, canceled, queued int, duration time.Duration) {
+	now := time.Now()
+	o.publishWarnMu.Lock()
+	if now.Sub(o.lastPartialPublishWarning) < managedRealtimePartialPublishLogInterval {
+		o.publishWarnMu.Unlock()
+		return
+	}
+	o.lastPartialPublishWarning = now
+	o.publishWarnMu.Unlock()
+
+	o.log.Warn("realtime: partial fleet publish",
+		"nodes_total", total,
+		"nodes_attempted", attempted,
+		"nodes_accepted", accepted,
+		"nodes_endpoint_missing", endpointMissing,
+		"nodes_failed", failed,
+		"nodes_canceled", canceled,
+		"queued", queued,
+		"duration", duration,
+	)
 }
 
 // ListConnectionInventory aggregates point-in-time snapshots from active

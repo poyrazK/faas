@@ -151,7 +151,22 @@ leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed
 for connection operations (`503`) and are skipped when another node accepts a
-publish.
+publish. Apid records bounded-cardinality publish outcomes in its standard
+operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
+`unavailable`, and `canceled`; `managed_realtime_publish_node` uses `ok`,
+`endpoint_missing`, `error`, and `canceled`. Durations are available through
+`apid_op_duration_seconds`. These metrics intentionally omit endpoint, channel,
+and node identifiers. A node's `ok` outcome means its local queue accepted the
+publish; it does not confirm delivery to a client. Partial-success warnings
+include fleet counts and are rate-limited to one per minute per apid process.
+
+Inspect the publish outcome and per-node failure rates with:
+
+```promql
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish"}[5m]))
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish_node"}[5m]))
+histogram_quantile(0.99, sum by (le) (rate(apid_op_duration_seconds_bucket{op="managed_realtime_publish"}[5m])))
+```
 
 Inspect health and counters from the `faas` group:
 
