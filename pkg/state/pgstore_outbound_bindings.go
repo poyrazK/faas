@@ -20,7 +20,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var offer OutboundIntegrationOffer
 	if err := row.Scan(&id, &accountID, &offer.Name, &offer.Origin, &offer.AllowedMethods, &offer.AllowedPathPrefixes,
 		&offer.Enabled, &offer.CredentialSource, &offer.CredentialConfigured, &offer.OwnerKind, &dailyRequestLimit, &accountPlan,
-		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS); err != nil {
+		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
 	offer.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
@@ -47,7 +47,7 @@ func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 		&binding.AllowedMethods, &binding.AllowedPathPrefixes, &binding.Enabled,
 		&binding.CredentialSource, &binding.CredentialConfigured, &binding.CreatedAt,
 		&binding.RouteMethods, &binding.RoutePathPrefixes, &binding.OwnerKind, &dailyRequestLimit, &bindingDailyRequestLimit, &accountPlan,
-		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS); err != nil {
+		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries); err != nil {
 		return OutboundAppBinding{}, mapErr(err)
 	}
 	binding.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
@@ -88,7 +88,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       integration.owner_kind, integration.daily_request_limit, account.plan,
-		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms
+		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
+		       integration.max_retries
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential
@@ -121,7 +122,8 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
-		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms
+		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
+		       integration.max_retries
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id
@@ -186,12 +188,12 @@ func (s *PgStore) CreateOutboundIntegration(ctx context.Context, offer OutboundI
 	_, err = tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst, max_in_flight,
-		     request_timeout_ms, enabled, provider_auth_mode, allowed_methods,
+		     request_timeout_ms, max_retries, enabled, provider_auth_mode, allowed_methods,
 		     allowed_path_prefixes, credential_source, owner_kind, daily_request_limit)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,'managed',$10,$11,'customer_sealed','customer',$12)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,'managed',$11,$12,'customer_sealed','customer',$13)`,
 		integrationID, accountID, offer.Name, offer.Origin, zeroTokenHash,
 		offer.RequestPolicy.RatePerSecond, offer.RequestPolicy.Burst, offer.RequestPolicy.MaxInFlight,
-		offer.RequestPolicy.RequestTimeoutMS, offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit)
+		offer.RequestPolicy.RequestTimeoutMS, offer.RequestPolicy.MaxRetries, offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit)
 	if err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
@@ -264,10 +266,10 @@ func (s *PgStore) SetOutboundRequestPolicy(ctx context.Context, accountID, integ
 	command, err := tx.Exec(ctx, `
 		UPDATE outbound_integrations
 		   SET rate_per_second = $3, burst = $4, max_in_flight = $5,
-		       request_timeout_ms = $6, updated_at = now()
+		       request_timeout_ms = $6, max_retries = $7, updated_at = now()
 		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer'
 		   AND provider_auth_mode = 'managed' AND enabled`,
-		account, integration, policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS)
+		account, integration, policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS, policy.MaxRetries)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -328,7 +330,8 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
-		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms
+		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
+		       integration.max_retries
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id
