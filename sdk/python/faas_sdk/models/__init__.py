@@ -1358,6 +1358,7 @@ from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
+from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
@@ -3013,6 +3014,7 @@ __all__ = (
     "RequestAnalyticsResponse",
     "RequestAnalyticsResponseGroupBy",
     "RequestAnalyticsRoute",
+    "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",

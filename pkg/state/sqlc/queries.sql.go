@@ -11571,6 +11571,141 @@ func (q *Queries) RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const requestTelemetryAnalyticsByRouteDeployment = `-- name: RequestTelemetryAnalyticsByRouteDeployment :many
+WITH filtered AS (
+    SELECT route,
+           method,
+           deployment_id::text AS deployment_id,
+           commit_sha,
+           deployment_tag,
+           deployment_created_at,
+           count::bigint AS request_count,
+           guest_resource_usage_available,
+           guest_cpu_time_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), per_route_deployment AS (
+    SELECT route,
+           method,
+           deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(request_count)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * request_count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM filtered
+    GROUP BY route, method, deployment_id
+), top_routes AS (
+    SELECT route, method
+    FROM per_route_deployment
+    GROUP BY route, method
+    ORDER BY SUM(requests) DESC, route ASC, method ASC
+    LIMIT $6::int
+), ranked_deployments AS (
+    SELECT per_route_deployment.route, per_route_deployment.method, per_route_deployment.deployment_id, per_route_deployment.commit_sha, per_route_deployment.deployment_tag, per_route_deployment.deployment_created_at, per_route_deployment.requests, per_route_deployment.guest_cpu_measured_requests, per_route_deployment.guest_cpu_avg_ms,
+           ROW_NUMBER() OVER (
+               PARTITION BY per_route_deployment.route, per_route_deployment.method
+               ORDER BY per_route_deployment.requests DESC, per_route_deployment.deployment_id ASC
+           ) AS deployment_rank
+    FROM per_route_deployment
+    JOIN top_routes USING (route, method)
+)
+SELECT route,
+       method,
+       CASE WHEN deployment_rank <= $5::int THEN deployment_id ELSE '__other__' END AS deployment_id,
+       CASE WHEN MAX(deployment_rank) <= $5::int THEN COALESCE(MAX(commit_sha), '') ELSE '' END AS commit_sha,
+       CASE WHEN MAX(deployment_rank) <= $5::int THEN COALESCE(MAX(deployment_tag), '') ELSE '' END AS deployment_tag,
+       CASE WHEN MAX(deployment_rank) <= $5::int THEN COALESCE(MAX(deployment_created_at), '') ELSE '' END AS deployment_created_at,
+       SUM(requests)::bigint AS requests,
+       CASE WHEN MAX(deployment_rank) > $5::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_measured_requests), 0)::bigint END AS guest_cpu_measured_requests,
+       CASE WHEN MAX(deployment_rank) > $5::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_avg_ms), 0)::int END AS guest_cpu_avg_ms
+FROM ranked_deployments
+GROUP BY route,
+         method,
+         CASE WHEN deployment_rank <= $5::int THEN deployment_id ELSE '__other__' END
+ORDER BY route ASC,
+         method ASC,
+         CASE WHEN CASE WHEN deployment_rank <= $5::int THEN deployment_id ELSE '__other__' END = '__other__' THEN 1 ELSE 0 END,
+         MAX(deployment_created_at) DESC,
+         CASE WHEN deployment_rank <= $5::int THEN deployment_id ELSE '__other__' END ASC
+`
+
+type RequestTelemetryAnalyticsByRouteDeploymentParams struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	ReceivedAt      pgtype.Timestamptz
+	ReceivedAt_2    pgtype.Timestamptz
+	DeploymentLimit int32
+	RouteLimit      int32
+}
+
+type RequestTelemetryAnalyticsByRouteDeploymentRow struct {
+	Route                    string
+	Method                   string
+	DeploymentID             string
+	CommitSha                string
+	DeploymentTag            string
+	DeploymentCreatedAt      string
+	Requests                 int64
+	GuestCpuMeasuredRequests int64
+	GuestCpuAvgMs            int32
+}
+
+// Per-route deployment split for the customer analytics window. Routes are
+// bounded to the same top-N surface as route analytics, and each route keeps
+// only its top deployments by request count; the remaining revisions are
+// folded into __other__ so the response cardinality is bounded by
+// route_limit * (deployment_limit + 1).
+func (q *Queries) RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteDeploymentParams) ([]RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsByRouteDeployment,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+		arg.DeploymentLimit,
+		arg.RouteLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsByRouteDeploymentRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsByRouteDeploymentRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.Requests,
+			&i.GuestCpuMeasuredRequests,
+			&i.GuestCpuAvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryAnalyticsSummary = `-- name: RequestTelemetryAnalyticsSummary :one
 WITH filtered AS (
     SELECT latency_ms, cold_boot, status, count::bigint AS request_count

@@ -1049,6 +1049,12 @@ type Querier interface {
 	// Top route/method rows for the customer analytics overview. `count` is
 	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
+	// Per-route deployment split for the customer analytics window. Routes are
+	// bounded to the same top-N surface as route analytics, and each route keeps
+	// only its top deployments by request count; the remaining revisions are
+	// folded into __other__ so the response cardinality is bounded by
+	// route_limit * (deployment_limit + 1).
+	RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteDeploymentParams) ([]RequestTelemetryAnalyticsByRouteDeploymentRow, error)
 	// Customer-facing request analytics over a bounded retention window.
 	// The recorder collapses identical requests into bounded latency-bucket
 	// rows with `count`, so all request/error/cold-boot totals and percentiles
