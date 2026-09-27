@@ -76,6 +76,14 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 
 ## Supported surface
 
+Server-side Node services can also use the hand-written
+`createServiceCallerVerifier` helper to verify Gregale's incoming internal
+service-call assertions. It uses the platform public JWKS endpoint and Node's
+built-in Ed25519 support. See [the networking guide](../../docs/networking.md#verifying-the-caller-preview)
+for setup, rollout requirements, and an HTTP handler example. Verification
+authenticates the caller but does not replace the target's caller allowlist or
+business authorization.
+
 Every operation in `api/openapi.yaml` is reachable through the
 generated services. The canonical mapping:
 

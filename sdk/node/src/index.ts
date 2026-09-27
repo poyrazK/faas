@@ -94,3 +94,14 @@ export {
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
 } from './release-context.js';
+
+// Server-side verification of incoming service-binding identity assertions.
+export {
+  createServiceCallerVerifier,
+  ServiceCallerVerificationError,
+  SERVICE_CALLER_ASSERTION_HEADER,
+  type ServiceCallerErrorCode,
+  type ServiceCallerVerifier,
+  type ServiceCallerVerifierOptions,
+  type VerifiedServiceCaller,
+} from './servicecaller.js';

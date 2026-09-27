@@ -561,6 +561,53 @@ if err := http.ListenAndServe(":8080", middleware.Wrap(mux)); err != nil {
 }
 ```
 
+Node services can use the same verification contract from `@gregale/sdk-node`:
+
+```ts
+import {
+  createServiceCallerVerifier,
+  SERVICE_CALLER_ASSERTION_HEADER,
+} from '@gregale/sdk-node';
+
+const apiOrigin = 'https://api.gregale.dev'; // use your deployment's API origin
+const verifier = createServiceCallerVerifier({
+  jwksUrl: `${apiOrigin}/v1/service-caller-keys`,
+  audience: process.env.FAAS_APP_ID ?? '',
+  require: true,
+  onFailure: (error) => console.warn('service caller verification failed', error.code),
+});
+
+async function handle(req, res) {
+  // Consume the platform-owned header before handing the request downstream.
+  const rawAssertion = req.headers[SERVICE_CALLER_ASSERTION_HEADER.toLowerCase()];
+  delete req.headers[SERVICE_CALLER_ASSERTION_HEADER.toLowerCase()];
+  let caller: Awaited<ReturnType<typeof verifier.verifyHeader>>;
+  try {
+    caller = await verifier.verifyHeader(rawAssertion);
+  } catch {
+    res.statusCode = 401;
+    return res.end('service caller assertion required or invalid');
+  }
+  if (!caller) {
+    res.statusCode = 401;
+    return res.end('service caller assertion required or invalid');
+  }
+  if (caller.callerAppId !== 'frontend-app-id') {
+    res.statusCode = 403;
+    return res.end('caller is not allowed');
+  }
+  req.serviceCaller = caller;
+  return routeRequest(req, res);
+}
+```
+
+`verifyHeader` returns only authenticated identity; with `require: false` (the
+default), absent or invalid assertions return `undefined`. `require: true`
+throws on either case so the service can reject the request. In both modes,
+the application still owns its allowlist and business authorization. The
+verifier uses Node's built-in Ed25519 support and does not add a runtime
+dependency.
+
 `Require: false` is the default rollout posture: missing or invalid assertions
 do not block a request, and are never added to its context as verified
 identity. Set `Require: true` only after assertion signing and key publication
