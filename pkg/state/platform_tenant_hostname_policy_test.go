@@ -106,4 +106,8 @@ func TestPgPlatformTenantHostnamePolicyRoundTrip(t *testing.T) {
 	if err != nil || !replay.UpdatedAt.Equal(policy.UpdatedAt) {
 		t.Fatalf("idempotent policy replay=%+v err=%v", replay, err)
 	}
+	disabled, err := store.SetPlatformTenantHostnamePolicy(ctx, accountID, tenant.ID, nil, 0)
+	if err != nil || len(disabled.AllowedSuffixes) != 0 || disabled.MaxHostnames != 0 {
+		t.Fatalf("disabled policy=%+v err=%v", disabled, err)
+	}
 }
