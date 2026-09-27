@@ -287,6 +287,9 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	safeScope := logsanitize.Field(scope)
+	safeScope = strings.ReplaceAll(safeScope, "\n", "")
+	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	var req api.PutAppSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -323,7 +326,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	s.log.Info("secret set",
 		"app", safeAppSlug,
 		"key", logsanitize.Field(key),
-		"scope", scope,
+		"scope", safeScope,
 		"account", acct.ID,
 		"value_bytes", logsanitize.RedactValue(req.Value),
 	)
@@ -552,7 +555,15 @@ func (s *server) recordSecretDeleteEvents(ctx context.Context, acct state.Accoun
 	safeAppSlug := logsanitize.Field(app.Slug)
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
-	s.log.Info("secret deleted", "app", safeAppSlug, "key", logsanitize.Field(key), "scope", scope, "account", acct.ID)
+	safeScope := logsanitize.Field(scope)
+	safeScope = strings.ReplaceAll(safeScope, "\n", "")
+	safeScope = strings.ReplaceAll(safeScope, "\r", "")
+	s.log.Info("secret deleted",
+		"app", safeAppSlug,
+		"key", logsanitize.Field(key),
+		"scope", safeScope,
+		"account", acct.ID,
+	)
 	// IAM-4 (ADR-035): record the secret delete. data.scope is the
 	// env-scope the row was deleted from (ADR-092 PR-B).
 	s.audit.Emit(ctx, "secret.deleted", &acct.ID, map[string]any{
