@@ -25015,7 +25015,7 @@ components:
             $ref: '#/components/schemas/PreAuthRouteLimit'
 
     PreAuthRouteLimit:
-      description: "Optional stricter per-source limit for one public method and path."
+      description: "Optional stricter per-source limit for one public method and path, with an optional response-based failure budget."
       type: object
       required: [method, path, requests_per_second, burst]
       properties:
@@ -25036,6 +25036,33 @@ components:
           type: integer
           minimum: 1
           maximum: 2000
+        failed_responses:
+          $ref: '#/components/schemas/PreAuthFailedResponseLimit'
+
+    PreAuthFailedResponseLimit:
+      description: "Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and wake after this budget is exhausted."
+      type: object
+      required: [failures_per_minute, burst]
+      properties:
+        failures_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 30000
+          description: "Continuous token refill per minute; no greater than the parent route's requests_per_second times 60."
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          description: "Maximum consecutive failed responses; no greater than the parent route's burst."
+        statuses:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          description: "Selected application response statuses. Defaults to [401, 403]. Only 4xx codes except 429 are supported."
+          items:
+            type: integer
+            minimum: 400
+            maximum: 499
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."

@@ -1118,7 +1118,8 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	app.RequestRateLimitBurst = &requestBurst
 	app.Manifest.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 3, Burst: 6,
-		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2}},
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1}}},
 	}
 	r := pgRouter{store: store}
 	got, ok, err := r.toApp(context.Background(), app)

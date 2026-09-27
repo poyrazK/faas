@@ -1176,6 +1176,7 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
 from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
 from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
 from .pre_auth_route_limit import PreAuthRouteLimit
@@ -2912,6 +2913,7 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthFailedResponseLimit",
     "PreAuthRateLimitConfig",
     "PreAuthRateLimitConfigMode",
     "PreAuthRouteLimit",

@@ -57,7 +57,8 @@ func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	config := &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 2, Burst: 4,
-		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2}},
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1, Statuses: []int{401, 403}}}},
 	}
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)
 	if rec.Code != 201 {
@@ -77,7 +78,8 @@ func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 
 	enforced := &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 2,
-		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1}},
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 2, Burst: 1}}},
 	}
 	rec = e.do(t, "PATCH", "/v1/apps/protected-app", api.UpdateAppRequest{PreAuthRateLimit: enforced}, nil)
 	if rec.Code != 200 {
@@ -108,6 +110,9 @@ func TestAppPreAuthRateLimitRejectsInvalidConfig(t *testing.T) {
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 21},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 2, Burst: 4,
 			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 3, Burst: 2}}},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 2, Burst: 4,
+			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 2,
+				FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 1, Burst: 1, Statuses: []int{429}}}}},
 	} {
 		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "invalid-preauth", PreAuthRateLimit: config}, nil)
 		if rec.Code != 400 {

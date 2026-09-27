@@ -7233,6 +7233,7 @@ haveApp:
 	// answer. This is deliberately after the origin leg and before observe so
 	// only live responses can populate the cache.
 	h.cacheHeadResponse(app.ID, rec)
+	h.recordPreAuthFailedResponse(r, rec.status)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
 	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush

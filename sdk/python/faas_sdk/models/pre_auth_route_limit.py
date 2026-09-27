@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.pre_auth_route_limit_method import PreAuthRouteLimitMethod, check_pre_auth_route_limit_method
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.pre_auth_failed_response_limit import PreAuthFailedResponseLimit
+
 
 T = TypeVar("T", bound="PreAuthRouteLimit")
 
 
 @_attrs_define
 class PreAuthRouteLimit:
-    """Optional stricter per-source limit for one public method and path."""
+    """Optional stricter per-source limit for one public method and path, with an optional response-based failure budget."""
 
     method: PreAuthRouteLimitMethod
     path: str
@@ -21,6 +26,10 @@ class PreAuthRouteLimit:
     normalizing the decoded request path."""
     requests_per_second: int
     burst: int
+    failed_responses: PreAuthFailedResponseLimit | Unset = UNSET
+    """Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
+    omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and
+    wake after this budget is exhausted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -32,6 +41,10 @@ class PreAuthRouteLimit:
 
         burst = self.burst
 
+        failed_responses: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failed_responses, Unset):
+            failed_responses = self.failed_responses.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -42,11 +55,15 @@ class PreAuthRouteLimit:
                 "burst": burst,
             }
         )
+        if failed_responses is not UNSET:
+            field_dict["failed_responses"] = failed_responses
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.pre_auth_failed_response_limit import PreAuthFailedResponseLimit
+
         d = dict(src_dict)
         method = check_pre_auth_route_limit_method(d.pop("method"))
 
@@ -56,11 +73,19 @@ class PreAuthRouteLimit:
 
         burst = d.pop("burst")
 
+        _failed_responses = d.pop("failed_responses", UNSET)
+        failed_responses: PreAuthFailedResponseLimit | Unset
+        if isinstance(_failed_responses, Unset):
+            failed_responses = UNSET
+        else:
+            failed_responses = PreAuthFailedResponseLimit.from_dict(_failed_responses)
+
         pre_auth_route_limit = cls(
             method=method,
             path=path,
             requests_per_second=requests_per_second,
             burst=burst,
+            failed_responses=failed_responses,
         )
 
         pre_auth_route_limit.additional_properties = d

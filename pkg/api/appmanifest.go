@@ -249,10 +249,20 @@ type PreAuthRateLimitConfig struct {
 // PreAuthRouteLimit adds a separate source bucket for one public method/path.
 // Matching is exact, against the decoded public URL path before edge rewrites.
 type PreAuthRouteLimit struct {
-	Method            string `json:"method"`
-	Path              string `json:"path"`
-	RequestsPerSecond int    `json:"requests_per_second"`
-	Burst             int    `json:"burst"`
+	Method            string                      `json:"method"`
+	Path              string                      `json:"path"`
+	RequestsPerSecond int                         `json:"requests_per_second"`
+	Burst             int                         `json:"burst"`
+	FailedResponses   *PreAuthFailedResponseLimit `json:"failed_responses,omitempty"`
+}
+
+// PreAuthFailedResponseLimit counts only selected application 4xx responses.
+// The gateway rejects subsequent requests from the same trusted source after
+// the source spends this budget; successful responses never spend it.
+type PreAuthFailedResponseLimit struct {
+	FailuresPerMinute int   `json:"failures_per_minute"`
+	Burst             int   `json:"burst"`
+	Statuses          []int `json:"statuses,omitempty"` // defaults to 401 and 403
 }
 
 const (
@@ -307,6 +317,25 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 		if route.RequestsPerSecond < 1 || route.RequestsPerSecond > c.RequestsPerSecond ||
 			route.Burst < 1 || route.Burst > c.Burst {
 			return fmt.Errorf("pre_auth_rate_limit.routes %s %s must not exceed the app-wide rate and burst", route.Method, route.Path)
+		}
+		if failed := route.FailedResponses; failed != nil {
+			if failed.FailuresPerMinute < 1 || failed.FailuresPerMinute > route.RequestsPerSecond*60 ||
+				failed.Burst < 1 || failed.Burst > route.Burst {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses exceeds the route rate or burst", route.Method, route.Path)
+			}
+			if len(failed.Statuses) > 4 {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses allows at most four statuses", route.Method, route.Path)
+			}
+			for i, status := range failed.Statuses {
+				if status < 400 || status > 499 || status == 429 {
+					return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses status %d is unsupported", route.Method, route.Path, status)
+				}
+				for _, previous := range failed.Statuses[:i] {
+					if previous == status {
+						return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses repeats status %d", route.Method, route.Path, status)
+					}
+				}
+			}
 		}
 	}
 	return nil
