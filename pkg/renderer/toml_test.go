@@ -376,6 +376,32 @@ func TestRenderTOML_VmmdDerivesIdentityAndTargetFromHost(t *testing.T) {
 	}
 }
 
+func TestRenderTOML_OptInServiceProxyHTTPS(t *testing.T) {
+	vmmd := fixtureTOML("vmmd")
+	vmmd.ServiceProxyCAPath = "/etc/faas/tls/service-proxy/ca.crt"
+	vmmdBody, _, err := renderTOML(tomlRenderCtx{Daemon: "vmmd", DC: vmmd})
+	if err != nil || !strings.Contains(string(vmmdBody), `service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"`) {
+		t.Fatalf("vmmd CA render: %v\n%s", err, vmmdBody)
+	}
+	gateway := fixtureTOML("gatewayd-internal")
+	gateway.ServiceProxyHTTPSListen = "10.100.0.1:443"
+	gateway.ServiceProxyTLS = &manifest.TLSMaterial{CertPath: "/etc/faas/tls/service-proxy/server.crt", KeyPath: "/etc/faas/tls/service-proxy/server.key", CAPath: "/etc/faas/tls/service-proxy/ca.crt"}
+	body, _, err := renderTOML(tomlRenderCtx{Daemon: "gatewayd-internal", DC: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`service_proxy_https_listen = "10.100.0.1:443"`,
+		`service_proxy_tls_cert_path = "/etc/faas/tls/service-proxy/server.crt"`,
+		`service_proxy_tls_key_path = "/etc/faas/tls/service-proxy/server.key"`,
+		`service_proxy_tls_ca_path = "/etc/faas/tls/service-proxy/ca.crt"`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("gateway HTTPS render missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestRenderTOML_NilDaemonConfig(t *testing.T) {
 	_, _, err := renderTOML(tomlRenderCtx{Daemon: "schedd", DC: nil})
 	if err == nil {

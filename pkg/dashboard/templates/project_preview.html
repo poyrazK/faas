@@ -21,6 +21,8 @@
     .badge-update { background: #d3e0f3; color: #1a3c75; }
     .badge-noop   { background: #eee; color: #555; }
     .badge-remove { background: #f3d3d3; color: #751a1a; }
+    .badge-skipped { background: #eee; color: #555; }
+    .route-removal-warning { border: 1px solid #b7791f; background: #fff8e6; color: #61430f; padding: 0.75rem 1rem; border-radius: 4px; margin: 1rem 0; }
     .excluded { text-decoration: line-through; color: #888; }
     .problem { border: 1px solid #c33; background: #fbeaea; color: #5a1a1a; padding: 0.75rem 1rem; border-radius: 4px; margin: 1rem 0; }
     .btn, .btn-cta, .btn-danger { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #888; background: #f6f6f6; color: #111; text-decoration: none; cursor: pointer; font: inherit; }
@@ -157,6 +159,38 @@
           {{end}}
         </tbody>
       </table>
+
+      {{if .Data.AsyncRoutes}}
+        <h2>Async routes ({{len .Data.AsyncRoutes}})</h2>
+        {{if gt .Data.AsyncRouteRemovalCount 0}}
+          <aside class="route-removal-warning" role="alert">
+            <strong>Destructive route changes:</strong> the route plan includes {{.Data.AsyncRouteRemovalCount}} manifest-owned async route removal(s).
+          </aside>
+        {{end}}
+        <table>
+          <thead><tr><th>App / route</th><th>Change</th><th>Match</th><th>Destinations</th><th>Retry / age</th></tr></thead>
+          <tbody>
+            {{range .Data.AsyncRoutes}}
+              <tr>
+                <td><code>{{.App}}</code><br><strong>{{.Name}}</strong></td>
+                <td>
+                  <span class="badge {{.ActionClass}}">{{.ActionGlyph}} {{.ActionLabel}}</span>
+                  {{if .Reason}}<br><small class="muted">{{.Reason}}</small>{{end}}
+                </td>
+                <td>
+                  {{.MatchMethods}} <code>{{.MatchHost}}{{.MatchPath}}</code><br>
+                  <small class="muted">priority {{.Priority}} · {{if .Enabled}}enabled{{else}}disabled{{end}}</small>
+                </td>
+                <td>
+                  success: {{if .OnSuccess}}<code>{{.OnSuccess}}</code>{{else}}<span class="muted">none</span>{{end}}<br>
+                  failure: {{if .OnFailure}}<code>{{.OnFailure}}</code>{{else}}<span class="muted">none</span>{{end}}
+                </td>
+                <td>{{.RetryPolicy}}<br><small class="muted">max age {{.MaxAge}}</small></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
 
       {{if gt (len .Data.Removed) 0}}
         <h2>Removed</h2>

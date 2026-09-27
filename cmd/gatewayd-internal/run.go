@@ -2380,6 +2380,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	retryBudget := gateway.NewRetryBudget(0, nil)
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
+		handler.WithRequestAudit(true)
+	}
+	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_API_DISCOVERY_ENABLED")), streamingFlagTrue) {
+		handler.WithAPIDiscovery(true)
+	}
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
 	}
@@ -2797,6 +2803,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestRuntime:                         row.GuestRuntime,
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
+					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
+					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
+					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
 					ConsumerId:                           row.ConsumerID,
 					PlatformTenantId:                     row.PlatformTenantID,
 					PlatformTenantSurfaceId:              row.PlatformTenantSurfaceID,
@@ -3370,12 +3379,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
+	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
+		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:   serviceEndpointProvider,
 			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
+			AllowAlias: guestServiceAliasAllowed,
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
@@ -3412,6 +3425,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
+			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
+			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
 			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
@@ -3422,7 +3437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
-	errc := make(chan error, 5)
+	errc := make(chan error, 6)
 	var servers []*http.Server
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
@@ -3584,11 +3599,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	serviceProxyTLS, tlsErr := serviceProxyHTTPSConfig(cfg)
+	if tlsErr != nil {
+		return tlsErr
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
 		}
 		if guestServiceProxy == nil {
+			if serviceProxyTLS != nil {
+				return errors.New("gatewayd: private service HTTPS requires an available guest service proxy")
+			}
 			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
 		} else {
 			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
@@ -3620,11 +3642,33 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					errc <- err
 				}
 			}()
+			if serviceProxyTLS != nil {
+				httpsAddr := strings.TrimSpace(cfg.ServiceProxyHTTPSListen)
+				httpsSrv := deps.newSrv(httpsAddr, serviceProxyHTTPSHandler(guestServiceProxy))
+				httpsSrv.Addr = httpsAddr
+				httpsSrv.TLSConfig = serviceProxyTLS
+				httpsSrv.Protocols = new(http.Protocols)
+				httpsSrv.Protocols.SetHTTP1(true)
+				httpsSrv.Protocols.SetHTTP2(true)
+				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+				addSrv(httpsSrv)
+				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
+				if listenErr != nil {
+					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
+				}
+				go func() {
+					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
+					if err := httpsSrv.ServeTLS(httpsListener, "", ""); err != nil && err != http.ErrServerClosed {
+						errc <- err
+					}
+				}()
+			}
 			bridgeIP, bridgeErr := serviceProxyBridgeIP(serviceProxyAddr)
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log)
+			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}

@@ -765,6 +765,11 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
+	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", directRoot)
+	if trustErr != nil {
+		return fmt.Errorf("run sidecar %s: prepare service proxy trust: %w", spec.Name, trustErr)
+	}
+	env = StampServiceProxyTrustEnv(env, serviceProxyTrust)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image

@@ -7,6 +7,7 @@ import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
@@ -14,9 +15,29 @@ import type { WorkerScaling } from './WorkerScaling.js';
  */
 export type UpdateAppRequest = {
   /**
-   * Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale.
+   * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */
   visibility?: 'public' | 'internal';
+  /**
+   * Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
+   */
+  allowed_service_callers?: any[] | null;
+  /**
+   * Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH.
+   */
+  allowed_service_call_scopes?: (ServiceCallerScopes | null);
+  /**
+   * Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_targets?: any[] | null;
+  /**
+   * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_policy?: 'account' | 'declared';
+  /**
+   * Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_transport?: 'http' | 'https';
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.

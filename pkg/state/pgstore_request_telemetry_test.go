@@ -176,6 +176,74 @@ func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *te
 	}
 }
 
+func TestPgStoreRequestTelemetry_AnalyticsByDeploymentCPUIsRequestWeighted(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID := uuid.NewString()
+	appID := uuid.NewString()
+	olderDeploymentID := uuid.NewString()
+	newerDeploymentID := uuid.NewString()
+	now := time.Now().UTC().Truncate(time.Second)
+	createdAt := now.Format(time.RFC3339Nano)
+
+	rows := []struct {
+		deploymentID string
+		createdAt    string
+		cpuMS        int32
+		count        int32
+		available    bool
+	}{
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 10, count: 2, available: true},
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 20, count: 3, available: true},
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 99, count: 100, available: false},
+		{deploymentID: newerDeploymentID, createdAt: now.Add(time.Minute).Format(time.RFC3339Nano), cpuMS: 20, count: 4, available: true},
+	}
+	for i, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, row.deploymentID), Valid: true},
+			Route:        "GET /cpu", Method: "GET", Status: 200, LatencyMs: 10,
+			ReceivedAt: pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:      row.count, UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			CommitSha: row.deploymentID, DeploymentCreatedAt: row.createdAt,
+			GuestCpuTimeMs: row.cpuMS, GuestResourceUsageAvailable: row.available,
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry row %d: %v", i, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+		AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Minute * 2), Valid: true},
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("RequestTelemetryAnalyticsByDeployment: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d deployments, want 2", len(got))
+	}
+	byID := make(map[string]sqlc.RequestTelemetryAnalyticsByDeploymentRow, len(got))
+	for _, row := range got {
+		byID[row.DeploymentID] = row
+	}
+	older := byID[olderDeploymentID]
+	if older.Requests != 105 || older.GuestCpuMeasuredRequests != 5 || older.GuestCpuAvgMs != 16 {
+		t.Fatalf("older deployment aggregate = %+v, want 105 requests, 5 CPU samples, 16ms weighted mean", older)
+	}
+	newer := byID[newerDeploymentID]
+	if newer.Requests != 4 || newer.GuestCpuMeasuredRequests != 4 || newer.GuestCpuAvgMs != 20 {
+		t.Fatalf("newer deployment aggregate = %+v, want 4 requests, 4 CPU samples, 20ms mean", newer)
+	}
+	for _, row := range got {
+		if row.TotalRequests != 109 {
+			t.Fatalf("total_requests = %d, want 109", row.TotalRequests)
+		}
+	}
+}
+
 // TestPgStoreRequestTelemetry_RoundTrip exercises the per-request
 // INSERT path and the per-app LIST path. The list is scoped by
 // (account_id, app_id, time window) per sqlc; the test inserts a

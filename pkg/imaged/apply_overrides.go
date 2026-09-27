@@ -143,7 +143,8 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 // image config must not be able to change whether a workload is request,
 // service, worker, or job mode.
 func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest {
-	// Project reconciliation stores generated GREGALE_SERVICE_*_URL values
+	// Project reconciliation stores generated GREGALE_SERVICE_*_URL and
+	// GREGALE_SERVICE_*_HTTPS_URL values
 	// on the app manifest. Merge them after image/deployment env so the
 	// platform-owned service endpoints cannot be shadowed by an image layer.
 	if len(app.Manifest.Env) > 0 {

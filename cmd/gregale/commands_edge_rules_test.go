@@ -213,6 +213,42 @@ func TestCmdEdgeRulesCreate_Route_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesCreate_AsyncExecutionPolicy(t *testing.T) {
+	resetJSONEnv(t)
+	var gotBody api.CreateEdgeRuleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	code := cmdEdgeRulesCreate([]string{
+		"--app", edgeRuleTestAppSlug,
+		"--kind", "async",
+		"--match-host", "x.example.com",
+		"--async-max-attempts", "4",
+		"--async-retry-base-seconds", "1",
+		"--async-retry-max-seconds", "30",
+		"--async-retry-jitter-seconds", "0.2",
+		"--async-max-age-seconds", "600",
+	})
+	if code != 0 {
+		t.Fatalf("create async = %d, want 0", code)
+	}
+	var action api.EdgeRuleAsyncAction
+	if err := json.Unmarshal(gotBody.Action, &action); err != nil {
+		t.Fatalf("action unmarshal: %v", err)
+	}
+	if gotBody.Kind != "async" || action.RetryPolicy == nil {
+		t.Fatalf("body.kind/action = %q / %+v", gotBody.Kind, action)
+	}
+	if *action.RetryPolicy != (api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2}) || action.MaxAgeSeconds != 600 {
+		t.Errorf("async execution policy = %+v, max_age_seconds=%d", action.RetryPolicy, action.MaxAgeSeconds)
+	}
+}
+
 func TestCmdEdgeRulesCreate_HappyPaths_AllKinds(t *testing.T) {
 	cases := []struct {
 		kind string

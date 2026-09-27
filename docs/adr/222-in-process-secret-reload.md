@@ -18,9 +18,13 @@
   process has reread and applied the projection; Gregale does not independently
   verify the application's internal state.
   `secrets list` reports the latest projection/signal outcome separately from
-  wake-time delivery for each active runtime that has reported. Missing runtime
-  reports remain unknown; the API does not claim a fleet-wide denominator or
-  that the app applied the new values without an explicit self-attestation.
+  wake-time delivery and includes every active runtime authorized for each
+  secret by the deployment scope and `env_secrets` allowlist. Missing reports
+  remain in that denominator as unknown, and each runtime's persisted image
+  opt-in is shown as enabled, disabled, or unknown for pre-migration
+  deployments. The API marks whether the complete roster is available and
+  does not claim that the app applied new values without an explicit
+  self-attestation.
   Reports are fenced to the exact secret versions and rejected if a rotation
   wins the race. The feature is
   restricted to single-workload deployments: guest-init rejects an opted-in

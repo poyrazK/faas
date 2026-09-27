@@ -137,19 +137,20 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: row.Kid, ValueHash: row.ValueHash,
 			DeliveryVersion: row.DeliveryVersion, DeliveredVersion: row.DeliveredVersion,
-			DeliveryStatus:              string(row.DeliveryStatus),
-			LastDeliveryAttemptAt:       formatOptionalSecretTime(row.LastDeliveryAttemptAt),
-			LastDeliveredAt:             formatOptionalSecretTime(row.LastDeliveredAt),
-			LastDeliveryErrorCode:       row.LastDeliveryErrorCode,
-			LastDeliveredWakeID:         row.LastDeliveredWakeID,
-			LastDeliveredInstanceID:     row.LastDeliveredInstanceID,
-			LastRuntimeReloadVersion:    row.LastRuntimeReloadVersion,
-			LastRuntimeReloadProjection: string(row.LastRuntimeReloadProjection),
-			LastRuntimeReloadSignal:     string(row.LastRuntimeReloadSignal),
-			LastRuntimeReloadAt:         formatOptionalSecretTime(row.LastRuntimeReloadAt),
-			LastRuntimeReloadErrorCode:  row.LastRuntimeReloadErrorCode,
-			LastRuntimeReloadInstanceID: row.LastRuntimeReloadInstanceID,
-			RuntimeReloadObservations:   observations[secretObservationKey{Scope: row.Scope, Key: row.Key}],
+			DeliveryStatus:               string(row.DeliveryStatus),
+			LastDeliveryAttemptAt:        formatOptionalSecretTime(row.LastDeliveryAttemptAt),
+			LastDeliveredAt:              formatOptionalSecretTime(row.LastDeliveredAt),
+			LastDeliveryErrorCode:        row.LastDeliveryErrorCode,
+			LastDeliveredWakeID:          row.LastDeliveredWakeID,
+			LastDeliveredInstanceID:      row.LastDeliveredInstanceID,
+			LastRuntimeReloadVersion:     row.LastRuntimeReloadVersion,
+			LastRuntimeReloadProjection:  string(row.LastRuntimeReloadProjection),
+			LastRuntimeReloadSignal:      string(row.LastRuntimeReloadSignal),
+			LastRuntimeReloadAt:          formatOptionalSecretTime(row.LastRuntimeReloadAt),
+			LastRuntimeReloadErrorCode:   row.LastRuntimeReloadErrorCode,
+			LastRuntimeReloadInstanceID:  row.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:    observations[secretObservationKey{Scope: row.Scope, Key: row.Key}],
+			RuntimeReloadTargetsComplete: true,
 		})
 	}
 	totalCount, err := s.store.CountAppSecrets(r.Context(), acct.ID, app.ID)
@@ -181,19 +182,20 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: r.Kid, ValueHash: r.ValueHash,
 			DeliveryVersion: r.DeliveryVersion, DeliveredVersion: r.DeliveredVersion,
-			DeliveryStatus:              string(r.DeliveryStatus),
-			LastDeliveryAttemptAt:       formatOptionalSecretTime(r.LastDeliveryAttemptAt),
-			LastDeliveredAt:             formatOptionalSecretTime(r.LastDeliveredAt),
-			LastDeliveryErrorCode:       r.LastDeliveryErrorCode,
-			LastDeliveredWakeID:         r.LastDeliveredWakeID,
-			LastDeliveredInstanceID:     r.LastDeliveredInstanceID,
-			LastRuntimeReloadVersion:    r.LastRuntimeReloadVersion,
-			LastRuntimeReloadProjection: string(r.LastRuntimeReloadProjection),
-			LastRuntimeReloadSignal:     string(r.LastRuntimeReloadSignal),
-			LastRuntimeReloadAt:         formatOptionalSecretTime(r.LastRuntimeReloadAt),
-			LastRuntimeReloadErrorCode:  r.LastRuntimeReloadErrorCode,
-			LastRuntimeReloadInstanceID: r.LastRuntimeReloadInstanceID,
-			RuntimeReloadObservations:   observations[secretObservationKey{Scope: r.Scope, Key: r.Key}],
+			DeliveryStatus:               string(r.DeliveryStatus),
+			LastDeliveryAttemptAt:        formatOptionalSecretTime(r.LastDeliveryAttemptAt),
+			LastDeliveredAt:              formatOptionalSecretTime(r.LastDeliveredAt),
+			LastDeliveryErrorCode:        r.LastDeliveryErrorCode,
+			LastDeliveredWakeID:          r.LastDeliveredWakeID,
+			LastDeliveredInstanceID:      r.LastDeliveredInstanceID,
+			LastRuntimeReloadVersion:     r.LastRuntimeReloadVersion,
+			LastRuntimeReloadProjection:  string(r.LastRuntimeReloadProjection),
+			LastRuntimeReloadSignal:      string(r.LastRuntimeReloadSignal),
+			LastRuntimeReloadAt:          formatOptionalSecretTime(r.LastRuntimeReloadAt),
+			LastRuntimeReloadErrorCode:   r.LastRuntimeReloadErrorCode,
+			LastRuntimeReloadInstanceID:  r.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:    observations[secretObservationKey{Scope: r.Scope, Key: r.Key}],
+			RuntimeReloadTargetsComplete: true,
 		})
 	}
 	for scope := range bucket {
@@ -224,20 +226,27 @@ type secretObservationKey struct {
 }
 
 func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) (map[secretObservationKey][]api.SecretRuntimeReloadObservation, error) {
-	rows, err := s.store.ListAppSecretRuntimeReloadObservations(ctx, accountID, appID, scope)
+	rows, err := s.store.ListAppSecretRuntimeReloadTargets(ctx, accountID, appID, scope)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[secretObservationKey][]api.SecretRuntimeReloadObservation, len(rows))
 	for _, row := range rows {
 		key := secretObservationKey{Scope: row.Scope, Key: row.Key}
-		out[key] = append(out[key], api.SecretRuntimeReloadObservation{
-			InstanceID: row.InstanceID, Version: row.Version,
-			Projection: string(row.Projection), Signal: string(row.Signal),
-			ObservedAt: row.ObservedAt.UTC().Format(time.RFC3339Nano), ErrorCode: row.ErrorCode,
+		observation := api.SecretRuntimeReloadObservation{
+			InstanceID: row.InstanceID, RuntimeState: row.RuntimeState,
+			ReloadSupport: row.ReloadSupport, Reported: row.Reported,
+			ErrorCode:             row.ErrorCode,
 			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
 			ApplicationAckAt: formatOptionalSecretTime(row.ApplicationAckAt), ApplicationAckErrorCode: row.ApplicationAckErrorCode,
-		})
+		}
+		if row.Reported {
+			observation.Version = row.Version
+			observation.Projection = string(row.Projection)
+			observation.Signal = string(row.Signal)
+			observation.ObservedAt = formatOptionalSecretTime(row.ObservedAt)
+		}
+		out[key] = append(out[key], observation)
 	}
 	return out, nil
 }

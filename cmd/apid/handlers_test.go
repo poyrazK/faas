@@ -33,24 +33,31 @@ func TestCreateApp_DuplicateSlug409(t *testing.T) {
 }
 
 func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
-	free := setup(t, api.PlanFree)
-	rec := free.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-free", Visibility: "internal"}, nil)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("free internal visibility: %d %s", rec.Code, rec.Body)
-	}
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanInternalIngressNotAllowed)
-
-	pro := setup(t, api.PlanPro)
-	rec = pro.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-pro", Visibility: "internal"}, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("pro internal visibility: %d %s", rec.Code, rec.Body)
-	}
-	var out api.AppResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Visibility != string(api.AppVisibilityInternal) {
-		t.Fatalf("created visibility=%q, want internal", out.Visibility)
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		t.Run(string(plan), func(t *testing.T) {
+			e := setup(t, plan)
+			rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-app", Visibility: "internal"}, nil)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("internal visibility: %d %s", rec.Code, rec.Body)
+			}
+			var out api.AppResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Visibility != string(api.AppVisibilityInternal) {
+				t.Fatalf("created visibility=%q, want internal", out.Visibility)
+			}
+			public := string(api.AppVisibilityPublic)
+			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &public}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("switch to public: %d %s", rec.Code, rec.Body)
+			}
+			internal := string(api.AppVisibilityInternal)
+			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &internal}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("switch back to internal: %d %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
 

@@ -213,7 +213,53 @@ gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale jobs run nightly --tasks 10
 gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale crons add --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
+gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
+
+Use a scheduled job when work should run to completion in an isolated job
+environment; use an HTTP app cron when the schedule should make a request to an
+app route. Use a command cron when a recurring task needs the app's deployment
+environment without an HTTP endpoint:
+
+```bash
+gregale crons add --app APP_ID --schedule "0 2 * * *" \
+  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
+gregale crons add --app APP_ID --schedule "0 4 * * 0" \
+  --command "bin/cleanup --older-than 30d" --shell
+gregale crons runs CRON_ID
+```
+
+Command crons create one deployment-attached app task for each scheduled
+occurrence and select the app's currently live deployment at fire time, so a
+later deployment automatically supplies the new command environment. The
+command runs with a 10-minute timeout and 1 MiB output limit by default; use
+`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
+repeatable and preserves argument boundaries. `--shell` instead treats the
+single `--command` value as a shell string and cannot be combined with `--arg`.
+Use `--skip-if-running` to skip a firing while an earlier command task remains
+active. By default command failures are not retried. Set `--retry-max` to allow
+up to five additional attempts after a command fails or times out; retries use
+exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
+at 24 hours). A cron run remains one logical history row while it waits for a
+retry, and its task receipt reports the attempt count and next retry time.
+Retries are at-least-once: a command may have produced side effects before it
+failed, so make retryable commands idempotent. A worker lease lost after
+dispatch is not automatically replayed because completion is uncertain.
+
+Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
+id; for a command cron, inspect its captured stdout/stderr, exit status, and
+retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
+`gregale crons run CRON_ID` to immediately run the cron's saved command on the
+current live deployment without moving its schedule cursor.
+If `--skip-if-running` is configured and another run is still active, the
+manual request fails rather than overlapping it.
+Cancel a queued or active command-cron run with
+`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
+request while the worker stops it. Disabling a cron only prevents future fires.
+`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
+command. Scheduled jobs create one task per occurrence and
+pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
@@ -225,6 +271,63 @@ after completion; the failure destination receives the same envelope when the
 invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
+
+Async edge rules can also set their own retry curve and maximum invocation
+age instead of inheriting the app retry curve and plan deadline:
+
+```json
+{
+  "retry_policy": {
+    "max_attempts": 4,
+    "base_seconds": 1,
+    "max_seconds": 30,
+    "jitter_seconds": 0.2
+  },
+  "max_age_seconds": 600,
+  "on_failure": "WEBHOOK_ID"
+}
+```
+
+`max_attempts` includes the initial attempt; the current plan caps the retry
+budget. `max_age_seconds` starts when the edge accepts the request and is
+clamped to the plan's maximum invocation deadline. Omit either setting (or
+use zero for maximum age) to keep the existing app/plan default. The CLI
+equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
+`--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
+`--async-max-age-seconds` on `gregale edge-rules create`.
+
+For deployed apps, the same async route can be declared in `gregale.yaml` and
+reconciled with the source deployment:
+
+```yaml
+async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    match_methods: [POST]
+    on_success: WEBHOOK_ID
+    on_failure: DLQ_WEBHOOK_ID
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+```
+
+`app` is the target app slug (or, in a project deploy, its workload name), and
+destinations are existing webhook IDs from
+`gregale webhooks list --app reports`. Route names are stable per app: later
+deploys update a matching manifest-owned route and remove stale manifest-owned
+routes. Unmanaged edge rules are never adopted or deleted; an exact route
+collision fails deployment with guidance to resolve it first. Omitting
+`async_routes` leaves managed routes unchanged, while `async_routes: []`
+clears them. In project deploys, only selected workloads are reconciled;
+omitted route declarations clear that workload's manifest-owned routes, while
+`--only` and `--exclude` workloads remain untouched. `--no-triggers` leaves
+existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
+and `DELETE` are also accepted. This declaration is YAML-only.
 
 ## Application inbox
 

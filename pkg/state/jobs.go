@@ -37,8 +37,8 @@ import (
 
 // Job is one row of public.jobs (migrations/00255 + 00572 for command and
 // the image-materialization columns added by the Epic #1184 follow-up).
-// Kind is the closed vocabulary ('app' | 'function') enforced by the
-// jobs_kind_check constraint; Status is ('active' | 'paused' | 'deleted')
+// Kind is the closed vocabulary ('batch' | 'recurring') enforced by the
+// jobs_kind_check and schedule-kind constraints; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
 // facing knob is open-vocabulary; Command is the OCI entrypoint added
 // by 00572 (text[], capped at 64 entries by jobs_command_min_chk).
@@ -46,20 +46,23 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	ID             string
-	AccountID      string
-	Kind           string // 'app' | 'function'
-	Name           string
-	ImageRef       string
-	RAMMB          int
-	TaskTimeoutS   int
-	MaxParallelism int
-	RetryMax       int
-	EnvOverrides   json.RawMessage
-	Status         string // 'active' | 'paused' | 'deleted'
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Command        []string // migrations/00572
+	ID              string
+	AccountID       string
+	Kind            string // 'batch' | 'recurring'
+	Name            string
+	ImageRef        string
+	RAMMB           int
+	TaskTimeoutS    int
+	MaxParallelism  int
+	RetryMax        int
+	EnvOverrides    json.RawMessage
+	Status          string // 'active' | 'paused' | 'deleted'
+	CronSchedule    string
+	CronTimezone    string
+	LastScheduledAt *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Command         []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Empty until materialization succeeds.
 	ImageResolvedDigest string
@@ -79,6 +82,31 @@ type Job struct {
 	// contract while transient failures are retried durably.
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
+}
+
+// JobScheduleStore is the durable scheduling seam used by schedd. Listing is
+// intentionally separate from claiming: each candidate is revalidated and
+// advanced in the same transaction that creates its job run, so multiple
+// schedulers cannot enqueue duplicate runs and a crash cannot consume a fire
+// without persisting the run.
+type JobScheduleStore interface {
+	JobListScheduled(ctx context.Context) ([]Job, error)
+	JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error)
+}
+
+// JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
+// schedule persistence in the same account-locked transaction as job quota
+// admission and row creation.
+type JobScheduleCreateStore interface {
+	JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, limit int) (Job, error)
+}
+
+// JobScheduleUpdateStore atomically updates a job and its schedule. A pointer
+// to an empty schedule clears recurring execution; nil leaves the schedule
+// untouched. Changing either schedule field resets the occurrence cursor so
+// the new rule starts from the update time instead of replaying old fires.
+type JobScheduleUpdateStore interface {
+	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string) (Job, error)
 }
 
 // JobRegistryCredential is a sealed Basic Auth credential scoped to one job

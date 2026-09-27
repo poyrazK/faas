@@ -77,15 +77,16 @@ def sync_detailed(
 ) -> Response[AppRoutesResponse | Problem]:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
-     Returns the `routes` array of the per-app metrics surface
-    directly. Reverse-proxies the gatewayd-internal loopback
-    control listener at `GET /v1/internal/apps/{slug}/routes`.
+     Returns the `routes` array of the per-app metrics surface.
+    Production reads the fleet Prometheus aggregate; single-box
+    development may use the gatewayd-internal loopback listener.
     The array is empty when `route_metrics_enabled` is false
     on the app (the gatewayd handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
-    state is not a 404). The route label is method + raw
-    path (pre-rewrite, ADR-093 D6); the `__route_other__`
-    bucket surfaces the wildcard-path signal.
+    state is not a 404). Labels use declared templates when available,
+    otherwise common numeric/UUID/long-hex segments become `{id}`.
+    Unrecognized slug segments remain literal, and `__route_other__`
+    marks the per-app metrics cardinality overflow.
 
     Args:
         slug (str):
@@ -116,15 +117,16 @@ def sync(
 ) -> AppRoutesResponse | Problem | None:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
-     Returns the `routes` array of the per-app metrics surface
-    directly. Reverse-proxies the gatewayd-internal loopback
-    control listener at `GET /v1/internal/apps/{slug}/routes`.
+     Returns the `routes` array of the per-app metrics surface.
+    Production reads the fleet Prometheus aggregate; single-box
+    development may use the gatewayd-internal loopback listener.
     The array is empty when `route_metrics_enabled` is false
     on the app (the gatewayd handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
-    state is not a 404). The route label is method + raw
-    path (pre-rewrite, ADR-093 D6); the `__route_other__`
-    bucket surfaces the wildcard-path signal.
+    state is not a 404). Labels use declared templates when available,
+    otherwise common numeric/UUID/long-hex segments become `{id}`.
+    Unrecognized slug segments remain literal, and `__route_other__`
+    marks the per-app metrics cardinality overflow.
 
     Args:
         slug (str):
@@ -150,15 +152,16 @@ async def asyncio_detailed(
 ) -> Response[AppRoutesResponse | Problem]:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
-     Returns the `routes` array of the per-app metrics surface
-    directly. Reverse-proxies the gatewayd-internal loopback
-    control listener at `GET /v1/internal/apps/{slug}/routes`.
+     Returns the `routes` array of the per-app metrics surface.
+    Production reads the fleet Prometheus aggregate; single-box
+    development may use the gatewayd-internal loopback listener.
     The array is empty when `route_metrics_enabled` is false
     on the app (the gatewayd handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
-    state is not a 404). The route label is method + raw
-    path (pre-rewrite, ADR-093 D6); the `__route_other__`
-    bucket surfaces the wildcard-path signal.
+    state is not a 404). Labels use declared templates when available,
+    otherwise common numeric/UUID/long-hex segments become `{id}`.
+    Unrecognized slug segments remain literal, and `__route_other__`
+    marks the per-app metrics cardinality overflow.
 
     Args:
         slug (str):
@@ -187,15 +190,16 @@ async def asyncio(
 ) -> AppRoutesResponse | Problem | None:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
-     Returns the `routes` array of the per-app metrics surface
-    directly. Reverse-proxies the gatewayd-internal loopback
-    control listener at `GET /v1/internal/apps/{slug}/routes`.
+     Returns the `routes` array of the per-app metrics surface.
+    Production reads the fleet Prometheus aggregate; single-box
+    development may use the gatewayd-internal loopback listener.
     The array is empty when `route_metrics_enabled` is false
     on the app (the gatewayd handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
-    state is not a 404). The route label is method + raw
-    path (pre-rewrite, ADR-093 D6); the `__route_other__`
-    bucket surfaces the wildcard-path signal.
+    state is not a 404). Labels use declared templates when available,
+    otherwise common numeric/UUID/long-hex segments become `{id}`.
+    Unrecognized slug segments remain literal, and `__route_other__`
+    marks the per-app metrics cardinality overflow.
 
     Args:
         slug (str):

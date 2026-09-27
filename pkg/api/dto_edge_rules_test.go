@@ -72,6 +72,40 @@ func TestEdgeRuleValidateAction_Validate_HappyPath(t *testing.T) {
 	}
 }
 
+func TestEdgeRuleAsyncAction_ValidateExecutionPolicy(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  EdgeRuleAsyncAction
+		wantErr string
+	}{
+		{
+			name: "valid policy",
+			action: EdgeRuleAsyncAction{
+				RetryPolicy:   &RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2},
+				MaxAgeSeconds: 300,
+			},
+		},
+		{name: "negative max age", action: EdgeRuleAsyncAction{MaxAgeSeconds: -1}, wantErr: "max_age_seconds"},
+		{name: "age exceeds platform ceiling", action: EdgeRuleAsyncAction{MaxAgeSeconds: MaxAsyncRouteAgeSeconds + 1}, wantErr: "max_age_seconds"},
+		{name: "invalid retry attempts", action: EdgeRuleAsyncAction{RetryPolicy: &RetryPolicyDTO{MaxAttempts: -1}}, wantErr: "max_attempts"},
+		{name: "retry cap below base", action: EdgeRuleAsyncAction{RetryPolicy: &RetryPolicyDTO{BaseSeconds: 5, MaxSeconds: 2}}, wantErr: "max_seconds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := tc.action.Validate()
+			if tc.wantErr == "" {
+				if problem != nil {
+					t.Fatalf("Validate() = %v, want nil", problem)
+				}
+				return
+			}
+			if problem == nil || !strings.Contains(problem.Detail, tc.wantErr) {
+				t.Fatalf("Validate() = %v, want detail containing %q", problem, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestEdgeRuleValidateAction_Validate_Rejects is the table-driven
 // negative arm. Each row mutates one field of the happy-path
 // action. The assertion target is `wantSub` (a substring of the

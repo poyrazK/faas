@@ -602,16 +602,19 @@ type AppInstancesData struct {
 }
 
 // JobsQueuesData is the dashboard-facing payload for the account-level jobs
-// and queues page. Jobs and runs are account-scoped; queue sections are
-// app-scoped and include bounded pending/dead-letter samples.
+// and queues page. Jobs, runs, and async invocation history are account-scoped;
+// queue sections are app-scoped and include bounded pending/dead-letter samples.
 type JobsQueuesData struct {
-	Jobs         []JobPageItem
-	Runs         []JobRunPageItem
-	Queues       []QueuePageItem
-	SelectedApp  string
-	ActionCSRF   string
-	Action       string
-	ErrorMessage string
+	Jobs                    []JobPageItem
+	Runs                    []JobRunPageItem
+	Queues                  []QueuePageItem
+	AsyncInvocations        []AsyncInvocationPageItem
+	NextAsyncInvocationsURL string
+	AsyncInvocationError    string
+	SelectedApp             string
+	ActionCSRF              string
+	Action                  string
+	ErrorMessage            string
 }
 
 // FailedEventsData backs the account-level Failed Events inbox. The handler
@@ -998,6 +1001,57 @@ type QueueMessageItem struct {
 	Replayable bool
 }
 
+// AsyncInvocationPageItem is the metadata-only dashboard projection of one
+// durable asynchronous HTTP request. Payloads, headers, and results are
+// intentionally omitted from the account-wide history table.
+type AsyncInvocationPageItem struct {
+	ID          string
+	DetailURL   string
+	AppSlug     string
+	Method      string
+	Path        string
+	State       string
+	StateClass  string
+	Outcome     string
+	Attempts    int
+	CreatedAt   string
+	CompletedAt string
+}
+
+// AsyncInvocationDetailData backs the account-scoped, metadata-only
+// drill-down for one durable asynchronous HTTP request. Request and result
+// bodies are intentionally omitted; operators can use the authenticated CLI
+// when they explicitly need the full invocation record.
+type AsyncInvocationDetailData struct {
+	Invocation AsyncInvocationDetailItem
+}
+
+// AsyncInvocationDetailItem is the safe dashboard projection of one async
+// invocation, including lifecycle settings and the configured completion
+// destinations but excluding payloads, headers, and result bodies.
+type AsyncInvocationDetailItem struct {
+	ID                      string
+	AppSlug                 string
+	Method                  string
+	Path                    string
+	State                   string
+	StateClass              string
+	Outcome                 string
+	Attempts                int
+	CreatedAt               string
+	DueAt                   string
+	ReceivedAt              string
+	CompletedAt             string
+	DeadlineAt              string
+	ResultRetentionUntil    string
+	RetryPolicy             string
+	LastError               string
+	OnSuccessDestinationID  string
+	OnSuccessDestinationURL string
+	OnFailureDestinationID  string
+	OnFailureDestinationURL string
+}
+
 // InstancePageItem is the safe dashboard projection of one instance. It
 // deliberately carries no guest credentials or namespace internals; node,
 // wake method, liveness restart count, and parked reason are the customer
@@ -1174,6 +1228,9 @@ type AppDetailData struct {
 	// the live Prometheus panels. nil means the plan does not include the
 	// telemetry retention feature or the best-effort read failed.
 	RequestAnalytics *RequestAnalyticsView
+	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
+	// dashboard keeps the rest of the app page available if this read fails.
+	DiscoveredRoutes DiscoveredRoutesView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -1826,6 +1883,9 @@ type RequestAnalyticsView struct {
 	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
+	DependenciesTruncated bool
+	ComputeCost           *RequestAnalyticsComputeCostView
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdownView
 	AsOf                  string
 	Bucket                string
 	SelectedRoute         string
@@ -1838,6 +1898,45 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+}
+
+type RequestAnalyticsComputeCostView struct {
+	EstimatedEUR               string
+	AllocatedEUR               string
+	UnallocatedEUR             string
+	OtherRoutesEUR             string
+	OtherRoutesRequests        int64
+	OtherRoutesRequestSharePct float64
+	RateEUR                    string
+	RequestCount               int64
+}
+
+type RequestAnalyticsDeploymentCostBreakdownView struct {
+	EstimatedEUR   string
+	AllocatedEUR   string
+	UnallocatedEUR string
+	OtherEUR       string
+	OtherRequests  int64
+	OtherSharePct  float64
+	RequestCount   int64
+	Deployments    []RequestAnalyticsDeploymentCostView
+}
+
+type RequestAnalyticsDeploymentCostView struct {
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedEUR             string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
 }
 
 type RequestAnalyticsGroupView struct {
@@ -1853,18 +1952,55 @@ type RequestAnalyticsGroupView struct {
 }
 
 type RequestAnalyticsRouteView struct {
-	Route         string
-	Method        string
-	Requests      int64
-	ErrorRequests int64
-	ErrorRatePct  float64
-	ColdBoots     int64
-	P50MS         int
-	P95MS         int
-	P99MS         int
-	TrendURL      string
+	Route                       string
+	Method                      string
+	Requests                    int64
+	ErrorRequests               int64
+	ErrorRatePct                float64
+	ColdBoots                   int64
+	P50MS                       int
+	P95MS                       int
+	P99MS                       int
+	ColdRequestP95MS            int
+	ColdRequestP95Available     bool
+	WakeBootP95MS               int
+	WakeBootP95Available        bool
+	GuestExecutionP50MS         int
+	GuestExecutionP95MS         int
+	GuestExecutionAvailable     bool
+	GuestCPUAvgMS               int
+	GuestCPUP95MS               int
+	GuestPeakRSSMaxMB           int
+	GuestResourceUsageAvailable bool
+	DependencySamples           int64
+	DependencyRequests          int64
+	Dependencies                []api.RequestAnalyticsDependency
+	EstimatedComputeCostEUR     string
+	RequestSharePct             float64
+	TrendURL                    string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
+}
+
+// DiscoveredRoutesView is the customer-facing projection of the durable API
+// inventory. Available is false when the store read fails or the capability
+// is unavailable; an available empty slice means no routes have been recorded.
+type DiscoveredRoutesView struct {
+	Available bool
+	CapHit    bool
+	Routes    []DiscoveredRouteItem
+}
+
+// DiscoveredRouteItem is one observed method and route template, with
+// inventory timestamps formatted by the handler for the dashboard.
+type DiscoveredRouteItem struct {
+	Method       string
+	Path         string
+	FirstSeen    string
+	LastSeen     string
+	RequestCount int64
+	Contract     string
+	Policy       string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one

@@ -373,6 +373,8 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		row.Count = normalizedRequestTelemetryCount(row.Count)
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
+		row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
+		row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
 			AccountID:                            row.AccountID,
@@ -389,6 +391,9 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			GuestOutcome:                         row.GuestOutcome,
 			GuestErrorClass:                      row.GuestErrorClass,
 			GuestDurationBucket:                  row.GuestDurationMS,
+			GuestCPUBucket:                       row.GuestCPUTimeMS,
+			GuestRSSBucket:                       row.GuestPeakRSSMB,
+			GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
 			ConsumerID:                           row.ConsumerID,
 			PlatformTenantID:                     row.PlatformTenantID,
 			PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
@@ -445,6 +450,9 @@ type bucketKey struct {
 	GuestOutcome                         string
 	GuestErrorClass                      string
 	GuestDurationBucket                  int
+	GuestCPUBucket                       int
+	GuestRSSBucket                       int
+	GuestResourceUsageAvailable          bool
 	ConsumerID                           string
 	PlatformTenantID                     string
 	PlatformTenantSurfaceID              string
@@ -462,18 +470,45 @@ type bucketKey struct {
 }
 
 func (k bucketKey) String() string {
-	// Canonical pipe-delimited string. Cheap, no allocations
-	// beyond the fmt.Sprintf; can be replaced with a binary
-	// encoding if the profiler flags it. (Profile showed < 1%
-	// of publisher CPU before the collapse; even at 2x with the
-	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%t|%t|%d|%d|%d",
-		k.AccountID, k.AppID, k.DeploymentID,
-		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
-		k.Country, k.WakeID, k.GuestRuntime, k.GuestOutcome,
-		k.GuestErrorClass, k.ConsumerID, k.PlatformTenantID, k.PlatformTenantSurfaceID, k.PlatformTenantJWTAuthorizationRuleID, k.NodeID, k.Region, k.CommitSHA,
-		k.DeploymentTag, k.DeploymentCreatedAt, k.ImageDigest, k.UsageOutboxed, k.ColdBoot,
-		k.GuestDurationBucket, k.LatencyBucket, k.bucket.Unix())
+	// Include every dimension in the key; the Go-syntax representation
+	// preserves field boundaries and avoids delimiter collisions in route or
+	// deployment metadata.
+	return fmt.Sprintf("%#v", k)
+}
+
+func requestTelemetryMemoryBucketUpperBound(megabytes int) int {
+	if megabytes <= 0 {
+		return 0
+	}
+	width := 256
+	switch {
+	case megabytes <= 64:
+		width = 4
+	case megabytes <= 256:
+		width = 16
+	case megabytes <= 1024:
+		width = 64
+	}
+	return ((megabytes + width - 1) / width) * width
+}
+
+// requestTelemetryCPUTimeBucketUpperBound keeps CPU/request useful at the
+// single-digit and low-double-digit millisecond range while still bounding
+// cardinality for unusually expensive handlers.
+func requestTelemetryCPUTimeBucketUpperBound(cpuMS int) int {
+	if cpuMS <= 0 {
+		return 0
+	}
+	width := 100
+	switch {
+	case cpuMS <= 100:
+		width = 1
+	case cpuMS <= 500:
+		width = 5
+	case cpuMS <= 2_000:
+		width = 25
+	}
+	return ((cpuMS + width - 1) / width) * width
 }
 
 // requestTelemetryLatencyBucketUpperBound quantizes a request latency to a

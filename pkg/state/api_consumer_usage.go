@@ -3,7 +3,9 @@ package state
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,6 +81,48 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 	if event.BillableUnits < 0 || event.BillableUnits > event.RequestCount {
 		return fmt.Errorf("consumer usage: billable_units must be between zero and request_count")
 	}
+	if audit := event.Audit; audit != nil {
+		if event.RequestCount != 1 {
+			return fmt.Errorf("request audit: one event must describe exactly one request")
+		}
+		if audit.RouteTemplate == "" || len(audit.RouteTemplate) > 256 || strings.ContainsAny(audit.RouteTemplate, "?#\x00\r\n\t") || audit.Method == "" || len(audit.Method) > 16 || audit.HTTPStatus < 100 || audit.HTTPStatus > 599 {
+			return fmt.Errorf("request audit: invalid route, method, or status")
+		}
+		if audit.LatencyMS < 0 || audit.LatencyMS > 86_400_000 || audit.OccurredAt.IsZero() || audit.OccurredAt.After(time.Now().Add(5*time.Minute)) {
+			return fmt.Errorf("request audit: invalid latency or occurrence time")
+		}
+		if len(audit.TraceID) != 0 && len(audit.TraceID) != 32 {
+			return fmt.Errorf("request audit: invalid trace ID")
+		}
+		if audit.DeploymentID != "" {
+			if _, err := uuid.Parse(audit.DeploymentID); err != nil {
+				return fmt.Errorf("request audit: invalid deployment ID: %w", err)
+			}
+		}
+		if len(audit.CommitSHA) > 64 || len(audit.RequestID) > 128 {
+			return fmt.Errorf("request audit: oversized revision or request ID")
+		}
+		if audit.SourceIP != "" {
+			if _, err := netip.ParseAddr(audit.SourceIP); err != nil {
+				return fmt.Errorf("request audit: invalid source IP: %w", err)
+			}
+		}
+	}
+	if route := discoveredRouteFor(event); route != "" {
+		if route == discoveredRouteOverflow {
+			return fmt.Errorf("api discovery: overflow label is reserved")
+		}
+		if event.RequestCount != 1 || len(route) > 256 || strings.ContainsAny(route, "?#\x00\r\n\t") {
+			return fmt.Errorf("api discovery: invalid request count or route")
+		}
+		method, path, ok := strings.Cut(route, " ")
+		if !ok || len(method) == 0 || len(method) > 16 || !strings.HasPrefix(path, "/") || len(path) == 0 {
+			return fmt.Errorf("api discovery: invalid method/template")
+		}
+		if event.Audit != nil && event.DiscoveredRoute != "" && event.Audit.RouteTemplate != event.DiscoveredRoute {
+			return fmt.Errorf("api discovery: route conflicts with audit evidence")
+		}
+	}
 	return nil
 }
 
@@ -100,6 +144,18 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.apiConsumerUsageEvents[event.EventID]; exists {
+		identity := m.apiConsumerUsageEvents[event.EventID]
+		if identity.accountID != event.AccountID || identity.appID != event.AppID {
+			return false, fmt.Errorf("consumer usage: event ID belongs to another account or app")
+		}
+		if event.Audit != nil {
+			m.recordRequestAuditLocked(event)
+		}
+		if payload := m.recordDiscoveredRouteLocked(event); len(payload) > 0 {
+			if err := m.appendEventLocked("apid", "event.published", &event.AccountID, payload, nil, time.Now().UTC()); err != nil {
+				return false, err
+			}
+		}
 		return false, nil
 	}
 	if event.PlatformTenantID != "" {
@@ -145,7 +201,15 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		tenantBucket.BillableUnits += event.BillableUnits
 		m.platformTenantUsage[tenantKey] = tenantBucket
 	}
-	m.apiConsumerUsageEvents[event.EventID] = struct{}{}
+	m.apiConsumerUsageEvents[event.EventID] = usageEventIdentity{accountID: event.AccountID, appID: event.AppID}
+	if event.Audit != nil {
+		m.recordRequestAuditLocked(event)
+	}
+	if payload := m.recordDiscoveredRouteLocked(event); len(payload) > 0 {
+		if err := m.appendEventLocked("apid", "event.published", &event.AccountID, payload, nil, time.Now().UTC()); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 

@@ -35,21 +35,24 @@ func (s *server) requireAppTaskAPI(w http.ResponseWriter) bool {
 
 func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 	resp := api.AppTaskResponse{
-		ID:              row.ID,
-		AppID:           row.AppID,
-		DeploymentID:    row.DeploymentID,
-		DeploymentScope: row.DeploymentScope,
-		Kind:            api.AppTaskKind(row.Kind),
-		Command:         append([]string(nil), row.Command...),
-		CommandShell:    row.CommandShell,
-		Status:          api.AppTaskStatus(row.Status),
-		TimeoutSeconds:  row.TimeoutSeconds,
-		MaxOutputBytes:  row.MaxOutputBytes,
-		StdoutTail:      row.StdoutTail,
-		StderrTail:      row.StderrTail,
-		OutputTruncated: row.OutputTruncated,
-		CreatedAt:       row.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:       row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                  row.ID,
+		AppID:               row.AppID,
+		DeploymentID:        row.DeploymentID,
+		DeploymentScope:     row.DeploymentScope,
+		Kind:                api.AppTaskKind(row.Kind),
+		Command:             append([]string(nil), row.Command...),
+		CommandShell:        row.CommandShell,
+		Status:              api.AppTaskStatus(row.Status),
+		TimeoutSeconds:      row.TimeoutSeconds,
+		MaxOutputBytes:      row.MaxOutputBytes,
+		RetryMax:            row.RetryMax,
+		RetryBackoffSeconds: row.RetryBackoffSeconds,
+		AttemptCount:        row.AttemptCount,
+		StdoutTail:          row.StdoutTail,
+		StderrTail:          row.StderrTail,
+		OutputTruncated:     row.OutputTruncated,
+		CreatedAt:           row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:           row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if row.ExitCode != nil {
 		value := *row.ExitCode
@@ -61,6 +64,7 @@ func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 	resp.CancelRequestedAt = appTaskTimeResponse(row.CancelRequested)
 	resp.StartedAt = appTaskTimeResponse(row.StartedAt)
 	resp.FinishedAt = appTaskTimeResponse(row.FinishedAt)
+	resp.RetryAt = appTaskTimeResponse(row.RetryAt)
 	return resp
 }
 

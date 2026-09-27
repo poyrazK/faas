@@ -46,6 +46,26 @@ func TestDashboardHandler_JobsQueues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("dead-letter invocation: %v", err)
 	}
+	finished := now.Add(time.Second)
+	outcome := state.OutcomeDeadLetter
+	asyncInvocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{
+		AccountID: acct.ID, AppID: app.ID, Source: state.InvocationAsyncInvoke,
+		State: state.InvocationDeadLetter, Method: http.MethodPost, Path: "/reports",
+		DueAt: now, Attempts: 4, CreatedAt: now, CompletedAt: &finished, Outcome: &outcome,
+		Payload: json.RawMessage(`{"customer_secret":"dashboard-must-not-render-this"}`),
+	})
+	if err != nil {
+		t.Fatalf("async dead-letter invocation: %v", err)
+	}
+	pendingAsyncInvocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{
+		AccountID: acct.ID, AppID: app.ID, Source: state.InvocationAsyncInvoke,
+		State: state.InvocationPending, Method: http.MethodPost, Path: "/reports/next",
+		DueAt: now.Add(time.Second), Attempts: 1, CreatedAt: now.Add(time.Second),
+		Payload: json.RawMessage(`{"customer_secret":"another-dashboard-secret"}`),
+	})
+	if err != nil {
+		t.Fatalf("pending async invocation: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/jobs", nil)
@@ -57,10 +77,34 @@ func TestDashboardHandler_JobsQueues(t *testing.T) {
 	for _, want := range []string{
 		"Jobs &amp; queues", "nightly", "manual", "jobs-app", "pending", "dead_letter",
 		"worker failed", "/dashboard/apps/jobs-app/queues", `name="csrf_token"`,
+		"Recent async invocations", asyncInvocation.ID, "POST /reports", "dead_letter",
+		"gregale invocations get",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}
+	}
+	for _, private := range []string{"dashboard-must-not-render-this", "another-dashboard-secret"} {
+		if strings.Contains(rec.Body.String(), private) {
+			t.Errorf("dashboard invocation history leaked request payload marker %q", private)
+		}
+	}
+	olderPageRec := httptest.NewRecorder()
+	olderPageReq := httptest.NewRequest(http.MethodGet, "/dashboard/jobs?async_before="+pendingAsyncInvocation.ID, nil)
+	olderPageReq.AddCookie(sessionCookie)
+	h.ServeHTTP(olderPageRec, olderPageReq)
+	if olderPageRec.Code != http.StatusOK || !strings.Contains(olderPageRec.Body.String(), asyncInvocation.ID) || strings.Contains(olderPageRec.Body.String(), pendingAsyncInvocation.ID) {
+		t.Fatalf("async history cursor page did not isolate older row %s: status=%d\n%s", asyncInvocation.ID, olderPageRec.Code, olderPageRec.Body.String())
+	}
+
+	// The per-app queue alias must not mix in the account-wide invocation
+	// history when it is scoped to one application.
+	appQueueRec := httptest.NewRecorder()
+	appQueueReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/jobs-app/queues", nil)
+	appQueueReq.AddCookie(sessionCookie)
+	h.ServeHTTP(appQueueRec, appQueueReq)
+	if appQueueRec.Code != http.StatusOK || strings.Contains(appQueueRec.Body.String(), "Recent async invocations") {
+		t.Fatalf("per-app queue page unexpectedly rendered account history: status=%d\n%s", appQueueRec.Code, appQueueRec.Body.String())
 	}
 	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardJobsCSRFCookie); cookie == nil || cookie.Value == "" {
 		t.Fatalf("GET jobs: missing %s cookie", dashboardJobsCSRFCookie)

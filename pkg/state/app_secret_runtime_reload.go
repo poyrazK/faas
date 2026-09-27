@@ -73,3 +73,12 @@ func validSecretRevision(revision string) bool {
 	decoded, err := hex.DecodeString(revision)
 	return err == nil && len(decoded) == 32
 }
+
+func validSecretReloadSignal(signal string) bool {
+	switch signal {
+	case "", "SIGHUP", "SIGUSR1", "SIGUSR2":
+		return true
+	default:
+		return false
+	}
+}

@@ -42,8 +42,9 @@ type InvocationsRetention struct {
 
 // deadlineBreachDetailsStore is implemented by the production stores. The
 // existing Store method keeps its count-only contract for older callers;
-// this optional seam lets the reaper receive the exact rows changed by its
-// atomic UPDATE and enqueue timeout destinations without duplicate races.
+// this optional seam lets the reaper report the exact rows changed by its
+// atomic update. The store also enqueues any selected destination in that
+// same transition transaction.
 type deadlineBreachDetailsStore interface {
 	ForceDeadlineBreachedInvocationsWithDetails(context.Context, []string) ([]state.Invocation, error)
 }
@@ -148,11 +149,6 @@ func (r *InvocationsRetention) SweepDeadlineBreached(ctx context.Context, limit 
 		}
 		if n == 0 {
 			forced = nil
-		}
-	}
-	for _, inv := range forced {
-		if err := enqueueInvocationDestination(ctx, r.store, r.now, inv, state.OutcomeTimeout, nil, inv.LastError); err != nil {
-			r.log.Warn("invocations deadline destination", "inv", inv.ID, "err", err)
 		}
 	}
 	if len(forced) > 0 {

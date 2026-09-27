@@ -1,4 +1,4 @@
-// Package templates ships the seventeen `gregale deploy --template <name>`
+// Package templates ships the eighteen `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -68,6 +68,7 @@ var Names = []string{
 	"cron-worker",
 	"webhook-receiver",
 	"ai-chat",
+	"secret-reload-node",
 }
 
 // Exists reports whether name is a known template.
@@ -237,7 +238,7 @@ func NameIsValid(name string) bool {
 //
 //	"hello"              — first-touch smoke tests (3)
 //	"function"           — generic runtimes the customer customises (6)
-//	"stateless-contract" — managed-service scaffolds that BYO credentials (5)
+//	"stateless-contract" — managed-service scaffolds that BYO credentials (6)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
 //	""                   — unknown / not in Names
@@ -254,7 +255,7 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver":
+	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"

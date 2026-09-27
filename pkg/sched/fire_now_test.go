@@ -1,5 +1,6 @@
 package sched
 
+// adr: 090 Manual fire-now bypasses the schedule boundary without moving it.
 // Tests for the fire-now side of issue #791 PR-C / ADR-090.
 //
 // Coverage split:
@@ -222,6 +223,94 @@ func TestDrainPending_HappyPathStampsSucceeded(t *testing.T) {
 	}
 	if !post.LastFiredAt.IsZero() {
 		t.Errorf("LastFiredAt post-drain = %v, want zero (RunCronNow must not MarkCronFired)", post.LastFiredAt)
+	}
+}
+
+func TestDrainPending_CommandCronQueuesTaskAndPreservesScheduleCursor(t *testing.T) {
+	t.Parallel()
+	h := newFireNowHarness(t)
+	ctx := context.Background()
+	_, app, deployment := seedApp(t, h.store, api.PlanPro, 256, 1)
+	if err := h.store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/fire-now", "apps/fire-now.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := h.store.CreateCronWithOptions(ctx, app.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"}, RetryMax: 2, RetryBackoffSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	lastFiredAt := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	if err := h.store.MarkCronFired(ctx, cron.ID, lastFiredAt); err != nil {
+		t.Fatalf("set schedule cursor: %v", err)
+	}
+	requestID, err := h.store.InsertFireNowRequest(ctx, cron.ID, app.AccountID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+
+	h.loop.drainPendingFireNowRequests(ctx)
+
+	request, err := h.store.GetFireNowRequest(ctx, requestID)
+	if err != nil {
+		t.Fatalf("GetFireNowRequest: %v", err)
+	}
+	if request.Status != state.FireNowStatusSucceeded || request.TaskID == nil || *request.TaskID == "" || request.InvocationID != nil {
+		t.Fatalf("fire-now receipt = %+v; want success with a task id and no invocation id", request)
+	}
+	tasks, err := h.store.ListCronAppTaskRuns(ctx, cron.ID, 10, "")
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("command cron tasks = %d, %v; want one", len(tasks), err)
+	}
+	task := tasks[0]
+	if task.ID != *request.TaskID || task.DeploymentID != deployment.ID || task.Status != state.AppTaskQueued ||
+		task.ScheduledFor != nil || task.RetryMax != 2 || task.RetryBackoffSeconds != 30 ||
+		len(task.Command) != 2 || task.Command[1] != "--compact" {
+		t.Fatalf("manual command task = %+v; want the saved command, retries, live deployment, and no scheduled_for", task)
+	}
+	cronAfter, err := h.store.CronByID(ctx, cron.ID)
+	if err != nil || !cronAfter.LastFiredAt.Equal(lastFiredAt) {
+		t.Fatalf("LastFiredAt after manual fire = %v, %v; want unchanged %v", cronAfter.LastFiredAt, err, lastFiredAt)
+	}
+	if h.synth.calls.Load() != 0 {
+		t.Errorf("HTTP synth calls = %d; command cron fire-now must enqueue an app task", h.synth.calls.Load())
+	}
+}
+
+func TestDrainPending_CommandCronRespectsSkipIfRunning(t *testing.T) {
+	t.Parallel()
+	h := newFireNowHarness(t)
+	ctx := context.Background()
+	_, app, deployment := seedApp(t, h.store, api.PlanPro, 256, 1)
+	if err := h.store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/fire-now-overlap", "apps/fire-now-overlap.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := h.store.CreateCronWithOptions(ctx, app.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance"}, SkipIfRunning: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	if _, created, err := h.store.CreateScheduledCronAppTask(ctx, cron.ID, nil, time.Now().UTC()); err != nil || !created {
+		t.Fatalf("seed active scheduled task: created=%t err=%v", created, err)
+	}
+	requestID, err := h.store.InsertFireNowRequest(ctx, cron.ID, app.AccountID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+
+	h.loop.drainPendingFireNowRequests(ctx)
+
+	request, err := h.store.GetFireNowRequest(ctx, requestID)
+	if err != nil {
+		t.Fatalf("GetFireNowRequest: %v", err)
+	}
+	if request.Status != state.FireNowStatusFailed || request.Error == nil || !strings.Contains(*request.Error, "active run") {
+		t.Fatalf("overlap fire-now receipt = %+v; want failed overlap", request)
+	}
+	tasks, err := h.store.ListCronAppTaskRuns(ctx, cron.ID, 10, "")
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("command cron tasks after overlap = %d, %v; want only the original task", len(tasks), err)
 	}
 }
 

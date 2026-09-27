@@ -3761,6 +3761,10 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
+	// rule age before the serving plan applies its lower deadline cap.
+	// The Scale plan currently owns the largest invocation deadline.
+	MaxAsyncRouteAgeSeconds = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -5920,9 +5924,10 @@ func (p Plan) RequireAuthnAllowed() bool {
 
 // InternalIngressAllowed reports whether the plan may hide an app from the
 // public edge while keeping it reachable through authenticated service routing.
-// This is intentionally Pro/Scale-only in the first networking slice.
+// Private ingress is a networking primitive on every recognized plan.
 func (p Plan) InternalIngressAllowed() bool {
-	return p == PlanPro || p == PlanScale
+	_, ok := LimitsFor(p)
+	return ok
 }
 
 // AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
@@ -7088,6 +7093,20 @@ const (
 	// row-budget. Past 100 the caller pages via ?cursor.
 	AppErrorsSummaryDefaultLimit = 20
 	AppErrorsSummaryMaxLimit     = 100
+
+	// AllowedServiceCallersMax bounds the target-side internal service
+	// policy (ADR-266). Scale admits at most 100 deployed apps, so a larger
+	// list cannot grant additional live callers and would slow every hop.
+	AllowedServiceCallersMax = 100
+	// ServiceCallMethodsMax and ServiceCallPathPrefixesMax bound each
+	// target-owned per-caller service policy. The byte cap prevents a single
+	// path rule from bloating the app manifest or proxy authorization work.
+	ServiceCallMethodsMax         = 32
+	ServiceCallPathPrefixesMax    = 64
+	ServiceCallPathPrefixMaxBytes = 1024
+	// ServiceBindingTargetsMax bounds a standalone caller's declared targets.
+	// The account app cap is 100, so additional names cannot add live targets.
+	ServiceBindingTargetsMax = 100
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

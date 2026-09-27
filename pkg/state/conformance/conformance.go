@@ -63,6 +63,7 @@ func Run(t *testing.T, open Open) {
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
@@ -92,6 +93,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
@@ -122,6 +124,7 @@ func Run(t *testing.T, open Open) {
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
@@ -130,6 +133,96 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testScheduledCommandCronLifecycle(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/cron.ext4", "apps/conformance/cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	first, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("first scheduled fire = %+v, created=%t, err=%v", first, created, err)
+	}
+	if first.Kind != state.AppTaskKindCron || first.CronID != cron.ID || first.DeploymentID != fx.Deployment.ID ||
+		first.ScheduledFor == nil || !first.ScheduledFor.Equal(firedAt) || len(first.Command) != 2 || first.Command[0] != "bin/maintenance" {
+		t.Fatalf("first scheduled task did not preserve cron metadata: %+v", first)
+	}
+
+	secondAt := firedAt.Add(time.Minute)
+	second, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || !created {
+		t.Fatalf("second scheduled fire = %+v, created=%t, err=%v", second, created, err)
+	}
+	duplicate, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || created || duplicate.ID != "" {
+		t.Fatalf("stale scheduled fire = %+v, created=%t, err=%v; want no-op", duplicate, created, err)
+	}
+	if active, err := fx.Store.CountActiveCronAppTasks(fx.Ctx, cron.ID); err != nil || active != 2 {
+		t.Fatalf("CountActiveCronAppTasks = %d, %v; want 2", active, err)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 2 || runs[0].ID != second.ID || runs[1].ID != first.ID {
+		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want newest-first history", runs, err)
+	}
+}
+
+func testManualCommandCronFireNow(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/manual-cron.ext4", "apps/conformance/manual-cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"}, RetryMax: 2, RetryBackoffSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	cursor := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	if err := fx.Store.MarkCronFired(fx.Ctx, cron.ID, cursor); err != nil {
+		t.Fatalf("MarkCronFired: %v", err)
+	}
+	requestID, err := fx.Store.InsertFireNowRequest(fx.Ctx, cron.ID, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+	claimed, err := fx.Store.ClaimPendingFireNowRequest(fx.Ctx)
+	if err != nil || claimed.ID != requestID || claimed.Status != state.FireNowStatusRunning {
+		t.Fatalf("ClaimPendingFireNowRequest = %+v, %v; want running request %s", claimed, err, requestID)
+	}
+
+	firedAt := time.Now().UTC()
+	task, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt)
+	if err != nil {
+		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
+	}
+	if task.CronID != cron.ID || task.Kind != state.AppTaskKindCron || task.DeploymentID != fx.Deployment.ID ||
+		task.ScheduledFor != nil || task.RetryMax != 2 || task.RetryBackoffSeconds != 30 ||
+		len(task.Command) != 2 || task.Command[0] != "bin/maintenance" {
+		t.Fatalf("manual command task = %+v; want cron settings and no scheduled_for", task)
+	}
+	request, err := fx.Store.GetFireNowRequest(fx.Ctx, requestID)
+	if err != nil || request.Status != state.FireNowStatusSucceeded || request.TaskID == nil || *request.TaskID != task.ID || request.InvocationID != nil {
+		t.Fatalf("fire-now request = %+v, %v; want successful task receipt", request, err)
+	}
+	replayed, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt.Add(time.Second))
+	if err != nil || replayed.ID != task.ID {
+		t.Fatalf("idempotent replay task = %+v, %v; want original %s", replayed, err, task.ID)
+	}
+	storedCron, err := fx.Store.CronByID(fx.Ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(cursor) {
+		t.Fatalf("cron cursor = %v, %v; want unchanged %v", storedCron.LastFiredAt, err, cursor)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
+		t.Fatalf("command cron runs = %+v, %v; want exactly one task", runs, err)
 	}
 }
 
@@ -1911,6 +2004,45 @@ func testDelayedTaskListing(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testAsyncInvocationHistory(t *testing.T, fx *Fixture) {
+	first, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(first async): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationQueue, DueAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(queue control): %v", err)
+	}
+	second, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(second async): %v", err)
+	}
+
+	page, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, "")
+	if err != nil || len(page) != 1 || page[0].Source != state.InvocationAsyncInvoke {
+		t.Fatalf("ListAsyncInvocationsForAccount(first page) = (%+v, %v), want one async row", page, err)
+	}
+	next, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, page[0].ID)
+	if err != nil || len(next) != 1 || next[0].Source != state.InvocationAsyncInvoke || next[0].ID == page[0].ID {
+		t.Fatalf("ListAsyncInvocationsForAccount(next page) = (%+v, %v), want the other async row", next, err)
+	}
+	if (page[0].ID != first.ID && page[0].ID != second.ID) || (next[0].ID != first.ID && next[0].ID != second.ID) {
+		t.Fatalf("async history pages = %q, %q; created IDs = %q, %q", page[0].ID, next[0].ID, first.ID, second.ID)
+	}
+	last, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, next[0].ID)
+	if err != nil || len(last) != 0 {
+		t.Fatalf("ListAsyncInvocationsForAccount(last page) = (%+v, %v), want empty", last, err)
+	}
+}
+
 func testBetaFirstSuccess(t *testing.T, fx *Fixture) {
 	firstInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
 		string(state.StateParked), 128, fx.Node.ID, uuid.NewString())
@@ -2636,10 +2768,18 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	const key = "DATABASE_URL"
 	scope := api.DefaultEnvScope
+	if err := fx.Store.SetDeploymentSecretReloadSignal(fx.Ctx, fx.Deployment.ID, "SIGHUP"); err != nil {
+		t.Fatalf("SetDeploymentSecretReloadSignal: %v", err)
+	}
 	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
 		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
+	}
+	unreported, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(unreported): %v", err)
 	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
@@ -2657,6 +2797,19 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].InstanceID != instance.ID || observations[0].Version != 1 {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(v1) = %+v, %v", observations, err)
+	}
+	targets, err := fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 2 {
+		t.Fatalf("ListAppSecretRuntimeReloadTargets(v1) = %+v, %v; want reported and unreported active targets", targets, err)
+	}
+	var sawUnreported bool
+	for _, target := range targets {
+		if target.InstanceID == unreported.ID {
+			sawUnreported = !target.Reported && target.ReloadSupport == "enabled"
+		}
+	}
+	if !sawUnreported {
+		t.Fatalf("target roster omitted the unreported reload-enabled runtime: %+v", targets)
 	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)

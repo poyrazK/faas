@@ -68,6 +68,9 @@ type JailerVMM struct {
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
 	preBoot *preBootLedger
+	// Public CA bundle for the opt-in guest service HTTPS endpoint. Never a
+	// private key and never the daemon-to-daemon mTLS root.
+	serviceProxyCAPEM []byte
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -549,6 +552,14 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		restorePrefetch:          newRestorePrefetchStore(),
 		preBoot:                  newPreBootLedger(),
 	}
+}
+
+// WithServiceProxyCA installs a public CA bundle for guest service clients.
+// vmmd validates the bundle before constructing the VMM; the copy is stable
+// for this process and participates in the pre-boot restore digest.
+func (v *JailerVMM) WithServiceProxyCA(pem []byte) *JailerVMM {
+	v.serviceProxyCAPEM = append([]byte(nil), pem...)
+	return v
 }
 
 // PrepareJailHelper stages the release-matched helper in the chroot base before
@@ -1034,7 +1045,7 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 // when captureKey's drive is known to already hold byte-identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
 func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
-	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, v.serviceProxyCAPEM)
 	if err != nil {
 		return false, err
 	}
@@ -1090,7 +1101,7 @@ type preBootFileWriter struct {
 // the individual Stage* methods always had. Order is preserved from the
 // previous implementation: secrets, API env, resolver, app-task marker,
 // sidecar env overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) ([]preBootFileWriter, string, error) {
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, serviceCAPEM ...[]byte) ([]preBootFileWriter, string, error) {
 	var writers []preBootFileWriter
 	digest := newPreBootDigest()
 	if len(secretsEnvJSON) > 0 {
@@ -1114,6 +1125,16 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
 			return writeServiceDiscoveryResolver(mp, ip)
 		}, path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
+		if len(serviceCAPEM) > 0 && len(serviceCAPEM[0]) > 0 {
+			ca := serviceCAPEM[0]
+			if len(ca) > 64*1024 {
+				return nil, "", errors.New("service proxy CA bundle exceeds 64 KiB")
+			}
+			digest.add("service-proxy-ca.crt", ca)
+			writers = append(writers, preBootFileWriter{what: "stage service proxy CA", write: func(mp string) error {
+				return writeServiceProxyCA(mp, ca)
+			}, path: serviceProxyCAPath, want: ca, mode: 0o444})
+		}
 	}
 	if appTask {
 		digest.add("app-task.json", nil)
@@ -1219,6 +1240,37 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
+
+const serviceProxyCAPath = "upper/etc/faas/service-proxy-ca.crt"
+
+func writeServiceProxyCA(mountRoot string, ca []byte) error {
+	target, err := stagedDrivePath(mountRoot, serviceProxyCAPath)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	rel, err := filepath.Rel(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+		return fmt.Errorf("create service CA directory: %w", err)
+	}
+	// Remove a prior file first: Root.WriteFile truncates an existing inode
+	// and would otherwise follow a guest-planted symlink. Root confines every
+	// path component to this mounted drive, including malicious parents.
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace service CA: %w", err)
+	}
+	if err := root.WriteFile(rel, ca, 0o444); err != nil {
+		return fmt.Errorf("write service CA: %w", err)
+	}
+	return root.Chmod(rel, 0o444)
+}
 
 const appTaskMarkerPath = "upper/etc/faas/app-task.json"
 

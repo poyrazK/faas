@@ -2140,6 +2140,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
+	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
+		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
 	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
@@ -2710,6 +2714,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
+		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
 	// Source builds arrive with a builderd-produced local OCI archive in
 	// dep.RootfsPath. Keep the original source tarball for the customer

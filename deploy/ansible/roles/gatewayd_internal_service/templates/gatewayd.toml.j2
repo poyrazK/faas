@@ -16,6 +16,13 @@ apps_domain = "{{ gatewayd_apps_domain }}"
 # listener; production binds the host bridge address on the reserved port so
 # the netns firewall can keep the path tenant-only.
 service_proxy_listen = "{{ gatewayd_service_proxy_listen | default('') }}"
+{% if gatewayd_service_proxy_https_listen | default('') | length > 0 %}
+# ADR-272: private guest service HTTPS. All paths use a dedicated service CA.
+service_proxy_https_listen = "{{ gatewayd_service_proxy_https_listen }}"
+service_proxy_tls_cert_path = "{{ gatewayd_service_proxy_tls_cert_path }}"
+service_proxy_tls_key_path = "{{ gatewayd_service_proxy_tls_key_path }}"
+service_proxy_tls_ca_path = "{{ gatewayd_service_proxy_tls_ca_path }}"
+{% endif %}
 
 # ADR-093 operator kill-switch. Default-on (true) so the rollout
 # reaches Hobby/Pro/Scale customers who didn't flip the per-app

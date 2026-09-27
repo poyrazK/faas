@@ -13,11 +13,13 @@
   credentials.
 - **Consequences:** Observations are fenced to the current secret version when
   written and are retained per runtime until the secret or runtime is deleted.
-  The list query includes only active runtimes that have reported. A missing
-  report is unknown, not evidence that a runtime lacks access; the result is
-  not a complete fleet denominator. A successful guest-init signal still does
-  not mean that the application applied the credentials. ADR-260 adds a
-  separate, explicitly application-owned self-attestation.
+  The follow-up roster query includes every active runtime authorized by the
+  deployment scope and `env_secrets` allowlist, even before it reports; a
+  missing report is unknown, not success. The response marks when this
+  denominator is complete and shows the persisted image opt-in as enabled,
+  disabled, or unknown for pre-migration deployments. A successful guest-init
+  signal still does not mean that the application applied the credentials.
+  ADR-260 adds a separate, explicitly application-owned self-attestation.
 - **Security:** The table and API contain only secret key/scope, opaque version,
   runtime ID, timestamps, and closed guest-init outcome fields. No plaintext or
   ciphertext is added to status responses or audit events.

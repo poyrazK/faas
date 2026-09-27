@@ -23,6 +23,14 @@ from ..models.secret_runtime_reload_observation_projection import (
     SecretRuntimeReloadObservationProjection,
     check_secret_runtime_reload_observation_projection,
 )
+from ..models.secret_runtime_reload_observation_reload_support import (
+    SecretRuntimeReloadObservationReloadSupport,
+    check_secret_runtime_reload_observation_reload_support,
+)
+from ..models.secret_runtime_reload_observation_runtime_state import (
+    SecretRuntimeReloadObservationRuntimeState,
+    check_secret_runtime_reload_observation_runtime_state,
+)
 from ..models.secret_runtime_reload_observation_signal import (
     SecretRuntimeReloadObservationSignal,
     check_secret_runtime_reload_observation_signal,
@@ -34,18 +42,26 @@ T = TypeVar("T", bound="SecretRuntimeReloadObservation")
 
 @_attrs_define
 class SecretRuntimeReloadObservation:
-    """Non-sensitive guest-init projection/signal outcome and optional application-owned reload acknowledgement for one
-    runtime. An application acknowledgement is a self-attestation, not independent verification.
+    """Non-sensitive active runtime target and optional guest-init projection/signal outcome plus application-owned reload
+    acknowledgement. An application acknowledgement is a self-attestation, not independent verification.
 
     """
 
     instance_id: str
-    """Runtime instance ID that reported this outcome."""
-    version: int
-    """Secret version observed by guest-init; compare with delivery_version to detect stale status."""
-    projection: SecretRuntimeReloadObservationProjection
-    signal: SecretRuntimeReloadObservationSignal
-    observed_at: datetime.datetime
+    """Authorized active runtime instance ID."""
+    runtime_state: SecretRuntimeReloadObservationRuntimeState
+    """Current active instance state."""
+    reload_support: SecretRuntimeReloadObservationReloadSupport
+    """Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted
+    metadata."""
+    reported: bool
+    """Whether this runtime has reported a guest-init outcome. False is unknown, never success."""
+    version: int | Unset = UNSET
+    """Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only
+    when reported is true."""
+    projection: SecretRuntimeReloadObservationProjection | Unset = UNSET
+    signal: SecretRuntimeReloadObservationSignal | Unset = UNSET
+    observed_at: datetime.datetime | Unset = UNSET
     error_code: SecretRuntimeReloadObservationErrorCode | Unset = UNSET
     application_ack_version: int | Unset = UNSET
     """Secret version the application claims to have applied; compare with delivery_version, independently of the
@@ -61,13 +77,25 @@ class SecretRuntimeReloadObservation:
     def to_dict(self) -> dict[str, Any]:
         instance_id = self.instance_id
 
+        runtime_state: str = self.runtime_state
+
+        reload_support: str = self.reload_support
+
+        reported = self.reported
+
         version = self.version
 
-        projection: str = self.projection
+        projection: str | Unset = UNSET
+        if not isinstance(self.projection, Unset):
+            projection = self.projection
 
-        signal: str = self.signal
+        signal: str | Unset = UNSET
+        if not isinstance(self.signal, Unset):
+            signal = self.signal
 
-        observed_at = self.observed_at.isoformat()
+        observed_at: str | Unset = UNSET
+        if not isinstance(self.observed_at, Unset):
+            observed_at = self.observed_at.isoformat()
 
         error_code: str | Unset = UNSET
         if not isinstance(self.error_code, Unset):
@@ -92,12 +120,19 @@ class SecretRuntimeReloadObservation:
         field_dict.update(
             {
                 "instance_id": instance_id,
-                "version": version,
-                "projection": projection,
-                "signal": signal,
-                "observed_at": observed_at,
+                "runtime_state": runtime_state,
+                "reload_support": reload_support,
+                "reported": reported,
             }
         )
+        if version is not UNSET:
+            field_dict["version"] = version
+        if projection is not UNSET:
+            field_dict["projection"] = projection
+        if signal is not UNSET:
+            field_dict["signal"] = signal
+        if observed_at is not UNSET:
+            field_dict["observed_at"] = observed_at
         if error_code is not UNSET:
             field_dict["error_code"] = error_code
         if application_ack_version is not UNSET:
@@ -116,13 +151,34 @@ class SecretRuntimeReloadObservation:
         d = dict(src_dict)
         instance_id = d.pop("instance_id")
 
-        version = d.pop("version")
+        runtime_state = check_secret_runtime_reload_observation_runtime_state(d.pop("runtime_state"))
 
-        projection = check_secret_runtime_reload_observation_projection(d.pop("projection"))
+        reload_support = check_secret_runtime_reload_observation_reload_support(d.pop("reload_support"))
 
-        signal = check_secret_runtime_reload_observation_signal(d.pop("signal"))
+        reported = d.pop("reported")
 
-        observed_at = datetime.datetime.fromisoformat(d.pop("observed_at"))
+        version = d.pop("version", UNSET)
+
+        _projection = d.pop("projection", UNSET)
+        projection: SecretRuntimeReloadObservationProjection | Unset
+        if isinstance(_projection, Unset):
+            projection = UNSET
+        else:
+            projection = check_secret_runtime_reload_observation_projection(_projection)
+
+        _signal = d.pop("signal", UNSET)
+        signal: SecretRuntimeReloadObservationSignal | Unset
+        if isinstance(_signal, Unset):
+            signal = UNSET
+        else:
+            signal = check_secret_runtime_reload_observation_signal(_signal)
+
+        _observed_at = d.pop("observed_at", UNSET)
+        observed_at: datetime.datetime | Unset
+        if isinstance(_observed_at, Unset):
+            observed_at = UNSET
+        else:
+            observed_at = datetime.datetime.fromisoformat(_observed_at)
 
         _error_code = d.pop("error_code", UNSET)
         error_code: SecretRuntimeReloadObservationErrorCode | Unset
@@ -158,6 +214,9 @@ class SecretRuntimeReloadObservation:
 
         secret_runtime_reload_observation = cls(
             instance_id=instance_id,
+            runtime_state=runtime_state,
+            reload_support=reload_support,
+            reported=reported,
             version=version,
             projection=projection,
             signal=signal,

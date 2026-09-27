@@ -102,6 +102,31 @@ func TestCmdCronsUpdate_HappyPath_Disable(t *testing.T) {
 	}
 }
 
+func TestCmdCronsUpdate_HappyPath_RetryPolicy(t *testing.T) {
+	var gotBody api.UpdateCronRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(api.CronResponse{
+			ID: cronsUpdateID, AppID: "a1", Kind: "command", Schedule: "*/5 * * * *",
+			Command: []string{"bin/maintenance"}, RetryMax: 3, RetryBackoffSeconds: 25, Enabled: true,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdCronsUpdate([]string{cronsUpdateID, "--retry-max", "3", "--retry-backoff-seconds", "25"}); code != 0 {
+		t.Fatalf("update retry policy = %d", code)
+	}
+	if gotBody.RetryMax == nil || *gotBody.RetryMax != 3 ||
+		gotBody.RetryBackoffSeconds == nil || *gotBody.RetryBackoffSeconds != 25 {
+		t.Fatalf("retry patch = %+v", gotBody)
+	}
+}
+
 func TestCmdCronsUpdate_HappyPath_PathEmpty(t *testing.T) {
 	var gotBody api.UpdateCronRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
