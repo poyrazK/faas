@@ -149,7 +149,7 @@
           </tbody>
         </table>
       {{else}}
-        <p class="muted">No invitations yet. Use the CLI (<code>faas orgs invite {{$d.Org.Slug}} &lt;email&gt;</code>) or the API (<code>POST /v1/orgs/{{$d.Org.Slug}}/members</code>) to create one.</p>
+        <p class="muted">No invitations yet. Use the CLI (<code>gregale orgs invite {{$d.Org.Slug}} &lt;email&gt;</code>) or the API (<code>POST /v1/orgs/{{$d.Org.Slug}}/members</code>) to create one.</p>
       {{end}}
 
       {{if eq $d.CallersRole "owner"}}

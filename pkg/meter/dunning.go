@@ -245,7 +245,11 @@ func (d *Dunning) parkAll(ctx context.Context, accountID string) {
 // so all account-lifecycle email content stays in one reviewable
 // file. Mirrors pkg/grace's relationship to pkg/mail.
 func (d *Dunning) sendSuspendedMail(ctx context.Context, acct state.Account, at time.Time) {
-	subject, body := mail.AccountSuspendedBody(acct.Email, at)
+	deletionAt := at.Add(DunningSuspendedToDeletedDuration - DunningPastDueToSuspendedDuration)
+	if acct.PastDueAt != nil {
+		deletionAt = acct.PastDueAt.Add(DunningSuspendedToDeletedDuration)
+	}
+	subject, body := mail.AccountSuspendedBody(acct.Email, at, deletionAt)
 	msg := mail.Message{
 		To:      []string{acct.Email},
 		Subject: subject, TextBody: body,
@@ -262,15 +266,15 @@ func (d *Dunning) sendSuspendedMail(ctx context.Context, acct state.Account, at 
 }
 
 // sendDeletionMail delivers the "your account is scheduled for hard
-// delete" email. Reuses the AccountDeletionPendingBody template — the
-// same shape as the customer-initiated flow because the customer sees
-// the same outcome (a hard delete in 30 days from the suspended step).
+// delete" email. It uses the non-payment template, not the
+// customer-initiated AccountDeletionPendingBody: the customer did not
+// ask for this deletion and can only stop it by paying.
 func (d *Dunning) sendDeletionMail(ctx context.Context, acct state.Account, at time.Time) {
 	pastDueAt := at // default for accounts that lost the original stamp
 	if acct.PastDueAt != nil {
 		pastDueAt = *acct.PastDueAt
 	}
-	subject, body := mail.AccountDeletionPendingBody(acct.Email, pastDueAt, at.Add(30*24*time.Hour))
+	subject, body := mail.AccountDeletionForNonPaymentBody(acct.Email, pastDueAt, at.Add(state.DeletionGraceDuration()))
 	msg := mail.Message{
 		To:      []string{acct.Email},
 		Subject: subject, TextBody: body,

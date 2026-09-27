@@ -524,7 +524,7 @@ func TestRender_Billing_PaidPlanShowsPortal(t *testing.T) {
 		}
 	}
 	// Free-tier fallback copy must NOT appear for a paid account.
-	if strings.Contains(body, "faas plan &lt;plan&gt;") {
+	if strings.Contains(body, "gregale plan &lt;plan&gt;") {
 		t.Errorf("paid-plan body should NOT contain Free-tier upgrade hint\n--- body ---\n%s", body)
 	}
 }
@@ -553,7 +553,7 @@ func TestRender_Billing_PaidPortalUnset(t *testing.T) {
 	if !strings.Contains(body, "billing portal is not available") {
 		t.Errorf("body missing operator-misconfig fallback\n--- body ---\n%s", body)
 	}
-	if !strings.Contains(body, "faas billing portal") {
+	if !strings.Contains(body, "gregale billing portal") {
 		t.Errorf("body missing CLI hint\n--- body ---\n%s", body)
 	}
 	if strings.Contains(body, "Open billing portal") {

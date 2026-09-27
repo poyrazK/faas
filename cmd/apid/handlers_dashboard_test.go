@@ -218,7 +218,7 @@ func TestDashboardHandler_AppsList(t *testing.T) {
 	// §8 contract: the empty-state CTA surfaces the deploy quickstart
 	// and the storage docs link. We don't pin "faas apps create" —
 	// that was the old §8 contradiction this PR fixes.
-	if !strings.Contains(body, "faas deploy --template=hello-node") {
+	if !strings.Contains(body, "gregale deploy --template=hello-node") {
 		t.Errorf("body missing deploy quickstart; got:\n%s", body)
 	}
 	if !strings.Contains(body, "https://gregale.dev/docs/storage") {

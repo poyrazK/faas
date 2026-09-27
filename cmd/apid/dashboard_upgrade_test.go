@@ -244,7 +244,7 @@ func TestDashboardBilling_NoProviderFallsBackToCLIHint(t *testing.T) {
 	if strings.Contains(body, `href="/dashboard/upgrade?plan=`) {
 		t.Errorf("no provider: billing page must not link to hosted checkout\nbody = %s", body)
 	}
-	if !strings.Contains(body, "faas plan") {
+	if !strings.Contains(body, "gregale plan") {
 		t.Errorf("no provider: billing page missing the CLI hint\nbody = %s", body)
 	}
 }

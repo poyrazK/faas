@@ -1,3 +1,4 @@
+// spec: §4.7
 package meter
 
 // Extra coverage for Dunning methods that RunOnce doesn't exercise
@@ -267,5 +268,48 @@ func TestDunning_SendDeletionMail_UsesAccountPastDueAt(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(msg.Subject), "delete") {
 		t.Errorf("subject = %q, want it to mention 'delete'", msg.Subject)
+	}
+}
+
+// TestDunning_MailsNameTheRightDeadlineAndRemedy — the suspension mail gave
+// the suspension time as the deletion deadline, and the deletion mail
+// reused the customer-initiated template ("You scheduled your account for
+// deletion … run account restore … change your password"), although a
+// dunning deletion can only be undone by paying.
+func TestDunning_MailsNameTheRightDeadlineAndRemedy(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	mailer := &localSender{}
+	d := newDunningWithMailer(store, mailer)
+
+	seeded := localSeedAccount(t, ctx, store)
+	pastDueAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.SetPastDueAtForTest(seeded.ID, pastDueAt); err != nil {
+		t.Fatalf("SetPastDueAtForTest: %v", err)
+	}
+	acct, err := store.AccountByID(ctx, seeded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d.sendSuspendedMail(ctx, acct, pastDueAt.Add(7*24*time.Hour+3*time.Hour))
+	if body := mailer.last().TextBody; !strings.Contains(body, "2026-07-22") {
+		t.Errorf("suspension mail must name the deletion date past_due_at+21d (2026-07-22):\n%s", body)
+	}
+
+	d.sendDeletionMail(ctx, acct, time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC))
+	msg := mailer.last()
+	if !strings.Contains(msg.Subject, "non-payment") {
+		t.Errorf("deletion subject = %q, want the non-payment reason", msg.Subject)
+	}
+	for _, want := range []string{"2026-07-01", "2026-08-21", "billing portal"} {
+		if !strings.Contains(msg.TextBody, want) {
+			t.Errorf("deletion mail missing %q:\n%s", want, msg.TextBody)
+		}
+	}
+	for _, forbidden := range []string{"You scheduled", "account restore", "change your password"} {
+		if strings.Contains(msg.TextBody, forbidden) {
+			t.Errorf("deletion mail contains %q:\n%s", forbidden, msg.TextBody)
+		}
 	}
 }
