@@ -3,6 +3,7 @@ ALTER TABLE deployments
     ADD COLUMN IF NOT EXISTS github_source_ref text,
     ADD COLUMN IF NOT EXISTS github_installation_id bigint;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -18,7 +19,8 @@ BEGIN
                  AND github_installation_id IS NOT NULL AND github_installation_id > 0)
             );
     END IF;
-END$$;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE deployments
