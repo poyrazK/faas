@@ -55,6 +55,7 @@ type Integration struct {
 	DailyRequestLimit         *int64
 	BindingDailyRequestLimits map[string]*int64
 	RequestTimeout            time.Duration
+	MaxRetries                int
 	ProviderAuthMode          string
 	CredentialSource          string
 	OwnerKind                 string
@@ -130,6 +131,9 @@ func (i Integration) Validate() error {
 	// the resolver at request time.
 	if i.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: request timeout must be positive", ErrInvalidIntegration)
+	}
+	if i.MaxRetries < 0 || i.MaxRetries > api.MaxOutboundRetries {
+		return fmt.Errorf("%w: max_retries must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetries)
 	}
 	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)

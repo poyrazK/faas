@@ -126,7 +126,8 @@ any attached app may use. This request-policy example fits the Pro plan:
     "rate_per_second": 50,
     "burst": 200,
     "max_in_flight": 100,
-    "request_timeout_ms": 2000
+    "request_timeout_ms": 2000,
+    "max_retries": 1
   }
 }
 ```
@@ -139,8 +140,8 @@ checked before it is stored and checked again on every new gateway connection;
 private, loopback, and special-use destinations are rejected. The customer's
 method/path policy is the integration-wide ceiling; each app binding can narrow
 it further. The optional `request_policy` configures rate, burst, concurrency,
-and upstream timeout for this integration. If omitted, it defaults to 10
-requests/second, burst 20, 10 concurrent requests, and 30 seconds. Customer
+upstream timeout, and retries for this integration. If omitted, it defaults to
+10 requests/second, burst 20, 10 concurrent requests, 30 seconds, and no retries. Customer
 integrations can be changed later with
 `PUT /v1/outbound/integrations/{id}/request-policy`; send the full
 `request_policy` object shown above. Updates affect subsequent admissions
@@ -152,12 +153,12 @@ allowed per account.
 
 The account plan bounds each integration's request policy:
 
-| Plan | Rate/sec | Burst | In flight | Timeout |
-| --- | ---: | ---: | ---: | ---: |
-| Free | 10 | 20 | 10 | 30 s |
-| Hobby | 20 | 100 | 50 | 60 s |
-| Pro | 100 | 500 | 250 | 120 s |
-| Scale | 500 | 2,000 | 1,000 | 300 s |
+| Plan | Rate/sec | Burst | In flight | Timeout | Max retries |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Free | 10 | 20 | 10 | 30 s | 2 |
+| Hobby | 20 | 100 | 50 | 60 s | 2 |
+| Pro | 100 | 500 | 250 | 120 s | 2 |
+| Scale | 500 | 2,000 | 1,000 | 300 s | 2 |
 
 These are configurable ceilings, not included usage. A plan downgrade clamps
 the effective policy on subsequent admissions and in API reads; upgrading later
@@ -272,9 +273,17 @@ The gateway forwards the request to the configured origin, preserving the
 path and query. It returns `429 application/problem+json` with `Retry-After`
 when the rate or concurrency budget is exhausted; inspect
 `X-Gregale-Outbound-Rejection` for `rate_limit` versus `concurrency_limit`.
-Callers decide whether and how to retry. Gregale makes no automatic retries,
-does not follow redirects, and does not transparently intercept encrypted
-egress. Provider responses (including provider `429`s) pass through.
+By default, Gregale makes one upstream attempt. A configured `max_retries`
+(0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
+for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
+`504` responses. Other methods and requests with bodies are never retried.
+Exponential backoff starts at 100 ms; a provider `Retry-After` value is
+honored but capped at one second. Every attempt shares the original
+request-timeout deadline. Retries stay inside one admission lease and consume
+one daily-budget unit; `outbound_upstream_requests_total` and its latency
+histogram record each actual provider attempt. The gateway does not follow
+redirects and does not transparently intercept encrypted egress. A final
+provider response (including `429`) passes through.
 If a provider response is interrupted or exceeds the gateway's body cap after
 headers have been sent, the gateway aborts the response stream. Callers must
 treat the resulting read error as an incomplete response, not a successful

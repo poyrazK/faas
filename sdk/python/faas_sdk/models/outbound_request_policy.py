@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="OutboundRequestPolicy")
 
 
@@ -17,6 +19,9 @@ class OutboundRequestPolicy:
     burst: int
     max_in_flight: int
     request_timeout_ms: int
+    max_retries: int | Unset = 0
+    """Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request
+    timeout and count as one admission."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +33,8 @@ class OutboundRequestPolicy:
 
         request_timeout_ms = self.request_timeout_ms
 
+        max_retries = self.max_retries
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -38,6 +45,8 @@ class OutboundRequestPolicy:
                 "request_timeout_ms": request_timeout_ms,
             }
         )
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
 
         return field_dict
 
@@ -52,11 +61,14 @@ class OutboundRequestPolicy:
 
         request_timeout_ms = d.pop("request_timeout_ms")
 
+        max_retries = d.pop("max_retries", UNSET)
+
         outbound_request_policy = cls(
             rate_per_second=rate_per_second,
             burst=burst,
             max_in_flight=max_in_flight,
             request_timeout_ms=request_timeout_ms,
+            max_retries=max_retries,
         )
 
         outbound_request_policy.additional_properties = d
