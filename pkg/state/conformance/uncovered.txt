@@ -136,7 +136,6 @@ CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
 CreateProjectEnvironmentApproval
-CreateProjectEnvironmentPromotion
 CreateQueueBinding
 CreateSession
 CreateSessionWithBinding
@@ -506,7 +505,6 @@ ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
 ProjectEnvironmentApprovalByToken
-ProjectEnvironmentPromotionByID
 ProjectEnvironmentPromotionByIdempotencyKey
 ProvisionedStaticEgressIPExists
 PruneAppLogDrainDeliveryAnalytics
