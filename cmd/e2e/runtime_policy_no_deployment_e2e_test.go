@@ -40,7 +40,7 @@ func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
 
 	// Request envelope, CPU, egress, and scheduler settings are all mutable on
 	// the app row. None changes the immutable image/deployment identity.
-	timeoutS, concurrency, rps, burst, cpu := 45, 3, 5, 10, 500
+	timeoutS, concurrency, rps, burst, cpu := 25, 3, 5, 10, 500
 	egress := []string{"203.0.113.0/24"}
 	scaling := &api.ScalingPolicy{ConcurrencyOverflow: api.ConcurrencyOverflowDrop}
 	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,

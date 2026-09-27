@@ -158,14 +158,14 @@ func TestHandleResumeConnExtension(t *testing.T) {
 }
 
 func TestHandleResumeConnWithAppCPULimit(t *testing.T) {
-	fds := []int{0, 0}
-	if err := unix.Pipe2(fds, unix.O_CLOEXEC); err != nil {
-		t.Fatalf("pipe2: %v", err)
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatalf("socketpair: %v", err)
 	}
-	readEnd := os.NewFile(uintptr(fds[0]), "guest-cpu-policy")
-	writeEnd := os.NewFile(uintptr(fds[1]), "host-cpu-policy")
-	defer func() { _ = readEnd.Close() }()
-	defer func() { _ = writeEnd.Close() }()
+	guestEnd := os.NewFile(uintptr(fds[0]), "guest-cpu-policy")
+	hostEnd := os.NewFile(uintptr(fds[1]), "host-cpu-policy")
+	defer func() { _ = guestEnd.Close() }()
+	defer func() { _ = hostEnd.Close() }()
 
 	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: 500})
 	if err != nil {
@@ -175,15 +175,15 @@ func TestHandleResumeConnWithAppCPULimit(t *testing.T) {
 	binary.BigEndian.PutUint32(msg[:4], VsockAppCPULimitMsgType)
 	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
 	copy(msg[8:], body)
-	go func() { _, _ = writeEnd.Write(msg) }()
+	go func() { _, _ = hostEnd.Write(msg) }()
 
 	var applied int
-	handleResumeConnWithExtension(readEnd, slog.Default(), nil, nil, func(cpu int) error {
+	handleResumeConnWithExtension(guestEnd, slog.Default(), nil, nil, func(cpu int) error {
 		applied = cpu
 		return nil
 	})
 	ack := []byte{0}
-	if _, err := writeEnd.Read(ack); err != nil {
+	if _, err := hostEnd.Read(ack); err != nil {
 		t.Fatalf("read ack: %v", err)
 	}
 	if ack[0] != VsockResumeAckOK || applied != 500 {

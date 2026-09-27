@@ -73,7 +73,7 @@ func (s *PgStore) ListPendingAppCPUPolicyTargets(ctx context.Context, appID stri
 	  AND ($1 = '' OR a.id = $1::uuid)
 	  AND (COALESCE(p.applied_revision, 0) < a.app_cpu_policy_revision
 	       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second'))
-	GROUP BY a.id, i.node_id, a.slug, a.app_cpu_policy_revision, a.cpu_millicores
+	GROUP BY a.id, i.node_id, a.slug, a.app_cpu_policy_revision, a.cpu_millicores, p.observed_at
 	ORDER BY COALESCE(p.observed_at, 'epoch'::timestamptz), a.id, i.node_id
 	LIMIT $3
 	`, appID, staleAfter.Seconds(), limit, api.DefaultAppCPUMillicores)

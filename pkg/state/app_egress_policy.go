@@ -94,7 +94,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	       COALESCE(p.applied_revision, 0) < a.egress_allowlist_revision
 	       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second')
 	  )
-	GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist
+	GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist, p.observed_at
 	ORDER BY COALESCE(p.observed_at, 'epoch'::timestamptz), a.id, i.node_id
 	LIMIT $3
 	`, appID, staleAfter.Seconds(), limit)
