@@ -178,6 +178,9 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			}
 
 			now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+			if err := e.store.SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, now.Add(-time.Hour), "rolling_out"); err != nil {
+				t.Fatal(err)
+			}
 			observation := canary.CircuitBreakerObservation{
 				Candidate: canary.HealthWindow{
 					Requests: 100, P95LatencyMS: 100,

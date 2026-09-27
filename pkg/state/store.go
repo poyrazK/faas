@@ -172,6 +172,10 @@ func sameDeploymentID(a, b string) bool {
 // loser result for concurrent meterd workers.
 var ErrCanaryStepConflict = errors.New("state: canary step conflict")
 
+// ErrCanaryStageNotElapsed means the current stage has not remained at its
+// configured traffic share for the required duration.
+var ErrCanaryStageNotElapsed = errors.New("state: canary stage duration has not elapsed")
+
 // ErrCanaryStateInvalid is returned when an automatic canary advance reaches
 // a deployment that is not an active, live rollout or whose persisted ladder
 // is internally inconsistent.
@@ -267,17 +271,23 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
 
-// CanaryAdvanceParams is the state-owned portion of one automatic canary
-// transition. The API layer resolves the next preset stage and supplies the
-// audit envelope; the store atomically applies the expected-step CAS,
-// traffic rebalance, rollout completion, and audit insert.
+// CanaryAdvanceParams is the state-owned portion of one canary stage
+// transition. The API layer resolves the preset stage and supplies the audit
+// envelope; worker calls may also require the durable lease and stage dwell.
+// The store applies all requested gates with the expected-step CAS, traffic
+// rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
 	ExpectedStep   int
 	TrafficPercent int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
-	Audit                   DeploymentAudit
+	// RequireCanaryStageElapsed makes the store compare the persisted stage
+	// start against its duration using the store clock before any traffic write.
+	// Customer-requested manual advances leave this disabled.
+	RequireCanaryStageElapsed bool
+	CanaryStageDuration       time.Duration
+	Audit                     DeploymentAudit
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test

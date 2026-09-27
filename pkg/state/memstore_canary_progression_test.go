@@ -160,6 +160,63 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMemStoreAdvanceCanaryRequiresElapsedStageDuration(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "canary-dwell@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "canary-dwell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:dwell-prior"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, ImageDigest: "sha256:dwell-candidate", CanaryPreset: "balanced",
+		CanaryStep: 0, CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	params := CanaryAdvanceParams{
+		ExpectedStep: 0, TrafficPercent: 10,
+		RequireSafeReleaseLease: true, RequireCanaryStageElapsed: true,
+		CanaryStageDuration: time.Minute,
+		Audit:               DeploymentAudit{Kind: DeployTrafficChanged, Actor: "meterd:canary_progression"},
+	}
+	if _, _, err := store.AdvanceCanary(ctx, candidate.ID, params); !errors.Is(err, ErrCanaryStageNotElapsed) {
+		t.Fatalf("advance before stage duration = %v, want ErrCanaryStageNotElapsed", err)
+	}
+	unchanged, err := store.DeploymentByID(ctx, candidate.ID)
+	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
+		t.Fatalf("early advance mutated candidate = %+v, err=%v", unchanged, err)
+	}
+	audits, err := store.ListDeploymentAudit(ctx, candidate.ID, 10)
+	if err != nil || len(audits) != 0 {
+		t.Fatalf("early advance audit rows = %d, err=%v; want none", len(audits), err)
+	}
+	if err := store.SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, time.Now().Add(-2*time.Minute), "rolling_out"); err != nil {
+		t.Fatal(err)
+	}
+	advanced, _, err := store.AdvanceCanary(ctx, candidate.ID, params)
+	if err != nil || advanced.CanaryStep != 1 || advanced.TrafficPercent != 10 {
+		t.Fatalf("advance after stage duration = %+v, err=%v", advanced, err)
+	}
+}
+
 func TestMemStoreFirstCanaryCompletesWithoutResidualRevision(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

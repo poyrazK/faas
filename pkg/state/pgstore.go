@@ -7443,12 +7443,15 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return d, nil
 }
 
-// AdvanceCanary atomically commits one automatic canary step. The expected
+// AdvanceCanary atomically commits one canary step. The expected
 // step is checked while the deployment row is locked; traffic redistribution,
 // terminal promotion, sibling supersede, and the audit row all share the same
 // transaction.
 func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
 	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if params.RequireCanaryStageElapsed && params.CanaryStageDuration <= 0 {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -7518,17 +7521,23 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := rows.Err(); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
 	}
-	if params.RequireSafeReleaseLease {
-		var checkedAt time.Time
-		if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&checkedAt); err != nil {
+	// Use the database clock both for the gate and the new stage anchor. That
+	// keeps future worker checks correct when APID and meterd host clocks drift.
+	var now time.Time
+	if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		if params.RequireSafeReleaseLease {
 			return Deployment{}, 0, fmt.Errorf("%w: read safe release worker lease clock: %w", ErrSafeReleaseLeaseUnavailable, err)
 		}
-		if !safeReleaseLeaseExpiresAt.After(checkedAt) {
-			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
-		}
+		return Deployment{}, 0, fmt.Errorf("state: read canary transition clock: %w", err)
+	}
+	if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
+		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+	}
+	if params.RequireCanaryStageElapsed && (dep.CanaryStepStartedAt == nil ||
+		now.Sub(*dep.CanaryStepStartedAt) < params.CanaryStageDuration) {
+		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 
-	now := time.Now().UTC()
 	newStep := params.ExpectedStep + 1
 	terminal := newStep >= dep.CanaryTotalSteps-1
 	persistedStep := newStep
@@ -8943,7 +8952,10 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		return fmt.Errorf("state: mark canary live iterate siblings: %w", err)
 	}
 
-	now := time.Now().UTC()
+	var now time.Time
+	if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
+		return fmt.Errorf("state: mark canary live read database clock: %w", err)
+	}
 	if len(siblings) == 0 && dep.TrafficPercent != 100 {
 		// A first deployment has no residual bucket. Complete it at
 		// 100% rather than exposing an invalid one-row split.

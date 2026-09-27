@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -166,6 +167,23 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 		t.Fatalf("worker advance without lease audit = %d rows, err=%v", len(audit), err)
 	}
 	if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, internalPath, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("Authorization", "Bearer "+canaryToken)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	unchanged, err = e.store.DeploymentByID(ctx, canary.ID)
+	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
+		t.Fatalf("early worker advance mutated canary = %+v, err=%v", unchanged, err)
+	}
+	audit, err = e.store.ListDeploymentAudit(ctx, canary.ID, 10)
+	if err != nil || len(audit) != 0 {
+		t.Fatalf("early worker advance audit = %d rows, err=%v", len(audit), err)
+	}
+	if err := e.store.SetDeploymentCanaryState(ctx, canary.ID, "balanced", 0, 4, time.Now().Add(-24*time.Hour), "rolling_out"); err != nil {
 		t.Fatal(err)
 	}
 	client := api.NewInternalSafeDeployClient(server.URL, canaryToken, actionToken)

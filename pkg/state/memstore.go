@@ -4452,12 +4452,15 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 	return d, nil
 }
 
-// AdvanceCanary applies one automatic canary transition under the same
+// AdvanceCanary applies one canary transition under the same
 // critical section as its traffic rebalance and audit insert. The expected
 // step is a compare-and-swap: concurrent meterd workers cannot both advance
 // the same row.
 func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
 	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if params.RequireCanaryStageElapsed && params.CanaryStageDuration <= 0 {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
 	m.mu.Lock()
@@ -4483,6 +4486,10 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	d.RolloutState = rolloutState
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
+	}
+	if params.RequireCanaryStageElapsed && (d.CanaryStepStartedAt == nil ||
+		time.Since(*d.CanaryStepStartedAt) < params.CanaryStageDuration) {
+		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 	depUUID, err := uuid.Parse(d.ID)
 	if err != nil {
