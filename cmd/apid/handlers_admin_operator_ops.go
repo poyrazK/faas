@@ -183,10 +183,15 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 // account and gives schedd an immediate suspension drain hint. The scheduler's
 // periodic account-status reconciliation is the durable fallback if a
 // notification is missed.
+// notifyAccountLifecycle emits app_changed for every app of the account.
+// gatewayd caches each app's account status and plan with no TTL and
+// re-reads them only on app_changed, so every change to either must
+// fan out here — otherwise the edge keeps answering from the old state
+// (a customer who paid stayed behind a 402 indefinitely).
 func (s *server) notifyAccountLifecycle(ctx context.Context, accountID, kind string) {
 	apps, err := s.store.ListApps(ctx, accountID)
 	if err != nil {
-		s.log.Warn("operator account lifecycle: list apps", "account", accountID, "kind", kind, "err", err)
+		s.log.Warn("account lifecycle: list apps", "account", accountID, "kind", kind, "err", err)
 		return
 	}
 	for _, app := range apps {
@@ -194,9 +199,20 @@ func (s *server) notifyAccountLifecycle(ctx context.Context, accountID, kind str
 			"kind": kind, "account_id": accountID, "app_id": app.ID,
 		})
 		if err := s.notif.Notify(ctx, db.NotifyAppChanged, string(payload)); err != nil {
-			s.log.Warn("operator account lifecycle: notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
+			s.log.Warn("account lifecycle: notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
 		}
 	}
+}
+
+// setAccountPlan writes the plan and, when it changed, tells the edge.
+func (s *server) setAccountPlan(ctx context.Context, acct state.Account, plan api.Plan) error {
+	if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+		return err
+	}
+	if acct.Plan != plan {
+		s.notifyAccountLifecycle(ctx, acct.ID, "account_plan_changed")
+	}
+	return nil
 }
 
 func (s *server) obsAppDetail(w http.ResponseWriter, r *http.Request, acct state.Account) {

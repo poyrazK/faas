@@ -226,6 +226,7 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 			}
 			return acct, api.ErrCapacity("could not mark for deletion")
 		}
+		s.notifyAccountLifecycle(ctx, acct.ID, "account_deleted_pending")
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
 		if err != nil {
 			return acct, api.ErrCapacity("could not refresh account")
@@ -361,6 +362,7 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 			"Grace expired",
 			"the 30-day grace window has lapsed; restore is no longer possible")
 	}
+	s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
 	fresh, err := s.store.AccountByID(ctx, acct.ID)
 	if err != nil {
 		return acct, api.ErrCapacity("could not refresh account")

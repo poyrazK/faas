@@ -56,7 +56,7 @@ func (s *server) applySubscriptionEnded(ctx context.Context, ev billing.Event, a
 		}
 	}
 	if acct.Plan != api.PlanFree {
-		if err := s.store.UpdateAccountPlan(ctx, acct.ID, api.PlanFree); err != nil {
+		if err := s.setAccountPlan(ctx, acct, api.PlanFree); err != nil {
 			return fmt.Errorf("downgrade plan to free: %w", err)
 		}
 	}

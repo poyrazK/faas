@@ -4401,7 +4401,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		writeJSON(w, http.StatusAccepted, response)
 		return
 	}
-	if err := s.store.UpdateAccountPlan(r.Context(), acct.ID, plan); err != nil {
+	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update plan"))
 		return
 	}
@@ -4976,7 +4976,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store plan: %w", err)
 			}
 		}
@@ -5060,7 +5060,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store payment plan: %w", err)
 			}
 		}
@@ -5087,6 +5087,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 					"account", acct.ID, "err", err)
 				return fmt.Errorf("restore account: %w", err)
 			} else {
+				s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
 				// Status just flipped back to active. Send the
 				// recovery email (spec §171 "All transitions emailed").
 				// payment_succeeded is naturally idempotent — the
@@ -5112,7 +5113,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store updated plan: %w", err)
 			}
 		}
