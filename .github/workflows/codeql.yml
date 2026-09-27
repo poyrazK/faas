@@ -35,7 +35,13 @@ jobs:
       matrix:
         include:
           - language: actions
+            queries: security-and-quality
           - language: go
+            queries: security-and-quality
+            # The Go suppression query has kind `alert-suppression`, so it
+            # must be added as a query-pack query rather than a local query
+            # in the alert-only suite.
+            packs: codeql/go-queries:AlertSuppression.ql
 
     steps:
       - name: Checkout
@@ -50,7 +56,8 @@ jobs:
           languages: ${{ matrix.language }}
           # 'security-and-quality' adds lint-style checks (unpinned
           # dependencies, etc.) on top of pure security queries.
-          queries: security-and-quality
+          queries: ${{ matrix.queries }}
+          packs: ${{ matrix.packs }}
           # Issue #995 / ADR-121 — paths-ignore lives in the
           # separate config file referenced below; see the file's
           # header comment for rationale.
