@@ -4991,8 +4991,8 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			return err
 		}
 	case billing.EventPaymentFailed:
-		// Apps keep serving; deploys blocked at the auth gate (handlers
-		// reading acct.Active() refuse writes). 7-day dunning timer
+		// Apps keep serving; deploys are blocked by admitAccountDeploy
+		// and the githubd bridge (Account.MayDeploy). 7-day dunning timer
 		// (M7 dunning state machine) lives in pkg/meter.Dunning.
 		//
 		// We route through MarkDunningStep(active → past_due) instead

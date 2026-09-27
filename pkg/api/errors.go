@@ -2573,6 +2573,15 @@ func ErrAccountSuspended() *Problem {
 		WithDocs(docsBase + "/billing")
 }
 
+// ErrDeploysBlocked is returned when an account that may not deploy (spec
+// §4.7: past_due and later) starts a deployment. Its apps keep whatever
+// the dunning ladder allows; only new deploys are refused.
+func ErrDeploysBlocked() *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
+		"Deploys blocked", "new deploys are blocked until the outstanding payment is resolved: "+dashboardBillingURL).
+		WithDocs(docsBase + "/billing")
+}
+
 // ErrExportRateLimited is returned by GET /v1/account/export when
 // the account has already served an export inside the 24h rate
 // window (issue #755 / PR-5.1). 429 + Retry-After: the wire carries

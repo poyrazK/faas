@@ -130,3 +130,41 @@ func TestRestore_DunningDeletionSaysPay(t *testing.T) {
 		t.Fatalf("status = %s; a refused restore must leave the deletion in place", got.Status)
 	}
 }
+
+// TestPastDueAccount_CannotDeploy — spec §4.7: past_due means "apps run,
+// deploys blocked", and both dunning emails promise it. Account.Active
+// admits past_due so its apps keep serving, and no deploy path checked
+// anything stricter: a past_due account deployed with a 202.
+func TestPastDueAccount_CannotDeploy(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := do("POST", "/v1/apps", `{"slug":"pd-app","runtime":"node22"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("create app = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatal(err)
+	}
+	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`
+	rec := do("POST", "/v1/apps/pd-app/deployments", deploy)
+	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), api.CodeBillingPastDue) {
+		t.Fatalf("past_due deploy = %d %s, want 402 %s", rec.Code, rec.Body.String(), api.CodeBillingPastDue)
+	}
+	// Reads and serving continue during the grace period.
+	if rec := do("GET", "/v1/apps/pd-app", ""); rec.Code != http.StatusOK {
+		t.Fatalf("past_due app read = %d, want 200", rec.Code)
+	}
+	// Paying lifts the block.
+	if err := env.store.UpdateAccountStatus(t.Context(), env.acct.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do("POST", "/v1/apps/pd-app/deployments", deploy); rec.Code != http.StatusAccepted {
+		t.Fatalf("deploy after paying = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+}

@@ -99,9 +99,13 @@ func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error
 
 func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Account, error) {
 	if s.account.ID != "" {
-		return s.account, nil
+		acct := s.account
+		if acct.Status == "" {
+			acct.Status = state.AccountActive
+		}
+		return acct, nil
 	}
-	return state.Account{ID: id, Plan: api.PlanFree}, nil
+	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive}, nil
 }
 
 func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
@@ -939,5 +943,36 @@ func TestEnqueueBuild_AnnotationsFallbackToPusher(t *testing.T) {
 	}
 	if created.Kind != state.DeploymentKindGitHub {
 		t.Errorf("dep.Kind = %q, want %q (push → github)", created.Kind, state.DeploymentKindGitHub)
+	}
+}
+
+// TestEnqueueBuild_RefusesAccountThatMayNotDeploy — the push path had no
+// account-status check: a past_due, suspended, or deletion-pending
+// account kept building (and deploying) on every GitHub push, although
+// the API refuses the same deploy (spec §4.7).
+func TestEnqueueBuild_RefusesAccountThatMayNotDeploy(t *testing.T) {
+	for _, st := range []state.AccountStatus{state.AccountPastDue, state.AccountSuspended, state.AccountDeletedPending} {
+		t.Run(string(st), func(t *testing.T) {
+			accountID, appID := "acct-1", "app-1"
+			stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+			path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, "abc123"), []byte("tiny-tar"))
+			store := &bridgeStubStore{
+				app:           state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
+				account:       state.Account{ID: accountID, Plan: api.PlanHobby, Status: st},
+				deployRateErr: errors.New("deploy rate must not be consumed for a refused deploy"),
+			}
+			g := &githubdBridge{store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+				spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: accountID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+				SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+			})
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("EnqueueBuild for a %s account: err = %v, want FailedPrecondition", st, err)
+			}
+			if len(store.updateStatusCalls) != 0 {
+				t.Fatalf("a refused push touched deployment status: %v", store.updateStatusCalls)
+			}
+		})
 	}
 }

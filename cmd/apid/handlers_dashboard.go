@@ -1696,8 +1696,8 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:        keyItems,
-		ShowDelete:  view.Status != state.AccountDeletedPending,
+		Keys:       keyItems,
+		ShowDelete: view.Status != state.AccountDeletedPending,
 		// A deletion dunning scheduled is cancelled by paying, not by
 		// the Restore button (the store refuses it).
 		ShowRestore: view.Status == state.AccountDeletedPending && view.PastDueAt == nil,

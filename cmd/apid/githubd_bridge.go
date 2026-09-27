@@ -270,6 +270,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	// A push must not deploy for an account the API would refuse:
+	// this path had no account-status check, so suspended and
+	// deletion-pending accounts kept building on every push.
+	if !acct.MayDeploy() {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", acct.ID, acct.Status)
+	}
 	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)

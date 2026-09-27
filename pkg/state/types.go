@@ -540,6 +540,11 @@ type Account struct {
 // Active reports whether the account may deploy (not suspended/deleted).
 func (a Account) Active() bool { return a.Status == AccountActive || a.Status == AccountPastDue }
 
+// MayDeploy reports whether the account may start new deployments. A
+// past_due account keeps serving during its grace period but cannot deploy
+// (spec §4.7), and a suspended or deleted_pending account cannot either.
+func (a Account) MayDeploy() bool { return a.Status == AccountActive }
+
 // EmailVerified reports whether the account has proved control of its email.
 func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }
 

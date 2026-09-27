@@ -61,6 +61,13 @@ func (s *server) getAccountRateLimits(w http.ResponseWriter, r *http.Request, ac
 }
 
 func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	// Spec §4.7: past_due blocks deploys. Account.Active admits
+	// past_due (its apps keep serving), and nothing else refused a
+	// deploy, so a customer who stopped paying could keep deploying.
+	if !acct.MayDeploy() {
+		api.WriteProblem(w, api.ErrDeploysBlocked())
+		return false
+	}
 	now := timeNow().UTC()
 	snapshot, err := s.consumeAccountDeployRate(r.Context(), acct, now)
 	if err != nil {
