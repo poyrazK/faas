@@ -136,36 +136,21 @@ func (s *PgStore) ListManagedRealtimeChannelRouteNodeIDs(ctx context.Context, en
 		return nil, false, nil
 	}
 	var disabled bool
+	var nodeIDs []string
+	// Read the overflow marker and rows in one statement snapshot. Overflow
+	// inserts its marker and clears routes in one transaction; separate reads
+	// could otherwise observe the marker before the clear and then miss every
+	// route during the transition.
 	if err := s.pool.QueryRow(ctx, `
 		select exists (
-		  select 1 from managed_realtime_channel_route_overflow where endpoint_id = $1
-		)`, endpointID).Scan(&disabled); err != nil {
-		return nil, false, fmt.Errorf("state: check realtime channel route index: %w", err)
-	}
-	if disabled {
-		return nil, true, nil
-	}
-	rows, err := s.pool.Query(ctx, `
-		select distinct node_id::text
-		  from managed_realtime_channel_routes
-		 where endpoint_id = $1 and channel = $2
-		 order by node_id::text`, endpointID, channel)
-	if err != nil {
+		         select 1 from managed_realtime_channel_route_overflow where endpoint_id = $1
+	       ),
+	       coalesce(array_agg(distinct routes.node_id::text order by routes.node_id::text), '{}'::text[])
+	  from managed_realtime_channel_routes routes
+	 where routes.endpoint_id = $1 and routes.channel = $2`, endpointID, channel).Scan(&disabled, &nodeIDs); err != nil {
 		return nil, false, fmt.Errorf("state: list realtime channel route nodes: %w", err)
 	}
-	defer rows.Close()
-	nodeIDs := make([]string, 0)
-	for rows.Next() {
-		var nodeID string
-		if err := rows.Scan(&nodeID); err != nil {
-			return nil, false, fmt.Errorf("state: scan realtime channel route node: %w", err)
-		}
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("state: iterate realtime channel route nodes: %w", err)
-	}
-	return nodeIDs, false, nil
+	return nodeIDs, disabled, nil
 }
 
 func (m *MemStore) AddManagedRealtimeChannelRoutes(_ context.Context, routes []ManagedRealtimeChannelRoute) error {

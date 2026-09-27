@@ -1,3 +1,5 @@
+-- filename: 20260928101629428_managed_realtime_channel_routes.sql
+
 -- Shared, conservative channel-to-node hints for managed realtime publish.
 -- A stale route only adds a node publish; incomplete snapshots never remove
 -- rows, and oversized endpoints fall back to full fleet broadcast.
