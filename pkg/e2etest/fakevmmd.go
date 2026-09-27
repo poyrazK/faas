@@ -133,10 +133,11 @@ type FakeVMMD struct {
 	// liveInstances / instanceStats back the Stats RPC: schedd's view of what
 	// is resident on the node. Kept in boot order so a test reading Stats sees
 	// a stable sequence.
-	liveInstances  []string
-	instanceStats  map[string]*vmmdpb.InstanceStats
-	frameworkReady []*vmmdpb.FrameworkReadyRequest
-	egressUpdates  []*vmmdpb.UpdateEgressAllowlistRequest
+	liveInstances   []string
+	instanceStats   map[string]*vmmdpb.InstanceStats
+	frameworkReady  []*vmmdpb.FrameworkReadyRequest
+	egressUpdates   []*vmmdpb.UpdateEgressAllowlistRequest
+	cpuLimitUpdates []*vmmdpb.UpdateAppCPULimitRequest
 
 	// unreachable makes the liveness RPCs fail, which is how a node that has
 	// died looks to schedd. Backdating last_heartbeat_at is not enough on its
@@ -617,6 +618,23 @@ func (s *FakeVMMD) EgressUpdates() []*vmmdpb.UpdateEgressAllowlistRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]*vmmdpb.UpdateEgressAllowlistRequest(nil), s.egressUpdates...)
+}
+
+// UpdateAppCPULimit receives the live per-app CPU quota schedd fans out
+// after an app policy change. The fake acknowledges the update so reconciliation
+// can record the revision as applied, and retains the request for assertions.
+func (s *FakeVMMD) UpdateAppCPULimit(_ context.Context, req *vmmdpb.UpdateAppCPULimitRequest) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	s.mu.Lock()
+	s.cpuLimitUpdates = append(s.cpuLimitUpdates, proto.Clone(req).(*vmmdpb.UpdateAppCPULimitRequest))
+	s.mu.Unlock()
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
+}
+
+// CPULimitUpdates returns the live CPU policy pushes the fake received, in order.
+func (s *FakeVMMD) CPULimitUpdates() []*vmmdpb.UpdateAppCPULimitRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.UpdateAppCPULimitRequest(nil), s.cpuLimitUpdates...)
 }
 
 // FrameworkReadyCalls returns the readiness signals the fake received.

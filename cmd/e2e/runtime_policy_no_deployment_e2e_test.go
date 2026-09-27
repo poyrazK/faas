@@ -137,19 +137,41 @@ func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
 	if got := runtimePolicyDeploymentIDs(t, f); len(got) != 2 || got[0] != deploymentIDs[0] || got[1] != deploymentIDs[1] {
 		t.Fatalf("final deployment set = %v, want original set %v", got, deploymentIDs)
 	}
-	statusBody, status := doReq(t, f.h, f.key, http.MethodGet,
-		"/v1/apps/"+f.app.Slug+"/policy/status?wait=10s", nil)
-	if status != http.StatusOK {
-		t.Fatalf("get runtime policy status: status=%d body=%s", status, statusBody)
+	policyStatus := waitForRuntimePolicyStatus(t, f, 10*time.Second)
+	cpuUpdateFound := false
+	for _, update := range f.vmmd.CPULimitUpdates() {
+		if update.GetAppId() == f.app.ID && update.GetRevision() == policyStatus.CPULimit.DesiredRevision && update.GetCpuMillicores() == int32(cpu) {
+			cpuUpdateFound = true
+			break
+		}
 	}
-	var policyStatus api.RuntimePolicyStatusResponse
-	if err := json.Unmarshal(statusBody, &policyStatus); err != nil {
-		t.Fatalf("decode runtime policy status: %v body=%s", err, statusBody)
+	if !cpuUpdateFound {
+		t.Fatalf("vmmd did not receive the active CPU policy revision: status=%+v updates=%v", policyStatus.CPULimit, f.vmmd.CPULimitUpdates())
 	}
-	if policyStatus.RequestPolicy.State != "active" || policyStatus.EdgeRules.State != "active" ||
-		policyStatus.ResponseCache.State != "active" || policyStatus.EgressAllowlist.State != "active" ||
-		policyStatus.CPULimit.State != "active" || policyStatus.SchedulerScaling.State != "active" {
-		t.Fatalf("runtime policies not fully acknowledged: %+v", policyStatus)
+}
+
+func waitForRuntimePolicyStatus(t *testing.T, f *normalPathFixture, timeout time.Duration) api.RuntimePolicyStatusResponse {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	path := "/v1/apps/" + f.app.Slug + "/policy/status"
+	var last api.RuntimePolicyStatusResponse
+	for {
+		body, status := doReq(t, f.h, f.key, http.MethodGet, path, nil)
+		if status != http.StatusOK {
+			t.Fatalf("get runtime policy status: status=%d body=%s", status, body)
+		}
+		if err := json.Unmarshal(body, &last); err != nil {
+			t.Fatalf("decode runtime policy status: %v body=%s", err, body)
+		}
+		if last.RequestPolicy.State == "active" && last.EdgeRules.State == "active" &&
+			last.ResponseCache.State == "active" && last.EgressAllowlist.State == "active" &&
+			last.CPULimit.State == "active" && last.SchedulerScaling.State == "active" {
+			return last
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("runtime policies not fully acknowledged within %s: %+v", timeout, last)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 }
 
