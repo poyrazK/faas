@@ -401,6 +401,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "bounded parallel callback recovery; values above 32 are capped"},
 	{Name: "FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "maximum persistent callback retry delay; defaults to one minute and is capped at one hour"},
 	{Name: "FAAS_REALTIME_CALLBACK_TIMEOUT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_CHANNEL_ROUTING_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "enable recipient-aware realtime publish only after every apid replica runs a route-writing version"},
 	{Name: "FAAS_REALTIME_HEALTH_LISTEN", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEARTBEAT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_AGE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

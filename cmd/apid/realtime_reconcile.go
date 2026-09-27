@@ -18,9 +18,110 @@ import (
 const managedRealtimeEndpointReconcileInterval = 30 * time.Second
 
 const (
-	managedRealtimeOwnerReapInterval = time.Minute
-	managedRealtimeOwnerReapBatch    = 1000
+	managedRealtimeOwnerReapInterval             = time.Minute
+	managedRealtimeOwnerReapBatch                = 1000
+	managedRealtimeChannelRouteReconcileInterval = 30 * time.Second
 )
+
+// reconcileManagedRealtimeChannelRoutes seeds the shared routing directory
+// from each active realtime node's authoritative live-connection snapshot.
+// Rows are additive: stale positives are safe, while removing a row during a
+// concurrent subscribe could make a publish skip a live recipient.
+func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedRealtimeOwner) error {
+	if owner == nil || !owner.channelRoutingEnabled || owner.channelRoutes == nil || owner.nodes == nil {
+		return nil
+	}
+	nodes, err := owner.nodes.ActiveComputeNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("list active nodes for realtime channel routing: %w", err)
+	}
+	active := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		active[node.ID] = struct{}{}
+	}
+	owner.retainChannelRoutesReady(active)
+
+	var errs []error
+	for _, node := range nodes {
+		op, err := owner.nodeOperator(node)
+		if err != nil {
+			owner.setChannelRoutesReady(node.ID, false)
+			errs = append(errs, fmt.Errorf("node %s operator: %w", node.ID, err))
+			continue
+		}
+		connections, err := op.Connections(ctx)
+		if err != nil {
+			owner.setChannelRoutesReady(node.ID, false)
+			errs = append(errs, fmt.Errorf("node %s connections: %w", node.ID, err))
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		routes := make([]state.ManagedRealtimeChannelRoute, 0)
+		for _, connection := range connections {
+			if connection.EndpointID == "" {
+				continue
+			}
+			for _, channel := range connection.Channels {
+				if !realtime.ValidateChannel(channel) {
+					err = fmt.Errorf("invalid channel %q in node snapshot", channel)
+					break
+				}
+				routes = append(routes, state.ManagedRealtimeChannelRoute{
+					EndpointID: connection.EndpointID,
+					Channel:    channel,
+					NodeID:     node.ID,
+				})
+			}
+			if err != nil {
+				break
+			}
+		}
+		if err == nil {
+			err = owner.channelRoutes.AddManagedRealtimeChannelRoutes(ctx, routes)
+		}
+		if err != nil {
+			owner.setChannelRoutesReady(node.ID, false)
+			errs = append(errs, fmt.Errorf("node %s route snapshot: %w", node.ID, err))
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		owner.setChannelRoutesReady(node.ID, true)
+	}
+	return errors.Join(errs...)
+}
+
+// runManagedRealtimeChannelRouteReconciler warms and periodically refreshes
+// route hints. Publish stays fleet-wide for any node whose snapshot fails.
+func (s *server) runManagedRealtimeChannelRouteReconciler(ctx context.Context) {
+	owner, ok := s.realtimeOwner.(*leasedRealtimeOwner)
+	if !ok || !owner.channelRoutingEnabled || owner.channelRoutes == nil {
+		return
+	}
+	log := s.log
+	if log == nil {
+		log = slog.Default()
+	}
+	runPass := func() {
+		if err := s.reconcileManagedRealtimeChannelRoutes(ctx, owner); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("managed realtime channel route reconciliation pass failed", "err", err)
+		}
+	}
+	runPass()
+	ticker := time.NewTicker(managedRealtimeChannelRouteReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runPass()
+		}
+	}
+}
 
 // reconcileManagedRealtimeEndpoints projects every durable endpoint row onto
 // the configured realtime registrar. Disabled rows are included so a missed

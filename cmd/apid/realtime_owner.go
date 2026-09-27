@@ -129,6 +129,10 @@ type leasedRealtimeOwner struct {
 	local                     realtimeNodeOperator
 	log                       *slog.Logger
 	ops                       *wire.OpsMetrics
+	channelRoutingEnabled     bool
+	channelRoutes             state.ManagedRealtimeChannelRouteStore
+	channelRoutesReadyMu      sync.RWMutex
+	channelRoutesReady        map[string]bool
 	clientFor                 func(state.ComputeNode) (realtimeNodeOperator, error)
 	leaseTTL                  time.Duration
 	publishWarnMu             sync.Mutex
@@ -145,7 +149,7 @@ func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, 
 	return &leasedRealtimeOwner{
 		registry: registry, nodes: nodes, localNodeID: localNodeID,
 		local: local, log: log, leaseTTL: managedRealtimeOwnerLeaseTTL,
-		clientFor: defaultRealtimeNodeOperator,
+		clientFor: defaultRealtimeNodeOperator, channelRoutesReady: make(map[string]bool),
 	}
 }
 
@@ -247,13 +251,13 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 	return o.discover(ctx, endpointID, connectionID)
 }
 
-func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(realtimeNodeOperator) error) error {
+func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, realtimeNodeOperator) error) error {
 	for attempt := 0; attempt < 2; attempt++ {
 		lease, op, err := o.resolve(ctx, endpointID, connectionID)
 		if err != nil {
 			return err
 		}
-		err = fn(op)
+		err = fn(lease, op)
 		if err == nil {
 			if closeAfter {
 				_ = o.registry.ReleaseManagedRealtimeConnectionOwner(ctx, connectionID, lease.LeaseToken)
@@ -273,29 +277,43 @@ func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointI
 }
 
 func (o *leasedRealtimeOwner) Send(ctx context.Context, endpointID, connectionID string, message realtime.Message) error {
-	return o.connectionOperation(ctx, endpointID, connectionID, false, func(op realtimeNodeOperator) error {
+	return o.connectionOperation(ctx, endpointID, connectionID, false, func(_ state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
 		return op.Send(ctx, endpointID, connectionID, message)
 	})
 }
 
 func (o *leasedRealtimeOwner) CloseConnection(ctx context.Context, endpointID, connectionID, reason string) error {
-	return o.connectionOperation(ctx, endpointID, connectionID, true, func(op realtimeNodeOperator) error {
+	return o.connectionOperation(ctx, endpointID, connectionID, true, func(_ state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
 		return op.CloseConnection(ctx, endpointID, connectionID, reason)
 	})
 }
 
 func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connectionID, channel string) error {
-	return o.connectionOperation(ctx, endpointID, connectionID, false, func(op realtimeNodeOperator) error {
+	return o.connectionOperation(ctx, endpointID, connectionID, false, func(lease state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
+		if o.channelRoutes != nil {
+			if err := o.channelRoutes.AddManagedRealtimeChannelRoutes(ctx, []state.ManagedRealtimeChannelRoute{{
+				EndpointID: endpointID, Channel: channel, NodeID: lease.NodeID,
+			}}); err != nil && o.channelRoutingEnabled {
+				// A new subscriber is never accepted while the shared routing
+				// hint cannot be committed; another apid may already have marked
+				// this node's snapshot complete.
+				return fmt.Errorf("realtime: record channel route before subscribe: %w", err)
+			}
+		}
 		return op.Subscribe(ctx, endpointID, connectionID, channel)
 	})
 }
 
 func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, connectionID, channel string) error {
-	return o.connectionOperation(ctx, endpointID, connectionID, false, func(op realtimeNodeOperator) error {
+	return o.connectionOperation(ctx, endpointID, connectionID, false, func(_ state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
 		return op.Unsubscribe(ctx, endpointID, connectionID, channel)
 	})
 }
 
+// Publish routes to known subscriber nodes when shared channel hints are
+// ready, while retaining fleet broadcast for unready nodes or degraded index
+// reads. A node that is down is tolerated when at least one recipient accepts
+// the request; if every recipient is unavailable the caller receives a 503.
 func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	result, err := o.PublishWithStatus(ctx, endpointID, channel, message)
 	return result.Queued, err
@@ -319,6 +337,13 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 		}
 		o.observePublish(outcome, started)
 		return result, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	if len(nodes) > 0 {
+		nodes = o.publishRecipients(ctx, endpointID, channel, nodes)
+		if len(nodes) == 0 {
+			o.observePublish("no_subscribers", started)
+			return 0, nil
+		}
 	}
 	// Keep one result per node so aggregation and error selection stay in
 	// fleet order even when node requests finish in a different order.
@@ -418,6 +443,53 @@ dispatch:
 		lastErr = errors.New("no active realtime nodes accepted publish")
 	}
 	return result, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+}
+
+// publishRecipients narrows fanout only for nodes whose connection snapshot
+// completed on this apid. An unready node is always sent the message, while
+// stale positive route rows merely cause extra publishes.
+func (o *leasedRealtimeOwner) publishRecipients(ctx context.Context, endpointID, channel string, active []state.ComputeNode) []state.ComputeNode {
+	if !o.channelRoutingEnabled || o.channelRoutes == nil {
+		return active
+	}
+	nodeIDs, disabled, err := o.channelRoutes.ListManagedRealtimeChannelRouteNodeIDs(ctx, endpointID, channel)
+	if err != nil || disabled {
+		return active
+	}
+	targets := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		targets[nodeID] = struct{}{}
+	}
+	o.channelRoutesReadyMu.RLock()
+	defer o.channelRoutesReadyMu.RUnlock()
+	recipients := make([]state.ComputeNode, 0, len(active))
+	for _, node := range active {
+		_, hasSubscriber := targets[node.ID]
+		if hasSubscriber || !o.channelRoutesReady[node.ID] {
+			recipients = append(recipients, node)
+		}
+	}
+	return recipients
+}
+
+func (o *leasedRealtimeOwner) setChannelRoutesReady(nodeID string, ready bool) {
+	o.channelRoutesReadyMu.Lock()
+	defer o.channelRoutesReadyMu.Unlock()
+	if ready {
+		o.channelRoutesReady[nodeID] = true
+	} else {
+		delete(o.channelRoutesReady, nodeID)
+	}
+}
+
+func (o *leasedRealtimeOwner) retainChannelRoutesReady(active map[string]struct{}) {
+	o.channelRoutesReadyMu.Lock()
+	defer o.channelRoutesReadyMu.Unlock()
+	for nodeID := range o.channelRoutesReady {
+		if _, ok := active[nodeID]; !ok {
+			delete(o.channelRoutesReady, nodeID)
+		}
+	}
 }
 
 func managedRealtimePublishNodeOutcome(err error) string {

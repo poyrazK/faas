@@ -218,6 +218,13 @@ func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
 }
 
+// realtimeChannelRoutingEnabledFromEnv opts into recipient-aware fanout only
+// after every apid replica has the route-writing implementation deployed.
+// The default preserves full fleet broadcast.
+func realtimeChannelRoutingEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_REALTIME_CHANNEL_ROUTING_ENABLED")) == "1"
+}
+
 // appTaskAPIEnabledFromEnv is the independent fail-closed public admission
 // gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
 func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
@@ -705,6 +712,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
+		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
@@ -1626,6 +1634,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
 		resolver.ops = ops
+		resolver.channelRoutingEnabled = realtimeChannelRoutingEnabledFromEnv(deps.getenv)
+		resolver.channelRoutes, _ = store.(state.ManagedRealtimeChannelRouteStore)
+		if resolver.channelRoutingEnabled && resolver.channelRoutes == nil {
+			log.Warn("apid: realtime channel routing requested but state store has no route directory; retaining fleet broadcast")
+		}
 		// The fleet adapter owns both public operations and endpoint
 		// reconciliation. It retains the local Unix fast path when present.
 		srv.realtimeOwner = resolver

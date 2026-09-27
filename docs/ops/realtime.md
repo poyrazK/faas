@@ -84,8 +84,18 @@ active realtime nodes. In a single-box install this is the local
 `FAAS_REALTIME_SOCKET`; in a multi-node install apid uses each node's private
 `gateway_target_url` and the `gatewayd-internal` control proxy. Connection
 operations are routed through the leased owner directory, while publish is
-broadcast to active nodes. The daemon-socket example below remains useful for
-node-local bootstrap and recovery tooling.
+broadcast to active nodes by default. New apid versions also record shared
+PostgreSQL channel-to-node hints while routing is disabled. After every apid
+replica has been upgraded, set
+`FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
+nodes with subscribers. Each apid seeds its readiness from
+live connection snapshots; a node receives full-fleet fallback traffic until
+its snapshot succeeds. Directory read errors and endpoints over the 10,000
+route-row cap also fall back to full broadcast; once an endpoint reaches that
+cap, it stays on broadcast until the endpoint is deleted. Stale route rows can
+add an unneeded node request, but cannot exclude a subscriber. The
+daemon-socket example below remains useful for node-local bootstrap and
+recovery tooling.
 
 ## Zero-downtime static bearer rotation
 
@@ -173,8 +183,9 @@ message on nodes that already accepted it.
 
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
-`unavailable`, and `canceled`; `managed_realtime_publish_node` uses `ok`,
-`endpoint_missing`, `error`, and `canceled`. Durations are available through
+`no_subscribers`, `unavailable`, and `canceled`;
+`managed_realtime_publish_node` uses `ok`, `endpoint_missing`, `error`, and
+`canceled`. Durations are available through
 `apid_op_duration_seconds`. These metrics intentionally omit endpoint, channel,
 and node identifiers. A node's `ok` outcome means its local queue accepted the
 publish; it does not confirm delivery to a client. Partial-success warnings
