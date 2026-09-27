@@ -4750,7 +4750,7 @@ paths:
       tags: [platform-tenants]
       operationId: createPlatformTenantAccessToken
       summary: Mint a tenant-bound, explicitly scoped self-service credential.
-      description: The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+      description: The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service scopes. Credential management additionally requires the owner to enable a scope allowlist and per-consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
       requestBody:
         required: true
         content:
@@ -4806,6 +4806,74 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantSelfActivationResponse' }
+
+  /v1/platform-tenant-self/consumers:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfConsumers
+      summary: List this tenant's linked consumers for credential management.
+      description: Requires platform_tenant:credentials:read. The tenant is derived from the bearer. The response omits app IDs and account-owned details.
+      responses:
+        '200':
+          description: Linked consumer identities belonging only to the caller's tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumersResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/credentials:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfCredentials
+      summary: List this tenant's linked consumer-key metadata.
+      description: Requires platform_tenant:credentials:read. Plaintext and hashes are never returned.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum keys in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the next page.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: One bounded page of redacted key metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/credentials/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenantSelfCredentials
+      summary: Reconcile this tenant's downstream consumer keys.
+      description: Requires platform_tenant:credentials:manage. New keys must use an owner-allowed scope and fit the owner's active-key cap; revocation remains available even after delegation is disabled. Submit only client-generated SHA-256 hashes, never plaintext. Changes are atomic, account/tenant identity comes from the bearer, and responses contain metadata only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsRequest' }
+      responses:
+        '200':
+          description: Credential metadata after atomic tenant-scoped reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The owner disabled delegation, a requested scope is not permitted, or the per-consumer active-key ceiling would be exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/platform-tenant-self/hostnames:
     post:
@@ -23844,6 +23912,25 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantSelfActivationSurfaceResponse' }
 
+    PlatformTenantSelfConsumerResponse:
+      description: Minimal linked-consumer identity used to target tenant-managed credentials; app IDs and account metadata are omitted.
+      type: object
+      required: [consumer_id, external_ref, name, status]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, revoked] }
+
+    PlatformTenantSelfConsumersResponse:
+      description: The linked consumer identities for the caller's tenant only.
+      type: object
+      required: [consumers]
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
       type: object
@@ -24094,7 +24181,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -24108,7 +24195,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -24125,7 +24212,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }

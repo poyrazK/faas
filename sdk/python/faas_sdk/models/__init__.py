@@ -1112,6 +1112,9 @@ from .platform_tenant_self_activation_surface_response_cert_state import (
     PlatformTenantSelfActivationSurfaceResponseCertState,
 )
 from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
+from .platform_tenant_self_consumer_response import PlatformTenantSelfConsumerResponse
+from .platform_tenant_self_consumer_response_status import PlatformTenantSelfConsumerResponseStatus
+from .platform_tenant_self_consumers_response import PlatformTenantSelfConsumersResponse
 from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
 from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
 from .platform_tenant_self_hostname_response import PlatformTenantSelfHostnameResponse
@@ -2833,6 +2836,9 @@ __all__ = (
     "PlatformTenantSelfActivationSurfaceResponse",
     "PlatformTenantSelfActivationSurfaceResponseCertState",
     "PlatformTenantSelfActivationSurfaceResponseStatus",
+    "PlatformTenantSelfConsumerResponse",
+    "PlatformTenantSelfConsumerResponseStatus",
+    "PlatformTenantSelfConsumersResponse",
     "PlatformTenantSelfDeploymentResponse",
     "PlatformTenantSelfDeploymentResponseStatus",
     "PlatformTenantSelfHostnameResponse",

@@ -26,7 +26,7 @@ const (
 	// Keeping a distinct, registered prefix lets secret scanners identify
 	// leaked CI credentials without confusing them with account keys.
 	DeployTokenPrefix = "fp_deploy_"
-	// PlatformTenantAccessTokenPrefix marks a read-only control-plane bearer
+	// PlatformTenantAccessTokenPrefix marks a tenant-bound self-service bearer
 	// bound to one platform tenant. It is accepted only on tenant-self routes.
 	PlatformTenantAccessTokenPrefix = "fp_tenant_"
 	// apiKeyRandomBytes is the entropy behind each key.
@@ -390,10 +390,12 @@ const (
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
-	ScopePlatformTenantUsageRead       = "platform_tenant:usage:read"
-	ScopePlatformTenantStatementsRead  = "platform_tenant:statements:read"
-	ScopePlatformTenantActivationRead  = "platform_tenant:activation:read"
-	ScopePlatformTenantHostnamesManage = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantUsageRead         = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead    = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead    = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
+	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -552,8 +554,10 @@ var (
 	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
 	ScopesGithubManageSurface          = []string{ScopeAdmin, ScopeGithubManage}
 	// Tenant-self scopes are intentionally not satisfied by account admin keys.
-	ScopesPlatformTenantUsageReadSurface       = []string{ScopePlatformTenantUsageRead}
-	ScopesPlatformTenantStatementsReadSurface  = []string{ScopePlatformTenantStatementsRead}
-	ScopesPlatformTenantActivationReadSurface  = []string{ScopePlatformTenantActivationRead}
-	ScopesPlatformTenantHostnamesManageSurface = []string{ScopePlatformTenantHostnamesManage}
+	ScopesPlatformTenantUsageReadSurface         = []string{ScopePlatformTenantUsageRead}
+	ScopesPlatformTenantStatementsReadSurface    = []string{ScopePlatformTenantStatementsRead}
+	ScopesPlatformTenantActivationReadSurface    = []string{ScopePlatformTenantActivationRead}
+	ScopesPlatformTenantHostnamesManageSurface   = []string{ScopePlatformTenantHostnamesManage}
+	ScopesPlatformTenantCredentialsReadSurface   = []string{ScopePlatformTenantCredentialsRead}
+	ScopesPlatformTenantCredentialsManageSurface = []string{ScopePlatformTenantCredentialsManage}
 )

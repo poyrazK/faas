@@ -239,7 +239,7 @@ type PlatformTenantDetailResponse struct {
 }
 
 // CreatePlatformTenantAccessTokenRequest asks the platform owner to mint a
-// read-only credential for one downstream tenant. Omitted expiration defaults
+// tenant-bound credential with selected self-service scopes. Omitted expiration defaults
 // to 90 days; callers may choose any future time up to 365 days away.
 type CreatePlatformTenantAccessTokenRequest struct {
 	Name      string     `json:"name"`

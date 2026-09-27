@@ -110,6 +110,12 @@ Only pre-linked surfaces are eligible. The hostname must match an owner-configur
 
 The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. No other writes, invoice handoff, activity, or account management are exposed by these tenant-bound scopes. See [ADR-247](adr/247-platform-tenant-self-service.md) and [ADR-284](adr/284-platform-tenant-self-activation.md).
 
+## Let downstream customers rotate their own consumer keys
+
+An owner can separately grant `platform_tenant:credentials:read` for linked-consumer and key metadata, and `platform_tenant:credentials:manage` for key creation, rotation, and revocation. The owner must first enable the tenant's [credential delegation policy](adr/288-platform-tenant-credential-policy.md); it restricts key scopes and the active-key ceiling per consumer. The manage scope never overrides that policy, and revocation stays available after issuance is disabled.
+
+`GET /v1/platform-tenant-self/consumers` returns only consumer IDs, external references, names, and statuses for the bearer tenant. `GET /v1/platform-tenant-self/credentials?limit=100&offset=0` returns key metadata without hashes or plaintext. Use `POST /v1/platform-tenant-self/credentials/apply` with the same hash-only bundle format as the owner API. Generate each key locally, store its plaintext in your own secret manager before sending the prefix and SHA-256 hash, and use the returned metadata to confirm the result. The tenant ID comes from the bearer; IDs linked to another tenant are not accepted. See [ADR-317](adr/317-platform-tenant-self-service-credentials.md).
+
 ## Control customer requests across apps
 
 After every gateway is upgraded, set an optional shared admission budget:

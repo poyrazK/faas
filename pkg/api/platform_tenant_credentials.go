@@ -26,6 +26,19 @@ type PlatformTenantCredentialPolicyResponse struct {
 	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
 }
 
+// PlatformTenantSelfConsumerResponse omits app IDs and account-owned details;
+// the tenant only needs its stable consumer ID to manage credentials.
+type PlatformTenantSelfConsumerResponse struct {
+	ConsumerID  string `json:"consumer_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+}
+
+type PlatformTenantSelfConsumersResponse struct {
+	Consumers []PlatformTenantSelfConsumerResponse `json:"consumers"`
+}
+
 // PlatformTenantCredentialIntent contains only public key metadata and the
 // SHA-256 digest of a client-generated key. Never send the plaintext key.
 type PlatformTenantCredentialIntent struct {
@@ -115,4 +128,30 @@ func (c *Client) SetPlatformTenantCredentialPolicy(ctx context.Context, tenantID
 	var out PlatformTenantCredentialPolicyResponse
 	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/credential-policy"
 	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+func (c *Client) ListPlatformTenantSelfConsumers(ctx context.Context) (PlatformTenantSelfConsumersResponse, error) {
+	var out PlatformTenantSelfConsumersResponse
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/consumers", nil, &out)
+}
+
+func (c *Client) ListPlatformTenantSelfCredentials(ctx context.Context, limit, offset int) (PlatformTenantCredentialsResponse, error) {
+	var out PlatformTenantCredentialsResponse
+	path := "/v1/platform-tenant-self/credentials"
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) ApplyPlatformTenantSelfCredentials(ctx context.Context, req ApplyPlatformTenantCredentialsRequest) (ApplyPlatformTenantCredentialsResponse, error) {
+	var out ApplyPlatformTenantCredentialsResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/credentials/apply", req, &out)
 }

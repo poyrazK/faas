@@ -8,6 +8,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func lockPlatformTenantCredentialPolicy(ctx context.Context, tx pgx.Tx, accountID, tenantID string) (PlatformTenantCredentialPolicy, error) {
+	policy, err := scanPlatformTenantCredentialPolicy(tx.QueryRow(ctx, `
+		select allowed_scopes, max_keys_per_consumer, updated_at
+		from platform_tenant_credential_policies
+		where account_id = $1::uuid and tenant_id = $2::uuid
+		for update`, accountID, tenantID), tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlatformTenantCredentialPolicy{TenantID: tenantID, AllowedScopes: []string{}}, nil
+	}
+	return policy, err
+}
+
 func scanPlatformTenantCredentialPolicy(row pgx.Row, tenantID string) (PlatformTenantCredentialPolicy, error) {
 	var policy PlatformTenantCredentialPolicy
 	if err := row.Scan(&policy.AllowedScopes, &policy.MaxKeysPerConsumer, &policy.UpdatedAt); err != nil {

@@ -113,8 +113,8 @@ type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
-// PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, read-only
-// control-plane bearer without widening the account API-key vocabulary.
+// PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, explicitly
+// scoped self-service bearer without widening account API-key capabilities.
 type PlatformTenantAccessTokenAuthenticator interface {
 	AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error)
 }
@@ -530,13 +530,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		}
 
 		// (1d) Downstream platform-tenant access bearer. This format is
-		// accepted only for the explicit read-only self-service route set;
+		// accepted only for the explicit tenant self-service route set;
 		// all regular account routes remain unreachable even if they happen
 		// to use a compatible scope in the future.
 		if api.ValidPlatformTenantAccessTokenFormat(tok) {
 			if !platformTenantSelfPathAllowed(r.Method, r.URL.Path) {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-					"Platform tenant token scope is limited", "this credential can only access its tenant's self-service read endpoints"))
+					"Platform tenant token scope is limited", "this credential can only access its tenant's explicitly scoped self-service endpoints"))
 				return
 			}
 			authenticator, ok := m.Authn.(PlatformTenantAccessTokenAuthenticator)
@@ -768,8 +768,11 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if method == http.MethodPost && suffix == "hostnames" {
 		return true
 	}
+	if method == http.MethodPost && suffix == "credentials/apply" {
+		return true
+	}
 	if method == http.MethodGet {
-		if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" {
+		if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" || suffix == "consumers" || suffix == "credentials" {
 			return true
 		}
 		return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")

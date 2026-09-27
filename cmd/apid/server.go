@@ -1418,7 +1418,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantCredentialPolicy)))
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantCredentialPolicy))))
 	// Downstream tenant bearers are distinct, tenant-bound capabilities with
-	// explicit read or narrow hostname-management scopes. Plaintext is returned
+	// explicit narrow self-service scopes. Plaintext is returned
 	// once and never cached.
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listPlatformTenantAccessTokens))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createPlatformTenantAccessToken))))
@@ -1445,6 +1445,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/platform-tenant-self/hostnames", s.authLimited(s.requireScope(api.ScopesPlatformTenantHostnamesManageSurface...)(s.createPlatformTenantSelfHostname)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.listPlatformTenantSelfStatements)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements/{statement_id}", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.getPlatformTenantSelfStatement)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/consumers", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfConsumers)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/credentials", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfCredentials)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/credentials/apply", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsManageSurface...)(s.applyPlatformTenantSelfCredentials)))
 	// Durable statement events belong to the cross-app platform tenant, not
 	// any one app's webhook namespace. Each delivery remains inspectable and
 	// replayable through the same signed webhook ledger.

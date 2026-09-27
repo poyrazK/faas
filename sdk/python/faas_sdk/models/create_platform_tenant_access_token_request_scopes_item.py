@@ -2,6 +2,8 @@ from typing import Literal
 
 CreatePlatformTenantAccessTokenRequestScopesItem = Literal[
     "platform_tenant:activation:read",
+    "platform_tenant:credentials:manage",
+    "platform_tenant:credentials:read",
     "platform_tenant:hostnames:manage",
     "platform_tenant:statements:read",
     "platform_tenant:usage:read",
@@ -11,6 +13,8 @@ CREATE_PLATFORM_TENANT_ACCESS_TOKEN_REQUEST_SCOPES_ITEM_VALUES: set[
     CreatePlatformTenantAccessTokenRequestScopesItem
 ] = {
     "platform_tenant:activation:read",
+    "platform_tenant:credentials:manage",
+    "platform_tenant:credentials:read",
     "platform_tenant:hostnames:manage",
     "platform_tenant:statements:read",
     "platform_tenant:usage:read",
