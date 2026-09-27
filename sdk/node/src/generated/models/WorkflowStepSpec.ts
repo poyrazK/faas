@@ -43,6 +43,10 @@ export type WorkflowStepSpec = {
    */
   timeout?: string;
   on_timeout?: string;
+  /**
+   * Name of the handler step to run after this step reaches a terminal failure.
+   */
+  on_failure?: string;
   retry?: (WorkflowRetrySpec | null);
 };
 

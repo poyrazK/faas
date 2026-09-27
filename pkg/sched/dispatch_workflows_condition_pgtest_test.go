@@ -1,3 +1,4 @@
+// adr: 265 — bounded durable condition polling, timeout, and attempt exhaustion.
 package sched_test
 
 import (

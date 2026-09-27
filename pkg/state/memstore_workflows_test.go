@@ -62,7 +62,7 @@ func TestMemStore_WorkflowConditionDeadlineWinsLateCheckerResult(t *testing.T) {
 	if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+	if _, err := store.StartWorkflowStep(ctx, run.ID, "await", 1, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(15 * time.Millisecond)

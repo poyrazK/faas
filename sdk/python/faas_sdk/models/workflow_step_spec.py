@@ -50,6 +50,8 @@ class WorkflowStepSpec:
     """Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day
     suffixes such as `7d`."""
     on_timeout: str | Unset = UNSET
+    on_failure: str | Unset = UNSET
+    """Name of the handler step to run after this step reaches a terminal failure."""
     retry: None | Unset | WorkflowRetrySpec = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -96,6 +98,8 @@ class WorkflowStepSpec:
 
         on_timeout = self.on_timeout
 
+        on_failure = self.on_failure
+
         retry: dict[str, Any] | None | Unset
         if isinstance(self.retry, Unset):
             retry = UNSET
@@ -133,6 +137,8 @@ class WorkflowStepSpec:
             field_dict["timeout"] = timeout
         if on_timeout is not UNSET:
             field_dict["on_timeout"] = on_timeout
+        if on_failure is not UNSET:
+            field_dict["on_failure"] = on_failure
         if retry is not UNSET:
             field_dict["retry"] = retry
 
@@ -202,6 +208,8 @@ class WorkflowStepSpec:
 
         on_timeout = d.pop("on_timeout", UNSET)
 
+        on_failure = d.pop("on_failure", UNSET)
+
         def _parse_retry(data: object) -> None | Unset | WorkflowRetrySpec:
             if data is None:
                 return data
@@ -232,6 +240,7 @@ class WorkflowStepSpec:
             wait_for_condition=wait_for_condition,
             timeout=timeout,
             on_timeout=on_timeout,
+            on_failure=on_failure,
             retry=retry,
         )
 

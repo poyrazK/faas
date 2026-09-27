@@ -96,7 +96,7 @@ func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
 	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionReady {
 		t.Fatalf("initial condition = %#v, %v", got, err)
 	}
-	if err := s.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+	if _, err := s.StartWorkflowStep(ctx, run.ID, "await", 1, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	u.Checked = true
@@ -120,7 +120,7 @@ func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
 	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionReady {
 		t.Fatalf("due check = %#v, %v", got, err)
 	}
-	if err := s.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 2, nil, nil); err != nil {
+	if _, err := s.StartWorkflowStep(ctx, run.ID, "await", 2, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	u.Checked, u.Done = true, true
@@ -144,7 +144,7 @@ func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
 	if err := s.CreateWorkflowSteps(ctx, other.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkWorkflowStepStatus(ctx, other.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+	if _, err := s.StartWorkflowStep(ctx, other.ID, "await", 1, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	u = state.WorkflowConditionUpdate{RunID: other.ID, StepName: "await", Checked: true, Result: json.RawMessage(`{"done":false}`), Interval: time.Hour, Timeout: time.Hour, MaxAttempts: 1, OnTimeout: true}
@@ -164,7 +164,7 @@ func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
 	if err := s.CreateWorkflowSteps(ctx, late.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkWorkflowStepStatus(ctx, late.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+	if _, err := s.StartWorkflowStep(ctx, late.ID, "await", 1, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE workflow_steps SET started_at = now() - interval '1 hour' WHERE run_id = $1 AND step_name = 'await'`, late.ID); err != nil {

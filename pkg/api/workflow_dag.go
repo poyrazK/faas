@@ -487,7 +487,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	for _, step := range spec.Steps {
 		refs, err := workflowInputReferences(step.Input, stepNames)
 		if err != nil {
-			return nil, fmt.Errorf("%w in step %q: %v", ErrWorkflowInputTemplateInvalid, step.Name, err)
+			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
 		}
 		dependencies := make(map[string]struct{}, len(step.DependsOn))
 		for _, dep := range step.DependsOn {

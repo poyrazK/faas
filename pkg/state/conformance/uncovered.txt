@@ -144,7 +144,6 @@ CreateSessionWithBinding
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
 CreateUploadSession
-CreateWorkflowRun
 CronByID
 CurrentMonthOverageCents
 DailyCostCents

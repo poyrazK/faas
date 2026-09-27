@@ -1,3 +1,6 @@
+// adr: 262 — timers are durable and release compute while parked.
+// adr: 263 — callback waits resume without polling.
+// adr: 265 — condition checks persist bounded attempts and their next wake.
 package sched_test
 
 import (

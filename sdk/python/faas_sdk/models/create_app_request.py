@@ -124,6 +124,8 @@ class CreateAppRequest:
     version_affinity_managed_cookie: bool | Unset = False
     """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
     version_affinity_cookie; omitted uses false."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -260,6 +262,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -353,6 +357,8 @@ class CreateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -524,6 +530,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
 
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -589,6 +597,7 @@ class CreateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

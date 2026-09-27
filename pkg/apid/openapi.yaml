@@ -26456,6 +26456,9 @@ components:
           example: "30s"
         on_timeout:
           type: string
+        on_failure:
+          type: string
+          description: "Name of the handler step to run after this step reaches a terminal failure."
         retry:
           oneOf:
             - $ref: '#/components/schemas/WorkflowRetrySpec'
