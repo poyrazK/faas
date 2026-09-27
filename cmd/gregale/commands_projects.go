@@ -691,10 +691,22 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	for _, reason := range preview.BlockingReasons {
 		_, _ = fmt.Fprintf(osStdout, "  blocked: %s\n", reason)
 	}
+	printPromotionReleaseSet("source", preview.FromReleaseSet)
+	printPromotionReleaseSet("target", preview.ToReleaseSet)
 	for _, change := range preview.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
 	}
 	return 0
+}
+
+func printPromotionReleaseSet(label string, release *api.ProjectReleaseSetResponse) {
+	if release == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "  %s release set: %s (%d workloads)\n", label, release.ID, len(release.Members))
+	for _, member := range release.Members {
+		_, _ = fmt.Fprintf(osStdout, "    %s -> %s\n", member.AppID, member.DeploymentID)
+	}
 }
 
 func cmdProjectsEnvironmentsList(args []string) int {

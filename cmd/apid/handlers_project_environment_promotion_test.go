@@ -449,8 +449,9 @@ func TestProjectEnvironmentPromotionPreviewBlocksActiveReleaseGraphs(t *testing.
 					activeDeploymentID = deployment.ID
 				}
 			}
-			if _, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, activeEnvironment, 1800,
-				[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: activeDeploymentID}}); err != nil {
+			release, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, activeEnvironment, 1800,
+				[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: activeDeploymentID}})
+			if err != nil {
 				t.Fatal(err)
 			}
 
@@ -467,6 +468,27 @@ func TestProjectEnvironmentPromotionPreviewBlocksActiveReleaseGraphs(t *testing.
 			wantReason := "environment \"" + activeEnvironment + "\" has active release set"
 			if preview.CanPromote || len(preview.BlockingReasons) != 1 || !strings.Contains(preview.BlockingReasons[0], wantReason) {
 				t.Fatalf("active release graph was not reported as a promotion blocker: %+v", preview)
+			}
+			graph := preview.FromReleaseSet
+			if activeEnvironment == "production" {
+				graph = preview.ToReleaseSet
+			}
+			if graph == nil || graph.ID != release.ID || !graph.Active || len(graph.Members) != 1 ||
+				graph.Members[0].AppID != app.ID || graph.Members[0].DeploymentID != activeDeploymentID {
+				t.Fatalf("promotion preview release graph = %+v, want release %s with deployment %s", graph, release.ID, activeDeploymentID)
+			}
+			wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+			if err != nil {
+				t.Fatalf("decode promotion token: %v", err)
+			}
+			fromReleaseID, toReleaseID := "", ""
+			if activeEnvironment == "staging" {
+				fromReleaseID = release.ID
+			} else {
+				toReleaseID = release.ID
+			}
+			if wire.FromReleaseSetID != fromReleaseID || wire.ToReleaseSetID != toReleaseID {
+				t.Fatalf("promotion token release ids = %q/%q, want %q/%q", wire.FromReleaseSetID, wire.ToReleaseSetID, fromReleaseID, toReleaseID)
 			}
 		})
 	}

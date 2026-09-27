@@ -29610,6 +29610,14 @@ components:
         changes:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionChange' }
+        from_release_set:
+          allOf:
+            - $ref: '#/components/schemas/ProjectReleaseSetResponse'
+          description: Immutable active release graph snapshot for the source environment, when present.
+        to_release_set:
+          allOf:
+            - $ref: '#/components/schemas/ProjectReleaseSetResponse'
+          description: Immutable active release graph snapshot for the target environment, when present.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         promotion_token: { type: string, minLength: 1 }
 

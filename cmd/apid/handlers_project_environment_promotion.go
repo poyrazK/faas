@@ -22,24 +22,28 @@ import (
 // execute and approval paths must recompute the current preview before using
 // it.
 type projectEnvironmentPromotionTokenWire struct {
-	Version         int    `json:"v"`
-	AccountID       string `json:"account_id"`
-	ProjectID       string `json:"project_id"`
-	ProjectSlug     string `json:"project_slug"`
-	FromEnvironment string `json:"from_environment"`
-	ToEnvironment   string `json:"to_environment"`
-	FromConfigHash  string `json:"from_config_hash"`
-	ToConfigHash    string `json:"to_config_hash"`
-	PromotionHash   string `json:"promotion_hash"`
-	IssuedAt        int64  `json:"issued_at"`
+	Version          int    `json:"v"`
+	AccountID        string `json:"account_id"`
+	ProjectID        string `json:"project_id"`
+	ProjectSlug      string `json:"project_slug"`
+	FromEnvironment  string `json:"from_environment"`
+	ToEnvironment    string `json:"to_environment"`
+	FromConfigHash   string `json:"from_config_hash"`
+	ToConfigHash     string `json:"to_config_hash"`
+	FromReleaseSetID string `json:"from_release_set_id,omitempty"`
+	ToReleaseSetID   string `json:"to_release_set_id,omitempty"`
+	PromotionHash    string `json:"promotion_hash"`
+	IssuedAt         int64  `json:"issued_at"`
 }
 
 type projectEnvironmentPromotionPlan struct {
-	ProjectID string
-	Preview   api.ProjectEnvironmentPromotionPreviewResponse
-	Apps      map[string]state.App
-	Sources   map[string]state.Deployment
-	Targets   map[string]state.Deployment
+	ProjectID      string
+	Preview        api.ProjectEnvironmentPromotionPreviewResponse
+	Apps           map[string]state.App
+	Sources        map[string]state.Deployment
+	Targets        map[string]state.Deployment
+	FromReleaseSet *state.ProjectReleaseSet
+	ToReleaseSet   *state.ProjectReleaseSet
 }
 
 func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -101,27 +105,33 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 
 	changes := make([]api.ProjectEnvironmentPromotionChange, 0, len(apps))
 	blockingReasons := make([]string, 0)
-	fromReleaseSetID, problem := s.activeProjectEnvironmentReleaseSetID(ctx, acct.ID, project.ID, fromEnvironment)
+	fromReleaseSet, problem := s.activeProjectEnvironmentReleaseSet(ctx, acct.ID, project.ID, fromEnvironment)
 	if problem != nil {
 		return plan, problem
 	}
-	toReleaseSetID, problem := s.activeProjectEnvironmentReleaseSetID(ctx, acct.ID, project.ID, toEnvironment)
+	toReleaseSet, problem := s.activeProjectEnvironmentReleaseSet(ctx, acct.ID, project.ID, toEnvironment)
 	if problem != nil {
 		return plan, problem
+	}
+	if fromReleaseSet.ID != "" {
+		plan.FromReleaseSet = &fromReleaseSet
+	}
+	if toReleaseSet.ID != "" {
+		plan.ToReleaseSet = &toReleaseSet
 	}
 	// This promotion flow copies per-workload live deployments. It cannot yet
 	// select the source graph's exact members or atomically activate/restore a
 	// target graph. Do not claim a graph-backed environment is promotable until
 	// the execution path can preserve those release-set semantics.
-	if fromReleaseSetID != "" {
+	if fromReleaseSet.ID != "" {
 		blockingReasons = append(blockingReasons, fmt.Sprintf(
 			"source environment %q has active release set %s; release-graph promotion is not available yet",
-			fromEnvironment, fromReleaseSetID))
+			fromEnvironment, fromReleaseSet.ID))
 	}
-	if toReleaseSetID != "" {
+	if toReleaseSet.ID != "" {
 		blockingReasons = append(blockingReasons, fmt.Sprintf(
 			"target environment %q has active release set %s; release-graph promotion is not available yet",
-			toEnvironment, toReleaseSetID))
+			toEnvironment, toReleaseSet.ID))
 	}
 	for _, app := range apps {
 		plan.Apps[app.Slug] = app
@@ -148,12 +158,13 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	}
 
 	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff,
-		fromReleaseSetID, toReleaseSetID, changes)
+		fromReleaseSet.ID, toReleaseSet.ID, changes)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion identity")
 	}
 	promotionToken, err := projectEnvironmentPromotionToken(acct.ID, project.ID, project.Slug,
-		from.Slug, to.Slug, configDiff.FromHash, configDiff.ToHash, promotionHash)
+		from.Slug, to.Slug, configDiff.FromHash, configDiff.ToHash,
+		fromReleaseSet.ID, toReleaseSet.ID, promotionHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion token")
 	}
@@ -162,24 +173,34 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		ToEnvironmentProtected: to.Protected, ApprovalRequired: to.Protected,
 		CanPromote: len(blockingReasons) == 0, BlockingReasons: blockingReasons,
 		ConfigDiff: configDiff, Changes: changes,
-		PromotionHash: promotionHash, PromotionToken: promotionToken,
+		FromReleaseSet: projectEnvironmentPromotionReleaseSetResponse(plan.FromReleaseSet),
+		ToReleaseSet:   projectEnvironmentPromotionReleaseSetResponse(plan.ToReleaseSet),
+		PromotionHash:  promotionHash, PromotionToken: promotionToken,
 	}
 	return plan, nil
 }
 
-func (s *server) activeProjectEnvironmentReleaseSetID(ctx context.Context, accountID, projectID, environment string) (string, *api.Problem) {
+func (s *server) activeProjectEnvironmentReleaseSet(ctx context.Context, accountID, projectID, environment string) (state.ProjectReleaseSet, *api.Problem) {
 	reader, ok := s.store.(state.ProjectReleaseSetReader)
 	if !ok {
-		return "", api.ErrCapacity("project release inventory is unavailable")
+		return state.ProjectReleaseSet{}, api.ErrCapacity("project release inventory is unavailable")
 	}
 	release, err := reader.ActiveProjectReleaseSet(ctx, accountID, projectID, environment)
 	if errors.Is(err, state.ErrNotFound) {
-		return "", nil
+		return state.ProjectReleaseSet{}, nil
 	}
 	if err != nil {
-		return "", api.ErrCapacity("could not inspect project release graph")
+		return state.ProjectReleaseSet{}, api.ErrCapacity("could not inspect project release graph")
 	}
-	return release.ID, nil
+	return release, nil
+}
+
+func projectEnvironmentPromotionReleaseSetResponse(release *state.ProjectReleaseSet) *api.ProjectReleaseSetResponse {
+	if release == nil {
+		return nil
+	}
+	response := projectReleaseSetResponse(*release)
+	return &response
 }
 
 func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -246,7 +267,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
-		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash || wire.PromotionHash != plan.Preview.PromotionHash {
+		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
+		wire.FromReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet) ||
+		wire.ToReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) ||
+		wire.PromotionHash != plan.Preview.PromotionHash {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion preview is stale", "the live releases or environment configuration changed; preview again"))
 		return
@@ -545,7 +569,11 @@ func projectEnvironmentPromotionWorkloads(plan projectEnvironmentPromotionPlan) 
 }
 
 func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionTokenWire, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) *api.Problem {
-	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash || wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash {
+	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
+		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
+		wire.FromReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet) ||
+		wire.ToReleaseSetID != projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet) ||
+		wire.PromotionHash != plan.Preview.PromotionHash {
 		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion configuration is stale", "the environment configuration changed; start a new promotion")
 	}
@@ -991,11 +1019,12 @@ func projectEnvironmentPromotionHash(
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func projectEnvironmentPromotionToken(accountID, projectID, projectSlug, fromEnvironment, toEnvironment, fromConfigHash, toConfigHash, promotionHash string) (string, error) {
+func projectEnvironmentPromotionToken(accountID, projectID, projectSlug, fromEnvironment, toEnvironment, fromConfigHash, toConfigHash, fromReleaseSetID, toReleaseSetID, promotionHash string) (string, error) {
 	wire := projectEnvironmentPromotionTokenWire{
 		Version: 1, AccountID: accountID, ProjectID: projectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		FromConfigHash: fromConfigHash, ToConfigHash: toConfigHash,
+		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID,
 		PromotionHash: promotionHash, IssuedAt: timeNow().UTC().Unix(),
 	}
 	raw, err := json.Marshal(wire)
@@ -1003,6 +1032,13 @@ func projectEnvironmentPromotionToken(accountID, projectID, projectSlug, fromEnv
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func projectEnvironmentPromotionReleaseSetID(release *state.ProjectReleaseSet) string {
+	if release == nil {
+		return ""
+	}
+	return release.ID
 }
 
 func decodeProjectEnvironmentPromotionToken(encoded string) (projectEnvironmentPromotionTokenWire, error) {
