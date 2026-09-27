@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	MaxPlatformTenantCredentialScopes        = 3
-	MaxPlatformTenantKeysPerConsumer         = 100
-	MaxPlatformTenantSelfConsumerRevokeBatch = 100
+	MaxPlatformTenantCredentialScopes          = 3
+	MaxPlatformTenantKeysPerConsumer           = 100
+	MaxPlatformTenantSelfConsumerRevokeBatch   = 100
+	MaxPlatformTenantSelfConsumerApplySurfaces = 100
 )
 
 type SetPlatformTenantCredentialPolicyRequest struct {
@@ -38,6 +39,29 @@ type PlatformTenantSelfConsumerResponse struct {
 
 type PlatformTenantSelfConsumersResponse struct {
 	Consumers []PlatformTenantSelfConsumerResponse `json:"consumers"`
+}
+
+// ApplyPlatformTenantSelfConsumersRequest creates or replays one customer
+// identity per selected active surface already linked to the bearer tenant.
+type ApplyPlatformTenantSelfConsumersRequest struct {
+	ExternalRef string   `json:"external_ref"`
+	Name        string   `json:"name"`
+	SurfaceIDs  []string `json:"surface_ids"`
+	DryRun      bool     `json:"dry_run,omitempty"`
+}
+
+type PlatformTenantSelfConsumerApplyItemResponse struct {
+	SurfaceID   string `json:"surface_id"`
+	ConsumerID  string `json:"consumer_id,omitempty"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Action      string `json:"action"`
+}
+
+type ApplyPlatformTenantSelfConsumersResponse struct {
+	DryRun    bool                                          `json:"dry_run"`
+	Consumers []PlatformTenantSelfConsumerApplyItemResponse `json:"consumers"`
 }
 
 // CreatePlatformTenantSelfConsumerRequest creates an identity on a surface
@@ -164,6 +188,11 @@ func (c *Client) CreatePlatformTenantSelfConsumer(ctx context.Context, req Creat
 func (c *Client) RevokePlatformTenantSelfConsumers(ctx context.Context, req RevokePlatformTenantSelfConsumersRequest) (PlatformTenantSelfConsumerRevocationResponse, error) {
 	var out PlatformTenantSelfConsumerRevocationResponse
 	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers/revoke", req, &out)
+}
+
+func (c *Client) ApplyPlatformTenantSelfConsumers(ctx context.Context, req ApplyPlatformTenantSelfConsumersRequest) (ApplyPlatformTenantSelfConsumersResponse, error) {
+	var out ApplyPlatformTenantSelfConsumersResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers/apply", req, &out)
 }
 
 func (c *Client) ListPlatformTenantSelfCredentials(ctx context.Context, limit, offset int) (PlatformTenantCredentialsResponse, error) {

@@ -4895,6 +4895,39 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/platform-tenant-self/consumers/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenantSelfConsumers
+      summary: Onboard one customer across selected linked app surfaces.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage. The bearer supplies the tenant, while Gregale resolves each selected active, already-linked surface to its app. At most one surface per app may be selected. The batch is all-or-nothing, honors the owner's provisioning policy and tenant-wide cap, and safely replays existing identities. Set dry_run to validate and preview actions without mutation or consumer IDs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersRequest' }
+      responses:
+        '201':
+          description: One or more app-local customer identities were created atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersResponse' }
+        '200':
+          description: Dry-run preview or exact replay with no new identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Tenant is inactive or an app already has a conflicting customer identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/platform-tenant-self/consumers/revoke:
     post:
       tags: [platform-tenants]
@@ -24025,6 +24058,43 @@ components:
         surface_id: { type: string, format: uuid }
         external_ref: { type: string, minLength: 1, maxLength: 256 }
         name: { type: string, minLength: 1, maxLength: 128 }
+
+    ApplyPlatformTenantSelfConsumersRequest:
+      description: All-or-nothing customer onboarding bundle across surfaces already linked to the token's tenant; no app or tenant identifier is accepted.
+      type: object
+      required: [external_ref, name, surface_ids]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        surface_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        dry_run: { type: boolean, default: false }
+
+    PlatformTenantSelfConsumerApplyItemResponse:
+      description: Result for one surface; a planned create omits consumer_id until the real apply runs.
+      type: object
+      required: [surface_id, external_ref, name, status, action]
+      properties:
+        surface_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active] }
+        action: { type: string, enum: [create, unchanged] }
+
+    ApplyPlatformTenantSelfConsumersResponse:
+      description: Redacted per-surface onboarding results. App and account identifiers are not returned.
+      type: object
+      required: [dry_run, consumers]
+      properties:
+        dry_run: { type: boolean }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerApplyItemResponse' }
 
     PlatformTenantSelfConsumersResponse:
       description: The linked consumer identities for the caller's tenant only.

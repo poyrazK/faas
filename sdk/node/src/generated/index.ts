@@ -81,6 +81,8 @@ export type { ApplyPlatformTenantCredentialsResponse } from './models/ApplyPlatf
 export type { ApplyPlatformTenantHostnameResponse } from './models/ApplyPlatformTenantHostnameResponse.js';
 export type { ApplyPlatformTenantRequest } from './models/ApplyPlatformTenantRequest.js';
 export type { ApplyPlatformTenantResponse } from './models/ApplyPlatformTenantResponse.js';
+export type { ApplyPlatformTenantSelfConsumersRequest } from './models/ApplyPlatformTenantSelfConsumersRequest.js';
+export type { ApplyPlatformTenantSelfConsumersResponse } from './models/ApplyPlatformTenantSelfConsumersResponse.js';
 export type { ApplyPlatformTenantSurfaceRequest } from './models/ApplyPlatformTenantSurfaceRequest.js';
 export type { ApplyPlatformTenantSurfaceResponse } from './models/ApplyPlatformTenantSurfaceResponse.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
@@ -582,6 +584,7 @@ export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js'
 export type { PlatformTenantSelfActivationHostnameResponse } from './models/PlatformTenantSelfActivationHostnameResponse.js';
 export type { PlatformTenantSelfActivationResponse } from './models/PlatformTenantSelfActivationResponse.js';
 export type { PlatformTenantSelfActivationSurfaceResponse } from './models/PlatformTenantSelfActivationSurfaceResponse.js';
+export type { PlatformTenantSelfConsumerApplyItemResponse } from './models/PlatformTenantSelfConsumerApplyItemResponse.js';
 export type { PlatformTenantSelfConsumerResponse } from './models/PlatformTenantSelfConsumerResponse.js';
 export type { PlatformTenantSelfConsumerRevocationResponse } from './models/PlatformTenantSelfConsumerRevocationResponse.js';
 export type { PlatformTenantSelfConsumersResponse } from './models/PlatformTenantSelfConsumersResponse.js';

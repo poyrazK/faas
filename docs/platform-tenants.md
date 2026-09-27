@@ -124,6 +124,18 @@ With that capability, call `POST /v1/platform-tenant-self/consumers` with `surfa
 
 To offboard customers, call `POST /v1/platform-tenant-self/consumers/revoke` with 1-100 unique `consumer_ids` from that tenant's customer listing. Gregale validates the entire batch before changing anything, then revokes each identity and its active keys atomically. A mixed-tenant, unlinked, or unknown ID returns the same not-found response without partial cleanup. Revocation remains available when new-customer provisioning is disabled or the tenant is suspended; a repeated request is safe and reports zero newly revoked keys. See [ADR-335](adr/335-platform-tenant-self-service-customer-offboarding.md).
 
+For customer onboarding across multiple apps, call `POST /v1/platform-tenant-self/consumers/apply` with one stable `external_ref`, a display `name`, and 1-100 unique `surface_ids` from this tenant's active activation inventory. Gregale derives app IDs from those linked surfaces, and a batch may include at most one surface per app. It creates one app-local customer identity per app in a single all-or-nothing operation; the owner-controlled policy and active-customer cap apply to the batch as a whole. Set `dry_run: true` to check policy, limits, and conflicts and preview `create`/`unchanged` actions without mutation or planned IDs. Exact retries are unchanged and remain valid if the owner later disables new provisioning. This endpoint does not issue keys; apply credentials separately after reviewing the plan. See [ADR-336](adr/336-platform-tenant-self-service-multi-app-onboarding.md).
+
+```http
+POST /v1/platform-tenant-self/consumers/apply
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"external_ref":"customer-42","name":"Customer 42","surface_ids":["<surface-a>","<surface-b>"],"dry_run":true}
+```
+
+After reviewing the per-surface preview, send the same request with `dry_run` omitted to commit the bundle. The apply rechecks current policy, cap, surface links, and identity conflicts; a changed condition fails without creating a partial set.
+
 ## Control customer requests across apps
 
 After every gateway is upgraded, set an optional shared admission budget:

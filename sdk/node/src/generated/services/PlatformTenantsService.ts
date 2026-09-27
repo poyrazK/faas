@@ -7,6 +7,8 @@ import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatf
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
+import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
+import type { ApplyPlatformTenantSelfConsumersResponse } from '../models/ApplyPlatformTenantSelfConsumersResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -1355,6 +1357,32 @@ export class PlatformTenantsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Tenant is inactive or the same app already has a conflicting identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Onboard one customer across selected linked app surfaces.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The bearer supplies the tenant, while Gregale resolves each selected active, already-linked surface to its app. At most one surface per app may be selected. The batch is all-or-nothing, honors the owner's provisioning policy and tenant-wide cap, and safely replays existing identities. Set dry_run to validate and preview actions without mutation or consumer IDs.
+   * @returns ApplyPlatformTenantSelfConsumersResponse Dry-run preview or exact replay with no new identities.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<ApplyPlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or an app already has a conflicting customer identity.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });

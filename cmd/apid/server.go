@@ -1449,6 +1449,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements/{statement_id}", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.getPlatformTenantSelfStatement)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/consumers", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfConsumers)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/consumers", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.createPlatformTenantSelfConsumer)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/consumers/apply", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.applyPlatformTenantSelfConsumers)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/consumers/revoke", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.revokePlatformTenantSelfConsumers)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/credentials", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfCredentials)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/credentials/apply", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsManageSurface...)(s.applyPlatformTenantSelfCredentials)))

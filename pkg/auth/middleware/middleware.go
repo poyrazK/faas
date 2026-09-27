@@ -771,6 +771,9 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if method == http.MethodPost && suffix == "consumers" {
 		return true
 	}
+	if method == http.MethodPost && suffix == "consumers/apply" {
+		return true
+	}
 	if method == http.MethodPost && suffix == "consumers/revoke" {
 		return true
 	}

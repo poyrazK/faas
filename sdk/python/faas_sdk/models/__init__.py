@@ -234,6 +234,8 @@ from .apply_platform_tenant_request import ApplyPlatformTenantRequest
 from .apply_platform_tenant_response import ApplyPlatformTenantResponse
 from .apply_platform_tenant_response_action import ApplyPlatformTenantResponseAction
 from .apply_platform_tenant_response_status import ApplyPlatformTenantResponseStatus
+from .apply_platform_tenant_self_consumers_request import ApplyPlatformTenantSelfConsumersRequest
+from .apply_platform_tenant_self_consumers_response import ApplyPlatformTenantSelfConsumersResponse
 from .apply_platform_tenant_surface_request import ApplyPlatformTenantSurfaceRequest
 from .apply_platform_tenant_surface_request_cert_kind import ApplyPlatformTenantSurfaceRequestCertKind
 from .apply_platform_tenant_surface_response import ApplyPlatformTenantSurfaceResponse
@@ -1114,6 +1116,9 @@ from .platform_tenant_self_activation_surface_response_cert_state import (
     PlatformTenantSelfActivationSurfaceResponseCertState,
 )
 from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
+from .platform_tenant_self_consumer_apply_item_response import PlatformTenantSelfConsumerApplyItemResponse
+from .platform_tenant_self_consumer_apply_item_response_action import PlatformTenantSelfConsumerApplyItemResponseAction
+from .platform_tenant_self_consumer_apply_item_response_status import PlatformTenantSelfConsumerApplyItemResponseStatus
 from .platform_tenant_self_consumer_response import PlatformTenantSelfConsumerResponse
 from .platform_tenant_self_consumer_response_status import PlatformTenantSelfConsumerResponseStatus
 from .platform_tenant_self_consumer_revocation_response import PlatformTenantSelfConsumerRevocationResponse
@@ -1877,6 +1882,8 @@ __all__ = (
     "ApplyPlatformTenantResponse",
     "ApplyPlatformTenantResponseAction",
     "ApplyPlatformTenantResponseStatus",
+    "ApplyPlatformTenantSelfConsumersRequest",
+    "ApplyPlatformTenantSelfConsumersResponse",
     "ApplyPlatformTenantSurfaceRequest",
     "ApplyPlatformTenantSurfaceRequestCertKind",
     "ApplyPlatformTenantSurfaceResponse",
@@ -2843,6 +2850,9 @@ __all__ = (
     "PlatformTenantSelfActivationSurfaceResponse",
     "PlatformTenantSelfActivationSurfaceResponseCertState",
     "PlatformTenantSelfActivationSurfaceResponseStatus",
+    "PlatformTenantSelfConsumerApplyItemResponse",
+    "PlatformTenantSelfConsumerApplyItemResponseAction",
+    "PlatformTenantSelfConsumerApplyItemResponseStatus",
     "PlatformTenantSelfConsumerResponse",
     "PlatformTenantSelfConsumerResponseStatus",
     "PlatformTenantSelfConsumerRevocationResponse",
