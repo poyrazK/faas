@@ -2406,6 +2406,35 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 	return created, nil
 }
 
+// checkAppQuotaTx is the deployed-app quota check. The caller holds the
+// account row lock. Developer environments use their own cap; production
+// apps and PR previews use DeployedApps. Keeping both counts inside the
+// account lock closes the same TOCTOU window for either quota family.
+func checkAppQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits) error {
+	var observed int
+	developer := IsDeveloperApp(app)
+	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`
+	limit := limits.DeployedApps
+	kind := QuotaErrorKindApps
+	if developer {
+		countQuery = `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0`
+		limit = limits.DeveloperApps
+		// Older internal callers construct a partial Limits value. Keep
+		// those callers safe while the plan table carries the real cap.
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindDeveloperApps
+	}
+	if err := tx.QueryRow(ctx, countQuery, app.AccountID).Scan(&observed); err != nil {
+		return fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
+	}
+	if observed >= limit {
+		return &QuotaError{Kind: kind, Limit: limit, Observed: observed}
+	}
+	return nil
+}
+
 func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits) (App, error) {
 
 	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
@@ -2433,30 +2462,9 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		return App{}, ErrConflict
 	}
 
-	// 3. Authoritative count under the lock. Developer environments use
-	//    their own cap; production apps and PR previews use DeployedApps.
-	//    Keeping both counts inside the account lock closes the same TOCTOU
-	//    window for either quota family.
-	var observed int
-	developer := IsDeveloperApp(app)
-	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`
-	limit := limits.DeployedApps
-	kind := QuotaErrorKindApps
-	if developer {
-		countQuery = `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0`
-		limit = limits.DeveloperApps
-		// Older internal callers construct a partial Limits value. Keep
-		// those callers safe while the plan table carries the real cap.
-		if limit <= 0 {
-			limit = limits.DeployedApps
-		}
-		kind = QuotaErrorKindDeveloperApps
-	}
-	if err := tx.QueryRow(ctx, countQuery, app.AccountID).Scan(&observed); err != nil {
-		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
-	}
-	if observed >= limit {
-		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
+	// 3. Authoritative count under the lock.
+	if err := checkAppQuotaTx(ctx, tx, app, limits); err != nil {
+		return App{}, err
 	}
 
 	// 4. Conditional insert. The slug unique index surfaces a concurrent collision
@@ -4344,9 +4352,33 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 // RestoreApp reactivates an app only while its customer grace deadline is
 // still in the future. The conditional update makes restore vs. sweep a
 // single race-safe decision; an unsuccessful update is reported as conflict.
-func (s *PgStore) RestoreApp(ctx context.Context, id string) (App, error) {
+func (s *PgStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var tomb App
+	if err := scanAppInto(&tomb, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1`, id)); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return App{}, ErrConflict
+		}
+		return App{}, mapErr(err)
+	}
+	// A restored app counts against the deployed-app quota like a new
+	// one. Without the check, delete → create → restore gave any plan an
+	// unlimited number of live apps.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, tomb.AccountID).Scan(&locked); err != nil {
+		return App{}, mapErr(err)
+	}
+	if tomb.Status == AppDeleted {
+		if err := checkAppQuotaTx(ctx, tx, tomb, limits); err != nil {
+			return App{}, err
+		}
+	}
 	var a App
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update apps
 		   set status = 'active', deleted_at = null, delete_grace_until = null, purge_claimed_at = null
 		 where id = $1
@@ -4359,6 +4391,9 @@ func (s *PgStore) RestoreApp(ctx context.Context, id string) (App, error) {
 			return App{}, ErrConflict
 		}
 		return App{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit restore app: %w", err)
 	}
 	return a, nil
 }

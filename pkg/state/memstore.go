@@ -3876,19 +3876,9 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	return created, nil
 }
 
-func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
-	if _, ok := m.accounts[app.AccountID]; !ok {
-		return App{}, ErrNotFound
-	}
-	// 1. Return the slug collision before quota. Deploy clients use this
-	// signal to fetch and continue with an app they previously reserved.
-	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
-			return App{}, ErrConflict
-		}
-	}
-	// 2. Authoritative count under the same lock. Mirrors the PgStore
-	//    predicates, including the separate developer-environment cap.
+// checkAppQuotaLocked mirrors PgStore's checkAppQuotaTx predicates,
+// including the separate developer-environment cap. Caller holds m.mu.
+func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 	observed := 0
 	developer := IsDeveloperApp(app)
 	for _, a := range m.apps {
@@ -3910,7 +3900,25 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		kind = QuotaErrorKindDeveloperApps
 	}
 	if observed >= limit {
-		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
+		return &QuotaError{Kind: kind, Limit: limit, Observed: observed}
+	}
+	return nil
+}
+
+func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
+	if _, ok := m.accounts[app.AccountID]; !ok {
+		return App{}, ErrNotFound
+	}
+	// 1. Return the slug collision before quota. Deploy clients use this
+	// signal to fetch and continue with an app they previously reserved.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	// 2. Authoritative count under the same lock.
+	if err := m.checkAppQuotaLocked(app, limits); err != nil {
+		return App{}, err
 	}
 	// 3. Conditional insert. The lock keeps the collision check above and
 	// insert atomic for MemStore.
@@ -5889,7 +5897,7 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	return a, nil
 }
 
-func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
+func (m *MemStore) RestoreApp(_ context.Context, id string, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -5898,6 +5906,9 @@ func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
 	}
 	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
 		return App{}, ErrConflict
+	}
+	if err := m.checkAppQuotaLocked(a, limits); err != nil {
+		return App{}, err
 	}
 	a.Status = AppActive
 	a.DeletedAt = nil

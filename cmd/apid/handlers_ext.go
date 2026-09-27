@@ -1801,8 +1801,14 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such app")
 		return
 	}
-	restored, err := s.store.RestoreApp(r.Context(), app.ID)
+	limits := api.MustLimitsFor(acct.Plan)
+	restored, err := s.store.RestoreApp(r.Context(), app.ID, limits)
 	if err != nil {
+		var qe *state.QuotaError
+		if errors.As(err, &qe) {
+			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 				api.CodeAppNotRestorable, "App not restorable",

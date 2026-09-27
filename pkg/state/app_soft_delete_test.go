@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
@@ -70,7 +72,7 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	} else if !repeated.DeleteGraceUntil.Equal(graceUntil) {
 		t.Fatalf("repeated DeleteGraceUntil = %v, want original %v", repeated.DeleteGraceUntil, graceUntil)
 	}
-	if _, err := m.RestoreApp(ctx, app.ID); err != nil {
+	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); err != nil {
 		t.Fatalf("RestoreApp: %v", err)
 	}
 	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
@@ -79,7 +81,7 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored app = %+v, %v", restored, err)
 	}
-	if _, err := m.RestoreApp(ctx, app.ID); !errors.Is(err, ErrConflict) {
+	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("RestoreApp on active app = %v, want ErrConflict", err)
 	}
 
@@ -90,7 +92,7 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if err := m.ClaimAppDeletion(ctx, app.ID); err != nil {
 		t.Fatalf("ClaimAppDeletion: %v", err)
 	}
-	if _, err := m.RestoreApp(ctx, app.ID); !errors.Is(err, ErrConflict) {
+	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
 	if err := m.DeleteAppPermanently(ctx, app.ID); err != nil {

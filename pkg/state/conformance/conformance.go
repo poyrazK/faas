@@ -84,6 +84,7 @@ func Run(t *testing.T, open Open) {
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
+		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
@@ -920,7 +921,7 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 			t.Fatalf("ClaimAppDeletion attempt %d: %v", attempt, err)
 		}
 	}
-	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrConflict) {
+	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {

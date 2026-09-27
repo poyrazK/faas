@@ -189,3 +189,37 @@ func TestDeleteAccount_PastDueGetsAReason(t *testing.T) {
 		t.Fatalf("after refused delete: status=%s deletion_requested_at=%v", got.Status, got.DeletionRequestedAt)
 	}
 }
+
+// TestRestoreApp_HonoursDeployedAppQuota — restoring a deleted app did not
+// count it against the plan: on Free (one app), delete A → create B →
+// restore A left two live apps, and repeating the cycle had no ceiling.
+func TestRestoreApp_HonoursDeployedAppQuota(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanFree, "")
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	for _, step := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{"POST", "/v1/apps", `{"slug":"quota-a","runtime":"node22"}`, http.StatusCreated},
+		{"DELETE", "/v1/apps/quota-a", "", http.StatusNoContent},
+		{"POST", "/v1/apps", `{"slug":"quota-b","runtime":"node22"}`, http.StatusCreated},
+		{"POST", "/v1/apps/quota-a/restore", "", http.StatusForbidden},
+		{"DELETE", "/v1/apps/quota-b", "", http.StatusNoContent},
+		{"POST", "/v1/apps/quota-a/restore", "", http.StatusOK},
+	} {
+		rec := do(step.method, step.path, step.body)
+		if rec.Code != step.want {
+			t.Fatalf("%s %s = %d %s, want %d", step.method, step.path, rec.Code, rec.Body.String(), step.want)
+		}
+		if step.want == http.StatusForbidden && !strings.Contains(rec.Body.String(), "plan_limit_apps") {
+			t.Fatalf("over-quota restore body = %s, want plan_limit_apps", rec.Body.String())
+		}
+	}
+}

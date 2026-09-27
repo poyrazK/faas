@@ -24,7 +24,6 @@ AlertPresetByName
 AlertRuleByAccountAppAndPresetName
 AlertRuleByID
 AppBySlug
-AppBySlugIncludingDeleted
 AppLogDrainByID
 AppLogDrainHealthByDrainID
 AppWebhookByID

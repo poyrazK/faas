@@ -2196,8 +2196,10 @@ type Store interface {
 	// transitions the app to deleted atomically. It is idempotent.
 	ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error)
 	// RestoreApp clears the tombstone iff the app is still inside its grace
-	// window. Expired or non-deleted rows return ErrConflict.
-	RestoreApp(ctx context.Context, id string) (App, error)
+	// window. Expired or non-deleted rows return ErrConflict. The restored
+	// app counts against the deployed-app quota under the account lock
+	// like a new one: *QuotaError when the account is at its limit.
+	RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error)
 	// ListDeletedApps returns tombstones for the app grace sweeper.
 	ListDeletedApps(ctx context.Context) ([]App, error)
 	// ClaimAppDeletion atomically closes the restore window for an expired
