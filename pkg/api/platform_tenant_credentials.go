@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	MaxPlatformTenantCredentialScopes = 3
-	MaxPlatformTenantKeysPerConsumer  = 100
+	MaxPlatformTenantCredentialScopes        = 3
+	MaxPlatformTenantKeysPerConsumer         = 100
+	MaxPlatformTenantSelfConsumerRevokeBatch = 100
 )
 
 type SetPlatformTenantCredentialPolicyRequest struct {
@@ -46,6 +47,17 @@ type CreatePlatformTenantSelfConsumerRequest struct {
 	SurfaceID   string `json:"surface_id"`
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+}
+
+// RevokePlatformTenantSelfConsumersRequest revokes selected app-local
+// identities and their credentials as one tenant-scoped operation.
+type RevokePlatformTenantSelfConsumersRequest struct {
+	ConsumerIDs []string `json:"consumer_ids"`
+}
+
+type PlatformTenantSelfConsumerRevocationResponse struct {
+	Consumers   []PlatformTenantSelfConsumerResponse `json:"consumers"`
+	RevokedKeys int                                  `json:"revoked_keys"`
 }
 
 // PlatformTenantCredentialIntent contains only public key metadata and the
@@ -147,6 +159,11 @@ func (c *Client) ListPlatformTenantSelfConsumers(ctx context.Context) (PlatformT
 func (c *Client) CreatePlatformTenantSelfConsumer(ctx context.Context, req CreatePlatformTenantSelfConsumerRequest) (PlatformTenantSelfConsumerResponse, error) {
 	var out PlatformTenantSelfConsumerResponse
 	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers", req, &out)
+}
+
+func (c *Client) RevokePlatformTenantSelfConsumers(ctx context.Context, req RevokePlatformTenantSelfConsumersRequest) (PlatformTenantSelfConsumerRevocationResponse, error) {
+	var out PlatformTenantSelfConsumerRevocationResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers/revoke", req, &out)
 }
 
 func (c *Client) ListPlatformTenantSelfCredentials(ctx context.Context, limit, offset int) (PlatformTenantCredentialsResponse, error) {

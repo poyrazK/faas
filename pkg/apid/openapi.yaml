@@ -4895,6 +4895,29 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/platform-tenant-self/consumers/revoke:
+    post:
+      tags: [platform-tenants]
+      operationId: revokePlatformTenantSelfConsumers
+      summary: Revoke selected customers and all of their credentials atomically.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage. The tenant is derived from the bearer; consumer_ids must be IDs returned by this tenant's customer listing. Every ID is validated before any change. Revocation remains available when customer provisioning is disabled or the tenant is suspended. An exact retry is safe and reports zero newly revoked keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokePlatformTenantSelfConsumersRequest' }
+      responses:
+        '200':
+          description: Revoked customer identities and count of keys newly revoked by this request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerRevocationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/platform-tenant-self/credentials:
     get:
       tags: [platform-tenants]
@@ -24011,6 +24034,28 @@ components:
         consumers:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+
+    RevokePlatformTenantSelfConsumersRequest:
+      description: All-or-nothing batch of customer IDs from this tenant's linked-consumer inventory.
+      type: object
+      required: [consumer_ids]
+      properties:
+        consumer_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    PlatformTenantSelfConsumerRevocationResponse:
+      description: Revoked identities with the number of active keys newly revoked by this operation; exact retries return zero.
+      type: object
+      required: [consumers, revoked_keys]
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        revoked_keys: { type: integer, minimum: 0 }
 
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.

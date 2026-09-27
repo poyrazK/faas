@@ -577,6 +577,7 @@ export type { PlatformTenantSelfActivationHostnameResponse } from './PlatformTen
 export type { PlatformTenantSelfActivationResponse } from './PlatformTenantSelfActivationResponse.js';
 export type { PlatformTenantSelfActivationSurfaceResponse } from './PlatformTenantSelfActivationSurfaceResponse.js';
 export type { PlatformTenantSelfConsumerResponse } from './PlatformTenantSelfConsumerResponse.js';
+export type { PlatformTenantSelfConsumerRevocationResponse } from './PlatformTenantSelfConsumerRevocationResponse.js';
 export type { PlatformTenantSelfConsumersResponse } from './PlatformTenantSelfConsumersResponse.js';
 export type { PlatformTenantSelfDeploymentResponse } from './PlatformTenantSelfDeploymentResponse.js';
 export type { PlatformTenantSelfHostnameResponse } from './PlatformTenantSelfHostnameResponse.js';
@@ -733,6 +734,7 @@ export type { ResourceProfile } from './ResourceProfile.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPostgresDatabaseRequest.js';
 export type { RetryDeploymentRequest } from './RetryDeploymentRequest.js';
 export type { RetryPolicyDTO } from './RetryPolicyDTO.js';
+export type { RevokePlatformTenantSelfConsumersRequest } from './RevokePlatformTenantSelfConsumersRequest.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './RollbackOperatorRuntimeConfigRequest.js';
 export type { RollbackRequest } from './RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './RolloutAbortedWebhookPayload.js';

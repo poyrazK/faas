@@ -36,6 +36,7 @@ import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTena
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
 import type { PlatformTenantSelfConsumerResponse } from '../models/PlatformTenantSelfConsumerResponse.js';
+import type { PlatformTenantSelfConsumerRevocationResponse } from '../models/PlatformTenantSelfConsumerRevocationResponse.js';
 import type { PlatformTenantSelfConsumersResponse } from '../models/PlatformTenantSelfConsumersResponse.js';
 import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
@@ -46,6 +47,7 @@ import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurf
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
 import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { RevokePlatformTenantSelfConsumersRequest } from '../models/RevokePlatformTenantSelfConsumersRequest.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
 import type { SetPlatformTenantConsumerProvisioningPolicyRequest } from '../models/SetPlatformTenantConsumerProvisioningPolicyRequest.js';
@@ -1353,6 +1355,31 @@ export class PlatformTenantsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Tenant is inactive or the same app already has a conflicting identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Revoke selected customers and all of their credentials atomically.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The tenant is derived from the bearer; consumer_ids must be IDs returned by this tenant's customer listing. Every ID is validated before any change. Revocation remains available when customer provisioning is disabled or the tenant is suspended. An exact retry is safe and reports zero newly revoked keys.
+   * @returns PlatformTenantSelfConsumerRevocationResponse Revoked customer identities and count of keys newly revoked by this request.
+   * @throws ApiError
+   */
+  public static revokePlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: RevokePlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerRevocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/revoke',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });

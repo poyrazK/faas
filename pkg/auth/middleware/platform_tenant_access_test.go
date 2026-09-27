@@ -86,6 +86,19 @@ func TestRequireSession_PlatformTenantAccessTokenIsTenantSelfOnly(t *testing.T) 
 	if consumerAccepted.Code != http.StatusNoContent {
 		t.Fatalf("tenant consumer provisioning status = %d, want 204", consumerAccepted.Code)
 	}
+	revokeConsumerAccepted := httptest.NewRecorder()
+	revokeConsumerRequest := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/consumers/revoke", nil)
+	revokeConsumerRequest.Header.Set("Authorization", "Bearer "+plaintext)
+	mw.RequireSession(func(w http.ResponseWriter, r *http.Request, got state.Account) {
+		_, key, ok := authmw.AccountFromContext(r)
+		if !ok || key == nil || key.PlatformTenantID != tenant.ID || got.ID != account.ID {
+			t.Errorf("consumer revocation tenant principal = account %q, key %+v, ok=%v", got.ID, key, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})(revokeConsumerAccepted, revokeConsumerRequest)
+	if revokeConsumerAccepted.Code != http.StatusNoContent {
+		t.Fatalf("tenant consumer revocation status = %d, want 204", revokeConsumerAccepted.Code)
+	}
 
 	for _, tc := range []struct {
 		method string

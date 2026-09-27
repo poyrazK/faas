@@ -1116,6 +1116,7 @@ from .platform_tenant_self_activation_surface_response_cert_state import (
 from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
 from .platform_tenant_self_consumer_response import PlatformTenantSelfConsumerResponse
 from .platform_tenant_self_consumer_response_status import PlatformTenantSelfConsumerResponseStatus
+from .platform_tenant_self_consumer_revocation_response import PlatformTenantSelfConsumerRevocationResponse
 from .platform_tenant_self_consumers_response import PlatformTenantSelfConsumersResponse
 from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
 from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
@@ -1420,6 +1421,7 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
@@ -2843,6 +2845,7 @@ __all__ = (
     "PlatformTenantSelfActivationSurfaceResponseStatus",
     "PlatformTenantSelfConsumerResponse",
     "PlatformTenantSelfConsumerResponseStatus",
+    "PlatformTenantSelfConsumerRevocationResponse",
     "PlatformTenantSelfConsumersResponse",
     "PlatformTenantSelfDeploymentResponse",
     "PlatformTenantSelfDeploymentResponseStatus",
@@ -3115,6 +3118,7 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "RevokePlatformTenantSelfConsumersRequest",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
