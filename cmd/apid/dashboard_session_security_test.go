@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var dashboardCSRFField = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
@@ -404,5 +405,67 @@ func TestTOTPGuard_WindowAndReset(t *testing.T) {
 	g.reset("c")
 	if len(g.fails) != 0 && g.fails["c"] != nil {
 		t.Fatal("reset left failures behind")
+	}
+}
+
+// TestSessionWrites_RejectOtherOrigins — customer apps live on
+// <slug>.gregale.dev, same-site with the API, so SameSite=Lax attaches the
+// session cookie to a no-cors fetch from any customer's page. With only a
+// visitor's cookie such a page deployed its own image into the visitor's
+// app, parked it, and minted admin keys.
+func TestSessionWrites_RejectOtherOrigins(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "victim-app", Runtime: "node22", RAMMB: 128, Status: state.AppActive}); err != nil {
+		t.Fatal(err)
+	}
+	send := func(origin, site string, withCookie bool, bearer string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "http://api.gregale.dev/v1/apps/victim-app/park", nil)
+		r.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+		}
+		if withCookie {
+			r.AddCookie(cookie)
+		}
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for _, c := range []struct {
+		name, origin, site string
+	}{
+		{"sibling app, same-site", "https://evil.gregale.dev", "same-site"},
+		{"sibling app, no fetch metadata", "https://evil.gregale.dev", ""},
+		{"other site", "https://evil.example", "cross-site"},
+	} {
+		if code := send(c.origin, c.site, true, ""); code != http.StatusForbidden {
+			t.Errorf("%s: cookie-authenticated park = %d, want 403", c.name, code)
+		}
+	}
+	if code := send("http://api.gregale.dev", "same-origin", true, ""); code == http.StatusForbidden {
+		t.Errorf("same-origin cookie request was refused")
+	}
+	if code := send("", "", true, ""); code == http.StatusForbidden {
+		t.Errorf("non-browser cookie request (no Origin, no Sec-Fetch-Site) was refused")
+	}
+	pt, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(t.Context(), acct.ID, hash, "ci", api.ScopesAdminOnly); err != nil {
+		t.Fatal(err)
+	}
+	if code := send("https://evil.gregale.dev", "same-site", false, pt); code == http.StatusForbidden {
+		t.Errorf("bearer request with a foreign Origin was refused; browsers never attach API keys")
 	}
 }

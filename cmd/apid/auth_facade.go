@@ -42,7 +42,7 @@ import (
 // conversion; behaviour matches cmd/apid/server.go:1341-1455 exactly
 // because pkg/auth lifts that body verbatim.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(next)
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(next))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -53,8 +53,52 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(next)
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(next))
 	return s.authMw.RequireLimited(pkgNext)
+}
+
+// sameOriginSessionWrites refuses a state-changing /v1 request that is
+// authenticated by the session cookie and was sent by a page on another
+// origin. Customer apps are served from <slug>.<apps domain>, which is
+// same-site with the API host, so SameSite=Lax still attaches the
+// session cookie to a no-cors fetch from any customer's app: a visiting
+// Gregale customer could be made to deploy an attacker's image into
+// their own app, park it, or mint keys. API keys and other bearer
+// credentials are never attached by a browser, and a request with
+// neither Origin nor Sec-Fetch-Site did not come from one, so both
+// pass; so does the dashboard, which is served from the API host.
+func (s *server) sameOriginSessionWrites(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next(w, r, acct)
+			return
+		}
+		if _, key, ok := middleware.AccountFromContext(r); ok && key == nil && !s.browserRequestFromTrustedOrigin(r) {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"cross-origin request rejected", "session-authenticated changes must come from the Gregale dashboard"))
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
+// browserRequestFromTrustedOrigin reports whether a browser sent this from
+// a control-plane origin: the API host itself or operations.<domain>, as
+// requireSameOrigin allows. Sec-Fetch-Site alone cannot tell a trusted
+// sibling from a customer's app — both are same-site — so a same-site
+// request must name a trusted Origin.
+func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
+	site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
+	if site == "cross-site" {
+		return false
+	}
+	raw := strings.TrimSpace(r.Header.Get("Origin"))
+	if raw == "" {
+		return site == "" || site == "same-origin" || site == "none"
+	}
+	origin, err := url.Parse(raw)
+	return err == nil && origin.Host != "" && s.isTrustedAdminOrigin(origin, r)
 }
 
 // requireMFA delegates to pkg/auth.Middleware.RequireMFA. Behaviour
