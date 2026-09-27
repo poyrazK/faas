@@ -225,6 +225,35 @@ func TestCallbackOutboxPrunesExistingDeadLettersOnRestart(t *testing.T) {
 	}
 }
 
+func TestCallbackOutboxRetentionToleratesOperatorRemovedFile(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root, MaxAttempts: 1})
+	first := testCallbackEvent()
+	first.ID = "evt_removed_older"
+	if claimed, err := queue.EnqueueAndClaim(first); err != nil || !claimed {
+		t.Fatalf("first EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if err := queue.Fail(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	queue.deadMaxBytes = queue.Stats().DeadLetterBytes + 128
+	if err := os.Remove(filepath.Join(root, "dead", first.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	second := testCallbackEvent()
+	second.ID = "evt_removed_newer"
+	if claimed, err := queue.EnqueueAndClaim(second); err != nil || !claimed {
+		t.Fatalf("second EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if err := queue.Fail(second.ID); err != nil {
+		t.Fatalf("Fail with removed prior dead letter: %v", err)
+	}
+	stats := queue.Stats()
+	if stats.DeadLetterTotal != 1 || stats.DeadLetterEvictions != 0 || stats.DeadLetterBytes > stats.DeadLetterCapacityBytes {
+		t.Fatalf("Stats after reconciling missing file = %+v", stats)
+	}
+}
+
 func TestCallbackOutboxRunReplaysPendingEvents(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 2})
 	event := testCallbackEvent()

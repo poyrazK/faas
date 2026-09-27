@@ -236,15 +236,18 @@ func (q *CallbackOutbox) pruneDeadLetters() (err error) {
 	}()
 	for q.deadBytes > q.deadMaxBytes {
 		oldest := heap.Pop(&q.dead).(callbackDeadLetter)
-		if err := os.Remove(filepath.Join(q.deadRoot, oldest.id+".json")); err != nil {
+		removeErr := os.Remove(filepath.Join(q.deadRoot, oldest.id+".json"))
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			heap.Push(&q.dead, oldest)
-			return fmt.Errorf("realtime: evict callback dead letter %q: %w", oldest.id, err)
+			return fmt.Errorf("realtime: evict callback dead letter %q: %w", oldest.id, removeErr)
 		}
 		q.deadBytes -= oldest.size
-		q.deadEvictions++
-		q.deadLastEvictionUnix = time.Now().Unix()
 		delete(q.deadIDs, oldest.id)
-		removed = true
+		if removeErr == nil {
+			q.deadEvictions++
+			q.deadLastEvictionUnix = time.Now().Unix()
+			removed = true
+		}
 	}
 	return nil
 }
