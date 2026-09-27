@@ -3537,3 +3537,44 @@ groups:
           summary: "Platform retries exceed 20% of original request traffic"
           description: "Gateway-generated replays have exceeded 20% of original attempts at more than one replay per second for ten minutes. Check transport failures and retry-rule budgets; use the retry kill switch if amplification is contributing to an incident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRetryAmplificationHigh.md"
+
+  - name: service_dependency
+    interval: 30s
+    rules:
+      - alert: FaasServiceDependencyErrorsHigh
+        expr: |
+          (
+            (
+              sum by (caller_app, target_app) (
+                increase(gateway_service_dependency_edge_calls_total{outcome="error"}[10m])
+              )
+              /
+              clamp_min(
+                sum by (caller_app, target_app) (
+                  increase(gateway_service_dependency_edge_calls_total[10m])
+                ),
+                1
+              )
+            ) > 0.10
+          )
+          and on (caller_app, target_app)
+          (
+            sum by (caller_app, target_app) (
+              increase(gateway_service_dependency_edge_calls_total{outcome="error"}[10m])
+            ) >= 5
+          )
+          and on (caller_app, target_app)
+          (
+            sum by (caller_app, target_app) (
+              increase(gateway_service_dependency_edge_calls_total[10m])
+            ) >= 20
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: service_dependency
+        annotations:
+          summary: "Service dependency errors are high from {{ $labels.caller_app }} to {{ $labels.target_app }}"
+          description: "This trusted caller-to-target edge has exceeded a 10% final error rate with at least five errors across twenty calls in the last ten minutes for five minutes. The alert labels contain app UUIDs; use the runbook to identify the apps and inspect the edge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceDependencyErrorsHigh.md"

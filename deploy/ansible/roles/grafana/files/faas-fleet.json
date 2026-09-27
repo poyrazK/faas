@@ -2400,6 +2400,97 @@
       ],
       "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 420,
+      "type": "timeseries",
+      "title": "Service dependency error ratio (10m, by edge)",
+      "description": "Top caller-to-target edges by final error ratio. Matches FaasServiceDependencyErrorsHigh: over 10% with at least five errors and twenty calls in ten minutes.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 278},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "topk(10, (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome=\"error\"}[10m])) / clamp_min(sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])),1)) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])) >= 20) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome=\"error\"}[10m])) >= 5))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.1}]}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 421,
+      "type": "timeseries",
+      "title": "Service dependency calls (10m, by edge)",
+      "description": "Top caller-to-target edges by total managed calls over ten minutes. UUID labels match the service dependency error alert.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 278},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "topk(10, sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 422,
+      "type": "timeseries",
+      "title": "Service dependency p95 latency by edge",
+      "description": "End-to-end internal call duration includes routing, target wake, forwarding, and retries. Compare each edge with its caller timeout and workload SLO.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 286},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le,caller_app,target_app) (rate(gateway_service_dependency_duration_seconds_bucket[$__rate_interval]))))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 423,
+      "type": "heatmap",
+      "title": "Service dependency latency distribution (trace exemplars)",
+      "description": "Raw per-edge duration buckets retain sampled trace_id exemplars. Hover an exemplar marker to open the configured trace destination or copy the ID for the observer endpoint.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 294},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (le,caller_app,target_app) (rate(gateway_service_dependency_duration_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{caller_app}} -> {{target_app}} / {{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"scaleDistribution": {"type": "linear"}}
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+      }
     }
   ],
   "refresh": "30s",
