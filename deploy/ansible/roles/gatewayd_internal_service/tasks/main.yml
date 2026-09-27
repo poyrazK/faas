@@ -209,6 +209,63 @@
     group: root
     mode: "0755"
 
+- name: gatewayd_internal_service — require shared retry budget when activated
+  ansible.builtin.assert:
+    that:
+      - not (gatewayd_retry_budget_required | bool) or (gatewayd_retry_budget_redis_url | length > 0)
+      - (gatewayd_retry_budget_redis_url | length == 0) or (gatewayd_retry_budget_redis_url is regex('^rediss?://[^\r\n]+$'))
+    fail_msg: >-
+      Shared retry budget requires a redis:// or rediss:// URL from the fleet
+      vault on every gateway host.
+  no_log: true
+
+- name: gatewayd_internal_service — create retry budget credential directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: gatewayd_retry_budget_redis_url | length > 0
+
+- name: gatewayd_internal_service — install shared retry budget credential
+  ansible.builtin.copy:
+    dest: /etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+    content: "{{ gatewayd_retry_budget_redis_url }}\n"
+    owner: root
+    group: root
+    mode: "0400"
+  when: gatewayd_retry_budget_redis_url | length > 0
+  no_log: true
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — install shared retry budget drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-retry-budget.conf
+    content: |
+      [Service]
+      LoadCredential=retry_budget_redis_url:/etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+      Environment=FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE=%d/retry_budget_redis_url
+    owner: root
+    group: root
+    mode: "0644"
+  when: gatewayd_retry_budget_redis_url | length > 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove shared retry budget drop-in when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-retry-budget.conf
+    state: absent
+  when: gatewayd_retry_budget_redis_url | length == 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove managed retry budget credential when disabled
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+    state: absent
+  when: gatewayd_retry_budget_redis_url | length == 0
+  no_log: true
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into the gatewayd-internal unit. Drop-in mirrors
 # deploy/ansible/roles/control_plane_service/templates/

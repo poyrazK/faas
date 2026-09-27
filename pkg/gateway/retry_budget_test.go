@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,9 @@ func TestRedisRetryBudgetSharesAllowanceAcrossGateways(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = second.Close() }()
+	if first.BackendID() == "" || first.BackendID() != second.BackendID() || first.BackendID() == server.Addr() {
+		t.Fatalf("backend identities differ or expose endpoint: %q, %q", first.BackendID(), second.BackendID())
+	}
 	first.ObserveOriginal(t.Context(), "app-1")
 	second.ObserveOriginal(t.Context(), "app-1")
 	if !first.AllowRetry(t.Context(), "app-1", 10, 1) {
@@ -56,6 +60,87 @@ func TestRedisRetryBudgetSharesAllowanceAcrossGateways(t *testing.T) {
 	server.Close()
 	if first.AllowRetry(t.Context(), "app-1", 100, 32) {
 		t.Fatal("shared-backend outage must fail closed for retries")
+	}
+}
+
+func TestRedisRetryBudgetCapsConcurrentGateways(t *testing.T) {
+	server := miniredis.RunT(t)
+	url := "redis://" + server.Addr()
+	first, err := NewRedisRetryBudget(t.Context(), url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	second, err := NewRedisRetryBudget(t.Context(), url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	for i := 0; i < 20; i++ {
+		first.ObserveOriginal(t.Context(), "app-concurrent")
+	}
+
+	results := make(chan bool, 20)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(budget *RetryBudget) {
+			defer wg.Done()
+			results <- budget.AllowRetry(t.Context(), "app-concurrent", 10, 0)
+		}([]*RetryBudget{first, second}[i%2])
+	}
+	wg.Wait()
+	close(results)
+	allowed := 0
+	for result := range results {
+		if result {
+			allowed++
+		}
+	}
+	if allowed != 2 {
+		t.Fatalf("concurrent gateways admitted %d retries for 20 originals at 10%%, want 2", allowed)
+	}
+}
+
+func TestRedisRetryBudgetReportsBackendFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+	budget, err := NewRedisRetryBudget(t.Context(), "redis://"+server.Addr(), 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = budget.Close() }()
+	metrics := NewMetrics()
+	metrics.PreInstantiateTrafficResilience()
+	budget.WithObserver(metrics)
+	budget.ObserveOriginal(t.Context(), "app-1")
+	if !budget.AllowRetry(t.Context(), "app-1", 10, 1) {
+		t.Fatal("first retry denied")
+	}
+	if budget.AllowRetry(t.Context(), "app-1", 10, 1) {
+		t.Fatal("second retry admitted")
+	}
+	server.Close()
+	budget.ObserveOriginal(t.Context(), "app-1")
+	if budget.AllowRetry(t.Context(), "app-1", 100, 32) {
+		t.Fatal("backend outage admitted a retry")
+	}
+	for _, tc := range []struct{ operation, result string }{
+		{"observe", "ok"}, {"observe", "error"},
+		{"admit", "allowed"}, {"admit", "denied"}, {"admit", "error"},
+	} {
+		found := false
+		for _, sample := range gatherNamed(t, metrics.Registry(), "gateway_retry_budget_backend_operations_total") {
+			labels := map[string]string{}
+			for _, label := range sample.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["operation"] == tc.operation && labels["result"] == tc.result {
+				found = sample.GetCounter().GetValue() == 1
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s/%s backend result", tc.operation, tc.result)
+		}
 	}
 }
 
