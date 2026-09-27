@@ -448,3 +448,28 @@ func installedIdent(t *testing.T) *age.X25519Identity {
 
 // keep the http import used even when sub-tests strip it
 var _ = http.MethodPost
+
+// TestSecrets_Rotate_NewKeyHonoursSecretQuota — rotating a key that does not
+// exist creates it, but only the PUT path checked SecretsMax, so rotate was
+// an unbounded way to add secrets. Rotating an existing key at the cap still
+// works.
+func TestSecrets_Rotate_NewKeyHonoursSecretQuota(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "rot-quota")
+	max := api.MustLimitsFor(api.PlanHobby).SecretCountMax
+	for i := 0; i < max; i++ {
+		key := "K" + strings.Repeat("A", i+1)
+		if rec := e.do(t, "POST", rotateURL(app.Slug, key), api.RotateAppSecretRequest{Value: "v"}, nil); rec.Code != http.StatusOK {
+			t.Fatalf("secret %d/%d: %d %s", i+1, max, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(t, "POST", rotateURL(app.Slug, "ONE_TOO_MANY"), api.RotateAppSecretRequest{Value: "v"}, nil)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("rotate created secret %d past SecretCountMax=%d", max+1, max)
+	}
+	if rec := e.do(t, "POST", rotateURL(app.Slug, "KA"), api.RotateAppSecretRequest{Value: "v2"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("rotating an existing key at the cap: %d %s", rec.Code, rec.Body.String())
+	}
+}

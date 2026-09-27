@@ -112,6 +112,15 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	isRotation := err == nil
+	// Rotating a key that does not exist creates it. Only the PUT path
+	// checked the per-app secret quota, so rotate was an unbounded way to
+	// add secrets past SecretsMax.
+	if !isRotation {
+		if prob := s.checkSecretQuota(r.Context(), acct, app, scope, key, limits); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 
 	// Resolve the current kid before sealing so the seal + kid
 	// stamp land in the same UpsertAppSecretWithKid call. Failure
