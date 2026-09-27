@@ -1201,6 +1201,10 @@ func testEnvCommon(dbURL string) []string {
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",
 		"FAAS_APP_ERRORS_ENABLED=false",
+		// The retained spans writer is production-default-on, but ordinary
+		// E2E daemons run unprivileged and do not need its /run/faas socket.
+		// Tests for the writer opt in with a per-test socket path.
+		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		// ADR-115 D5 / PR #1191 C2: pkg/mail/factory refuses to boot
 		// when FAAS_MAIL_TRANSPORT is unset on a non-dev box. Every
