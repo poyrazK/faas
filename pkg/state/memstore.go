@@ -5362,7 +5362,20 @@ func (m *MemStore) AuthDefaultFlippedAt(_ context.Context) (time.Time, error) {
 	return earliest, nil
 }
 
-func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (App, error) {
+func (m *MemStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
+	return m.updateAppWithActivity(ctx, id, p, nil, nil, nil)
+}
+
+func (m *MemStore) UpdateAppWithActivity(ctx context.Context, id string, p UpdateAppParams, entry OrgActivity, build OrgActivityAppConfigBuilder) (App, int64, error) {
+	if build == nil {
+		return App{}, 0, ErrInvalidArgument
+	}
+	var outboxID int64
+	app, err := m.updateAppWithActivity(ctx, id, p, &entry, build, &outboxID)
+	return app, outboxID, err
+}
+
+func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
 		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
 		return App{}, ErrInvalidArgument
@@ -5373,6 +5386,7 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	before := a
 	if a.ScalingPolicyRevision <= 0 {
 		a.ScalingPolicyRevision = 1
 	}
@@ -5707,9 +5721,32 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		a.WorkloadClass != oldWorkloadClass || a.NodeID != oldNodeID {
 		a.ScalingPolicyRevision++
 	}
+	var normalized OrgActivity
+	var recordActivity bool
+	if entry != nil {
+		data, record, err := build(before, a)
+		if err != nil {
+			return App{}, err
+		}
+		if record {
+			entry.Data = data
+			normalized, err = bindOrgActivityToApp(*entry, a)
+			if err != nil {
+				return App{}, err
+			}
+			normalized, err = normalizeOrgActivity(normalized, time.Now())
+			if err != nil {
+				return App{}, err
+			}
+			recordActivity = true
+		}
+	}
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
+	}
+	if recordActivity && outboxID != nil {
+		*outboxID = m.enqueueOrgActivityOutboxLocked(normalized)
 	}
 	return a, nil
 }
@@ -5810,49 +5847,8 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 // ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
 // the first deadline, matching the PostgreSQL COALESCE update.
 func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	a, ok := m.apps[id]
-	if !ok {
-		return App{}, ErrNotFound
-	}
-	for _, b := range m.objectBuckets {
-		if b.AppID == id && b.State != "deleted" {
-			return App{}, ErrConflict
-		}
-	}
-	if graceUntil.IsZero() {
-		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
-	}
-	now := time.Now().UTC()
-	if a.DeletedAt == nil {
-		a.DeletedAt = &now
-	}
-	if a.DeleteGraceUntil == nil {
-		deadline := graceUntil.UTC()
-		a.DeleteGraceUntil = &deadline
-	}
-	wasDeleted := a.Status == AppDeleted
-	a.Status = AppDeleted
-	m.apps[id] = a
-	m.cancelAppTasksForAppLocked(id, now)
-	if !wasDeleted {
-		delete(m.appDeletionClaims, id)
-	}
-	for cronID, cron := range m.crons {
-		if cron.AppID == id {
-			delete(m.crons, cronID)
-		}
-	}
-	// Retire replica placements immediately while preserving snapshot rows for
-	// GC and a possible restore during the grace window.
-	for i := range m.snapshots {
-		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
-		if ok && deployment.AppID == id {
-			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
-		}
-	}
-	return a, nil
+	a, _, err := m.scheduleAppDeletion(id, graceUntil, nil)
+	return a, err
 }
 
 func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
@@ -7927,6 +7923,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
 		}
+		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
+			return err
+		}
 		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
@@ -7964,6 +7963,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
 		}
+		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
+			return err
+		}
 		for siblingID, other := range updatedSiblings {
 			m.deployments[siblingID] = other
 		}
@@ -7988,6 +7990,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 			return err
 		}
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+			return err
+		}
+		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
 			return err
 		}
 		for otherID, other := range m.deployments {
@@ -8048,6 +8053,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
 		}
+		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
+			return err
+		}
 		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
@@ -8073,6 +8081,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 		return err
 	}
+	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
+		return err
+	}
 	for siblingID, other := range updatedSiblings {
 		m.deployments[siblingID] = other
 	}
@@ -8090,6 +8101,17 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 // fan-in reads from this directly). Returns the post-flip
 // deployment.
 func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason) (Deployment, []string, error) {
+	deployment, cancelledBuilds, err := m.cancelDeploymentTx(ctx, id, principal, reason, nil, nil)
+	return deployment, cancelledBuilds, err
+}
+
+func (m *MemStore) CancelDeploymentTxWithActivity(ctx context.Context, id, principal string, reason CancelReason, activity OrgActivity) (Deployment, []string, int64, error) {
+	var outboxID int64
+	deployment, cancelledBuilds, err := m.cancelDeploymentTx(ctx, id, principal, reason, &activity, &outboxID)
+	return deployment, cancelledBuilds, outboxID, err
+}
+
+func (m *MemStore) cancelDeploymentTx(_ context.Context, id, principal string, reason CancelReason, activity *OrgActivity, activityOutboxID *int64) (Deployment, []string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -8104,6 +8126,14 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 	}
 	if !reason.IsValid() {
 		return Deployment{}, nil, ErrInvalidStateTransition
+	}
+	var normalizedActivity OrgActivity
+	if activity != nil {
+		var err error
+		normalizedActivity, err = normalizeOrgActivity(*activity, time.Now())
+		if err != nil {
+			return Deployment{}, nil, err
+		}
 	}
 	now := time.Now().UTC()
 	d.Status = DeployCancelled
@@ -8144,6 +8174,9 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 			}
 			cancelled = append(cancelled, buildID)
 		}
+	}
+	if activity != nil && activityOutboxID != nil {
+		*activityOutboxID = m.enqueueOrgActivityOutboxLocked(normalizedActivity)
 	}
 	return d, cancelled, nil
 }
@@ -9581,6 +9614,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
+	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
+		return Deployment{}, err
+	}
 	d.ErrorCode = code
 	m.failDeploymentLocked(d, message)
 	d = m.deployments[id]
@@ -9626,6 +9662,9 @@ func (m *MemStore) SetDeploymentFailedEx(
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
+	}
+	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
+		return Deployment{}, err
 	}
 	d.ErrorCode = code
 	d.ErrorHint = hint
@@ -9783,6 +9822,9 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 		if b.DeploymentID == id {
 			return nil
 		}
+	}
+	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", ""); err != nil {
+		return err
 	}
 	m.failDeploymentLocked(d, message)
 	m.markDeploymentSnapshotsStaleLocked(id)
@@ -10619,6 +10661,23 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.deleteCustomDomainLocked(domain)
+}
+
+func (m *MemStore) DeleteCustomDomainWithActivity(_ context.Context, domain string, entry OrgActivity) (int64, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.deleteCustomDomainLocked(domain); err != nil {
+		return 0, err
+	}
+	return m.enqueueOrgActivityOutboxLocked(entry), nil
+}
+
+func (m *MemStore) deleteCustomDomainLocked(domain string) error {
 	if _, ok := m.domains[domain]; !ok {
 		return ErrNotFound
 	}
@@ -22443,39 +22502,10 @@ func (m *MemStore) UpdateOrgMemberRole(_ context.Context, orgID, accountID strin
 // ErrOrgLastOwner (a self-transfer would silently skip the swap and
 // the wire-shape contract is to refuse).
 func (m *MemStore) TransferOrgOwnership(_ context.Context, orgID, fromAccountID, toAccountID string) error {
-	if fromAccountID == toAccountID {
-		return ErrOrgLastOwner
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	fromKey := orgAccountKey{OrgID: orgID, AccountID: fromAccountID}
-	fromMem, ok := m.memberships[fromKey]
-	if !ok {
-		return ErrNotFound
-	}
-	if fromMem.Role != OrgRoleOwner || fromMem.RemovedAt != nil {
-		return ErrOrgLastOwner
-	}
-	toKey := orgAccountKey{OrgID: orgID, AccountID: toAccountID}
-	toMem, ok := m.memberships[toKey]
-	if !ok {
-		return ErrNotFound
-	}
-	if toMem.RemovedAt != nil {
-		return ErrNotFound
-	}
-	if toMem.Role == OrgRoleOwner {
-		return ErrOrgLastOwner
-	}
-	// Demote-first mirrors PgStore's ordering. MemStore is single-
-	// critical-section so the partial unique race PgStore guards
-	// against can't occur here — but the ordering keeps the two
-	// implementations byte-identical at the concurrency seam.
-	fromMem.Role = OrgRoleAdmin
-	m.memberships[fromKey] = fromMem
-	toMem.Role = OrgRoleOwner
-	m.memberships[toKey] = toMem
-	return nil
+	_, _, err := transferOrgOwnershipLocked(m, orgID, fromAccountID, toAccountID)
+	return err
 }
 
 // ListOrgMembers returns every membership row, ordered by JoinedAt.

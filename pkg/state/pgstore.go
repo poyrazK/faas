@@ -3764,6 +3764,14 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
+	return updateApp(ctx, s.pool, id, p)
+}
+
+type appUpdateQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p UpdateAppParams) (App, error) {
 	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
 		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
 		return App{}, ErrInvalidArgument
@@ -3955,7 +3963,7 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 	if p.ScalingPolicy != nil {
 		policyMinInstances = p.ScalingPolicy.MinInstances
 	}
-	row := s.pool.QueryRow(ctx, upd,
+	row := queryer.QueryRow(ctx, upd,
 		id,
 		p.RAMMB, p.SetIdleTimeout, intOrZero(p.IdleTimeoutS),
 		p.MaxConcurrency, nullAppStatus(p.Status),
@@ -8673,6 +8681,9 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
 			}
 		}
+		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark deployment live commit: %w", err)
 		}
@@ -8734,6 +8745,9 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
 				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
 			}
+		}
+		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
+			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark manual split live commit: %w", err)
@@ -8801,6 +8815,9 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
 				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
 			}
+		}
+		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
+			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark stable deployment live commit: %w", err)
@@ -8880,6 +8897,9 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
 			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
 		}
+	}
+	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: mark deployment live commit: %w", err)
@@ -8979,8 +8999,26 @@ func scanOpenAPISnapshot(row pgx.Row) (OpenAPISnapshot, error) {
 // outside this transaction (best-effort; SweepStuckRunningBuilds
 // is the durable backstop).
 func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason) (Deployment, []string, error) {
+	return s.cancelDeploymentTx(ctx, id, principal, reason, nil, nil)
+}
+
+func (s *PgStore) CancelDeploymentTxWithActivity(ctx context.Context, id, principal string, reason CancelReason, activity OrgActivity) (Deployment, []string, int64, error) {
+	var outboxID int64
+	deployment, cancelledBuilds, err := s.cancelDeploymentTx(ctx, id, principal, reason, &activity, &outboxID)
+	return deployment, cancelledBuilds, outboxID, err
+}
+
+func (s *PgStore) cancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason, activity *OrgActivity, activityOutboxID *int64) (Deployment, []string, error) {
 	if !reason.IsValid() {
 		return Deployment{}, nil, ErrInvalidStateTransition
+	}
+	var normalizedActivity OrgActivity
+	if activity != nil {
+		var normalizeErr error
+		normalizedActivity, normalizeErr = normalizeOrgActivity(*activity, time.Now())
+		if normalizeErr != nil {
+			return Deployment{}, nil, normalizeErr
+		}
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -9119,6 +9157,12 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	var rootfsBytes int64
 	if err := scanDeploymentInto(&d, tx.QueryRow(ctx, `SELECT `+deploymentSelectColumnsWithRootfs+` FROM deployments WHERE id = $1`, id), &rootfsPath, &rootfsKey, &rootfsBytes); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: scan deployment: %w", err)
+	}
+	if activity != nil && activityOutboxID != nil {
+		*activityOutboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalizedActivity)
+		if err != nil {
+			return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: enqueue activity: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: commit: %w", err)
@@ -10867,6 +10911,9 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
 		return Deployment{}, err
 	}
+	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", code); err != nil {
+		return Deployment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
@@ -10962,6 +11009,9 @@ func (s *PgStore) SetDeploymentFailedEx(
 		return Deployment{}, err
 	}
 	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", code); err != nil {
 		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -11074,6 +11124,9 @@ func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) 
 	}
 	if tag.RowsAffected() > 0 {
 		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
+		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", ""); err != nil {
 			return err
 		}
 	}
@@ -26631,91 +26684,13 @@ func (s *PgStore) UpdateOrgMemberRole(ctx context.Context, orgID, accountID stri
 //     cannot become owner)
 //   - both rows present + invariants hold → swap succeeds
 func (s *PgStore) TransferOrgOwnership(ctx context.Context, orgID, fromAccountID, toAccountID string) error {
-	if fromAccountID == toAccountID {
-		// No-op would silently skip the swap if the caller is
-		// already the only owner. Refuse explicitly so the handler
-		// surface is consistent (ErrOrgLastOwner mirrors the
-		// self-transfer-is-illegal invariant; PR 5 front-loads the
-		// check so we don't issue a no-op write).
-		return ErrOrgLastOwner
-	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("state: transfer org ownership tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
-
-	// (1) Probe fromAccountID: must be the active owner right now.
-	var fromRole string
-	var fromRemoved *time.Time
-	row := tx.QueryRow(ctx, `
-		select role, removed_at
-		  from org_memberships
-		 where org_id = $1 and account_id = $2
-		   for update
-	`, orgID, fromAccountID)
-	if err := row.Scan(&fromRole, &fromRemoved); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("state: transfer ownership from probe: %w", err)
-	}
-	if fromRole != string(OrgRoleOwner) || fromRemoved != nil {
-		return ErrOrgLastOwner
-	}
-
-	// (2) Probe toAccountID: must be an active, non-owner member.
-	// Promoting a viewer/admin to owner is the swap; the active
-	// membership is what makes the swap legitimate. Reject a
-	// already-owner path with ErrOrgLastOwner so the partial unique
-	// tripwire is bypassed upstream (cleaner wire-shape error).
-	var toRole string
-	var toRemoved *time.Time
-	row = tx.QueryRow(ctx, `
-		select role, removed_at
-		  from org_memberships
-		 where org_id = $1 and account_id = $2
-		   for update
-	`, orgID, toAccountID)
-	if err := row.Scan(&toRole, &toRemoved); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("state: transfer ownership to probe: %w", err)
-	}
-	if toRemoved != nil {
-		return ErrNotFound
-	}
-	if toRole == string(OrgRoleOwner) {
-		return ErrOrgLastOwner
-	}
-
-	// (3) Demote fromAccountID to admin first. Order matters: if
-	// the demote succeeded and the promote raced with another
-	// transfer, the partial unique org_memberships_one_owner_idx
-	// would 23505 on the second owner. The reverse order (promote
-	// first) would briefly leave two active owners, which is the
-	// exact invariant the partial unique is meant to prevent.
-	// Demote-first means a 23505 on the promote step surfaces as
-	// ErrOrgLastOwner and the tx rolls back cleanly.
-	if _, err := tx.Exec(ctx, `
-		update org_memberships
-		   set role = $3
-		 where org_id = $1 and account_id = $2
-	`, orgID, fromAccountID, string(OrgRoleAdmin)); err != nil {
-		return fmt.Errorf("state: transfer ownership demote: %w", err)
-	}
-	// (4) Promote toAccountID to owner.
-	if _, err := tx.Exec(ctx, `
-		update org_memberships
-		   set role = $3
-		 where org_id = $1 and account_id = $2
-	`, orgID, toAccountID, string(OrgRoleOwner)); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			return ErrOrgLastOwner
-		}
-		return fmt.Errorf("state: transfer ownership promote: %w", err)
+	if _, _, err := transferOrgOwnershipTx(ctx, tx, orgID, fromAccountID, toAccountID); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: transfer ownership commit: %w", err)

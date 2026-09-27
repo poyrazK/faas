@@ -2677,7 +2677,7 @@ func populateOrgActivity(ctx context.Context, r *http.Request, log *slog.Logger,
 
 func validDashboardActivityKindPrefix(prefix string) bool {
 	switch prefix {
-	case "", "app.", "deploy.", "env.", "domain.":
+	case "", "app.", "deploy.", "env.", "domain.", "api_key.", "org.":
 		return true
 	default:
 		return false

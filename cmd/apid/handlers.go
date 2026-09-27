@@ -189,7 +189,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
 	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
 	// accounts under concurrency (spec §4.2).
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
+	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
 		var qe *state.QuotaError
 		switch {

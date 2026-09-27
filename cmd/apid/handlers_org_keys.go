@@ -177,7 +177,12 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	// already uses rotated_from_id).
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
-	k, err := s.store.CreateOrgAPIKeyWithProvenance(r.Context(), mem.OrgID, acct.ID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil)
+	activityData := map[string]any{"scopes": scopes}
+	if expiresAt != nil {
+		activityData["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+	}
+	activity := newOrgAPIKeyActivity(r, acct, mem.OrgID, "api_key.created", activityData)
+	k, err := s.createOrgAPIKeyWithActivity(r.Context(), acct, mem.OrgID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil, activity)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
@@ -260,7 +265,8 @@ func (s *server) revokeOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	id := r.PathValue("id")
-	updated, err := s.store.RevokeOrgAPIKey(r.Context(), mem.OrgID, id)
+	activity := newOrgAPIKeyActivity(r, acct, mem.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+	updated, err := s.revokeOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, activity)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not revoke key"))
 		return
@@ -333,6 +339,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	} else {
 		graceWindow = time.Duration(*gw) * 24 * time.Hour
 	}
+	var graceWindowDays int
+	if graceWindow > 0 {
+		graceWindowDays = int(graceWindow / (24 * time.Hour))
+	}
 	// Mint the new plaintext + hash BEFORE the rotation so the
 	// store op can persist the real hash. The handler is the
 	// only site that ever sees the plaintext in memory.
@@ -349,7 +359,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	// rotations both point to the same predecessor.
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
-	newKey, oldKey, err := s.store.RotateOrgAPIKeyWithProvenance(r.Context(), mem.OrgID, id, hash, req.Label, graceWindow, bindIP, bindUA, nil)
+	activity := newOrgAPIKeyActivity(r, acct, mem.OrgID, "api_key.rotated", map[string]any{
+		"old_key_id": id, "grace_window_days": graceWindowDays,
+	})
+	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, req.Label, graceWindow, bindIP, bindUA, nil, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
@@ -363,10 +376,6 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","org":"`+mem.OrgID+`"}`)
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
-	}
 	// Audit payload mirrors the legacy key.rotated shape plus
 	// org_id. The legacy event does NOT fire on this path (the
 	// canonical /v1/orgs/{slug}/keys surface only emits the new

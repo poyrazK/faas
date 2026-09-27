@@ -579,7 +579,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity deployment id: %w", parseErr)
 		}
 		activity.DeploymentID = &deploymentID
-		activity.SourceType = "deployment"
+		activity.SourceType = "deployment.requested"
 		activity.SourceID = d.ID
 		if activity.AppID == nil {
 			appID, parseErr := uuid.Parse(d.AppID)

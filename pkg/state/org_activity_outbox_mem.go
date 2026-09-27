@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type orgActivityOutboxRow struct {
@@ -20,9 +22,12 @@ type orgActivityOutboxRow struct {
 }
 
 var (
-	_ OrgActivityOutboxStore             = (*MemStore)(nil)
-	_ OrgActivityEnvMutationStore        = (*MemStore)(nil)
-	_ OrgActivityDeploymentMutationStore = (*MemStore)(nil)
+	_ OrgActivityOutboxStore               = (*MemStore)(nil)
+	_ OrgActivityEnvMutationStore          = (*MemStore)(nil)
+	_ OrgActivityAppConfigMutationStore    = (*MemStore)(nil)
+	_ OrgActivityDeploymentMutationStore   = (*MemStore)(nil)
+	_ OrgActivityDomainMutationStore       = (*MemStore)(nil)
+	_ OrgActivityCancellationMutationStore = (*MemStore)(nil)
 )
 
 func orgActivityOutboxKey(entry OrgActivity) string {
@@ -54,6 +59,36 @@ func (m *MemStore) enqueueOrgActivityOutboxLocked(entry OrgActivity) int64 {
 	m.orgActivityOutboxByKey[key] = item.ID
 	m.nextOrgActivityOutboxID++
 	return item.ID
+}
+
+func (m *MemStore) enqueueDeploymentOutcomeActivityLocked(deploymentID, outcome, errorCode string) error {
+	targetID, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return nil
+	}
+	var latestID int64
+	var request OrgActivity
+	for id, row := range m.orgActivityOutbox {
+		activity := row.Activity
+		if id <= latestID || (activity.SourceType != "deployment.requested" && activity.SourceType != "rollback.requested") ||
+			(activity.Kind != "deploy.requested" && activity.Kind != "deploy.rollback_requested") || activity.DeploymentID == nil ||
+			*activity.DeploymentID != targetID {
+			continue
+		}
+		latestID = id
+		request = activity
+	}
+	if latestID == 0 {
+		return nil
+	}
+	activity, emit, err := deploymentOutcomeActivity(request, outcome, errorCode, time.Now())
+	if err != nil {
+		return err
+	}
+	if emit {
+		m.enqueueOrgActivityOutboxLocked(activity)
+	}
+	return nil
 }
 
 func (m *MemStore) EnqueueOrgActivityOutbox(_ context.Context, entry OrgActivity) (int64, error) {

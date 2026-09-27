@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -165,20 +166,105 @@ func orgActivityResponse(row state.OrgActivity) api.OrgActivityResponse {
 }
 
 func orgActivitySummary(row state.OrgActivity) string {
+	role := orgActivityDataString(row, "role")
+	newRole := orgActivityDataString(row, "new_role")
 	switch row.Kind {
+	case "app.created":
+		return fmt.Sprintf("%s created app %s", row.ActorLabel, row.ResourceLabel)
+	case "app.deleted":
+		return fmt.Sprintf("%s deleted app %s", row.ActorLabel, row.ResourceLabel)
+	case "app.restored":
+		return fmt.Sprintf("%s restored app %s", row.ActorLabel, row.ResourceLabel)
+	case "app.config_updated":
+		fields := orgActivityDataChangeFields(row)
+		if len(fields) == 0 {
+			return fmt.Sprintf("%s updated %s settings", row.ActorLabel, row.ResourceLabel)
+		}
+		return fmt.Sprintf("%s updated %s settings (%s)", row.ActorLabel, row.ResourceLabel, strings.Join(fields, ", "))
+	case "deploy.requested":
+		return fmt.Sprintf("%s requested a deployment of %s", row.ActorLabel, row.ResourceLabel)
 	case "app.deployed":
 		return fmt.Sprintf("%s deployed %s", row.ActorLabel, row.ResourceLabel)
+	case "deploy.failed":
+		return fmt.Sprintf("Deployment of %s failed (requested by %s)", row.ResourceLabel, row.ActorLabel)
+	case "deploy.cancelled":
+		return fmt.Sprintf("%s cancelled deployment %s", row.ActorLabel, row.ResourceLabel)
 	case "env.set":
 		return fmt.Sprintf("%s changed %s", row.ActorLabel, row.ResourceLabel)
 	case "env.deleted":
 		return fmt.Sprintf("%s removed %s", row.ActorLabel, row.ResourceLabel)
 	case "domain.added":
 		return fmt.Sprintf("%s added", row.ResourceLabel)
+	case "domain.removed":
+		return fmt.Sprintf("%s removed", row.ResourceLabel)
 	case "domain.tls_issued":
 		return fmt.Sprintf("%s issued TLS certificate", row.ActorLabel)
+	case "api_key.created":
+		return fmt.Sprintf("%s created API key %s", row.ActorLabel, row.ResourceLabel)
+	case "api_key.rotated":
+		return fmt.Sprintf("%s rotated API key %s", row.ActorLabel, row.ResourceLabel)
+	case "api_key.revoked":
+		return fmt.Sprintf("%s revoked API key %s", row.ActorLabel, row.ResourceLabel)
+	case "org.invitation.created":
+		return orgActivitySummaryWithRole(fmt.Sprintf("%s invited %s", row.ActorLabel, row.ResourceLabel), role)
+	case "org.invitation.accepted":
+		return orgActivitySummaryWithRole(fmt.Sprintf("%s accepted an invitation for %s", row.ActorLabel, row.ResourceLabel), role)
+	case "org.invitation.revoked":
+		return fmt.Sprintf("%s revoked the invitation for %s", row.ActorLabel, row.ResourceLabel)
+	case "org.member.added":
+		return orgActivitySummaryWithRole(fmt.Sprintf("%s joined the workspace", row.ResourceLabel), role)
+	case "org.member.role_changed":
+		return orgActivitySummaryWithRole(fmt.Sprintf("%s changed %s's role", row.ActorLabel, row.ResourceLabel), newRole)
+	case "org.member.removed":
+		return orgActivitySummaryWithRole(fmt.Sprintf("%s removed %s", row.ActorLabel, row.ResourceLabel), role)
+	case "org.ownership_transferred":
+		return fmt.Sprintf("%s transferred ownership to %s", row.ActorLabel, row.ResourceLabel)
 	case "deploy.rolled_back":
 		return fmt.Sprintf("%s rolled back %s", row.ActorLabel, row.ResourceLabel)
+	case "deploy.rollback_failed":
+		return fmt.Sprintf("Rollback of %s failed (requested by %s)", row.ResourceLabel, row.ActorLabel)
+	case "deploy.rollback_requested":
+		return fmt.Sprintf("%s requested a rollback of %s", row.ActorLabel, row.ResourceLabel)
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%s %s %s", row.ActorLabel, row.Kind, row.ResourceLabel))
 	}
+}
+
+func orgActivityDataChangeFields(row state.OrgActivity) []string {
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(row.Data, &data); err != nil {
+		return nil
+	}
+	var changes []struct {
+		Field string `json:"field"`
+	}
+	if err := json.Unmarshal(data["changes"], &changes); err != nil {
+		return nil
+	}
+	fields := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if field := strings.TrimSpace(change.Field); field != "" {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func orgActivityDataString(row state.OrgActivity, key string) string {
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(row.Data, &data); err != nil {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(data[key], &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func orgActivitySummaryWithRole(summary, role string) string {
+	if role == "" {
+		return summary
+	}
+	return fmt.Sprintf("%s (%s)", summary, role)
 }
