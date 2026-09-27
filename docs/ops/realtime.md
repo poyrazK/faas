@@ -177,7 +177,16 @@ Inspect health and counters from the `faas` group:
 curl --unix-socket /run/faas/realtimed.sock http://localhost/healthz
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
+curl --unix-socket /run/faas/realtimed.sock 'http://localhost/internal/callbacks/dead-letters?limit=100'
 ```
+
+The dead-letter endpoint returns metadata only. Use the `next_cursor` value as
+`after` to list another page. After correcting a callback receiver, POST to
+`/internal/callbacks/dead-letters/<event-id>:replay` on this Unix socket to
+return one event to the pending outbox. Replay preserves the event ID and
+resets its retry budget; HTTP 409 means pending capacity or an active
+same-connection delivery must clear first. See the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
 The customer CLI exposes the authenticated connection operations as well:
 

@@ -1,6 +1,7 @@
 package realtime
 
 // adr: 281
+// adr: 293
 
 import (
 	"context"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -198,6 +200,120 @@ func TestCallbackOutboxDeadLettersAfterBoundedFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "dead", event.ID+".json")); err != nil {
 		t.Fatalf("dead letter stat: %v", err)
+	}
+}
+
+func TestCallbackOutboxListsDeadLetterMetadataWithoutPrivatePayload(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	for _, id := range []string{"evt_dead_a", "evt_dead_b"} {
+		event := testCallbackEvent()
+		event.ID = id
+		if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+			t.Fatalf("EnqueueAndClaim %s = (%v, %v), want claimed", id, claimed, err)
+		}
+		if err := queue.Fail(id); err != nil {
+			t.Fatalf("Fail %s: %v", id, err)
+		}
+	}
+
+	first, err := queue.ListDeadLetters("", 1)
+	if err != nil {
+		t.Fatalf("ListDeadLetters first page: %v", err)
+	}
+	if len(first.Items) != 1 || first.Items[0].ID != "evt_dead_a" || first.NextCursor != "evt_dead_a" {
+		t.Fatalf("first page = %+v, want evt_dead_a and its cursor", first)
+	}
+	entry := first.Items[0]
+	if entry.Type != EventMessage || entry.EndpointID != "endpoint-1" || entry.ConnectionID != "connection-1" ||
+		entry.Sequence != 7 || entry.Attempts != 1 || entry.SizeBytes <= 0 || entry.OccurredAt.IsZero() ||
+		entry.EnqueuedAt.IsZero() || entry.DeadLetteredAt.IsZero() {
+		t.Fatalf("dead-letter metadata = %+v, missing expected values", entry)
+	}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"hello", "callback-secret", "https://example.com/callback"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("metadata JSON contains private callback value %q: %s", secret, encoded)
+		}
+	}
+
+	second, err := queue.ListDeadLetters(first.NextCursor, 1)
+	if err != nil {
+		t.Fatalf("ListDeadLetters second page: %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != "evt_dead_b" || second.NextCursor != "" {
+		t.Fatalf("second page = %+v, want evt_dead_b and no next cursor", second)
+	}
+}
+
+func TestCallbackOutboxReplaysDeadLetterWithOriginalIDAndResetAttempts(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root, MaxAttempts: 1})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	if err := queue.Fail(event.ID); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if err := queue.ReplayDeadLetter(event.ID); err != nil {
+		t.Fatalf("ReplayDeadLetter: %v", err)
+	}
+	if err := queue.ReplayDeadLetter(event.ID); err != nil {
+		t.Fatalf("repeat ReplayDeadLetter: %v, want idempotent success", err)
+	}
+	stats := queue.Stats()
+	if stats.Pending != 1 || stats.DeadLetterTotal != 0 {
+		t.Fatalf("Stats after replay = %+v, want one pending and no dead letters", stats)
+	}
+	var record callbackOutboxRecord
+	payload, err := os.ReadFile(filepath.Join(root, event.ID+".json"))
+	if err != nil {
+		t.Fatalf("read replayed pending record: %v", err)
+	}
+	if err := json.Unmarshal(payload, &record); err != nil {
+		t.Fatalf("decode replayed pending record: %v", err)
+	}
+	if record.Event.ID != event.ID || record.Attempts != 0 || !record.NextAttemptAt.IsZero() || record.Event.Sequence != event.Sequence {
+		t.Fatalf("replayed record = %+v, want original event and reset attempts", record)
+	}
+	if record.CallbackURL != event.CallbackURL || record.CallbackAuthToken != event.CallbackAuthToken {
+		t.Fatalf("replayed record lost its private delivery configuration: %+v", record)
+	}
+	claimed, ok, err := queue.ClaimNext()
+	if err != nil || !ok || claimed.ID != event.ID {
+		t.Fatalf("ClaimNext after replay = (%+v, %v, %v), want original event", claimed, ok, err)
+	}
+}
+
+func TestCallbackOutboxReplayHonorsPendingCapacityAndInFlightOrder(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	if err := queue.Fail(event.ID); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	queue.maxBytes = 1
+	if err := queue.ReplayDeadLetter(event.ID); !errors.Is(err, ErrCallbackOutboxFull) {
+		t.Fatalf("ReplayDeadLetter at capacity = %v, want ErrCallbackOutboxFull", err)
+	}
+	if stats := queue.Stats(); stats.Pending != 0 || stats.DeadLetterTotal != 1 {
+		t.Fatalf("Stats after capacity rejection = %+v, want dead letter retained", stats)
+	}
+
+	queue.maxBytes = 1 << 20
+	later := testCallbackEvent()
+	later.ID = "evt_later"
+	later.Sequence = event.Sequence + 1
+	if claimed, err := queue.EnqueueAndClaim(later); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim later event = (%v, %v), want claimed", claimed, err)
+	}
+	if err := queue.ReplayDeadLetter(event.ID); !errors.Is(err, ErrCallbackDeadLetterConflict) {
+		t.Fatalf("ReplayDeadLetter with later in-flight event = %v, want order conflict", err)
 	}
 }
 

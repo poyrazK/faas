@@ -24,13 +24,19 @@ const (
 	DefaultCallbackOutboxMaxAttempts         = 10
 	DefaultCallbackOutboxReplayWorkers       = 8
 	MaxCallbackOutboxReplayWorkers           = 32
+	DefaultCallbackDeadLetterPageSize        = 100
+	MaxCallbackDeadLetterPageSize            = 100
 	DefaultCallbackOutboxRetryInterval       = time.Second
 )
 
 var (
-	ErrCallbackOutboxFull      = errors.New("realtime: callback outbox is full")
-	ErrCallbackOutboxAdmission = errors.New("realtime: callback outbox admission failed")
-	ErrCallbackOutboxItem      = errors.New("realtime: callback outbox item is not claimable")
+	ErrCallbackOutboxFull         = errors.New("realtime: callback outbox is full")
+	ErrCallbackOutboxAdmission    = errors.New("realtime: callback outbox admission failed")
+	ErrCallbackOutboxItem         = errors.New("realtime: callback outbox item is not claimable")
+	ErrCallbackOutboxUnavailable  = errors.New("realtime: callback outbox is unavailable")
+	ErrCallbackDeadLetterNotFound = errors.New("realtime: callback dead letter not found")
+	ErrCallbackDeadLetterConflict = errors.New("realtime: callback dead letter replay conflicts with active delivery")
+	ErrCallbackDeadLetterCorrupt  = errors.New("realtime: callback dead letter is corrupt")
 )
 
 // CallbackOutboxConfig controls the node-local callback spool.
@@ -58,6 +64,29 @@ type CallbackOutboxStats struct {
 	DeadLetterCapacityBytes    int64   `json:"dead_letter_capacity_bytes"`
 	DeadLetterEvictions        uint64  `json:"dead_letter_evictions"`
 	DeadLetterLastEvictionUnix int64   `json:"dead_letter_last_eviction_unix"`
+}
+
+// CallbackDeadLetter contains operator-safe metadata for a retained callback.
+// Payload bytes, callback URLs, and callback credentials are deliberately
+// excluded from this type so they cannot escape through the management API.
+type CallbackDeadLetter struct {
+	ID             string    `json:"id"`
+	Type           EventType `json:"type"`
+	EndpointID     string    `json:"endpoint_id"`
+	ConnectionID   string    `json:"connection_id"`
+	Sequence       uint64    `json:"sequence"`
+	OccurredAt     time.Time `json:"occurred_at"`
+	EnqueuedAt     time.Time `json:"enqueued_at"`
+	DeadLetteredAt time.Time `json:"dead_lettered_at"`
+	Attempts       int       `json:"attempts"`
+	SizeBytes      int64     `json:"size_bytes"`
+}
+
+// CallbackDeadLetterPage is one stable, ID-ordered page of retained callback
+// metadata. Pass NextCursor as the next request's after value to continue.
+type CallbackDeadLetterPage struct {
+	Items      []CallbackDeadLetter `json:"items"`
+	NextCursor string               `json:"next_cursor,omitempty"`
 }
 
 type callbackDeadLetter struct {
@@ -591,6 +620,189 @@ func (q *CallbackOutbox) Fail(id string) error {
 	item.size = int64(len(payload))
 	delete(q.inFlight, id)
 	return nil
+}
+
+// ListDeadLetters returns retained callback metadata in event-ID order. The
+// cursor is exclusive so a caller can safely resume a bounded listing.
+func (q *CallbackOutbox) ListDeadLetters(after string, limit int) (CallbackDeadLetterPage, error) {
+	if q == nil {
+		return CallbackDeadLetterPage{}, ErrCallbackOutboxUnavailable
+	}
+	if (after != "" && !validCallbackOutboxID(after)) || limit < 1 || limit > MaxCallbackDeadLetterPageSize {
+		return CallbackDeadLetterPage{}, ErrCallbackOutboxItem
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	deadLetters := append(callbackDeadLetterHeap(nil), q.dead...)
+	sort.Slice(deadLetters, func(i, j int) bool { return deadLetters[i].id < deadLetters[j].id })
+	page := CallbackDeadLetterPage{Items: make([]CallbackDeadLetter, 0, limit)}
+	for _, dead := range deadLetters {
+		if dead.id <= after {
+			continue
+		}
+		if len(page.Items) == limit {
+			page.NextCursor = page.Items[len(page.Items)-1].ID
+			break
+		}
+		payload, err := os.ReadFile(filepath.Join(q.deadRoot, dead.id+".json"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				q.removeDeadLetter(dead.id)
+				continue
+			}
+			return CallbackDeadLetterPage{}, fmt.Errorf("realtime: read callback dead letter %q: %w", dead.id, err)
+		}
+		var record callbackOutboxRecord
+		if err := json.Unmarshal(payload, &record); err != nil || record.Event.ID != dead.id ||
+			(record.Event.Type != EventMessage && record.Event.Type != EventDisconnect) {
+			return CallbackDeadLetterPage{}, fmt.Errorf("realtime: decode callback dead letter %q: %w", dead.id, ErrCallbackDeadLetterCorrupt)
+		}
+		enqueuedAt := record.EnqueuedAt
+		if enqueuedAt.IsZero() {
+			enqueuedAt = record.Event.At
+		}
+		if enqueuedAt.IsZero() {
+			enqueuedAt = dead.modified
+		}
+		page.Items = append(page.Items, CallbackDeadLetter{
+			ID:             record.Event.ID,
+			Type:           record.Event.Type,
+			EndpointID:     record.Event.EndpointID,
+			ConnectionID:   record.Event.ConnectionID,
+			Sequence:       record.Event.Sequence,
+			OccurredAt:     record.Event.At,
+			EnqueuedAt:     enqueuedAt,
+			DeadLetteredAt: dead.modified,
+			Attempts:       record.Attempts,
+			SizeBytes:      dead.size,
+		})
+	}
+	return page, nil
+}
+
+// ReplayDeadLetter returns a retained event to the pending queue. Repeating a
+// request for an ID already pending is safe and does not create a duplicate.
+// The event ID and enqueue timestamp are preserved for application deduplication
+// and queue age reporting; only its bounded retry state is reset.
+func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
+	if q == nil {
+		return ErrCallbackOutboxUnavailable
+	}
+	if !validCallbackOutboxID(id) {
+		return ErrCallbackOutboxItem
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, pending := q.items[id]; pending {
+		return nil
+	}
+	if _, dead := q.deadIDs[id]; !dead {
+		return ErrCallbackDeadLetterNotFound
+	}
+
+	deadPath := filepath.Join(q.deadRoot, id+".json")
+	payload, err := os.ReadFile(deadPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			q.removeDeadLetter(id)
+			return ErrCallbackDeadLetterNotFound
+		}
+		return fmt.Errorf("realtime: read callback dead letter %q for replay: %w", id, err)
+	}
+	var record callbackOutboxRecord
+	if err := json.Unmarshal(payload, &record); err != nil || record.Event.ID != id ||
+		(record.Event.Type != EventMessage && record.Event.Type != EventDisconnect) {
+		return fmt.Errorf("realtime: decode callback dead letter %q for replay: %w", id, ErrCallbackDeadLetterCorrupt)
+	}
+	for inFlightID := range q.inFlight {
+		pending := q.items[inFlightID]
+		if pending != nil && pending.record.Event.ConnectionID == record.Event.ConnectionID &&
+			callbackEventBefore(record.Event, pending.record.Event) {
+			return ErrCallbackDeadLetterConflict
+		}
+	}
+
+	pendingPath := filepath.Join(q.root, id+".json")
+	if _, err := os.Lstat(pendingPath); err == nil {
+		return ErrCallbackDeadLetterConflict
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("realtime: inspect callback replay destination %q: %w", id, err)
+	}
+	enqueuedAt := record.EnqueuedAt
+	if enqueuedAt.IsZero() {
+		enqueuedAt = record.Event.At
+	}
+	if enqueuedAt.IsZero() {
+		enqueuedAt = time.Now().UTC()
+	}
+	record.EnqueuedAt = enqueuedAt
+	record.Attempts = 0
+	record.NextAttemptAt = time.Time{}
+	payload, err = json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("realtime: encode callback dead-letter replay %q: %w", id, err)
+	}
+	if q.bytes+int64(len(payload)) > q.maxBytes {
+		return ErrCallbackOutboxFull
+	}
+	if err := writeCallbackOutboxFile(deadPath, payload); err != nil {
+		q.refreshDeadLetterInfo(id)
+		return fmt.Errorf("realtime: persist callback dead-letter replay %q: %w", id, err)
+	}
+	if err := os.Rename(deadPath, pendingPath); err != nil {
+		q.refreshDeadLetterInfo(id)
+		return fmt.Errorf("realtime: move callback dead-letter replay %q: %w", id, err)
+	}
+	q.removeDeadLetter(id)
+	item := &callbackOutboxItem{record: record, path: pendingPath, size: int64(len(payload)), enqueuedAt: enqueuedAt}
+	q.items[id] = item
+	heap.Push(&q.pendingAge, item)
+	q.bytes += item.size
+	var syncErr error
+	if err := syncCallbackOutboxDir(q.root); err != nil {
+		syncErr = errors.Join(syncErr, fmt.Errorf("realtime: sync callback outbox after replay: %w", err))
+	}
+	if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
+		syncErr = errors.Join(syncErr, fmt.Errorf("realtime: sync callback dead letters after replay: %w", err))
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return nil
+}
+
+// removeDeadLetter updates retained-dead-letter indexes after a successful
+// move. It is called with q.mu held.
+func (q *CallbackOutbox) removeDeadLetter(id string) {
+	for index, dead := range q.dead {
+		if dead.id == id {
+			heap.Remove(&q.dead, index)
+			delete(q.deadIDs, id)
+			q.deadBytes -= dead.size
+			return
+		}
+	}
+	delete(q.deadIDs, id)
+}
+
+// refreshDeadLetterInfo repairs the in-memory size and modification time after
+// a dead-letter rewrite that did not complete its move to the pending folder.
+// It is called with q.mu held.
+func (q *CallbackOutbox) refreshDeadLetterInfo(id string) {
+	info, err := os.Stat(filepath.Join(q.deadRoot, id+".json"))
+	if err != nil {
+		return
+	}
+	for index := range q.dead {
+		if q.dead[index].id == id {
+			q.deadBytes += info.Size() - q.dead[index].size
+			q.dead[index].size = info.Size()
+			q.dead[index].modified = info.ModTime()
+			heap.Init(&q.dead)
+			return
+		}
+	}
 }
 
 // Release abandons an in-flight claim without changing its retry budget. It

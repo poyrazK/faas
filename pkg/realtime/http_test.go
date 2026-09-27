@@ -1,5 +1,7 @@
 package realtime
 
+// adr: 293
+
 import (
 	"context"
 	"encoding/json"
@@ -306,7 +308,7 @@ func TestHealthHandlerDoesNotExposeManagementRoutes(t *testing.T) {
 		t.Fatalf("health status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 
-	for _, path := range []string{"/internal/stats", "/internal/connections", "/internal/endpoints"} {
+	for _, path := range []string{"/internal/stats", "/internal/connections", "/internal/endpoints", "/internal/callbacks/dead-letters"} {
 		request = httptest.NewRequest(http.MethodGet, path, nil)
 		recorder = httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)

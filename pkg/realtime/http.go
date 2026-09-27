@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -46,6 +47,24 @@ func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
 		return CallbackOutboxStats{}
 	}
 	return h.DurableQueue.Stats()
+}
+
+// ListCallbackDeadLetters exposes metadata-only dead-letter inspection through
+// the daemon's private management socket.
+func (h HTTPHooks) ListCallbackDeadLetters(after string, limit int) (CallbackDeadLetterPage, error) {
+	if h.DurableQueue == nil {
+		return CallbackDeadLetterPage{}, ErrCallbackOutboxUnavailable
+	}
+	return h.DurableQueue.ListDeadLetters(after, limit)
+}
+
+// ReplayCallbackDeadLetter requeues one retained event through the durable
+// callback outbox.
+func (h HTTPHooks) ReplayCallbackDeadLetter(id string) error {
+	if h.DurableQueue == nil {
+		return ErrCallbackOutboxUnavailable
+	}
+	return h.DurableQueue.ReplayDeadLetter(id)
 }
 
 func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, error) {
@@ -458,6 +477,10 @@ func (m *Manager) internalHandler() http.Handler {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/internal/")
 		switch {
+		case path == "callbacks/dead-letters":
+			m.handleCallbackDeadLetters(w, r)
+		case strings.HasPrefix(path, "callbacks/dead-letters/"):
+			m.handleCallbackDeadLetterRoute(w, r, strings.TrimPrefix(path, "callbacks/dead-letters/"))
 		case path == "endpoints" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, m.EndpointIDs())
 		case path == "endpoints" && r.Method == http.MethodPost:
@@ -474,6 +497,80 @@ func (m *Manager) internalHandler() http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+type callbackDeadLetterManagement interface {
+	ListCallbackDeadLetters(after string, limit int) (CallbackDeadLetterPage, error)
+	ReplayCallbackDeadLetter(id string) error
+}
+
+func (m *Manager) handleCallbackDeadLetters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	hooks, ok := m.hooks.(callbackDeadLetterManagement)
+	if !ok {
+		writeCallbackDeadLetterError(w, ErrCallbackOutboxUnavailable)
+		return
+	}
+	after := r.URL.Query().Get("after")
+	limit := DefaultCallbackDeadLetterPageSize
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > MaxCallbackDeadLetterPageSize {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	page, err := hooks.ListCallbackDeadLetters(after, limit)
+	if err != nil {
+		writeCallbackDeadLetterError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (m *Manager) handleCallbackDeadLetterRoute(w http.ResponseWriter, r *http.Request, path string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !strings.HasSuffix(path, ":replay") {
+		http.NotFound(w, r)
+		return
+	}
+	id := strings.TrimSuffix(path, ":replay")
+	if !validCallbackOutboxID(id) {
+		http.Error(w, "invalid callback dead-letter id", http.StatusBadRequest)
+		return
+	}
+	hooks, ok := m.hooks.(callbackDeadLetterManagement)
+	if !ok {
+		writeCallbackDeadLetterError(w, ErrCallbackOutboxUnavailable)
+		return
+	}
+	if err := hooks.ReplayCallbackDeadLetter(id); err != nil {
+		writeCallbackDeadLetterError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "status": "pending"})
+}
+
+func writeCallbackDeadLetterError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrCallbackDeadLetterNotFound):
+		http.Error(w, "callback dead letter not found", http.StatusNotFound)
+	case errors.Is(err, ErrCallbackOutboxFull), errors.Is(err, ErrCallbackDeadLetterConflict):
+		http.Error(w, "callback dead-letter replay conflicts with pending capacity or delivery", http.StatusConflict)
+	case errors.Is(err, ErrCallbackOutboxUnavailable):
+		http.Error(w, "callback outbox unavailable", http.StatusServiceUnavailable)
+	case errors.Is(err, ErrCallbackOutboxItem):
+		http.Error(w, "invalid callback dead-letter request", http.StatusBadRequest)
+	default:
+		http.Error(w, "callback dead-letter operation failed", http.StatusInternalServerError)
+	}
 }
 
 func (m *Manager) handleEndpointCreate(w http.ResponseWriter, r *http.Request) {
