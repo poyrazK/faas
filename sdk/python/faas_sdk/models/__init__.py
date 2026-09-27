@@ -727,6 +727,7 @@ from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_pre_auth_observations_range import GetAppPreAuthObservationsRange
 from .get_app_request_analytics_group_by import GetAppRequestAnalyticsGroupBy
 from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalyticsTimeseriesGroupBy
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
@@ -1178,6 +1179,10 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
+from .pre_auth_observations_response import PreAuthObservationsResponse
+from .pre_auth_observations_response_range import PreAuthObservationsResponseRange
+from .pre_auth_policy_observation import PreAuthPolicyObservation
+from .pre_auth_policy_observation_kind import PreAuthPolicyObservationKind
 from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
 from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
 from .pre_auth_route_limit import PreAuthRouteLimit
@@ -2492,6 +2497,7 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppPreAuthObservationsRange",
     "GetAppRequestAnalyticsGroupBy",
     "GetAppRequestAnalyticsTimeseriesGroupBy",
     "GetAppRequestAnalyticsTimeseriesMethod",
@@ -2921,6 +2927,10 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreAuthFailedResponseLimit",
+    "PreAuthObservationsResponse",
+    "PreAuthObservationsResponseRange",
+    "PreAuthPolicyObservation",
+    "PreAuthPolicyObservationKind",
     "PreAuthRateLimitConfig",
     "PreAuthRateLimitConfigMode",
     "PreAuthRouteLimit",

@@ -602,6 +602,8 @@ export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './PlatformTenantWebhookResponse.js';
 export type { PreAuthFailedResponseLimit } from './PreAuthFailedResponseLimit.js';
+export type { PreAuthObservationsResponse } from './PreAuthObservationsResponse.js';
+export type { PreAuthPolicyObservation } from './PreAuthPolicyObservation.js';
 export type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 export type { PreAuthRouteLimit } from './PreAuthRouteLimit.js';
 export type { PreflightFinding } from './PreflightFinding.js';

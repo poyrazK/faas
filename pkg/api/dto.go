@@ -5567,6 +5567,31 @@ type RepoResponse struct {
 	Private       bool   `json:"private"`
 }
 
+// PreAuthObservationsResponse reports observe-mode decisions over a bounded
+// time range. A result count is the final gateway response to a request that
+// would have been blocked; a 2xx result is only a possible false-positive
+// signal, not proof that the requester was legitimate.
+type PreAuthObservationsResponse struct {
+	AppID    string                     `json:"app_id"`
+	Range    string                     `json:"range"`
+	Source   string                     `json:"source"`
+	AsOf     string                     `json:"as_of"`
+	Policies []PreAuthPolicyObservation `json:"policies"`
+}
+
+type PreAuthPolicyObservation struct {
+	PolicyID      string `json:"policy_id"`
+	Kind          string `json:"kind"` // app | route | failures
+	Method        string `json:"method,omitempty"`
+	Path          string `json:"path,omitempty"`
+	WouldBlock    int64  `json:"would_block"`
+	Result2xx     int64  `json:"result_2xx"`
+	Result3xx     int64  `json:"result_3xx"`
+	Result4xx     int64  `json:"result_4xx"`
+	Result5xx     int64  `json:"result_5xx"`
+	ResultUnknown int64  `json:"result_unknown"`
+}
+
 // AppMetricsResponse is the per-app metrics payload returned by
 // GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-042).
 //

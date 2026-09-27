@@ -5714,6 +5714,9 @@ haveApp:
 	if h.applyPreAuthRateLimit(w, r, rec, app, deploymentSmoke) {
 		return
 	}
+	if app.PreAuthRateLimit != nil && app.PreAuthRateLimit.Mode == api.PreAuthRateLimitObserve {
+		defer func() { h.recordPreAuthShadowResult(r, rec.status) }()
+	}
 	// ADR-120: resolve end-customer identity before edge rewrite, body
 	// buffering, customer rule throttling, or wake work. The optional source
 	// limit above is deliberately earlier so a burst can avoid credential
