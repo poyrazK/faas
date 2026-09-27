@@ -836,6 +836,10 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
 		Short:   "List deployments or manage stable named URLs for immutable revisions",
+		Examples: []string{
+			"gregale deployments --app my-api --limit 10",
+			"gregale deployments --app my-api --wide",
+		},
 		Subcommands: []cliSub{{
 			Name:  "alias",
 			Short: "Manage stable named URLs for immutable deployments",
@@ -866,8 +870,12 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
 		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
+		Examples: []string{
+			"gregale deployment summary v42 --app my-api",
+			"gregale deployment wait v42 --app my-api",
+		},
 		Subcommands: []cliSub{
-			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
 			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
@@ -889,11 +897,21 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
 		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
+		Examples: []string{
+			"gregale deploys status 00000000000000000000000000000001",
+			"gregale deploys show v42 --app my-api --status",
+		},
 		Subcommands: []cliSub{
 			// ADR-117 companion read surface and ADR-124 deployment
 			// operations. Keep this list in lock-step with cmdDeploys.
-			{Name: "show", Short: "Print the closed 6-stage post-stream summary"},
-			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance"},
+			{Name: "show", Short: "Print the closed 6-stage post-stream summary", Examples: []string{"gregale deploys show 00000000000000000000000000000001", "gregale deploys show v42 --app my-api --status"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+				{Name: "status", Short: "include terminal status and timing"},
+				{Name: "url", Short: "print only the deployment preview URL"},
+			}},
+			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance", Examples: []string{"gregale deploys status 00000000000000000000000000000001", "gregale deploys status v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+			}},
 			{Name: "cancel", Short: "Cancel one pending deployment"},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority"},
 			{Name: "clear", Short: "Hide one deployment from the list"},
@@ -1718,6 +1736,7 @@ var cliCommands = []cliCommand{
 		Name:        "rollback",
 		DocSlug:     "rollback",
 		Short:       "Re-promote the previous deployment",
+		Examples:    []string{"gregale rollback my-api", "gregale rollback my-api --to v41"},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},

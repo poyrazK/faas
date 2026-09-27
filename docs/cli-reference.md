@@ -1056,6 +1056,13 @@ List deployments or manage stable named URLs for immutable revisions
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
 
+Examples:
+
+```sh
+gregale deployments --app my-api --limit 10
+gregale deployments --app my-api --wide
+```
+
 ### deployments alias
 
 Manage stable named URLs for immutable deployments
@@ -1106,13 +1113,29 @@ Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wa
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
 
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment wait v42 --app my-api
+```
+
 ### deployment summary
 
 Show the release diff and rollback target
 
+`gregale deployment summary <id|vN> --app <SLUG>`
+
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment summary v42 --app my-api --json
+```
 
 ### deployment wait
 
@@ -1149,13 +1172,48 @@ Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys show
 
 Print the closed 6-stage post-stream summary
 
+`gregale deploys show <id|vN> [--app <SLUG>] [--status] [--url]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--status` | include terminal status and timing |  |
+| `--url` | print only the deployment preview URL |  |
+
+Examples:
+
+```sh
+gregale deploys show 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys status
 
 Print stages, terminal status, and failure guidance
+
+`gregale deploys status <id|vN> [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys status v42 --app my-api --json
+```
 
 ### deploys cancel
 
@@ -2403,6 +2461,13 @@ Re-promote the previous deployment
 |---|---|---|
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--json` | machine-readable output |  |
+
+Examples:
+
+```sh
+gregale rollback my-api
+gregale rollback my-api --to v41
+```
 
 
 ## projects
