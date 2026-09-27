@@ -11,6 +11,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// adr: 127 — request-ID journal writes are recorded before guest work and fail closed if persistence fails.
 func TestObserveRequestIDJournalWriteMetrics(t *testing.T) {
 	m := NewMetrics()
 	m.ObserveRequestIDJournalWrite(25*time.Millisecond, nil)
