@@ -1,7 +1,10 @@
+-- filename: 20260927211555008_github_production_trigger.sql
+
 -- +goose Up
 alter table github_deploy_policies
     add column if not exists production_trigger text not null default 'webhook';
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -14,6 +17,7 @@ BEGIN
             CHECK (production_trigger IN ('webhook', 'actions'));
     END IF;
 END$$;
+-- +goose StatementEnd
 
 -- +goose Down
 alter table github_deploy_policies drop column if exists production_trigger;

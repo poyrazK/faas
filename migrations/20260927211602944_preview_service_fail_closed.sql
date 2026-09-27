@@ -1,3 +1,5 @@
+-- filename: 20260927211602944_preview_service_fail_closed.sql
+
 -- +goose Up
 -- Revoke the compatibility backfill. Customers who need production calls
 -- from previews can explicitly re-enable allow_marked through the policy API.
