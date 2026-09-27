@@ -494,3 +494,32 @@ func TestCLIAuthApproval_ExpiredCodeNamesTheShippedCLI(t *testing.T) {
 		t.Fatalf("expired-code page = %d, want a gregale login hint:\n%s", rec.Code, body)
 	}
 }
+
+// TestSignIn_RejectsOtherOrigins — login and signup accepted posts from any
+// page. A customer's app on a sibling subdomain (same-site, so the session
+// cookie it causes to be set is kept) could sign a visitor into the
+// attacker's account.
+func TestSignIn_RejectsOtherOrigins(t *testing.T) {
+	h, _, store, _ := newAuthedDashboardServerFull(t)
+	id := accountID(t, store, "alice@example.com")
+	seedPassword(t, store, id)
+	login := func(origin string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "http://api.gregale.dev/v1/auth/login",
+			strings.NewReader(`{"email":"alice@example.com","password":"`+seededPassword+`"}`))
+		r.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+			r.Header.Set("Sec-Fetch-Site", "same-site")
+		}
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+	rec := login("https://evil.gregale.dev")
+	if rec.Code != http.StatusForbidden || responseCookie(rec, sessionCookie) != nil {
+		t.Fatalf("sibling-origin login = %d (cookie set: %v), want 403 and no session", rec.Code, responseCookie(rec, sessionCookie) != nil)
+	}
+	if rec := login(""); rec.Code == http.StatusForbidden {
+		t.Fatalf("non-browser login was refused: %s", rec.Body)
+	}
+}

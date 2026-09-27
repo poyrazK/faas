@@ -83,6 +83,21 @@ func (s *server) sameOriginSessionWrites(next accountHandler) accountHandler {
 	}
 }
 
+// fromTrustedOrigin guards the routes that sign someone in (login, signup,
+// password reset). Without it a customer's app on a sibling subdomain could
+// post the attacker's credentials and sign a visitor into the attacker's
+// account; whatever the visitor then deployed or configured landed there.
+func (s *server) fromTrustedOrigin(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.browserRequestFromTrustedOrigin(r) {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"cross-origin request rejected", "sign in from the Gregale dashboard"))
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 // browserRequestFromTrustedOrigin reports whether a browser sent this from
 // a control-plane origin: the API host itself or operations.<domain>, as
 // requireSameOrigin allows. Sec-Fetch-Site alone cannot tell a trusted

@@ -2949,10 +2949,10 @@ func (s *server) handler() http.Handler {
 	// /signup, /login/forgot, /v1/auth/google, and /v1/auth/github.
 	mux.Handle("POST /login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postLoginEmail)))
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postLoginEmail))))
 	mux.Handle("POST /signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postSignup)))
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postSignup))))
 	mux.Handle("POST /login/forgot", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postForgotPassword)))
@@ -2964,7 +2964,7 @@ func (s *server) handler() http.Handler {
 	}, http.HandlerFunc(s.renderResetForm)))
 	mux.Handle("POST /auth/reset", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
-	}, http.HandlerFunc(s.postReset)))
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postReset))))
 	// POST /dashboard/account/set-password is the authed opt-in for
 	// OAuth-only customers and the change-password path for everyone
 	// else. Behind sessionAuth so the call is anchored to a known
@@ -3000,10 +3000,10 @@ func (s *server) handler() http.Handler {
 	// bucket as /login.
 	mux.Handle("POST /v1/auth/signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postV1AuthSignup)))
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthSignup))))
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postV1AuthLogin)))
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
