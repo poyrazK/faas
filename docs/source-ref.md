@@ -92,14 +92,16 @@ The CLI scopes that logical key to the source-ref transport before sending it
 to apid, so a replay folds to the original build row without colliding with a
 different deploy transport.
 
-The source-ref path reads `gregale.yaml` (or `gregale.yml`) from the fetched
-archive, not from the runner's current directory. Cron and event-trigger
+The source-ref path reads `gregale.yaml`, `gregale.yml`, or `gregale.toml` from
+the fetched archive, not from the runner's current directory. Cron and event-trigger
 declarations are validated, quota-checked, deduplicated, and applied before
 the build is accepted. `async_routes:` declarations are validated and
 reconciled by their stable manifest names; project deploys reconcile only
 selected workloads, and `workflows:` is stored on the deployment. Pass
 `--no-triggers` when a release should deploy code and workflows without
-reconciling trigger or async-route declarations.
+reconciling trigger or async-route declarations. Companion declarations and
+top-level `main_depends_on` are also validated and pinned to that deployment.
+See [application companions](./companions.md) for the manifest shape.
 
 The app-level `scaling:` declaration is currently rejected on this transport
 because the source-ref handler cannot safely update app policy transactionally

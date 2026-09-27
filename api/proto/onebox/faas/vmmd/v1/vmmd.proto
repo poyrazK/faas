@@ -650,6 +650,9 @@ message AppSpec {
   // Disables the bounded startup CPU allowance for this deployment. False
   // preserves the established behavior for callers that omit this field.
   bool disable_startup_cpu_boost = 24;
+  // main_depends_on carries the primary workload's startup gates into the
+  // guest workload roster. Empty preserves legacy startup behavior.
+  repeated WorkloadDependency main_depends_on = 28;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
