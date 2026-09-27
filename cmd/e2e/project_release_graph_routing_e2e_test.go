@@ -34,7 +34,7 @@ func (p releaseGraphEndpointProvider) ServiceEndpoints(context.Context, string) 
 func createReleaseGraphApp(t *testing.T, f *normalPathFixture, accountID, projectID, slug, workload string) state.App {
 	t.Helper()
 	app, err := f.store.CreateApp(f.ctx, state.App{
-		AccountID: accountID, ProjectID: projectID, Slug: slug,
+		AccountID: accountID, ProjectID: projectID, Slug: slug, NodeID: f.nodeID,
 		Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256,
 		IdleTimeoutS: 3600, MaxConcurrency: 1, WorkloadName: workload,
 		Manifest: state.AppManifest{RevisionPinTTLSeconds: api.RevisionPinMaxTTLSeconds},
