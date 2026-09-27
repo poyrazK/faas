@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -253,6 +254,8 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	bucketPath := "/v1/apps/compute-binding-app/buckets"
 	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
 	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	notifier := &runtimeConfigNotifyStub{}
+	e.s.notif = notifier
 
 	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
 	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
@@ -264,6 +267,11 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	}
 	if created.Prefix != "GREGALE_S3_ASSETS" || created.Scope != state.DefaultEnvScope || created.Credential.Permission != api.ObjectBucketPermissionReadWrite {
 		t.Fatalf("unexpected binding: %+v", created)
+	}
+	var change db.RuntimeConfigChangedPayload
+	if notifier.channel != db.NotifySecretRotated || json.Unmarshal([]byte(notifier.payload), &change) != nil ||
+		change.AppID != app.ID || change.AccountID != e.acct.ID || change.Kind != "binding_created" || change.Scope != state.DefaultEnvScope || change.Key != "" {
+		t.Fatalf("binding runtime notification = %q %q", notifier.channel, notifier.payload)
 	}
 	rows, err := e.store.ListAppSecretsInScope(context.Background(), e.acct.ID, app.ID, state.DefaultEnvScope)
 	if err != nil || len(rows) != 6 {

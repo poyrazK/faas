@@ -56,6 +56,69 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	return objectS3CredentialFromSQL(row), nil
 }
 
+// CreateObjectS3ComputeBinding makes the credential, six runtime secrets,
+// freshness stamp and snapshot invalidation visible at one commit boundary.
+func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
+	if !validObjectS3ComputeBindingCreateRequest(req) {
+		return ObjectS3Credential{}, ErrInvalidArgument
+	}
+	c := req.Credential
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if _, err := q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if _, err := q.ObjectS3BindingLockApp(ctx, tx, sqlc.ObjectS3BindingLockAppParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	credentialCount, err := q.ObjectS3CredentialCount(ctx, tx, mustPgUUID(c.BucketID))
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	secretCount, err := q.ObjectS3BindingSecretCount(ctx, tx, sqlc.ObjectS3BindingSecretCountParams{AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.ManagedAppID)})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount+int64(len(req.Secrets)) > int64(req.MaxSecretsPerApp) {
+		return ObjectS3Credential{}, ErrConflict
+	}
+	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
+		ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID),
+		AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission,
+		Column9: c.ManagedAppID, Column10: c.ManagedScope, Column11: c.ManagedPrefix,
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	for _, secret := range req.Secrets {
+		if _, err := q.ObjectS3BindingSecretInsert(ctx, tx, sqlc.ObjectS3BindingSecretInsertParams{
+			AccountID: mustPgUUID(secret.AccountID), AppID: mustPgUUID(secret.AppID), Scope: secret.Scope,
+			Key: secret.Key, Ciphertext: secret.Ciphertext, Kid: pgtype.Text{String: secret.Kid, Valid: true},
+			ValueHash:                        pgtype.Text{String: secret.ValueHash, Valid: true},
+			ManagedObjectStorageCredentialID: mustPgUUID(c.ID),
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ObjectS3Credential{}, ErrConflict
+			}
+			return ObjectS3Credential{}, mapErr(err)
+		}
+	}
+	if err := q.ObjectS3BindingStampRuntime(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	return objectS3CredentialFromSQL(row), nil
+}
+
 func (s *PgStore) ListObjectS3Credentials(ctx context.Context, accountID, bucketID string) ([]ObjectS3Credential, error) {
 	rows, err := sqlc.New().ObjectS3CredentialList(ctx, s.pool, sqlc.ObjectS3CredentialListParams{AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID)})
 	if err != nil {
@@ -77,6 +140,50 @@ func (s *PgStore) RevokeObjectS3Credential(ctx context.Context, accountID, bucke
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RevokeObjectS3ComputeBinding atomically revokes the binding and every
+// rotation stage, removes its managed secrets, and marks the app's runtime
+// configuration and snapshots stale.
+func (s *PgStore) RevokeObjectS3ComputeBinding(ctx context.Context, accountID, bucketID, bindingID string) (bool, error) {
+	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
+		return false, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	parent, err := q.ObjectS3BindingRevokeLock(ctx, tx, sqlc.ObjectS3BindingRevokeLockParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	revoked, err := q.ObjectS3CredentialRevoke(ctx, tx, sqlc.ObjectS3CredentialRevokeParams{
+		ID: mustPgUUID(bindingID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	secrets, err := q.ObjectS3BindingDeleteSecrets(ctx, tx, mustPgUUID(bindingID))
+	if err != nil {
+		return false, mapErr(err)
+	}
+	changed := revoked > 0 || secrets > 0
+	if changed {
+		if err := q.ObjectS3BindingStampRuntime(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+		if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, parent.ManagedAppID); err != nil {
+			return false, mapErr(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, mapErr(err)
+	}
+	return changed, nil
 }
 
 func (s *PgStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {

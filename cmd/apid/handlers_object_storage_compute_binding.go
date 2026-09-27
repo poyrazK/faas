@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -206,40 +205,25 @@ func (s *server) createObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	credential, err := store.CreateObjectS3Credential(r.Context(), state.ObjectS3Credential{
-		ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
+	credentialID := uuid.NewString()
+	secretValues = objectStorageBindingSecretValues(keys, s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
+	secrets, prob := s.sealObjectStorageBindingValues(acct, app, credentialID, bucket.Scope, secretValues, limits)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: recipient.String(), Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
-	}, api.MaxObjectS3CredentialsPerBucket)
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	secretValues = objectStorageBindingSecretValues(keys, s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
-	if prob := s.persistObjectStorageBindingSecrets(r, acct, app, credential.ID, bucket.Scope, secretValues, limits); prob != nil {
-		_ = store.RevokeObjectS3Credential(r.Context(), acct.ID, bucket.ID, credential.ID)
-		_ = s.store.DeleteManagedObjectStorageSecrets(r.Context(), credential.ID)
-		api.WriteProblem(w, prob)
-		return
-	}
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
 	s.audit.Emit(r.Context(), "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": req.Prefix})
 	writeJSON(w, http.StatusCreated, viewObjectStorageComputeBinding(credential))
-}
-
-func (s *server) persistObjectStorageBindingSecrets(r *http.Request, acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) *api.Problem {
-	secrets, prob := s.sealObjectStorageBindingValues(acct, app, credentialID, scope, values, limits)
-	if prob != nil {
-		return prob
-	}
-	for _, secret := range secrets {
-		if err := s.store.PutManagedObjectStorageSecret(r.Context(), secret); err != nil {
-			if errors.Is(err, state.ErrConflict) {
-				return api.ErrManagedObjectStorageSecretConflict()
-			}
-			return api.ErrCapacity("could not persist compute binding secret")
-		}
-	}
-	return nil
 }
 
 func (s *server) sealObjectStorageBindingValues(acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) ([]state.AppSecret, *api.Problem) {
@@ -324,15 +308,13 @@ func (s *server) deleteObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	if credential.Status == state.ObjectS3CredentialStatusActive {
-		if err := store.RevokeObjectS3Credential(r.Context(), acct.ID, bucket.ID, credential.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
-			bucketProblem(w, err)
-			return
-		}
-	}
-	if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), credential.ID); err != nil {
+	changed, err := store.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, bucket.ID, credential.ID)
+	if err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	if changed {
+		s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_revoked", credential.ManagedScope, "")
 	}
 	s.audit.Emit(r.Context(), "object_storage.compute_binding_revoked", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID})
 	w.WriteHeader(http.StatusNoContent)

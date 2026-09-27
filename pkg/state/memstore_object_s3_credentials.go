@@ -44,6 +44,77 @@ func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credent
 	return cloneObjectS3Credential(c), nil
 }
 
+func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
+	if !validObjectS3ComputeBindingCreateRequest(req) {
+		return ObjectS3Credential{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := req.Credential
+	bucket, ok := m.objectBuckets[c.BucketID]
+	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" {
+		return ObjectS3Credential{}, ErrNotFound
+	}
+	app, ok := m.apps[c.ManagedAppID]
+	if !ok || app.AccountID != c.AccountID {
+		return ObjectS3Credential{}, ErrNotFound
+	}
+	active := 0
+	for _, existing := range m.objectS3Credentials {
+		if existing.AccessKeyID == c.AccessKeyID || existing.ID == c.ID ||
+			(existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive &&
+				existing.ManagedAppID == c.ManagedAppID && existing.ManagedScope == c.ManagedScope && existing.ManagedPrefix == c.ManagedPrefix) {
+			return ObjectS3Credential{}, ErrConflict
+		}
+		if existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive && existing.RotationParentID == "" {
+			active++
+		}
+	}
+	if active >= req.MaxCredentialsPerBucket {
+		return ObjectS3Credential{}, ErrConflict
+	}
+	secretCount := 0
+	for _, existing := range m.secrets {
+		if existing.AccountID == c.AccountID && existing.AppID == c.ManagedAppID {
+			secretCount++
+		}
+	}
+	if secretCount+len(req.Secrets) > req.MaxSecretsPerApp {
+		return ObjectS3Credential{}, ErrConflict
+	}
+	for _, secret := range req.Secrets {
+		if _, exists := m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}]; exists {
+			return ObjectS3Credential{}, ErrConflict
+		}
+	}
+	if m.objectS3Credentials == nil {
+		m.objectS3Credentials = map[string]ObjectS3Credential{}
+	}
+	now := time.Now().UTC()
+	c.CreatedAt = now
+	c.SecretSealed = append([]byte(nil), c.SecretSealed...)
+	m.objectS3Credentials[c.ID] = c
+	for _, secret := range req.Secrets {
+		secret.Ciphertext = append([]byte(nil), secret.Ciphertext...)
+		secret.CreatedAt, secret.UpdatedAt = now, now
+		secret.DeliveryVersion, secret.DeliveryStatus = 1, SecretDeliveryPending
+		m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}] = secret
+	}
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	m.runtimeConfigChangedAt[c.ManagedAppID] = now
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+	return cloneObjectS3Credential(c), nil
+}
+
 func (m *MemStore) ListObjectS3Credentials(_ context.Context, accountID, bucketID string) ([]ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -80,6 +151,56 @@ func (m *MemStore) RevokeObjectS3Credential(_ context.Context, accountID, bucket
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bucketID, bindingID string) (bool, error) {
+	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
+		return false, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.objectS3Credentials[bindingID]
+	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.ManagedAppID == "" || c.RotationParentID != "" {
+		return false, ErrNotFound
+	}
+	now := time.Now().UTC()
+	changed := false
+	if c.Status == ObjectS3CredentialStatusActive {
+		c.Status, c.RevokedAt = ObjectS3CredentialStatusRevoked, &now
+		m.objectS3Credentials[bindingID] = c
+		changed = true
+	}
+	for id, stage := range m.objectS3Credentials {
+		if stage.RotationParentID == bindingID && stage.Status == ObjectS3CredentialStatusActive {
+			stage.Status, stage.RevokedAt = ObjectS3CredentialStatusRevoked, &now
+			m.objectS3Credentials[id] = stage
+			changed = true
+		}
+	}
+	for key, secret := range m.secrets {
+		if secret.ManagedObjectStorageCredentialID == bindingID {
+			delete(m.secrets, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	if now.After(m.runtimeConfigChangedAt[c.ManagedAppID]) {
+		m.runtimeConfigChangedAt[c.ManagedAppID] = now
+	}
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+	return true, nil
 }
 
 func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
