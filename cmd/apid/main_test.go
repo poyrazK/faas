@@ -114,6 +114,9 @@ func withTestHMACFiles(t *testing.T) {
 	// "connection refused" inside its 3s deadline. Mirrors the
 	// FAAS_APP_ERRORS_ENABLED=false env used in the e2e harness.
 	t.Setenv("FAAS_APP_ERRORS_ENABLED", "false")
+	// Most in-process tests should not bind the production default under
+	// /run/faas. The startup integration test opts in with a temp socket.
+	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "false")
 }
 
 // --- seedDevAccount --------------------------------------------------------
@@ -311,6 +314,9 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	t.Setenv("FAAS_APID_REQUEST_TELEMETRY_SOCKET", filepath.Join(socketDir, "usage.sock"))
+	spansWriterSocket := filepath.Join(socketDir, "spans-writer.sock")
+	t.Setenv("FAAS_APID_OTEL_SPANS_WRITER_SOCKET", spansWriterSocket)
+	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "true")
 	deps := defaultDeps()
 	// Let runWithDeps own the listener (more realistic).
 	var capturedAddr atomic.Value
@@ -379,6 +385,21 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("listener address never captured and runWithDeps didn't return")
 		}
+	}
+	spansWriterDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(spansWriterDeadline) {
+		if _, err := os.Stat(spansWriterSocket); err == nil {
+			break
+		}
+		select {
+		case runErr := <-done:
+			t.Fatalf("runWithDeps returned %v before starting spans writer", runErr)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(spansWriterSocket); err != nil {
+		t.Fatalf("app-errors-disabled APID did not start spans writer: %v", err)
 	}
 	// Bounded wait for Accept — httpSrv.Serve is in a goroutine.
 	for time.Now().Before(deadline) {

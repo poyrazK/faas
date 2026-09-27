@@ -48,6 +48,7 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	}
 	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro,
 		"FAAS_APP_ERRORS_ENABLED=false",
+		"FAAS_OTEL_SPANS_WRITER_ENABLED=true",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+telemetrySocket,
 		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+spansWriterSocket,
