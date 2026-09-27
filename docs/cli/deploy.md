@@ -75,7 +75,8 @@ existing app's resources are preserved. In a dirty Git checkout the plan states
 whether local changes are included. The default deploy ships committed `HEAD`;
 use `--worktree` when the plan reports that local changes are excluded. JSON
 output remains a single machine-readable deployment receipt and does not
-include this human preflight block.
+include this human preflight block. A dirty checkout also prints an exclusion
+warning to stderr, including with `--json`, so a script's stdout stays parseable.
 
 ## Safe production rollouts
 

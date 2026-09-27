@@ -2921,6 +2921,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					}
 				}
 			}
+			if dirtyFileCount > 0 && !*worktree {
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
+			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
 			}

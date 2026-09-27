@@ -32,33 +32,33 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
-| [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
+| [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
-| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
+| [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
+| [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
-| [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
+| [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
-| [`debug`](#debug) | Production debugger (ADR-127) |
+| [`debug`](#debug) | Inspect production requests and regressions |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
-| [`login`](#login) | Authenticate this machine (--token for CI) |
+| [`login`](#login) | Authenticate this machine |
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Query runtime logs and HTTP request events (slug defaults to linked context) |
+| [`logs`](#logs) | Query runtime logs and HTTP request events |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -378,7 +378,7 @@ Restore an app during its deletion grace window
 
 ### apps routes
 
-List admitted per-route labels for one app (ADR-093)
+List admitted per-route labels for one app
 
 ### apps tcp
 
@@ -386,7 +386,7 @@ Manage raw TCP listeners
 
 ### apps streaming-cap
 
-Per-app streaming classification probe (ADR-102 D6)
+Show app streaming classification
 
 ### apps -q
 
@@ -459,7 +459,7 @@ Inspect networking or manage private-network attachments
 
 ### app routes
 
-List admitted per-route labels for one app (ADR-093)
+List admitted per-route labels for one app
 
 ### app tcp
 
@@ -1104,8 +1104,11 @@ Show the release diff and rollback target
 
 Wait until a deployment is live (or safe rollout completes)
 
+`gregale deployment wait <id|vN> [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug for a vN revision outside a linked project |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
@@ -1156,9 +1159,9 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 ## deploy
 
-Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
+Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1179,6 +1182,10 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
 | `--profile <PROFILE>` | named app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--vcpu <N>` | assert the plan guest vCPU shape (omit to use the plan default) |  |
+| `--execution-mode <request|service|worker|job>` | app lifecycle mode |  |
+| `--restart-policy <no|on-failure|always|unless-stopped>` | app restart policy |  |
+| `--startup-deadline-s <SECONDS>` | maximum startup seconds (0 uses plan default) |  |
+| `--max-retries <N>` | maximum restart attempts (0 uses plan default) |  |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |
@@ -1189,9 +1196,9 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
 | `--pr-number <N>` | GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action. |  |
-| `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
-| `--show-affected` | render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124) |  |
-| `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
+| `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
+| `--show-affected` | show workloads that deploy, stay unchanged, or are removed |  |
+| `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
 | `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
@@ -1201,6 +1208,8 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
 | `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
 | `--no-traffic` | stage with 0% production traffic and print the preview URL |  |
+| `--rollback-on-5xx` | roll back after repeated first-wake 5xx responses |  |
+| `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
@@ -1260,7 +1269,7 @@ Show durable TLS status for all domains
 
 ## dev
 
-Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)
+Sync local changes to a developer environment
 
 `gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
@@ -1320,7 +1329,7 @@ Compare two named environments in the linked project
 
 ## preview
 
-Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
+Manage preview environments for pull requests
 
 `gregale preview [<subcommand>]`
 
@@ -1613,7 +1622,7 @@ Render the env-diff matrix (presence / value-equality across scopes)
 
 ## init
 
-Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])
+Scaffold a project from a built-in template
 
 `gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list]`
 
@@ -1635,7 +1644,7 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 
 | Flag | Meaning | |
 |---|---|---|
-| `--upstreams` | List data upstreams captured for this app (ADR-098 §9.A) |  |
+| `--upstreams` | List data upstreams captured for this app |  |
 | `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
 | `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
 
@@ -1732,7 +1741,7 @@ Wait for one invocation to finish
 
 ## debug
 
-Production debugger (ADR-127)
+Inspect production requests and regressions
 
 `gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
@@ -1810,6 +1819,8 @@ List API keys
 
 Mint a new API key
 
+`gregale keys add <label>`
+
 ### keys rm
 
 Revoke an API key
@@ -1825,13 +1836,14 @@ Set the rotation grace window
 
 ## login
 
-Authenticate this machine (--token for CI)
+Authenticate this machine
 
-`gregale login [--token <TOKEN>]`
+`gregale login [--token <TOKEN>] [--token-stdin]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
+| `--token-stdin` | read a pre-minted token from stdin (CI) |  |
 
 
 ## link
@@ -1882,7 +1894,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Query runtime logs and HTTP request events (slug defaults to linked context)
+Query runtime logs and HTTP request events
 
 `gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
@@ -2454,10 +2466,10 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--production-branch <BRANCH>` | production branch for the project |  |
 | `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--environment <SLUG>` | registered project environment to scan |  |
-| `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
-| `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
+| `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
+| `--show-affected` | show workloads that deploy or stay unchanged |  |
 | `--explain` | show detector provenance and skipped/merged decisions |  |
-| `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
+| `--persist-exclude` | save --exclude slugs for future project deploys |  |
 
 
 ## secrets

@@ -456,9 +456,9 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "restore", Short: "Restore an app during its deletion grace window"},
-			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
-			{Name: "streaming-cap", Short: "Per-app streaming classification probe (ADR-102 D6)"},
+			{Name: "streaming-cap", Short: "Show app streaming classification"},
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
 			{Name: "--quiet", Short: "Delete one app (positional: <slug>)"},
 		},
@@ -484,7 +484,7 @@ var cliCommands = []cliCommand{
 			{Name: "security", Short: "Show posture or configure deploy enforcement"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
-			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},
 		Positionals: []string{"<slug>"},
@@ -862,7 +862,8 @@ var cliCommands = []cliCommand{
 			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
@@ -907,7 +908,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "deploy",
 		DocSlug: "deploy",
-		Short:   "Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Short:   "Deploy an app, function, or project",
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
@@ -932,6 +933,10 @@ var cliCommands = []cliCommand{
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
 			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "vcpu", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
+			{Name: "execution-mode", Short: "app lifecycle mode", Value: "request|service|worker|job"},
+			{Name: "restart-policy", Short: "app restart policy", Value: "no|on-failure|always|unless-stopped"},
+			{Name: "startup-deadline-s", Short: "maximum startup seconds (0 uses plan default)", Value: "SECONDS"},
+			{Name: "max-retries", Short: "maximum restart attempts (0 uses plan default)", Value: "N"},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
@@ -971,13 +976,13 @@ var cliCommands = []cliCommand{
 			// contract headline (slug, mutex with --only) without
 			// re-litigating the ADR-124 partition semantic — that's
 			// public docs site territory.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
-			{Name: "show-affected", Short: "render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
+			{Name: "show-affected", Short: "show workloads that deploy, stay unchanged, or are removed"},
 			// ADR-124 follow-up #3 (PR-B commit 5): write-side
 			// complement to --exclude. Records excluded slugs into
 			// deployment_scope_exclusions on a successful apply so
 			// subsequent deploys honor the persisted set automatically.
-			{Name: "persist-exclude", Short: "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)"},
+			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
@@ -987,6 +992,8 @@ var cliCommands = []cliCommand{
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
 			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
+			{Name: "rollback-on-5xx", Short: "roll back after repeated first-wake 5xx responses"},
+			{Name: "disable-startup-cpu-boost", Short: "disable temporary CPU boost during VM startup"},
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger and async-route changes"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
@@ -1023,7 +1030,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "dev",
 		DocSlug: "dev",
-		Short:   "Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)",
+		Short:   "Sync local changes to a developer environment",
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -1067,7 +1074,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "preview",
 		DocSlug: "preview",
-		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
+		Short:   "Manage preview environments for pull requests",
 		Subcommands: []cliSub{
 			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
@@ -1245,7 +1252,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "init",
 		DocSlug: "init",
-		Short:   "Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])",
+		Short:   "Scaffold a project from a built-in template",
 		Flags: []cliFlag{
 			{Name: "template", Short: "template name", Req: true, Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
@@ -1268,7 +1275,7 @@ var cliCommands = []cliCommand{
 		// completion backend and man-page renderer read this
 		// Flags block to surface the right verb shape.
 		Flags: []cliFlag{
-			{Name: "upstreams", Short: "List data upstreams captured for this app (ADR-098 §9.A)"},
+			{Name: "upstreams", Short: "List data upstreams captured for this app"},
 			{Name: "scope", Short: "filter by scope (defaults to linked project environment; used with --upstreams)", Value: "scope"},
 			{Name: "errors", Short: "show the latest failed deployment's persisted error explanation"},
 		},
@@ -1338,7 +1345,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "debug",
 		DocSlug: "debug",
-		Short:   "Production debugger (ADR-127)",
+		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
 			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/inspect/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
@@ -1381,7 +1388,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage API keys (keys list|add|rm|rotate|grace-window)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List API keys"},
-			{Name: "add", Short: "Mint a new API key"},
+			{Name: "add", Short: "Mint a new API key", Positionals: []string{"<label>"}},
 			{Name: "rm", Short: "Revoke an API key"},
 			{Name: subRotate, Short: "Rotate an API key"},
 			{Name: "grace-window", Short: "Set the rotation grace window"},
@@ -1390,8 +1397,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "login",
 		DocSlug: "auth",
-		Short:   "Authenticate this machine (--token for CI)",
-		Flags:   []cliFlag{{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"}},
+		Short:   "Authenticate this machine",
+		Flags: []cliFlag{
+			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
+			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
+		},
 	},
 	{
 		Name:        "link",
@@ -1431,7 +1441,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "logs",
 		DocSlug:     "logs",
-		Short:       "Query runtime logs and HTTP request events (slug defaults to linked context)",
+		Short:       "Query runtime logs and HTTP request events",
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},
@@ -1770,14 +1780,14 @@ var cliCommands = []cliCommand{
 			// added to cmdScan in PR-#1065 but missing from the
 			// manifest that drives `gregale man scan` and the shell
 			// completion tables.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
-			{Name: "show-affected", Short: "render the WillDeploy + Unaffected tables (ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
+			{Name: "show-affected", Short: "show workloads that deploy or stay unchanged"},
 			{Name: "explain", Short: "show detector provenance and skipped/merged decisions"},
 			// ADR-124 follow-up #3 (PR-B commit 5): symmetric flag
 			// set on scan (no-op on the scan path; the scan handler
 			// ignores persist_exclude). Accepted so a single flag set
 			// is reusable across the scan + apply pair.
-			{Name: "persist-exclude", Short: "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)"},
+			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 		},
 	},
 	{
