@@ -22,6 +22,7 @@ type PublishedEventWork struct {
 	// migration. SnapshotCaptured distinguishes it from an empty recipient set.
 	RecipientSnapshot []PublishedEventRecipient
 	SnapshotCaptured  bool
+	RecipientProgress map[string]PublishedEventRecipientProgress
 	ClaimToken        string
 	Attempts          int
 	AvailableAt       time.Time
@@ -42,9 +43,32 @@ type PublishedEventRecipient struct {
 	Filter    json.RawMessage `json:"filter"`
 }
 
+// PublishedEventRecipientProgress records scheduler-side fanout progress for
+// one candidate. Invocation execution retries are tracked on the invocation.
+type PublishedEventRecipientProgress struct {
+	State     string    `json:"state"`
+	Attempts  int       `json:"attempts"`
+	LastError string    `json:"last_error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+const (
+	PublishedEventRecipientPending  = "pending"
+	PublishedEventRecipientFiltered = "filtered"
+	PublishedEventRecipientEnqueued = "enqueued"
+	PublishedEventRecipientFailed   = "failed"
+)
+
 type PublishedEventWorkStore interface {
 	ClaimDuePublishedEvent(context.Context, time.Time) (*PublishedEventWork, error)
 	FinishPublishedEvent(context.Context, int64, string, error) error
+}
+
+// PublishedEventRecipientProgressStore persists each recipient outcome while
+// an event receipt is claimed, so one failed candidate cannot replay successful
+// candidates after a worker restart.
+type PublishedEventRecipientProgressStore interface {
+	RecordPublishedEventRecipientProgress(context.Context, int64, string, string, PublishedEventRecipientProgress) error
 }
 
 const PublishedEventLease = 5 * time.Minute
@@ -58,6 +82,7 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	var work PublishedEventWork
 	var payload []byte
 	var snapshot []byte
+	var progress []byte
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (
 		SELECT id FROM event_fanout_outbox
 		WHERE (state = 'pending' AND available_at <= $1)
@@ -67,8 +92,9 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	SET state = 'processing', claim_token = gen_random_uuid(),
 	    lease_until = $1 + interval '5 minutes', attempts = attempts + 1
 	FROM candidate WHERE o.id = candidate.id
-	RETURNING o.id, o.payload, o.recipient_snapshot, o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
-		&work.ID, &payload, &snapshot, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
+	RETURNING o.id, o.payload, o.recipient_snapshot, o.recipient_progress,
+	          o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
+		&work.ID, &payload, &snapshot, &progress, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -82,14 +108,62 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 			return nil, fmt.Errorf("decode published event recipient snapshot: %w", err)
 		}
 	}
+	if progress != nil {
+		if err := json.Unmarshal(progress, &work.RecipientProgress); err != nil {
+			return nil, fmt.Errorf("decode published event recipient progress: %w", err)
+		}
+	}
 	return &work, nil
+}
+
+func (s *PgStore) RecordPublishedEventRecipientProgress(ctx context.Context, id int64, token, recipientID string, progress PublishedEventRecipientProgress) error {
+	if err := validatePublishedEventRecipientProgress(progress); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		return err
+	}
+	result, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox AS o
+		SET recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$3::text], $4::jsonb, true),
+		    last_error = CASE WHEN $4::jsonb->>'state' = 'failed'
+		        THEN left('subscription ' || $3 || ': ' || coalesce($4::jsonb->>'last_error', 'recipient failed'), 1024)
+		        ELSE o.last_error END
+		WHERE o.id = $1 AND o.claim_token = $2::uuid AND o.state = 'processing'
+		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) AS recipients(recipient)
+		              WHERE recipient->>'id' = $3)`, id, token, recipientID, encoded)
+	if err != nil {
+		return fmt.Errorf("record published event recipient progress: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func validatePublishedEventRecipientProgress(progress PublishedEventRecipientProgress) error {
+	switch progress.State {
+	case PublishedEventRecipientPending, PublishedEventRecipientFiltered,
+		PublishedEventRecipientEnqueued, PublishedEventRecipientFailed:
+	default:
+		return fmt.Errorf("state: invalid published event recipient state %q", progress.State)
+	}
+	if progress.Attempts < 0 {
+		return fmt.Errorf("state: published event recipient attempts cannot be negative")
+	}
+	return nil
 }
 
 func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token string, routeErr error) error {
 	if routeErr == nil {
-		result, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox SET state = 'delivered',
-			delivered_at = now(), claim_token = NULL, lease_until = NULL, last_error = NULL
-			WHERE id = $1 AND claim_token = $2::uuid AND state = 'processing'`, id, token)
+		result, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox AS o SET state = 'delivered',
+			delivered_at = now(), claim_token = NULL, lease_until = NULL,
+			last_error = (SELECT left('subscription ' || progress.key || ': ' ||
+				coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
+				FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
+				WHERE progress.outcome->>'state' = 'failed'
+				ORDER BY progress.key LIMIT 1)
+			WHERE o.id = $1 AND o.claim_token = $2::uuid AND o.state = 'processing'`, id, token)
 		if err != nil {
 			return err
 		}
@@ -179,7 +253,8 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	}
 	m.eventFanoutNextID++
 	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
-		SnapshotCaptured: true, AvailableAt: now, CreatedAt: time.Now().UTC()}
+		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),
+		AvailableAt: now, CreatedAt: time.Now().UTC()}
 	return nil
 }
 
@@ -222,7 +297,43 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 		copy.RecipientSnapshot[i] = recipient
 		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
 	}
+	copy.RecipientProgress = make(map[string]PublishedEventRecipientProgress, len(chosen.RecipientProgress))
+	for id, progress := range chosen.RecipientProgress {
+		copy.RecipientProgress[id] = progress
+	}
 	return &copy, nil
+}
+
+func (m *MemStore) RecordPublishedEventRecipientProgress(_ context.Context, id int64, token, recipientID string, progress PublishedEventRecipientProgress) error {
+	if err := validatePublishedEventRecipientProgress(progress); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, work := range m.eventFanout {
+		if work.ID != id {
+			continue
+		}
+		if work.ClaimToken != token || token == "" || work.Delivered {
+			return ErrConflict
+		}
+		found := false
+		for _, recipient := range work.RecipientSnapshot {
+			if recipient.ID == recipientID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if work.RecipientProgress == nil {
+			work.RecipientProgress = make(map[string]PublishedEventRecipientProgress)
+		}
+		work.RecipientProgress[recipientID] = progress
+		return nil
+	}
+	return ErrNotFound
 }
 
 func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token string, routeErr error) error {

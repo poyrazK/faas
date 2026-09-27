@@ -543,7 +543,11 @@ their enabled source/type subscription candidates when they are accepted. A
 later subscription edit or deletion does not change that event's recipients;
 the captured JSON data filter is evaluated when fanout runs. Receipts accepted
 before the recipient-snapshot migration continue using the previous routing
-behavior, which reads current subscriptions.
+behavior, which reads current subscriptions. The scheduler records a routing
+outcome for each captured candidate, so a transient enqueue error retries only
+that candidate. Retries are capped at 12; terminal routing failures remain on
+the outbox receipt and are logged by the scheduler. Once an invocation is
+enqueued, its handler retry and dead-letter lifecycle applies independently.
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.

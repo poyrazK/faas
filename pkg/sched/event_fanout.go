@@ -18,6 +18,7 @@ const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
+const eventFanoutRecipientMaxAttempts = 12
 
 // routePublishedEvent is the schedd-side fanout seam for the internal event
 // fabric. The publish endpoint persists the canonical envelope before sending
@@ -65,10 +66,10 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 				// cannot have subscribed before this event either.
 				return errors.Join(routeErrs...)
 			}
-			if err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
+			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
 				Source: row.Source, Type: row.Type, Filter: row.Filter,
-			}, now); err != nil {
+			}, now, false); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
 		}
@@ -81,13 +82,20 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 	return errors.Join(routeErrs...)
 }
 
-func (l *Loop) routePublishedEventSnapshot(ctx context.Context, payload []byte, recipients []state.PublishedEventRecipient) error {
+func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.PublishedEventWork) error {
+	progressStore, ok := l.engine.store.(state.PublishedEventRecipientProgressStore)
+	if !ok {
+		return errors.New("sched: event recipient progress store is unavailable")
+	}
 	var envelope events.Envelope
-	if err := json.Unmarshal(payload, &envelope); err != nil {
+	if err := json.Unmarshal(work.Payload, &envelope); err != nil {
 		return fmt.Errorf("sched: decode event.published payload: %w", err)
 	}
 	if err := envelope.Validate(); err != nil {
 		return fmt.Errorf("sched: validate event.published payload: %w", err)
+	}
+	if work.RecipientProgress == nil {
+		work.RecipientProgress = make(map[string]state.PublishedEventRecipientProgress)
 	}
 	eventPayload, err := json.Marshal(envelope)
 	if err != nil {
@@ -95,22 +103,72 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, payload []byte, 
 	}
 	now := time.Now().UTC()
 	var routeErrs []error
-	for _, recipient := range recipients {
-		if err := l.routeSubscription(ctx, envelope, eventPayload, recipient, now); err != nil {
-			routeErrs = append(routeErrs, err)
+	for _, recipient := range work.RecipientSnapshot {
+		previous := work.RecipientProgress[recipient.ID]
+		if previous.State == state.PublishedEventRecipientFiltered ||
+			previous.State == state.PublishedEventRecipientEnqueued ||
+			previous.State == state.PublishedEventRecipientFailed {
+			continue
+		}
+		matched, routeErr := l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, UpdatedAt: now}
+		switch {
+		case routeErr == nil && matched:
+			outcome.State = state.PublishedEventRecipientEnqueued
+		case routeErr == nil:
+			outcome.State = state.PublishedEventRecipientFiltered
+		case !matched || errors.Is(routeErr, state.ErrNotFound):
+			outcome.State = state.PublishedEventRecipientFailed
+			outcome.LastError = routeErr.Error()
+		case outcome.Attempts >= eventFanoutRecipientMaxAttempts:
+			outcome.State = state.PublishedEventRecipientFailed
+			outcome.LastError = routeErr.Error()
+		default:
+			outcome.State = state.PublishedEventRecipientPending
+			outcome.LastError = routeErr.Error()
+			routeErrs = append(routeErrs, fmt.Errorf("subscription %s: %w", recipient.ID, routeErr))
+		}
+		if len(outcome.LastError) > 1024 {
+			outcome.LastError = outcome.LastError[:1024]
+		}
+		if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, outcome); err != nil {
+			return fmt.Errorf("sched: record event recipient %s progress: %w", recipient.ID, err)
+		}
+		work.RecipientProgress[recipient.ID] = outcome
+		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
+			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
+				"source", envelope.Source, "subscription_id", recipient.ID, "app_id", recipient.AppID,
+				"attempts", outcome.Attempts, "err", outcome.LastError)
 		}
 	}
 	return errors.Join(routeErrs...)
 }
 
-func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time) error {
+func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
 	matched, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source,
 		Type: row.Type, Filter: row.Filter}).Match(envelope)
 	if err != nil {
-		return fmt.Errorf("subscription %s: %w", row.ID, err)
+		return false, fmt.Errorf("subscription %s: %w", row.ID, err)
 	}
 	if !matched {
-		return nil
+		return false, nil
+	}
+	if requireActiveApp {
+		app, appErr := l.engine.store.AppByID(ctx, row.AppID)
+		if errors.Is(appErr, state.ErrNotFound) {
+			return true, fmt.Errorf("subscription %s target app is missing: %w", row.ID, state.ErrNotFound)
+		}
+		if appErr != nil {
+			return true, fmt.Errorf("subscription %s target app lookup: %w", row.ID, appErr)
+		}
+		if app.Status == state.AppDeleted {
+			return true, fmt.Errorf("subscription %s target app is deleted: %w", row.ID, state.ErrNotFound)
+		}
+		envelopeAccountID, eventAccountErr := uuid.Parse(envelope.AccountID)
+		appAccountID, appAccountErr := uuid.Parse(app.AccountID)
+		if eventAccountErr != nil || appAccountErr != nil || envelopeAccountID != appAccountID {
+			return true, fmt.Errorf("subscription %s target app account mismatch: %w", row.ID, state.ErrNotFound)
+		}
 	}
 	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
 	invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
@@ -129,7 +187,7 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		},
 	))
 	if err != nil {
-		return fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, err)
+		return true, fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, err)
 	}
 	_, err = l.engine.store.EnqueueInvocation(ctx, state.Invocation{
 		ID: invocationID, AppID: row.AppID, AccountID: row.AccountID,
@@ -138,13 +196,13 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
 	})
 	if err != nil && !errors.Is(err, state.ErrConflict) {
-		return fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, err)
+		return true, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, err)
 	}
 	if err == nil && l.pool != nil {
 		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
 			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
 	}
-	return nil
+	return true, nil
 }
 
 // runEventFanoutSweep drains durable claims in bounded batches. The outbox is
@@ -190,7 +248,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		}
 		var routeErr error
 		if work.SnapshotCaptured {
-			routeErr = l.routePublishedEventSnapshot(ctx, work.Payload, work.RecipientSnapshot)
+			routeErr = l.routePublishedEventSnapshot(ctx, work)
 		} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
 			// Receipts accepted before the snapshot migration retain their
 			// existing current-subscription routing behavior.
