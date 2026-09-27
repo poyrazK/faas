@@ -17,17 +17,25 @@ func TestPgOutboundFlowAttributionSurvivesDeploymentRemovalAndIPReuse(t *testing
 	}
 	now := time.Now().UTC()
 	makeEvent := func(instance string, at time.Time) state.OutboundFlowEvent {
+		replyPort := uint16(50888)
 		return state.OutboundFlowEvent{
 			ID: uuid.NewString(), ObservedAt: at, NodeID: nodeID,
 			InstanceID: instance, AccountID: accountID, AppID: appID, DeploymentID: deploymentID,
 			SourceIP: "10.100.0.5", SourcePort: 43210,
 			DestinationIP: "198.51.100.20", DestinationPort: 443, Protocol: "tcp",
+			ReplyDestinationIP: "192.0.2.10", ReplyDestinationPort: &replyPort,
 		}
 	}
 	first := makeEvent(uuid.NewString(), now.Add(-48*time.Hour))
 	second := makeEvent(uuid.NewString(), now)
 	if err := s.InsertOutboundFlowEvents(ctx, []state.OutboundFlowEvent{first, second}); err != nil {
 		t.Fatalf("insert: %v", err)
+	}
+	otherAccountID, otherAppID, otherDeploymentID := seedLiveDeploy(t, s, ctx, "reused-flow-owner", "reused-flow-owner")
+	other := makeEvent(uuid.NewString(), now.Add(time.Second))
+	other.AccountID, other.AppID, other.DeploymentID = otherAccountID, otherAppID, otherDeploymentID
+	if err := s.InsertOutboundFlowEvents(ctx, []state.OutboundFlowEvent{other}); err != nil {
+		t.Fatalf("insert reused IP for another account: %v", err)
 	}
 	// A retry after an uncertain client timeout must not duplicate evidence.
 	if err := s.InsertOutboundFlowEvents(ctx, []state.OutboundFlowEvent{second}); err != nil {
@@ -37,12 +45,13 @@ func TestPgOutboundFlowAttributionSurvivesDeploymentRemovalAndIPReuse(t *testing
 		t.Fatalf("delete deployment: %v", err)
 	}
 	var count int
-	var digest, egress, provenance string
-	if err := pool.QueryRow(ctx, `SELECT count(*), min(image_digest), min(host(egress_ip)), min(egress_ip_source) FROM outbound_flow_events WHERE account_id = $1`, accountID).Scan(&count, &digest, &egress, &provenance); err != nil {
+	var digest, egress, provenance, replyDestination string
+	var replyPort int
+	if err := pool.QueryRow(ctx, `SELECT count(*), min(image_digest), min(host(egress_ip)), min(egress_ip_source), min(host(reply_destination_ip)), min(reply_destination_port) FROM outbound_flow_events WHERE account_id = $1`, accountID).Scan(&count, &digest, &egress, &provenance, &replyDestination, &replyPort); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 || digest != "sha256:abc" || egress != "203.0.113.10" || provenance != "node_public" {
-		t.Fatalf("historical rows: count=%d digest=%q egress=%q provenance=%q", count, digest, egress, provenance)
+	if count != 2 || digest != "sha256:abc" || egress != "203.0.113.10" || provenance != "node_public" || replyDestination != "192.0.2.10" || replyPort != 50888 {
+		t.Fatalf("historical rows: count=%d digest=%q egress=%q provenance=%q reply=%s:%d", count, digest, egress, provenance, replyDestination, replyPort)
 	}
 	deleted, err := s.DeleteOutboundFlowEventsBefore(ctx, now.Add(-24*time.Hour), 100)
 	if err != nil || deleted != 1 {
@@ -59,6 +68,21 @@ func TestPgOutboundFlowAttributionSurvivesDeploymentRemovalAndIPReuse(t *testing
 	}
 	if count != 0 {
 		t.Fatalf("account erasure left %d flow rows", count)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbound_flow_events WHERE account_id = $1 AND source_ip = '10.100.0.5'::inet`, otherAccountID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("first account erasure removed another account's reused-IP evidence: count=%d", count)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM deployments WHERE id = $1`, otherDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM apps WHERE id = $1`, otherAppID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, otherAccountID); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -4422,17 +4422,21 @@ WITH flow AS (
            (e.value->>'source_port')::integer AS source_port,
            (e.value->>'destination_ip')::inet AS destination_ip,
            (e.value->>'destination_port')::integer AS destination_port,
+           (e.value->>'reply_destination_ip')::inet AS reply_destination_ip,
+           (e.value->>'reply_destination_port')::integer AS reply_destination_port,
            e.value->>'protocol' AS protocol
     FROM jsonb_array_elements($1::jsonb) AS e(value)
 )
 INSERT INTO outbound_flow_events (
     id, observed_at, node_id, instance_id, account_id, org_id, app_id,
     deployment_id, image_digest, source_ip, source_port,
-    destination_ip, destination_port, protocol, egress_ip, egress_ip_source
+    destination_ip, destination_port, reply_destination_ip,
+    reply_destination_port, protocol, egress_ip, egress_ip_source
 )
 SELECT f.id, f.observed_at, f.node_id, f.instance_id, f.account_id, a.org_id,
        f.app_id, f.deployment_id, d.image_digest, f.source_ip,
-       f.source_port, f.destination_ip, f.destination_port, f.protocol,
+       f.source_port, f.destination_ip, f.destination_port,
+       f.reply_destination_ip, f.reply_destination_port, f.protocol,
        coalesce(a.static_egress_ip, n.public_ip),
        CASE WHEN a.static_egress_ip IS NOT NULL THEN 'app_static'
             WHEN n.public_ip IS NOT NULL THEN 'node_public'

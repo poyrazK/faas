@@ -27,7 +27,11 @@ type OutboundFlowEvent struct {
 	SourcePort      uint16    `json:"source_port"`
 	DestinationIP   string    `json:"destination_ip"`
 	DestinationPort uint16    `json:"destination_port"`
-	Protocol        string    `json:"protocol"`
+	// ReplyDestination is the return address/port in the host conntrack
+	// namespace. An upstream provider can translate it again.
+	ReplyDestinationIP   string  `json:"reply_destination_ip,omitempty"`
+	ReplyDestinationPort *uint16 `json:"reply_destination_port,omitempty"`
+	Protocol             string  `json:"protocol"`
 }
 
 func (e OutboundFlowEvent) validate() error {
@@ -51,6 +55,14 @@ func (e OutboundFlowEvent) validate() error {
 	}
 	if _, err := netip.ParseAddr(e.DestinationIP); err != nil {
 		return fmt.Errorf("outbound flow: invalid destination IP: %w", err)
+	}
+	if (e.ReplyDestinationIP == "") != (e.ReplyDestinationPort == nil) {
+		return fmt.Errorf("outbound flow: incomplete reply destination")
+	}
+	if e.ReplyDestinationIP != "" {
+		if _, err := netip.ParseAddr(e.ReplyDestinationIP); err != nil {
+			return fmt.Errorf("outbound flow: invalid reply destination IP: %w", err)
+		}
 	}
 	return nil
 }

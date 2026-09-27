@@ -13,6 +13,8 @@ SELECT observed_at, node_id, account_id, org_id, app_id,
        deployment_id, image_digest, instance_id,
        host(source_ip) AS private_source_ip, source_port,
        host(destination_ip) AS destination_ip, destination_port,
+       host(reply_destination_ip) AS host_reply_destination_ip,
+       reply_destination_port AS host_reply_destination_port,
        protocol, egress_ip_source
 FROM outbound_flow_events
 WHERE egress_ip = '203.0.113.10'::inet
@@ -27,6 +29,29 @@ node's public IP at insertion. `egress_ip_source` says which one was used;
 `unknown` means neither was available. This is an inferred public address,
 not a packet-level observation of a cloud provider's NAT. `source_port` is
 the guest's original port, which may differ from the external NAT port.
+`reply_destination_ip` and `reply_destination_port` come from the host
+conntrack reply tuple. They show the address and port to which that host
+expects return traffic, and can reveal host-side SNAT. A cloud provider or
+upstream network may translate them again; do not assert a public source
+IP/port match from these fields alone. If a report includes an external
+source port, compare it with both ports, and confirm the actual boundary
+with a test destination that records its observed tuple.
+When the reported address is the host conntrack reply destination, the
+`outbound_flow_events_reply_time_idx` index supports an exact address/port
+lookup:
+
+```sql
+SELECT observed_at, account_id, app_id, deployment_id, instance_id,
+       host(source_ip) AS private_source_ip, source_port,
+       host(destination_ip) AS destination_ip, destination_port
+FROM outbound_flow_events
+WHERE reply_destination_ip = '203.0.113.10'::inet
+  AND reply_destination_port = 50888
+  AND observed_at >= '2026-09-27T12:00:00Z'::timestamptz
+  AND observed_at <  '2026-09-27T12:10:00Z'::timestamptz
+ORDER BY observed_at, id;
+```
+
 Use destination IP and port, the node, and a narrow time window to corroborate
 a provider report. IDs remain after instance, deployment, or app deletion;
 account deletion removes the rows. The scheduler's hourly retention sweep
@@ -131,3 +156,23 @@ coverage samples when the database is reachable. A database outage may
 prevent the sample itself from being written, in which case the missing
 heartbeat is the evidence of uncertain coverage. This collector cannot
 reconstruct flows from before it was deployed.
+
+## Independent host acceptance exercise
+
+Before using the rows as evidence for a provider report, exercise the full
+path on an isolated Linux compute host. Use a controlled TCP and UDP receiver
+that records UTC time and its observed source/destination IP and port only.
+Run one deployment for account A, make one connection of each protocol, stop
+it, then run a deployment for account B after the same private host IP is
+reused. For each connection, verify that the flow row names the correct
+account, deployment, image digest, instance, node, original tuple, and host
+conntrack reply destination. The historical lease must agree with the row's
+timestamp; the other account must not be returned as a candidate. Compare
+the receiver's source IP/port to the reply destination to determine whether
+translation occurs beyond the host. If they differ, record the provider NAT
+boundary as unresolved until an authoritative mapping is available.
+
+Finally, stop the conntrack listener briefly and confirm that the coverage
+query above marks that UTC window uncertain. A passing exercise requires
+correct ownership in both reuse intervals and an explicit gap during the
+interruption; an empty flow query cannot pass it.

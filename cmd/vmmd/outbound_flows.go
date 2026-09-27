@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os/exec"
@@ -42,6 +43,8 @@ type flowCaptureSink interface {
 type conntrackTuple struct {
 	protocol, sourceIP, destinationIP string
 	sourcePort, destinationPort       uint16
+	replyDestinationIP                string
+	replyDestinationPort              *uint16
 	eventAt                           time.Time
 }
 
@@ -64,9 +67,10 @@ func conntrackEventTime(field string) (time.Time, bool) {
 	return time.Unix(sec, nsec).UTC(), true
 }
 
-// parseConntrackNew accepts only the original tuple of a TCP/UDP NEW event.
-// Conntrack prints the reply tuple as a second set of identical keys; the
-// first values are the guest's source and its intended destination.
+// parseConntrackNew accepts the original tuple of a TCP/UDP NEW event and,
+// when present, the reply destination. Conntrack prints the reply tuple as
+// a second set of identical keys. Its destination is the return address and
+// port in the host's network namespace, which may reflect host-side SNAT.
 func parseConntrackNew(line string) (conntrackTuple, bool) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
@@ -89,33 +93,73 @@ func parseConntrackNew(line string) (conntrackTuple, bool) {
 	if !newEvent || protocol == "" {
 		return conntrackTuple{}, false
 	}
-	values := map[string]string{}
+	values := map[string][]string{}
 	for _, field := range fields {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
 		}
-		if (key == "src" || key == "dst" || key == "sport" || key == "dport") && values[key] == "" {
-			values[key] = value
+		if key == "src" || key == "dst" || key == "sport" || key == "dport" {
+			values[key] = append(values[key], value)
 		}
 	}
-	src, err := netip.ParseAddr(values["src"])
+	first := func(key string) string {
+		if len(values[key]) == 0 {
+			return ""
+		}
+		return values[key][0]
+	}
+	src, err := netip.ParseAddr(first("src"))
 	if err != nil {
 		return conntrackTuple{}, false
 	}
-	dst, err := netip.ParseAddr(values["dst"])
+	dst, err := netip.ParseAddr(first("dst"))
 	if err != nil {
 		return conntrackTuple{}, false
 	}
-	sport, err := strconv.ParseUint(values["sport"], 10, 16)
+	sport, err := strconv.ParseUint(first("sport"), 10, 16)
 	if err != nil {
 		return conntrackTuple{}, false
 	}
-	dport, err := strconv.ParseUint(values["dport"], 10, 16)
+	dport, err := strconv.ParseUint(first("dport"), 10, 16)
 	if err != nil {
 		return conntrackTuple{}, false
 	}
-	return conntrackTuple{protocol, src.String(), dst.String(), uint16(sport), uint16(dport), eventAt}, true
+	tuple := conntrackTuple{protocol: protocol, sourceIP: src.String(), destinationIP: dst.String(),
+		sourcePort: uint16(sport), destinationPort: uint16(dport), eventAt: eventAt}
+	replyFields := 0
+	for _, key := range []string{"src", "dst", "sport", "dport"} {
+		if len(values[key]) > 2 {
+			return conntrackTuple{}, false
+		}
+		if len(values[key]) == 2 {
+			replyFields++
+		}
+	}
+	if replyFields == 0 {
+		return tuple, true
+	}
+	if replyFields != 4 {
+		return conntrackTuple{}, false
+	}
+	replyDestination, err := netip.ParseAddr(values["dst"][1])
+	if err != nil {
+		return conntrackTuple{}, false
+	}
+	replyPort, err := strconv.ParseUint(values["dport"][1], 10, 16)
+	if err != nil {
+		return conntrackTuple{}, false
+	}
+	if _, err := netip.ParseAddr(values["src"][1]); err != nil {
+		return conntrackTuple{}, false
+	}
+	if _, err := strconv.ParseUint(values["sport"][1], 10, 16); err != nil {
+		return conntrackTuple{}, false
+	}
+	tuple.replyDestinationIP = replyDestination.String()
+	port := uint16(replyPort)
+	tuple.replyDestinationPort = &port
+	return tuple, true
 }
 
 // runOutboundFlowCapture listens to the host conntrack event stream, separate
@@ -185,7 +229,23 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 		}
 	}()
 	log.Info("outbound flow capture started", "node_id", nodeID)
-	scan := bufio.NewScanner(stdout)
+	consumeErr := consumeConntrackEvents(stdout, owners, nodeID, bridge, queue, log, coverage)
+	if consumeErr != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	<-stderrDone
+	if consumeErr != nil {
+		return fmt.Errorf("read conntrack events: %w", consumeErr)
+	}
+	if waitErr != nil {
+		return waitErr
+	}
+	return errors.New("conntrack event stream ended")
+}
+
+func consumeConntrackEvents(input io.Reader, owners flowOwnerLookup, nodeID string, bridge netip.Prefix, queue chan<- state.OutboundFlowEvent, log *slog.Logger, coverage *flowCaptureCoverage) error {
+	scan := bufio.NewScanner(input)
 	scan.Buffer(make([]byte, 4096), 64*1024)
 	dropped := 0
 	unparsed := 0
@@ -219,6 +279,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 			AccountID: owner.AccountID, AppID: owner.AppID, DeploymentID: owner.DeploymentID,
 			SourceIP: tuple.sourceIP, SourcePort: tuple.sourcePort,
 			DestinationIP: tuple.destinationIP, DestinationPort: tuple.destinationPort,
+			ReplyDestinationIP: tuple.replyDestinationIP, ReplyDestinationPort: tuple.replyDestinationPort,
 			Protocol: tuple.protocol,
 		}
 		select {
@@ -231,16 +292,7 @@ func captureOutboundFlowProcess(ctx context.Context, owners flowOwnerLookup, nod
 			}
 		}
 	}
-	scanErr := scan.Err()
-	waitErr := cmd.Wait()
-	<-stderrDone
-	if scanErr != nil {
-		return fmt.Errorf("read conntrack events: %w", scanErr)
-	}
-	if waitErr != nil {
-		return waitErr
-	}
-	return errors.New("conntrack event stream ended")
+	return scan.Err()
 }
 
 func guestFlowSource(bridge netip.Prefix, source string) bool {

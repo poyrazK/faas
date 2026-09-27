@@ -2838,17 +2838,22 @@ CREATE TABLE public.outbound_flow_events (
     source_port integer NOT NULL,
     destination_ip inet NOT NULL,
     destination_port integer NOT NULL,
+    reply_destination_ip inet,
+    reply_destination_port integer,
     protocol text NOT NULL,
     egress_ip inet,
     egress_ip_source text NOT NULL,
     CONSTRAINT outbound_flow_events_pkey PRIMARY KEY (id),
     CONSTRAINT outbound_flow_events_source_port_check CHECK ((source_port >= 0) AND (source_port <= 65535)),
     CONSTRAINT outbound_flow_events_destination_port_check CHECK ((destination_port >= 0) AND (destination_port <= 65535)),
+    CONSTRAINT outbound_flow_events_reply_destination_port_check CHECK ((reply_destination_port >= 0) AND (reply_destination_port <= 65535)),
+    CONSTRAINT outbound_flow_events_reply_pair_check CHECK (((reply_destination_ip IS NULL) = (reply_destination_port IS NULL))),
     CONSTRAINT outbound_flow_events_protocol_check CHECK ((protocol = ANY (ARRAY['tcp'::text, 'udp'::text]))),
     CONSTRAINT outbound_flow_events_egress_ip_source_check CHECK ((egress_ip_source = ANY (ARRAY['app_static'::text, 'node_public'::text, 'unknown'::text]))),
     CONSTRAINT outbound_flow_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE
 );
 CREATE INDEX outbound_flow_events_egress_time_idx ON public.outbound_flow_events USING btree (egress_ip, observed_at DESC);
+CREATE INDEX outbound_flow_events_reply_time_idx ON public.outbound_flow_events USING btree (reply_destination_ip, reply_destination_port, observed_at DESC) WHERE (reply_destination_ip IS NOT NULL);
 CREATE INDEX outbound_flow_events_account_time_idx ON public.outbound_flow_events USING btree (account_id, observed_at DESC);
 CREATE INDEX outbound_flow_events_instance_time_idx ON public.outbound_flow_events USING btree (instance_id, observed_at DESC);
 CREATE INDEX outbound_flow_events_retention_idx ON public.outbound_flow_events USING btree (observed_at, id);
