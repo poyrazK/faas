@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +57,15 @@ func (f *fakeRealtimeNode) RegisterEndpoint(context.Context, realtime.Endpoint) 
 	return nil
 }
 func (f *fakeRealtimeNode) RemoveEndpoint(context.Context, string) error { f.removed++; return nil }
+
+type publishingRealtimeNode struct {
+	*fakeRealtimeNode
+	publish func(context.Context) (int, error)
+}
+
+func (f *publishingRealtimeNode) Publish(ctx context.Context, _, _ string, _ realtime.Message) (int, error) {
+	return f.publish(ctx)
+}
 
 func TestLeasedRealtimeOwnerDiscoversAndReusesConnectionLease(t *testing.T) {
 	ctx := context.Background()
@@ -137,6 +149,142 @@ func TestLeasedRealtimeOwnerBroadcastsPublishAndEndpoint(t *testing.T) {
 		if fake.registered != 1 || fake.pubs != 1 {
 			t.Errorf("node %d registered=%d pubs=%d", i, fake.registered, fake.pubs)
 		}
+	}
+}
+
+func TestLeasedRealtimeOwnerPublishHasBoundedConcurrency(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	const nodeCount = maxConcurrentRealtimePublishes*2 + 1
+	started := make(chan struct{}, nodeCount)
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	var active, peak atomic.Int32
+	operators := make(map[string]realtimeNodeOperator, nodeCount)
+	for i := range nodeCount {
+		node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: fmt.Sprintf("node-%d", i), Active: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		operators[node.ID] = &publishingRealtimeNode{
+			fakeRealtimeNode: &fakeRealtimeNode{},
+			publish: func(ctx context.Context) (int, error) {
+				current := active.Add(1)
+				defer active.Add(-1)
+				for {
+					previous := peak.Load()
+					if current <= previous || peak.CompareAndSwap(previous, current) {
+						break
+					}
+				}
+				started <- struct{}{}
+				select {
+				case <-release:
+					return 1, nil
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				}
+			},
+		}
+	}
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.clientFor = func(node state.ComputeNode) (realtimeNodeOperator, error) {
+		if operator := operators[node.ID]; operator != nil {
+			return operator, nil
+		}
+		return nil, errors.New("unknown node")
+	}
+	type publishOutcome struct {
+		queued int
+		err    error
+	}
+	done := make(chan publishOutcome, 1)
+	go func() {
+		queued, err := owner.Publish(ctx, "endpoint-1", "updates", realtime.Message{})
+		done <- publishOutcome{queued, err}
+	}()
+	for range maxConcurrentRealtimePublishes {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("publish did not start concurrent node requests")
+		}
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if result.err != nil || result.queued != nodeCount {
+			t.Fatalf("publish queued=%d err=%v, want %d/nil", result.queued, result.err, nodeCount)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("publish did not finish")
+	}
+	if got := peak.Load(); got != maxConcurrentRealtimePublishes {
+		t.Fatalf("peak concurrent publishes=%d, want %d", got, maxConcurrentRealtimePublishes)
+	}
+}
+
+func TestLeasedRealtimeOwnerPublishKeepsPartialSuccess(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	operators := make(map[string]realtimeNodeOperator)
+	var successNodeID string
+	for i, publish := range []func(context.Context) (int, error){
+		func(context.Context) (int, error) {
+			return 0, &realtime.ManagementError{StatusCode: http.StatusNotFound}
+		},
+		func(context.Context) (int, error) { return 0, errors.New("node unavailable") },
+		func(context.Context) (int, error) { return 2, nil },
+	} {
+		node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: fmt.Sprintf("node-%d", i), Active: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 2 {
+			successNodeID = node.ID
+		}
+		operators[node.ID] = &publishingRealtimeNode{fakeRealtimeNode: &fakeRealtimeNode{}, publish: publish}
+	}
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	failSuccessNode := false
+	owner.clientFor = func(node state.ComputeNode) (realtimeNodeOperator, error) {
+		if failSuccessNode && node.ID == successNodeID {
+			return nil, errors.New("node unavailable")
+		}
+		if operator := operators[node.ID]; operator != nil {
+			return operator, nil
+		}
+		return nil, errors.New("unknown node")
+	}
+	queued, err := owner.Publish(ctx, "endpoint-1", "updates", realtime.Message{})
+	if err != nil || queued != 2 {
+		t.Fatalf("partial publish queued=%d err=%v, want 2/nil", queued, err)
+	}
+
+	failSuccessNode = true
+	queued, err = owner.Publish(ctx, "endpoint-1", "updates", realtime.Message{})
+	if queued != 0 || !errors.Is(err, errManagedRealtimeOwnerUnavailable) {
+		t.Fatalf("failed publish queued=%d err=%v, want 0/unavailable", queued, err)
+	}
+}
+
+func TestLeasedRealtimeOwnerPublishCanceledBeforeFanout(t *testing.T) {
+	store := state.NewMemStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.clientFor = func(state.ComputeNode) (realtimeNodeOperator, error) {
+		return &fakeRealtimeNode{}, nil
+	}
+	queued, err := owner.Publish(ctx, "endpoint-1", "updates", realtime.Message{})
+	if queued != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled publish queued=%d err=%v, want 0/context canceled", queued, err)
 	}
 }
 
