@@ -2137,6 +2137,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the writer (apid gRPC) and the gateway-side recorder.
 	var appErrSrv *grpc.Server
 	var appErrLis net.Listener
+	var spansWriterSrv *grpc.Server
 	appErrRotator := wire.NewTLSRotator(nil)
 	// Preview teardown is independent of the optional app-error writer. Keep
 	// the janitor outside that feature gate so disabling the gRPC listener in
@@ -2282,14 +2283,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		swTarget := cfg.GetSpansWriterTarget(deps.getenv)
 		if isUnixSocketPath(swTarget) {
-			swSrv, swLis, err := runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
-			if err != nil {
+			var swLis net.Listener
+			var listenErr error
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
+			if listenErr != nil {
 				_ = l.Close()
-				return fmt.Errorf("apid: otel spans writer server: %w", err)
+				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
 			}
 			go func() {
 				log.Info("apid otel spans writer server listening", "target", swTarget)
-				if err := swSrv.Serve(swLis); err != nil {
+				if err := spansWriterSrv.Serve(swLis); err != nil {
 					log.Error("apid otel spans writer serve", "err", err)
 				}
 			}()
@@ -2338,6 +2341,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if appErrSrv != nil {
 			appErrSrv.GracefulStop()
+		}
+		if spansWriterSrv != nil {
+			spansWriterSrv.GracefulStop()
 		}
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
