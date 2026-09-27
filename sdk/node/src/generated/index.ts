@@ -294,6 +294,7 @@ export type { DeploymentListResponse } from './models/DeploymentListResponse.js'
 export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.js';
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
+export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
@@ -630,6 +631,7 @@ export type { ProjectEnvironmentEdgeRuleResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentPromotionChange } from './models/ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionListResponse } from './models/ProjectEnvironmentPromotionListResponse.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './models/ProjectEnvironmentPromotionPreviewResponse.js';
+export type { ProjectEnvironmentPromotionReleaseGraphResponse } from './models/ProjectEnvironmentPromotionReleaseGraphResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './models/ProjectEnvironmentPromotionResponse.js';
 export type { ProjectEnvironmentPromotionStatusResponse } from './models/ProjectEnvironmentPromotionStatusResponse.js';
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './models/ProjectEnvironmentPromotionStatusWorkloadResponse.js';

@@ -95,6 +95,24 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(_ conte
 	return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 }
 
+func (m *MemStore) UpdateProjectEnvironmentPromotionReleaseSets(_ context.Context, accountID, id, targetReleaseSetID, restoredTargetReleaseSetID string) (ProjectEnvironmentPromotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[id]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	if targetReleaseSetID != "" {
+		promotion.TargetReleaseSetID = targetReleaseSetID
+	}
+	if restoredTargetReleaseSetID != "" {
+		promotion.RestoredTargetReleaseSetID = restoredTargetReleaseSetID
+	}
+	promotion.UpdatedAt = time.Now().UTC()
+	m.projectEnvironmentPromotions[id] = promotion
+	return cloneProjectEnvironmentPromotion(promotion), nil
+}
+
 func (m *MemStore) ProjectEnvironmentPromotionByID(_ context.Context, accountID, projectSlug, targetEnvironment, id string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

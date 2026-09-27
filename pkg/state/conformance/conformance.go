@@ -89,6 +89,7 @@ func Run(t *testing.T, open Open) {
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
 		{"project_environment_edge_policy_is_scoped_and_replaceable", testProjectEnvironmentEdgePolicy},
+		{"project_environment_promotion_release_graph_checkpoints_are_durable", testProjectEnvironmentPromotionReleaseGraphCheckpoints},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"apps_with_live_deployments_are_scoped_and_filter_non_live", testAppsWithLiveDeployment},

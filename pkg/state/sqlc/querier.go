@@ -502,6 +502,9 @@ type Querier interface {
 	// Gateway restart hydration: readiness is independent of the instance's
 	// RUNNING state, so replay only the latest reversible ready/unready event.
 	LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error)
+	// Gateway hydration keeps each required readiness source independent so one
+	// recovered probe cannot override another probe that is still unready.
+	LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
@@ -1243,10 +1246,11 @@ type Querier interface {
 	// in-process (pkg/gateway/spans_accumulator.go) and flushes the
 	// accumulated summary every FAAS_OTEL_FLUSH_INTERVAL (default 30s).
 	// UPDATE (not INSERT) because the row already exists — the recorder
-	// wrote it from the gateway edge
-	// (pkg/gateway/request_telemetry_publisher.go). Last-writer-wins on
-	// concurrent UPDATEs is acceptable; the 24h window bounds the index
-	// seek to the partial index request_telemetry_trace_idx selectivity.
+	// wrote it from the gateway edge (pkg/gateway/request_telemetry_publisher.go).
+	// Multiple trusted producers can contribute to one trace (for example,
+	// gatewayd-internal service bindings and outboundd provider calls), so merge
+	// by span identity instead of allowing a later writer to erase earlier spans.
+	// Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
 	// $N::jsonb cast is load-bearing — without it sqlc binds as text and
 	// Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 	//

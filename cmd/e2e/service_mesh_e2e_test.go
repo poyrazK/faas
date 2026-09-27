@@ -28,7 +28,7 @@ import (
 
 // serviceCall issues an internal service-proxy request on the loopback control
 // listener. callerAppID is empty to exercise the unauthenticated path.
-func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string) (int, http.Header, string) {
+func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, extraHeaders ...http.Header) (int, http.Header, string) {
 	t.Helper()
 	url := h.GatewayControlURL + "/v1/internal/services/" + service + path
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -37,6 +37,13 @@ func serviceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path st
 	}
 	if callerAppID != "" {
 		req.Header.Set("X-Faas-Caller-App", callerAppID)
+	}
+	for _, headers := range extraHeaders {
+		for name, values := range headers {
+			for _, value := range values {
+				req.Header.Add(name, value)
+			}
+		}
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -72,14 +79,14 @@ func createServiceApp(t *testing.T, f *normalPathFixture, slug string, patch map
 // pollServiceCall retries until the expected status lands or the budget
 // expires. Wake and cache-invalidation are asynchronous at the edges, so a
 // single shot would be testing timing rather than behaviour.
-func pollServiceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, want int, budget time.Duration) (int, http.Header, string) {
+func pollServiceCall(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, want int, budget time.Duration, extraHeaders ...http.Header) (int, http.Header, string) {
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	var status int
 	var header http.Header
 	var body string
 	for time.Now().Before(deadline) {
-		status, header, body = serviceCall(t, h, callerAppID, service, path)
+		status, header, body = serviceCall(t, h, callerAppID, service, path, extraHeaders...)
 		if status == want {
 			return status, header, body
 		}

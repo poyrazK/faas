@@ -26,6 +26,14 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
    * Immutable active release graph snapshot for the target environment, when present.
    */
   to_release_set?: ProjectReleaseSetResponse;
+  /**
+   * True when promotion stages deployments dark and atomically activates a project release graph.
+   */
+  release_graph_mode: boolean;
+  /**
+   * Compatibility window used by the promoted release graph.
+   */
+  release_ttl_seconds?: number;
   promotion_hash: string;
   promotion_token: string;
 };

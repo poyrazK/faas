@@ -2159,6 +2159,12 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
+	// OverrideReadinessProbe is the optional reversible primary-app traffic
+	// readiness probe. It is independent of startup healthcheck and liveness.
+	OverrideReadinessProbe json.RawMessage `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn is the primary workload's startup dependency list.
+	// It is persisted independently so the runtime can apply the graph at boot.
+	OverrideMainDependsOn json.RawMessage `json:"override_main_depends_on,omitempty"`
 	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
 	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
@@ -6468,50 +6474,57 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                      string
-	AccountID               string
-	ProjectID               string
-	ProjectSlug             string
-	FromEnvironment         string
-	ToEnvironment           string
-	PromotionHash           string
-	IdempotencyKey          string
-	Status                  string
-	Error                   string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	CompletedAt             *time.Time
-	RollbackStatus          string
-	RollbackIdempotencyKey  string
-	RollbackError           string
-	RollbackStartedAt       *time.Time
-	RollbackCompletedAt     *time.Time
-	VerificationStatus      string
-	VerificationError       string
-	VerificationStartedAt   *time.Time
-	VerificationCompletedAt *time.Time
+	ID                         string
+	AccountID                  string
+	ProjectID                  string
+	ProjectSlug                string
+	FromEnvironment            string
+	ToEnvironment              string
+	PromotionHash              string
+	ReleaseGraphMode           bool
+	SourceReleaseSetID         string
+	PreviousTargetReleaseSetID string
+	TargetReleaseSetID         string
+	RestoredTargetReleaseSetID string
+	ReleaseTTLSeconds          int
+	IdempotencyKey             string
+	Status                     string
+	Error                      string
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	CompletedAt                *time.Time
+	RollbackStatus             string
+	RollbackIdempotencyKey     string
+	RollbackError              string
+	RollbackStartedAt          *time.Time
+	RollbackCompletedAt        *time.Time
+	VerificationStatus         string
+	VerificationError          string
+	VerificationStartedAt      *time.Time
+	VerificationCompletedAt    *time.Time
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
 // Deployment IDs are strings intentionally: the operation remains readable
 // if a legacy or test deployment identifier is not a UUID.
 type ProjectEnvironmentPromotionWorkload struct {
-	ID                         string
-	PromotionID                string
-	WorkloadSlug               string
-	WorkloadName               string
-	SourceDeploymentID         string
-	PreviousTargetDeploymentID string
-	TargetDeploymentID         string
-	Status                     string
-	Error                      string
-	RollbackStatus             string
-	RestoredTargetDeploymentID string
-	RollbackError              string
-	VerificationStatus         string
-	VerificationError          string
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ID                           string
+	PromotionID                  string
+	WorkloadSlug                 string
+	WorkloadName                 string
+	SourceDeploymentID           string
+	PreviousTargetDeploymentID   string
+	PreviousTargetTrafficPercent int
+	TargetDeploymentID           string
+	Status                       string
+	Error                        string
+	RollbackStatus               string
+	RestoredTargetDeploymentID   string
+	RollbackError                string
+	VerificationStatus           string
+	VerificationError            string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 // IsZero reports whether this is an unset Project (Go zero value).

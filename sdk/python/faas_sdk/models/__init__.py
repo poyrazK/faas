@@ -565,6 +565,7 @@ from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
+from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -1203,6 +1204,7 @@ from .project_environment_promotion_change_target_revision_kind import (
 )
 from .project_environment_promotion_list_response import ProjectEnvironmentPromotionListResponse
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
+from .project_environment_promotion_release_graph_response import ProjectEnvironmentPromotionReleaseGraphResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
 from .project_environment_promotion_status_response_rollback_status import (
@@ -2242,6 +2244,7 @@ __all__ = (
     "DeploymentLiveWebhookPayload",
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
+    "DeploymentReadinessProbe",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -2869,6 +2872,7 @@ __all__ = (
     "ProjectEnvironmentPromotionChangeTargetRevisionKind",
     "ProjectEnvironmentPromotionListResponse",
     "ProjectEnvironmentPromotionPreviewResponse",
+    "ProjectEnvironmentPromotionReleaseGraphResponse",
     "ProjectEnvironmentPromotionResponse",
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
