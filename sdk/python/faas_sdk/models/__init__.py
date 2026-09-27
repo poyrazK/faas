@@ -1107,6 +1107,12 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_surface_certificate_changed_webhook_payload import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayload,
+)
+from .platform_tenant_surface_certificate_changed_webhook_payload_cert_state import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState,
+)
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
@@ -2791,6 +2797,8 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayload",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",

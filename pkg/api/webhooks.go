@@ -226,6 +226,21 @@ type PlatformTenantHostnameVerifiedWebhookPayload struct {
 	VerifiedAt       time.Time `json:"verified_at"`
 }
 
+// PlatformTenantSurfaceCertificateChangedWebhookPayload records a persisted
+// certificate-state transition for a surface explicitly linked to a platform
+// tenant. It contains status and expiry metadata only, never certificate or
+// private-key material or provider error text.
+type PlatformTenantSurfaceCertificateChangedWebhookPayload struct {
+	PlatformTenantID string     `json:"platform_tenant_id"`
+	ExternalRef      string     `json:"external_ref"`
+	SurfaceID        string     `json:"surface_id"`
+	SurfaceName      string     `json:"surface_name"`
+	AppID            string     `json:"app_id"`
+	CertState        string     `json:"cert_state"`
+	CertNotAfter     *time.Time `json:"cert_not_after"`
+	ChangedAt        time.Time  `json:"changed_at"`
+}
+
 type CreatePlatformTenantWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`
 	WebhookSecret  string   `json:"webhook_secret"`
