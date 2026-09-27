@@ -29,9 +29,13 @@ func gatherNamed(t *testing.T, reg *prometheus.Registry, name string) []*dto.Met
 func TestTrafficResilienceMetricsAreRegistered(t *testing.T) {
 	m := NewMetrics()
 	m.PreInstantiateTrafficResilience()
+	m.SetRetryBudgetBackendID("test-backend")
 	for _, name := range []string{
 		"gateway_retry_attempts_total",
 		"gateway_retry_exhausted_total",
+		"gateway_retry_budget_shared",
+		"gateway_retry_budget_backend_info",
+		"gateway_retry_budget_backend_operations_total",
 		"gateway_circuit_transitions_total",
 	} {
 		if got := gatherNamed(t, m.Registry(), name); len(got) == 0 {
@@ -101,6 +105,19 @@ func TestTrafficResilienceCountersIncrement(t *testing.T) {
 	gauges := gatherNamed(t, m.Registry(), "gateway_circuit_open_targets")
 	if len(gauges) != 1 || gauges[0].GetGauge().GetValue() != 3 {
 		t.Fatalf("open targets = %v, want a single app-1 series at 3", gauges)
+	}
+}
+
+func TestRetryBudgetModeMetric(t *testing.T) {
+	m := NewMetrics()
+	series := gatherNamed(t, m.Registry(), "gateway_retry_budget_shared")
+	if len(series) != 1 || series[0].GetGauge().GetValue() != 0 {
+		t.Fatalf("local budget mode = %v, want 0", series)
+	}
+	m.SetRetryBudgetShared(true)
+	series = gatherNamed(t, m.Registry(), "gateway_retry_budget_shared")
+	if len(series) != 1 || series[0].GetGauge().GetValue() != 1 {
+		t.Fatalf("shared budget mode = %v, want 1", series)
 	}
 }
 

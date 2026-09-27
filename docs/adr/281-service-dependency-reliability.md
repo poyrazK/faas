@@ -52,6 +52,17 @@ Without the setting, the existing process-local budget remains available for
 single-node installations; operators must configure a shared endpoint on all
 gateways before claiming a fleet-wide cap.
 
+For Ansible-managed hosts, provide one fleet Vault variable
+`gatewayd_retry_budget_redis_url` and enable
+`gatewayd_retry_budget_required`. The role projects the URL through a
+root-only systemd credential and sets
+`FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE`; the direct URL environment
+variable remains for older deployments and cannot be combined with the file.
+Per-gateway mode and credential-free backend identity metrics allow operators
+to confirm every gateway reaches the same Redis endpoint. Backend operation
+errors are counted, and alerts cover mixed modes, endpoint mismatch, and
+Redis failures. The Redis service itself is an operator prerequisite.
+
 ## Consequences
 
 - Callers can bound the full dependency hop and tune retries without changing

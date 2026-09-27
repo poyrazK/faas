@@ -2,7 +2,10 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -18,11 +21,32 @@ const (
 // window. Attempt limits protect one request; this budget protects the fleet
 // when many requests fail at once.
 type RetryBudget struct {
-	mu      sync.Mutex
-	window  time.Duration
-	now     func() time.Time
-	buckets map[string]retryBudgetBucket
-	remote  redis.UniversalClient
+	mu        sync.Mutex
+	window    time.Duration
+	now       func() time.Time
+	buckets   map[string]retryBudgetBucket
+	remote    redis.UniversalClient
+	backendID string
+	observer  retryBudgetObserver
+}
+
+type retryBudgetObserver interface {
+	RecordRetryBudgetOperation(operation, result string)
+}
+
+// WithObserver records bounded backend outcomes. Configure it before the
+// budget is used; the gateway installs it during startup.
+func (b *RetryBudget) WithObserver(observer retryBudgetObserver) *RetryBudget {
+	if b != nil {
+		b.observer = observer
+	}
+	return b
+}
+
+func (b *RetryBudget) recordOperation(operation, result string) {
+	if b.observer != nil {
+		b.observer.RecordRetryBudgetOperation(operation, result)
+	}
 }
 
 type retryBudgetBucket struct {
@@ -51,7 +75,11 @@ func (b *RetryBudget) ObserveOriginal(parent context.Context, scope string) {
 	if b.remote != nil {
 		ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
 		defer cancel()
-		_ = retryBudgetObserveScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, b.window.Milliseconds()).Err()
+		if err := retryBudgetObserveScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, b.window.Milliseconds()).Err(); err != nil {
+			b.recordOperation("observe", "error")
+		} else {
+			b.recordOperation("observe", "ok")
+		}
 		return
 	}
 	b.mu.Lock()
@@ -87,7 +115,16 @@ func (b *RetryBudget) AllowRetry(parent context.Context, scope string, percent, 
 		admitted, err := retryBudgetAdmitScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, percent, minRetries).Int()
 		// A shared-backend failure must never silently restore a per-process
 		// allowance; declining a replay preserves the fleet safety bound.
-		return err == nil && admitted == 1
+		if err != nil {
+			b.recordOperation("admit", "error")
+			return false
+		}
+		if admitted == 1 {
+			b.recordOperation("admit", "allowed")
+			return true
+		}
+		b.recordOperation("admit", "denied")
+		return false
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -148,7 +185,20 @@ func NewRedisRetryBudget(parent context.Context, rawURL string, window time.Dura
 	}
 	budget := NewRetryBudget(window, nil)
 	budget.remote = client
+	// Hash the transport endpoint and logical DB, never the URL credentials.
+	endpoint := fmt.Sprintf("%s|%s|%d|%t", opts.Network, opts.Addr, opts.DB, opts.TLSConfig != nil)
+	sum := sha256.Sum256([]byte(endpoint))
+	budget.backendID = hex.EncodeToString(sum[:8])
 	return budget, nil
+}
+
+// BackendID is a credential-free, stable identity for the shared endpoint.
+// A process-local budget returns an empty identity.
+func (b *RetryBudget) BackendID() string {
+	if b == nil {
+		return ""
+	}
+	return b.backendID
 }
 
 func (b *RetryBudget) Close() error {

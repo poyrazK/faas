@@ -13,6 +13,13 @@ gatewayd_route_metrics_enabled: true
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
 
+# Set this URL once for the gateway fleet through Ansible Vault. The role
+# copies it to a root-only systemd credential on each gateway node. Set
+# gatewayd_retry_budget_required=true for the activation pass so an omitted
+# host variable cannot leave one gateway with a process-local allowance.
+gatewayd_retry_budget_redis_url: ""
+gatewayd_retry_budget_required: false
+
 # Shared public wildcard suffix. Operators with a different Cloudflare/public
 # zone override this variable; the split compute gateway must receive the same
 # value as apid and gatewayd-public.
