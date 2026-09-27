@@ -47,6 +47,18 @@ groups:
           description: "The node restarted its callback replay loop at least three times in the last 15 minutes. Inspect realtimed logs and local outbox storage health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
+      - alert: FaasRealtimeCallbackOutboxNearCapacity
+        expr: realtimed_callback_pending_capacity_bytes > 0 and (realtimed_callback_pending_bytes / realtimed_callback_pending_capacity_bytes) > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback outbox is near capacity"
+          description: "Pending callbacks use more than 80% of this node's outbox capacity. Restore callback delivery so the durable queue can drain before it stops accepting new records."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
       - alert: FaasRealtimeCallbackDeadLettersPresent
         expr: realtimed_callback_dead_letters > 0
         for: 5m

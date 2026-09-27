@@ -1,4 +1,4 @@
-# Synthetic coverage for managed realtime callback alerts (ADR-286 and ADR-288).
+# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, and ADR-289).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -6,6 +6,39 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - interval: 30s
+    name: "pending callback outbox near capacity fires"
+    input_series:
+      - series: 'realtimed_callback_pending_bytes{job="realtimed",instance="compute-a:9107"}'
+        values: '55000000x21'
+      - series: 'realtimed_callback_pending_capacity_bytes{job="realtimed",instance="compute-a:9107"}'
+        values: '67108864x21'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasRealtimeCallbackOutboxNearCapacity
+        exp_alerts:
+          - exp_labels:
+              job: realtimed
+              instance: compute-a:9107
+              severity: warn
+              component: realtimed
+              family: realtime_callbacks
+            exp_annotations:
+              summary: "Realtime callback outbox is near capacity"
+              description: "Pending callbacks use more than 80% of this node's outbox capacity. Restore callback delivery so the durable queue can drain before it stops accepting new records."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+  - interval: 30s
+    name: "pending callback outbox below threshold stays quiet"
+    input_series:
+      - series: 'realtimed_callback_pending_bytes{job="realtimed",instance="compute-a:9107"}'
+        values: '50000000x21'
+      - series: 'realtimed_callback_pending_capacity_bytes{job="realtimed",instance="compute-a:9107"}'
+        values: '67108864x21'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasRealtimeCallbackOutboxNearCapacity
+
   - interval: 30s
     name: "repeated replay supervisor restarts fire"
     input_series:

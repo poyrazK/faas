@@ -15,6 +15,14 @@ minutes. Check `realtimed_callback_replay_supervisor_restarts_total` and review
 nearby `realtimed` log entries for the underlying filesystem or outbox error.
 The counter resets when `realtimed` restarts.
 
+`FaasRealtimeCallbackOutboxNearCapacity` means pending callback data has stayed
+above 80% of the outbox byte limit for five minutes. Check
+`realtimed_callback_pending_bytes` and
+`realtimed_callback_pending_capacity_bytes`, then compare with the oldest
+pending age and replay progress. Restore callback receiver or node storage
+health so the replay loop can drain the queue; reaching the limit causes new
+callback records to be rejected.
+
 `FaasRealtimeCallbackDeadLettersNearCapacity` means the node's retained
 callback dead letters use more than 80% of their configured byte limit.
 `FaasRealtimeCallbackDeadLettersPresent` means the node has retained one or

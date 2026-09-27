@@ -37,6 +37,7 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 		`realtimed_accepted_connections_total 3`,
 		`realtimed_received_bytes_total 128`,
 		`realtimed_callback_errors_total 1`,
+		`realtimed_callback_pending_capacity_bytes 0`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="accepted"} 1`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="rejected"} 2`,
 	} {
@@ -78,6 +79,24 @@ func TestStatsCollectorExposesCallbackOutboxRetention(t *testing.T) {
 		if !strings.Contains(text, metric) {
 			t.Errorf("metric %q missing from:\n%s", metric, text)
 		}
+	}
+}
+
+func TestStatsCollectorExposesCallbackOutboxCapacity(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 4096})
+	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
+	defer func() { _ = manager.Close() }()
+
+	if got := manager.Stats().CallbackPendingCapacityBytes; got != 4096 {
+		t.Fatalf("pending capacity bytes = %d, want 4096", got)
+	}
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(NewStatsCollector(manager))
+	recorder := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(recorder.Body.String(), "realtimed_callback_pending_capacity_bytes 4096") {
+		t.Fatalf("pending capacity gauge missing from:\n%s", recorder.Body.String())
 	}
 }
 

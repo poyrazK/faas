@@ -252,6 +252,7 @@ type Stats struct {
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackPending                    uint64  `json:"callback_pending"`
 	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
+	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
 	CallbackReplayDeliveries           uint64  `json:"callback_replay_deliveries"`
 	CallbackOldestPendingAgeSeconds    float64 `json:"callback_oldest_pending_age_seconds"`
 	CallbackDeadLetters                uint64  `json:"callback_dead_letters"`
@@ -1100,6 +1101,7 @@ func (m *Manager) Stats() Stats {
 		outbox := provider.OutboxStats()
 		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
 		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
+		stats.CallbackPendingCapacityBytes = uint64(maxInt64(outbox.CapacityBytes, 0))
 		stats.CallbackReplayDeliveries = outbox.ReplayDeliveries
 		stats.CallbackOldestPendingAgeSeconds = outbox.OldestPendingAgeSeconds
 		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))

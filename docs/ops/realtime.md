@@ -261,7 +261,9 @@ the pending count and bytes, retained dead-letter count and bytes, retention
 capacity, eviction count, and last eviction time. The
 `realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
 loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
-restarts. The `FaasRealtimeCallbackDeadLettersPresent`,
+restarts. The pending outbox capacity gauge and
+`FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
+the enqueue limit. The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
