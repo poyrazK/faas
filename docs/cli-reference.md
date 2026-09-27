@@ -1641,7 +1641,15 @@ Pull sealed-secret keys to a .env skeleton (values blank)
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+
+Examples:
+
+```sh
+gregale env pull --app my-api
+gregale env pull --app my-api --scope staging
+```
 
 ### env push
 
@@ -1664,6 +1672,17 @@ gregale env push --app my-api --restart
 ### env diff
 
 Render the env-diff matrix (presence / value-equality across scopes)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
+
+Examples:
+
+```sh
+gregale env diff --app my-api
+gregale env diff --app my-api --json
+```
 
 
 ## init
@@ -2558,11 +2577,21 @@ List sealed secrets
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
+
+Examples:
+
+```sh
+gregale secrets list --app my-api
+gregale secrets list --app my-api --scope __all__
+```
 
 ### secrets set
 
 Set a sealed secret
+
+`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2575,6 +2604,7 @@ Examples:
 
 ```sh
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
 ```
 
@@ -2582,9 +2612,19 @@ gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
 
 Remove a sealed secret
 
+`gregale secrets unset <KEY> --app <slug> [--scope <SCOPE>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
+
+Examples:
+
+```sh
+gregale secrets unset --app my-api OLD_API_KEY
+gregale secrets unset --app my-api OLD_API_KEY --scope staging
+```
 
 ### secrets list-all
 
@@ -2594,12 +2634,23 @@ List every secret across apps
 
 Rotate a secret and optionally wait for runtime application
 
+`gregale secrets rotate [<KEY=VALUE>] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read one KEY=VALUE pair from stdin |  |
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
 | `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
+
+Examples:
+
+```sh
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m
+```
 
 
 ## slo
