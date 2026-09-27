@@ -341,6 +341,40 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 	}
 }
 
+func TestConfig_GetSpansWriterTargetFollowsTopology(t *testing.T) {
+	t.Run("explicit target wins", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.toml:9093"}
+		env := func(key string) string {
+			if key == "FAAS_APID_OTEL_SPANS_WRITER_SOCKET" {
+				return "unix:///run/faas/custom-spans.sock"
+			}
+			return ""
+		}
+		if got := c.GetSpansWriterTarget(env); got != "unix:///run/faas/custom-spans.sock" {
+			t.Fatalf("explicit target = %q", got)
+		}
+	})
+
+	t.Run("split-box target reuses request telemetry endpoint", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.toml:9093"}
+		env := func(key string) string {
+			if key == "FAAS_APID_REQUEST_TELEMETRY_TARGET" {
+				return "tcp://telemetry.faas:9443"
+			}
+			return ""
+		}
+		if got := c.GetSpansWriterTarget(env); got != "tcp://telemetry.faas:9443" {
+			t.Fatalf("split-box target = %q", got)
+		}
+	})
+
+	t.Run("single-box uses dedicated socket", func(t *testing.T) {
+		if got := (&Config{}).GetSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
+			t.Fatalf("single-box target = %q", got)
+		}
+	})
+}
+
 func TestNormalizeCLIAuthURLBase(t *testing.T) {
 	tests := []struct {
 		name string

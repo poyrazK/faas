@@ -3,13 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
+import type { ProjectEnvironmentDomainDiffResponse } from './ProjectEnvironmentDomainDiffResponse.js';
 import type { ProjectEnvironmentEdgePolicyDiffResponse } from './ProjectEnvironmentEdgePolicyDiffResponse.js';
 import type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 import type { ProjectEnvironmentRoutePolicyDiffResponse } from './ProjectEnvironmentRoutePolicyDiffResponse.js';
 import type { ProjectEnvironmentSecretChangeResponse } from './ProjectEnvironmentSecretChangeResponse.js';
 import type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
 /**
- * Release, variable, secret, and binding changes for one workload.
+ * Release, variable, secret, binding, and domain changes for one workload.
  */
 export type ProjectEnvironmentWorkloadDiffResponse = {
   workload_slug: string;
@@ -18,6 +19,7 @@ export type ProjectEnvironmentWorkloadDiffResponse = {
   variables: Array<ProjectEnvironmentVariableChangeResponse>;
   secrets: Array<ProjectEnvironmentSecretChangeResponse>;
   bindings: Array<ProjectEnvironmentBindingChangeResponse>;
+  domains: ProjectEnvironmentDomainDiffResponse;
   routes: ProjectEnvironmentRoutePolicyDiffResponse;
   policies: ProjectEnvironmentEdgePolicyDiffResponse;
 };

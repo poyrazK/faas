@@ -134,6 +134,9 @@ func renderProjectEnvironmentPromotionWait(status api.ProjectEnvironmentPromotio
 
 func renderProjectEnvironmentPromotionStatus(status api.ProjectEnvironmentPromotionStatusResponse) {
 	_, _ = fmt.Fprintf(osStdout, "Promotion %s: %s -> %s (%s)\n", status.PromotionID, status.FromEnvironment, status.ToEnvironment, status.Status)
+	if status.SyncConfig {
+		_, _ = fmt.Fprintln(osStdout, "  non-secret configuration: synced")
+	}
 	if status.Error != "" {
 		_, _ = fmt.Fprintf(osStdout, "  error: %s\n", status.Error)
 	}

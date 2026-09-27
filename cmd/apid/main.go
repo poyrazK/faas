@@ -2137,6 +2137,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the writer (apid gRPC) and the gateway-side recorder.
 	var appErrSrv *grpc.Server
 	var appErrLis net.Listener
+	var spansWriterSrv *grpc.Server
 	appErrRotator := wire.NewTLSRotator(nil)
 	// Preview teardown is independent of the optional app-error writer. Keep
 	// the janitor outside that feature gate so disabling the gRPC listener in
@@ -2222,30 +2223,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}()
 		}
 
-		// ADR-127 PR-D: gatewayd-public → apid
-		// WriteSpansSummary unary RPC. The gateway's flush
-		// loop drains the per-trace accumulator (Stage 3)
-		// every 30s and ships each (trace_id, summary_json,
-		// account_id) triple to apid's writer. Gated by
-		// FAAS_OTEL_SPANS_WRITER_ENABLED (default true);
-		// killing it is the fail-closed kill-switch for the
-		// OTel writer's write path (the auth + handler can
-		// still run; they just stop landing writes).
-		if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-			swTarget := envOrFrom(deps.getenv, "FAAS_APID_OTEL_SPANS_WRITER_SOCKET", "/run/faas/otel_spans_writer.sock")
-			swSrv, swLis, err := runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: otel spans writer server: %w", err)
-			}
-			go func() {
-				log.Info("apid otel spans writer server listening")
-				if err := swSrv.Serve(swLis); err != nil {
-					log.Error("apid otel spans writer serve", "err", err)
-				}
-			}()
-		}
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2299,6 +2276,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// The retained service-spans writer is independent from optional customer
+	// app-error reporting. Split-box deployments register it on the shared
+	// AppErrors mTLS listener; only the single-box topology needs a dedicated
+	// Unix socket here.
+	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		swTarget := cfg.GetSpansWriterTarget(deps.getenv)
+		if isUnixSocketPath(swTarget) {
+			var swLis net.Listener
+			var listenErr error
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
+			if listenErr != nil {
+				_ = l.Close()
+				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
+			}
+			go func() {
+				log.Info("apid otel spans writer server listening", "target", swTarget)
+				if err := spansWriterSrv.Serve(swLis); err != nil {
+					log.Error("apid otel spans writer serve", "err", err)
+				}
+			}()
+		}
+	}
+
 	// systemd Type=notify must not promote apid until all startup work
 	// (including migrations, listeners, and provider wiring) completed.
 	// The customer-facing /readyz remains the richer dependency probe;
@@ -2341,6 +2341,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if appErrSrv != nil {
 			appErrSrv.GracefulStop()
+		}
+		if spansWriterSrv != nil {
+			spansWriterSrv.GracefulStop()
 		}
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
@@ -2792,7 +2795,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
 	// single-box path and is registered by runSpansWriterServer.
-	if appErrorsEnabled && !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+	if !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		registerSpansWriterReceiver(srv, store, ops, limiter, true)
 	}
 	return srv, lis, nil

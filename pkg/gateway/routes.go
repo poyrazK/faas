@@ -15,6 +15,7 @@ type RouteTarget struct {
 	RoutedSurfaceID       string
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string
+	CustomDomain          bool
 }
 
 // RouteCache is the in-memory hostname→route-target LRU (spec §4.1: 10k

@@ -62,6 +62,51 @@ type AppChangedPayload struct {
 	Legacy           bool   `json:"-"`
 }
 
+// AppEgressPolicyChangedPayload is the low-latency wake-up emitted by the
+// apps.egress_allowlist trigger. The app row remains the desired-state source;
+// revision identifies the version schedd should reconcile.
+type AppEgressPolicyChangedPayload struct {
+	AppID    string `json:"app_id"`
+	Revision int64  `json:"revision"`
+}
+
+func ParseAppEgressPolicyChangedPayload(raw string) (AppEgressPolicyChangedPayload, error) {
+	var payload AppEgressPolicyChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppEgressPolicyChangedPayload{}, fmt.Errorf("db: decode app egress policy payload: %w", err)
+	}
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	if _, err := uuid.Parse(payload.AppID); err != nil {
+		return AppEgressPolicyChangedPayload{}, fmt.Errorf("db: invalid app egress policy app_id: %w", err)
+	}
+	if payload.Revision <= 0 {
+		return AppEgressPolicyChangedPayload{}, errors.New("db: invalid app egress policy revision")
+	}
+	return payload, nil
+}
+
+// AppCPULimitPolicyChangedPayload is the low-latency wake-up emitted when an
+// app's desired live CPU quota changes. The app row remains authoritative.
+type AppCPULimitPolicyChangedPayload struct {
+	AppID    string `json:"app_id"`
+	Revision int64  `json:"revision"`
+}
+
+func ParseAppCPULimitPolicyChangedPayload(raw string) (AppCPULimitPolicyChangedPayload, error) {
+	var payload AppCPULimitPolicyChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppCPULimitPolicyChangedPayload{}, fmt.Errorf("db: decode app CPU limit policy payload: %w", err)
+	}
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	if _, err := uuid.Parse(payload.AppID); err != nil {
+		return AppCPULimitPolicyChangedPayload{}, fmt.Errorf("db: invalid app CPU limit policy app_id: %w", err)
+	}
+	if payload.Revision <= 0 {
+		return AppCPULimitPolicyChangedPayload{}, errors.New("db: invalid app CPU limit policy revision")
+	}
+	return payload, nil
+}
+
 // RuntimeConfigChangedPayload is the private invalidation envelope used by
 // vmmd's live configuration cache. Values are never carried on this channel;
 // consumers re-read the scoped rows after receiving the wake-up.
@@ -578,6 +623,15 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                             400). Only imaged subscribes.
 const (
 	NotifyAppChanged = "app_changed"
+	// NotifyAppEgressPolicyChanged wakes schedd when an app's runtime egress
+	// allowlist changes. It is backed by apps.egress_allowlist_revision and
+	// app_egress_policy_node_status, so missing this notification is repaired by
+	// the periodic current-state reconciler.
+	NotifyAppEgressPolicyChanged = "app_egress_policy_changed"
+	// NotifyAppCPULimitPolicyChanged wakes schedd when the desired live app CPU
+	// quota changes. A durable per-node acknowledgement plus periodic repair
+	// makes the notification a fast wake-up, not a delivery guarantee.
+	NotifyAppCPULimitPolicyChanged = "app_cpu_limit_policy_changed"
 	// NotifyAppEnvChanged wakes live-config consumers after an app env row is
 	// changed. The payload contains identity only; values are re-read from the
 	// store by the receiving vmmd.

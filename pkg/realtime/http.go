@@ -359,14 +359,24 @@ func parseCallbackRetryAfter(status int, value string, now time.Time) time.Durat
 	}
 	maximum := MaxCallbackOutboxMaxRetryInterval
 	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil {
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
 		if seconds == 0 {
 			return 0
 		}
-		if seconds >= uint64(maximum/time.Second) {
+		if seconds < 0 {
+			return 0
+		}
+		if seconds >= int64(maximum/time.Second) {
 			return maximum
 		}
 		return time.Duration(seconds) * time.Second
+	} else if parseErr, ok := err.(*strconv.NumError); ok && parseErr.Err == strconv.ErrRange {
+		// A delta-seconds value outside int64 still represents a delay longer
+		// than the maximum we honor. Clamp it without narrowing an unsigned value.
+		if strings.HasPrefix(value, "-") {
+			return 0
+		}
+		return maximum
 	}
 	date, err := http.ParseTime(value)
 	if err != nil {

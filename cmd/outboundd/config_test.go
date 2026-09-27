@@ -22,6 +22,20 @@ func TestLoadConfigDefaultsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestOutboundSpansWriterTargetUsesOverrideOrLocalSocket(t *testing.T) {
+	if got := outboundSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
+		t.Fatalf("default spans writer target = %q", got)
+	}
+	if got := outboundSpansWriterTarget(func(name string) string {
+		if name == "FAAS_APID_OTEL_SPANS_WRITER_SOCKET" {
+			return "/run/faas/custom-spans.sock"
+		}
+		return ""
+	}); got != "/run/faas/custom-spans.sock" {
+		t.Fatalf("configured spans writer target = %q", got)
+	}
+}
+
 func TestPoliciesHashesTokenAndValidatesIntegration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "outboundd.toml")
 	contents := `
