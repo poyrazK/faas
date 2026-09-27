@@ -212,3 +212,41 @@ func TestInboundWebhookCreateFreePlanGate(t *testing.T) {
 		t.Fatalf("free plan status %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestInboundWebhookRefusedForInactiveAccountOrDeletedApp — the public
+// ingress route has no account credential, so no account-status gate ran:
+// a suspended account kept accepting deliveries into invocations that
+// could never run, and a deleted app kept its endpoint. A suspended
+// account now answers 402 (providers retry) and writes no receipt.
+func TestInboundWebhookRefusedForInactiveAccountOrDeletedApp(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "inbound-gated")
+	endpoint := mustCreateInboundWebhook(t, e, "inbound-gated")
+	body := []byte(`{"id":"evt_suspended","object":"event","type":"invoice.paid"}`)
+
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("suspended account ingress = %d %s, want 402", rec.Code, rec.Body)
+	}
+	if due, err := e.store.ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10); err != nil || len(due) != 0 {
+		t.Fatalf("suspended account got %d durable deliveries (err %v), want 0", len(due), err)
+	}
+
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret); rec.Code != http.StatusAccepted {
+		t.Fatalf("provider retry after reactivation = %d %s, want 202", rec.Code, rec.Body)
+	}
+
+	if _, err := e.store.ScheduleAppDeletion(t.Context(), appID, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	other := []byte(`{"id":"evt_after_delete","object":"event","type":"invoice.paid"}`)
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, other, inboundWebhookTestSecret); rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted app ingress = %d %s, want 404", rec.Code, rec.Body)
+	}
+}

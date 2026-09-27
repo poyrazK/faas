@@ -325,6 +325,20 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
 		return
 	}
+	// This route carries no account credential, so none of the
+	// account-status gates applied: a suspended or deletion-pending
+	// account kept accepting deliveries (202) into invocations that
+	// could never run, and a deleted app kept its endpoint. Refuse
+	// before the durable receipt; a provider retries a 402 and
+	// delivers once the account is back in good standing.
+	if app.Status == state.AppDeleted {
+		http.NotFound(w, r)
+		return
+	}
+	if !acct.Active() {
+		api.WriteProblem(w, api.ErrAccountSuspended())
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	s.acceptInboundWebhook(w, r, endpoint, providerEventID, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts))
 }
