@@ -6,9 +6,24 @@ import {
   currentGregaleRelease,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
+  gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
 } from '../src/index.js';
+
+test('SSR release meta helper renders only a validated release ID', () => {
+  const release = 'a91f2000-0000-4000-8000-000000000001';
+  assert.equal(
+    gregaleReleaseMetaTag(new Headers({ [GREGALE_RELEASE_HEADER]: release })),
+    `<meta name="gregale-release" content="${release}">`,
+  );
+  assert.equal(gregaleReleaseMetaTag(new Headers()), '');
+  assert.equal(gregaleReleaseMetaTag(new Headers({ [GREGALE_RELEASE_HEADER]: '<script>' })), '');
+  assert.equal(gregaleReleaseMetaTag([
+    [GREGALE_RELEASE_HEADER, release],
+    [GREGALE_RELEASE_HEADER, 'another-release'],
+  ]), '');
+});
 
 test('request context propagates the release only to managed service calls', async () => {
   const calls: Array<{ url: string; headers: Headers }> = [];

@@ -13,8 +13,10 @@ import (
 
 type releaseBackend struct {
 	*fakeBackend
-	releaseID    string
-	deploymentID string
+	releaseID          string
+	deploymentID       string
+	activeReleaseID    string
+	releaseDeployments map[string]string
 }
 
 type releaseAsyncMatcher struct{ noOpEdgeRuleMatcher }
@@ -24,7 +26,20 @@ func (releaseAsyncMatcher) MatchAsync(context.Context, string, string, string) *
 }
 
 func (b *releaseBackend) ResolveProjectRelease(_ context.Context, appID, scope, requestedID string) (string, string, error) {
-	if appID != b.app.ID || scope != "production" || requestedID != "" && requestedID != b.releaseID {
+	if appID != b.app.ID || scope != "production" {
+		return "", "", ErrReleaseGone
+	}
+	if b.releaseDeployments != nil {
+		if requestedID == "" {
+			requestedID = b.activeReleaseID
+		}
+		deploymentID, ok := b.releaseDeployments[requestedID]
+		if !ok {
+			return "", "", ErrReleaseGone
+		}
+		return requestedID, deploymentID, nil
+	}
+	if requestedID != "" && requestedID != b.releaseID {
 		return "", "", ErrReleaseGone
 	}
 	return b.releaseID, b.deploymentID, nil
@@ -43,6 +58,59 @@ func TestPublicProjectReleaseSelectsExactMember(t *testing.T) {
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get(api.ReleaseHeader) != releaseID || response.Header().Get(api.RevisionHeader) != oldID {
 		t.Fatalf("release response = %d release %q revision %q", response.Code, response.Header().Get(api.ReleaseHeader), response.Header().Get(api.RevisionHeader))
+	}
+}
+
+func TestPublicProjectReleaseClientSticksAcrossCutoverAndExpires(t *testing.T) {
+	h, backend, upstream := newTestHandler(t)
+	oldReleaseID, newReleaseID := uuid.NewString(), uuid.NewString()
+	oldDeploymentID, newDeploymentID := uuid.NewString(), uuid.NewString()
+	backend.app.ProjectID = uuid.NewString()
+	backend.app.RevisionPinTTLSeconds = 3600
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "old", DeploymentID: oldDeploymentID})
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "new", DeploymentID: newDeploymentID})
+	resolver := &releaseBackend{fakeBackend: backend, activeReleaseID: oldReleaseID, releaseDeployments: map[string]string{
+		oldReleaseID: oldDeploymentID,
+		newReleaseID: newDeploymentID,
+	}}
+	h.backend = resolver
+
+	requestRelease := func(pin string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/checkout", nil)
+		if pin != "" {
+			request.Header.Set(api.ReleaseHeader, pin)
+		}
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		return response
+	}
+
+	// The initial page/API response carries the release ID the browser embeds
+	// in its HTML bootstrap metadata.
+	oldClientBootstrap := requestRelease("")
+	if oldClientBootstrap.Code != http.StatusOK || oldClientBootstrap.Header().Get(api.ReleaseHeader) != oldReleaseID || oldClientBootstrap.Header().Get(api.RevisionHeader) != oldDeploymentID {
+		t.Fatalf("old-client bootstrap = %d release %q revision %q", oldClientBootstrap.Code, oldClientBootstrap.Header().Get(api.ReleaseHeader), oldClientBootstrap.Header().Get(api.RevisionHeader))
+	}
+
+	// Publish a new graph. Unpinned clients move to it, while the client that
+	// bootstrapped with the old release stays on the exact old deployment.
+	resolver.activeReleaseID = newReleaseID
+	newClient := requestRelease("")
+	oldClient := requestRelease(oldReleaseID)
+	if newClient.Code != http.StatusOK || newClient.Header().Get(api.ReleaseHeader) != newReleaseID || newClient.Header().Get(api.RevisionHeader) != newDeploymentID {
+		t.Fatalf("new-client request = %d release %q revision %q", newClient.Code, newClient.Header().Get(api.ReleaseHeader), newClient.Header().Get(api.RevisionHeader))
+	}
+	if oldClient.Code != http.StatusOK || oldClient.Header().Get(api.ReleaseHeader) != oldReleaseID || oldClient.Header().Get(api.RevisionHeader) != oldDeploymentID {
+		t.Fatalf("old-client pinned request = %d release %q revision %q", oldClient.Code, oldClient.Header().Get(api.ReleaseHeader), oldClient.Header().Get(api.RevisionHeader))
+	}
+
+	// Removing the retired set models TTL expiry. The old client gets 410 and
+	// is never silently routed into the new graph.
+	delete(resolver.releaseDeployments, oldReleaseID)
+	expiredClient := requestRelease(oldReleaseID)
+	if expiredClient.Code != http.StatusGone {
+		t.Fatalf("expired old-client request = %d, want %d", expiredClient.Code, http.StatusGone)
 	}
 }
 

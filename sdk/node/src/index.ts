@@ -89,6 +89,7 @@ export {
 export {
   createGregaleFetch,
   currentGregaleRelease,
+  gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,

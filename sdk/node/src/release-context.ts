@@ -6,6 +6,8 @@ export const GREGALE_REVISION_HEADER = 'X-Gregale-Revision';
 /** Header carrying an immutable project deployment graph. */
 export const GREGALE_RELEASE_HEADER = 'X-Gregale-Release';
 
+const RELEASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const releaseContext = new AsyncLocalStorage<string | undefined>();
 
 function cleanRelease(value: string | null | undefined): string | undefined {
@@ -28,6 +30,17 @@ export function withGregaleReleaseContext<T>(release: string | null | undefined,
 /** Capture the header from a Web Request or Headers object and run a handler. */
 export function withGregaleRequestContext<T>(headers: HeadersInit, handler: () => T): T {
   return withGregaleReleaseContext(new Headers(headers).get(GREGALE_RELEASE_HEADER), handler);
+}
+
+/**
+ * Render the selected Gregale release as an HTML meta tag for an SSR page.
+ * The value is emitted only when it has the UUID form accepted by the public
+ * release-pin API, so untrusted header values cannot inject markup.
+ */
+export function gregaleReleaseMetaTag(headers: HeadersInit): string {
+  const release = cleanRelease(new Headers(headers).get(GREGALE_RELEASE_HEADER));
+  if (!release || !RELEASE_UUID_PATTERN.test(release)) return '';
+  return `<meta name="gregale-release" content="${release.toLowerCase()}">`;
 }
 
 /** Return the current request's release, when one was selected. */

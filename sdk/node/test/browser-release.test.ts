@@ -6,6 +6,7 @@ import {
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
 } from '../src/browser.js';
+import { gregaleReleaseMetaTag } from '../src/release-context.js';
 
 const API_ORIGIN = 'https://api.example.test';
 const EXTERNAL_ORIGIN = 'https://third-party.example.test';
@@ -170,6 +171,47 @@ test('release state is isolated per browser client and a mismatched response can
 
   assert.equal(clientA.release, RELEASE_A);
   assert.equal(clientB.release, RELEASE_B);
+});
+
+test('SSR bootstrap keeps an old SPA on its release graph across cutover and expiry', async () => {
+  const releaseFromHTML = (html: string) => html.match(/<meta name="gregale-release" content="([^"]+)">/)?.[1];
+  const oldHTML = `<html><head>${gregaleReleaseMetaTag(new Headers({ [GREGALE_RELEASE_HEADER]: RELEASE_A }))}</head></html>`;
+  const newHTML = `<html><head>${gregaleReleaseMetaTag(new Headers({ [GREGALE_RELEASE_HEADER]: RELEASE_B }))}</head></html>`;
+  const oldClientRelease = releaseFromHTML(oldHTML);
+  const newClientRelease = releaseFromHTML(newHTML);
+  assert.ok(oldClientRelease);
+  assert.ok(newClientRelease);
+
+  const graphs = new Map([
+    [RELEASE_A, 'api-v7 -> billing-v13'],
+    [RELEASE_B, 'api-v8 -> billing-v14'],
+  ]);
+  let activeRelease = RELEASE_A;
+  const seenReleases: Array<string | null> = [];
+  const serverFetch: typeof globalThis.fetch = async (_input, init) => {
+    const requestedRelease = new Headers(init?.headers).get(GREGALE_RELEASE_HEADER);
+    seenReleases.push(requestedRelease);
+    const selectedRelease = requestedRelease ?? activeRelease;
+    const graph = graphs.get(selectedRelease);
+    if (!graph) return new Response('release expired', { status: 410 });
+    return new Response(graph, { status: 200, headers: { [GREGALE_RELEASE_HEADER]: selectedRelease } });
+  };
+
+  const oldClient = createGregaleBrowserFetch({ managedOrigins: [API_ORIGIN], initialRelease: oldClientRelease, fetch: serverFetch });
+  activeRelease = RELEASE_B;
+  const oldResponse = await oldClient.fetch(`${API_ORIGIN}/checkout`);
+  assert.equal(await oldResponse.text(), 'api-v7 -> billing-v13');
+
+  const newClient = createGregaleBrowserFetch({ managedOrigins: [API_ORIGIN], initialRelease: newClientRelease, fetch: serverFetch });
+  const newResponse = await newClient.fetch(`${API_ORIGIN}/checkout`);
+  assert.equal(await newResponse.text(), 'api-v8 -> billing-v14');
+
+  graphs.delete(RELEASE_A);
+  const expiredResponse = await oldClient.fetch(`${API_ORIGIN}/checkout`);
+  assert.equal(expiredResponse.status, 410);
+  assert.equal(await expiredResponse.text(), 'release expired');
+  assert.deepEqual(seenReleases, [RELEASE_A, RELEASE_B, RELEASE_A]);
+  assert.equal(oldClient.release, RELEASE_A, 'expiry does not move an existing client to the new graph');
 });
 
 test('requires an absolute initial release ID and managed origins', () => {

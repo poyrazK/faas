@@ -160,6 +160,29 @@ the release explicitly when they are enqueued.
 
 ### Browser SPA release pinning
 
+For an SSR-rendered document, put the release selected on the inbound page
+request into the HTML before sending it. Gregale has already resolved the
+active release and forwarded it to the app as `X-Gregale-Release`:
+
+```ts
+import { gregaleReleaseMetaTag } from '@gregale/sdk-node';
+
+function renderPage(request: Request): Response {
+  const releaseMeta = gregaleReleaseMetaTag(request.headers);
+  const html = `<!doctype html>
+<html>
+  <head>${releaseMeta}</head>
+  <body><div id="app"></div><script type="module" src="/app.js"></script></body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+```
+
+The helper emits nothing when the request has no valid release ID, and only
+emits the UUID form accepted by the gateway's release-pin API. Since this
+value is request-specific, shared caches for rendered HTML must be disabled or
+keyed by `X-Gregale-Release`.
+
 Browser clients can use the browser-safe fetch adapter without importing the
 Node-only SDK entry point:
 
@@ -196,6 +219,13 @@ only when the application intentionally wants to start a new release context.
 For cross-origin APIs, configure CORS to expose `X-Gregale-Release` and allow
 it as a request header. The default CORS policy already exposes both release
 and revision response headers.
+
+This SSR bootstrap binds the browser to the release that served its document.
+A static HTML file served without request-time rendering cannot read the
+navigation response headers from JavaScript; it must provide a release-specific
+bootstrap value during publishing, or use a dynamic document/bootstrap route.
+Without a seeded value, the adapter can only learn the active release from its
+first API response and pin subsequent calls.
 
 ## Execution streaming
 
