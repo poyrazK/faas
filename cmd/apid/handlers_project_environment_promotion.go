@@ -101,6 +101,28 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 
 	changes := make([]api.ProjectEnvironmentPromotionChange, 0, len(apps))
 	blockingReasons := make([]string, 0)
+	fromReleaseSetID, problem := s.activeProjectEnvironmentReleaseSetID(ctx, acct.ID, project.ID, fromEnvironment)
+	if problem != nil {
+		return plan, problem
+	}
+	toReleaseSetID, problem := s.activeProjectEnvironmentReleaseSetID(ctx, acct.ID, project.ID, toEnvironment)
+	if problem != nil {
+		return plan, problem
+	}
+	// This promotion flow copies per-workload live deployments. It cannot yet
+	// select the source graph's exact members or atomically activate/restore a
+	// target graph. Do not claim a graph-backed environment is promotable until
+	// the execution path can preserve those release-set semantics.
+	if fromReleaseSetID != "" {
+		blockingReasons = append(blockingReasons, fmt.Sprintf(
+			"source environment %q has active release set %s; release-graph promotion is not available yet",
+			fromEnvironment, fromReleaseSetID))
+	}
+	if toReleaseSetID != "" {
+		blockingReasons = append(blockingReasons, fmt.Sprintf(
+			"target environment %q has active release set %s; release-graph promotion is not available yet",
+			toEnvironment, toReleaseSetID))
+	}
 	for _, app := range apps {
 		plan.Apps[app.Slug] = app
 		source, sourceErr := s.store.LiveDeploymentForScope(ctx, app.ID, fromEnvironment)
@@ -125,7 +147,8 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		changes = append(changes, change)
 	}
 
-	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff, changes)
+	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff,
+		fromReleaseSetID, toReleaseSetID, changes)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion identity")
 	}
@@ -142,6 +165,21 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		PromotionHash: promotionHash, PromotionToken: promotionToken,
 	}
 	return plan, nil
+}
+
+func (s *server) activeProjectEnvironmentReleaseSetID(ctx context.Context, accountID, projectID, environment string) (string, *api.Problem) {
+	reader, ok := s.store.(state.ProjectReleaseSetReader)
+	if !ok {
+		return "", api.ErrCapacity("project release inventory is unavailable")
+	}
+	release, err := reader.ActiveProjectReleaseSet(ctx, accountID, projectID, environment)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", api.ErrCapacity("could not inspect project release graph")
+	}
+	return release.ID, nil
 }
 
 func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -925,17 +963,25 @@ func deploymentRevision(deployment state.Deployment) (kind, value string) {
 	}
 }
 
-func projectEnvironmentPromotionHash(projectSlug, fromEnvironment, toEnvironment string, configDiff api.ProjectEnvironmentConfigDiffResponse, changes []api.ProjectEnvironmentPromotionChange) (string, error) {
+func projectEnvironmentPromotionHash(
+	projectSlug, fromEnvironment, toEnvironment string,
+	configDiff api.ProjectEnvironmentConfigDiffResponse,
+	fromReleaseSetID, toReleaseSetID string,
+	changes []api.ProjectEnvironmentPromotionChange,
+) (string, error) {
 	identity := struct {
-		ProjectSlug     string                                  `json:"project_slug"`
-		FromEnvironment string                                  `json:"from_environment"`
-		ToEnvironment   string                                  `json:"to_environment"`
-		FromConfigHash  string                                  `json:"from_config_hash"`
-		ToConfigHash    string                                  `json:"to_config_hash"`
-		Changes         []api.ProjectEnvironmentPromotionChange `json:"changes"`
+		ProjectSlug      string                                  `json:"project_slug"`
+		FromEnvironment  string                                  `json:"from_environment"`
+		ToEnvironment    string                                  `json:"to_environment"`
+		FromConfigHash   string                                  `json:"from_config_hash"`
+		ToConfigHash     string                                  `json:"to_config_hash"`
+		FromReleaseSetID string                                  `json:"from_release_set_id,omitempty"`
+		ToReleaseSetID   string                                  `json:"to_release_set_id,omitempty"`
+		Changes          []api.ProjectEnvironmentPromotionChange `json:"changes"`
 	}{
 		ProjectSlug: projectSlug, FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
-		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash, Changes: changes,
+		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash,
+		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID, Changes: changes,
 	}
 	raw, err := json.Marshal(identity)
 	if err != nil {

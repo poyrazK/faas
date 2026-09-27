@@ -49,7 +49,11 @@
   includes the active set and workload app IDs alongside the existing live
   deployment inventory so clients can compare those selections.
   These reads do not change activation, environment hostname routing, or
-  promotion semantics.
+  promotion semantics. The existing workload-by-workload promotion flow cannot
+  yet select and atomically activate or restore a release graph. Its preview
+  therefore blocks promotions when either environment has an active set;
+  environments without active sets keep the existing promotion behavior until
+  graph-aware execution is available.
 - **Durable work:** Async invoke, delayed tasks, queues, inbox messages, and
   asynchronous edge routes capture the selected release or direct revision
   when enqueued. The scheduler and gateway revalidate it before delivery.
