@@ -11,8 +11,8 @@
 //
 //   - The Dispatcher's hot path is a 5-second ticker. Each tick:
 //     1. Claims up to DefaultCap rows in a single FOR UPDATE
-//     SKIP LOCKED transaction, ORDER BY account_id,
-//     next_attempt_at.
+//     SKIP LOCKED transaction, interleaving due rows across
+//     accounts before applying the batch cap.
 //     2. For each claimed row, fires a goroutine that POSTs to
 //     the customer's target_url via pkg/webhookout.Dispatcher
 //     with the webhook HeaderSet.
@@ -34,9 +34,9 @@
 //
 // Queue ordering:
 //   - The claim query is bounded to DefaultCap rows per tick and
-//     groups rows by account_id. This is not round-robin: a noisy
-//     account can fill a batch. Fair claim selection remains a
-//     separate follow-up.
+//     takes one due row per selected account before a second row
+//     from any account. The starting account rotates per tick so
+//     extra slots are shared across the fleet.
 //
 // Why exponential backoff with ±25% jitter:
 //   - Matches the pkg/webhookout backoff shape (5 attempts,

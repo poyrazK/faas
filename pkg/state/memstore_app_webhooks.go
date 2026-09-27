@@ -395,30 +395,71 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 	return in, nil
 }
 
-// ClaimDueAppWebhookDeliveries mirrors the PgStore's claim
-// transaction shape: ORDER BY account_id, next_attempt_at (grouped
-// by account, not round-robin), status='pending' → 'in_flight'
-// transition. In-flight rows whose next_attempt_at has passed (an
-// orphaned row from a dispatcher restart) are also reclaimable —
-// see the PgStore claim transaction in pgstore_app_webhooks.go.
+// ClaimDueAppWebhookDeliveries mirrors the PgStore's fair selection and
+// pending → in_flight transition. Expired in-flight leases are reclaimable.
 func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var candidates []AppWebhookDelivery
+	if limit <= 0 {
+		return nil, nil
+	}
+	byAccount := make(map[string][]AppWebhookDelivery)
 	for _, d := range m.appWebhookDeliveries {
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
 			!d.NextAttemptAt.After(now) {
-			candidates = append(candidates, d)
+			byAccount[d.AccountID] = append(byAccount[d.AccountID], d)
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].AccountID != candidates[j].AccountID {
-			return candidates[i].AccountID < candidates[j].AccountID
+	if len(byAccount) == 0 {
+		return nil, nil
+	}
+	accounts := make([]string, 0, len(byAccount))
+	for accountID, rows := range byAccount {
+		accounts = append(accounts, accountID)
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].NextAttemptAt.Equal(rows[j].NextAttemptAt) {
+				return rows[i].ID < rows[j].ID
+			}
+			return rows[i].NextAttemptAt.Before(rows[j].NextAttemptAt)
+		})
+		byAccount[accountID] = rows
+	}
+	sort.Strings(accounts)
+	// The first account in each five-second bucket moves by one batch.
+	// Consider up to twice the requested count so another worker's locked
+	// rows do not leave the batch empty while other accounts are due.
+	accountCount := len(accounts)
+	offset := (now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)) % int64(accountCount)
+	if offset < 0 {
+		offset += int64(accountCount)
+	}
+	selectedAccounts := accountCount
+	if selectedAccounts > 2*limit {
+		selectedAccounts = 2 * limit
+	}
+	orderedAccounts := make([]string, selectedAccounts)
+	for turn := range orderedAccounts {
+		pos := (accountCount - int(offset) + turn) % accountCount
+		orderedAccounts[turn] = accounts[pos]
+	}
+
+	var candidates []AppWebhookDelivery
+	for slot := 0; len(candidates) < limit; slot++ {
+		progress := false
+		for _, accountID := range orderedAccounts {
+			rows := byAccount[accountID]
+			if slot >= len(rows) {
+				continue
+			}
+			candidates = append(candidates, rows[slot])
+			progress = true
+			if len(candidates) == limit {
+				break
+			}
 		}
-		return candidates[i].NextAttemptAt.Before(candidates[j].NextAttemptAt)
-	})
-	if limit > 0 && len(candidates) > limit {
-		candidates = candidates[:limit]
+		if !progress {
+			break
+		}
 	}
 	out := make([]AppWebhookDelivery, len(candidates))
 	claimUntil := now.Add(AppWebhookClaimLease).UTC().Truncate(time.Microsecond)

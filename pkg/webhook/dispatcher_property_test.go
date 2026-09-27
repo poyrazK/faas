@@ -47,7 +47,7 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 
 	loader, sealed := identityForSealedBlob(t)
 	m := state.NewMemStore()
-	var accountIDs []string
+	var accountIDs, webhookIDs []string
 	// One webhook per account; deliveries fan-out from it.
 	for i := 0; i < accounts; i++ {
 		acct := fmt.Sprintf("acct-%d", i)
@@ -57,6 +57,7 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 			t.Fatalf("CreateApp[%d]: %v", i, err)
 		}
 		w := newTestAppWebhook(t, m, appID, acct, srv.URL, state.AppWebhookRetryDefault)
+		webhookIDs = append(webhookIDs, w.ID)
 		w.SecretSealed = sealed
 		if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
 			t.Fatalf("UpdateAppWebhook[%d]: %v", i, err)
@@ -79,26 +80,31 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 	disp.Sleeper = (&recordingSleeper{}).Sleep
 	disp.HTTPClient = srv.Client()
 	disp.Cap = cap
+	base := time.Now().Add(time.Second)
+	var tick int
+	disp.Now = func() time.Time { return base.Add(time.Duration(tick) * disp.Tick) }
 
-	// Drive the cycle synchronously so we can observe after each
-	// tick without an inflight race.
+	// Wait for each cycle's HTTP attempts before measuring its claims.
 	var succeededPerAccount [accounts]int
-	for tk := 0; tk < ticks; tk++ {
+	for tick = 0; tick < ticks; tick++ {
 		disp.cycle(context.Background())
-		// cycle() fires goroutines via disp.inflight; sleep long
-		// enough for them to land MarkSucceeded calls on the
-		// MemStore before the per-tick snapshot.
-		time.Sleep(20 * time.Millisecond)
+		disp.inflight.Wait()
 		for i, acct := range accountIDs {
-			deliveries, _, err := m.ListAppWebhookDeliveries(context.Background(), fmt.Sprintf("app-%d", i), "", 0, "")
+			deliveries, _, err := m.ListAppWebhookDeliveries(context.Background(), fmt.Sprintf("app-%d", i), webhookIDs[i], 0, "")
 			if err != nil {
 				t.Fatalf("ListAppWebhookDeliveries[%d]: %v", i, err)
 			}
+			var total int
 			for _, d := range deliveries {
 				if d.AccountID == acct && d.Status == state.AppWebhookDeliverySucceeded {
-					succeededPerAccount[i]++
+					total++
 				}
 			}
+			delta := total - succeededPerAccount[i]
+			if delta < cap/accounts || delta > (cap+accounts-1)/accounts {
+				t.Errorf("tick %d account %s claimed %d rows, want 6 or 7", tick, acct, delta)
+			}
+			succeededPerAccount[i] = total
 		}
 	}
 

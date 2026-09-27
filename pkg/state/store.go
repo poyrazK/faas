@@ -6063,7 +6063,7 @@ type Store interface {
 	// In a single transaction it:
 	//   1. Locks up to `limit` rows whose status IN
 	//      ('pending','in_flight') AND next_attempt_at <= `now`,
-	//      ORDER BY account_id, next_attempt_at.
+	//      interleaving the oldest due rows across accounts.
 	//   2. Transitions the rows to 'in_flight' and sets
 	//      next_attempt_at to the claim deadline. Only expired
 	//      in_flight claims can be reclaimed after a crash.

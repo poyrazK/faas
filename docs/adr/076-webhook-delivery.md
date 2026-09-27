@@ -46,13 +46,16 @@ Mirrors the cron / alert split that already exists. The alert
 delivery path is unchanged; the new surface lives at
 `/v1/apps/{slug}/webhooks[/...]`.
 
-### 3.2 Per-account fairness via SQL round-robin claim
+### 3.2 Per-account fairness via rotating SQL claim
 
-The original design assumed `ORDER BY account_id, next_attempt_at`
-would produce round-robin claims. It actually groups all due rows
-from the first account before the next account, so a busy account
-can fill the 32-row batch. Fair selection still needs a separate
-implementation and a test that counts delivered rows by webhook.
+The original `ORDER BY account_id, next_attempt_at` grouped a busy
+account's rows and could fill the entire 32-row batch. The claim now
+enumerates due accounts, reads a bounded number of oldest rows per
+account through the partial index, and interleaves them before
+`FOR UPDATE SKIP LOCKED`. The starting account rotates every five
+seconds by one batch width, sharing extra slots when the batch size
+is not divisible by the account count. The property test counts
+delivered rows by webhook after each tick.
 
 ### 3.3 DLQ at attempt 7 with three retry-policy presets
 
@@ -128,7 +131,7 @@ Positive:
   events on a 5xx — the headline win. `app_webhook_deliveries`
   survives schedd restart because the row is on disk before the
   dispatcher attempts delivery.
-- Per-account fairness emerges from the claim query — no new
+- Per-account fairness comes from the rotating claim query — no new
   state table, no config knob, no operator maintenance.
 - The retry-policy closed set (default | aggressive | none) gives
   customers three load-bearing presets without the maintenance
@@ -146,10 +149,9 @@ Negative / costs:
   new `webhook_deliveries_table_mb` alert is queued for the
   follow-up.
 - The 5-second tick + 32/tick cap is a deliberate batching
-  trade-off: a single noisy account could push out the per-tick
-  cap, but the ORDER BY round-robin + partial index keeps it
-  bounded. A larger fleet might want a sub-tick cap per account,
-  but at today's fleet size the contract is sufficient.
+  trade-off. Fair selection enumerates due accounts on each tick;
+  a much larger backlog may need a maintained queue-head index or
+  account cursor to keep that scan cheap.
 - The dispatcher is a schedd-only goroutine today; future
   multi-schedd deployments (ADR-064 cross-node rebalance) would
   need a per-node cap-aware partition to avoid a thundering herd
@@ -174,10 +176,8 @@ Negative / costs:
   event-shaped (`event`, `payload`, no cool-down). A union type
   on the ledger would break the dispatcher's claim query.
 - **Token-bucket fairness (per-account state table).** Rejected:
-  the SQL `ORDER BY account_id, next_attempt_at` round-robin is
-  sufficient at the 32/tick cap. A token bucket adds a state
-  table, a refresh tick, and a config knob for a benefit no
-  current customer reads.
+  the bounded rotating claim provides per-batch fairness without
+  a state table, refresh tick, or config knob.
 - **Free-form retry policy DSL.** Rejected: three closed presets
   cover 100% of observed customer use cases; a DSL would invite
   unbounded retry budgets and complicate the dispatcher's backoff

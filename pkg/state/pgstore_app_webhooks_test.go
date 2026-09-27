@@ -322,7 +322,7 @@ func TestPgStore_AppWebhookDelivery_RoundTrip(t *testing.T) {
 
 // TestPgStore_ClaimDueAppWebhookDeliveries exercises the dispatcher's
 // tick entry. Pins the FOR UPDATE SKIP LOCKED claim + status
-// 'pending'/'in_flight' filter + per-account ORDER BY + limit clamp.
+// 'pending'/'in_flight' filter + due time + limit clamp.
 func TestPgStore_ClaimDueAppWebhookDeliveries(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	acct, app, _ := seedLiveDeploy(t, s, ctx, "claim")
@@ -365,6 +365,160 @@ func TestPgStore_ClaimDueAppWebhookDeliveries(t *testing.T) {
 	}
 	if claimed[0].Status != state.AppWebhookDeliveryInFlight {
 		t.Errorf("post-claim status = %q, want in_flight", claimed[0].Status)
+	}
+}
+
+func TestPgStore_ClaimDueAppWebhookDeliveries_FairAcrossAccounts(t *testing.T) {
+	s, ctx := pgStore(t)
+	const accounts, perAccount, cap = 3, 5, 5
+	for i := 0; i < accounts; i++ {
+		suffix := fmt.Sprintf("fair-claim-%d", i)
+		acct, app, _ := seedLiveDeploy(t, s, ctx, suffix, suffix)
+		wh, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < perAccount; j++ {
+			d := pgSampleDelivery(wh.ID, app, acct)
+			d.NextAttemptAt = time.Now().Add(-time.Minute)
+			if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+				t.Fatalf("record account %d delivery %d: %v", i, j, err)
+			}
+		}
+	}
+	now := time.Now().Add(time.Second)
+	totals := make(map[string]int)
+	for tick := 0; tick < 2; tick++ {
+		claimed, err := s.ClaimDueAppWebhookDeliveries(ctx, cap, now.Add(time.Duration(tick)*5*time.Second))
+		if err != nil {
+			t.Fatalf("tick %d claim: %v", tick, err)
+		}
+		if len(claimed) != cap {
+			t.Fatalf("tick %d claimed %d rows, want %d", tick, len(claimed), cap)
+		}
+		counts := make(map[string]int)
+		for i, d := range claimed {
+			counts[d.AccountID]++
+			totals[d.AccountID]++
+			if i > 0 && claimed[i-1].AccountID == d.AccountID {
+				t.Errorf("tick %d adjacent claims share account %s", tick, d.AccountID)
+			}
+		}
+		if len(counts) != accounts {
+			t.Fatalf("tick %d reached %d accounts, want %d: %+v", tick, len(counts), accounts, counts)
+		}
+		for accountID, count := range counts {
+			if count < 1 || count > 2 {
+				t.Errorf("tick %d account %s claimed %d rows, want 1 or 2", tick, accountID, count)
+			}
+		}
+	}
+	min, max := cap*2, 0
+	for _, count := range totals {
+		if count < min {
+			min = count
+		}
+		if count > max {
+			max = count
+		}
+	}
+	if max-min > 1 {
+		t.Errorf("two-tick account totals = %+v, want gap <= 1", totals)
+	}
+}
+
+func TestPgStore_ClaimDueAppWebhookDeliveries_RotatesBeyondBatchSize(t *testing.T) {
+	s, ctx := pgStore(t)
+	const accounts, batchSize = 12, 4
+	for i := 0; i < accounts; i++ {
+		suffix := fmt.Sprintf("rotate-claim-%d", i)
+		acct, app, _ := seedLiveDeploy(t, s, ctx, suffix, suffix)
+		wh, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			d := pgSampleDelivery(wh.ID, app, acct)
+			d.NextAttemptAt = time.Now().Add(-time.Minute)
+			if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+				t.Fatalf("record account %d delivery %d: %v", i, j, err)
+			}
+		}
+	}
+	base := time.Now().Truncate(5 * time.Second).Add(5 * time.Second)
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := s.ClaimDueAppWebhookDeliveries(ctx, batchSize, base.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claimed %d rows, %v; want %d", tick, len(claimed), err, batchSize)
+		}
+		for _, d := range claimed {
+			if seen[d.AccountID] {
+				t.Errorf("account %s claimed again before every account received a slot", d.AccountID)
+			}
+			seen[d.AccountID] = true
+		}
+	}
+	if len(seen) != accounts {
+		t.Errorf("claims reached %d accounts, want %d", len(seen), accounts)
+	}
+}
+
+func TestPgStore_ClaimDueAppWebhookDeliveries_SkipsLockedRowsWithinAccount(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "locked-claim")
+	wh, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30; i++ {
+		d := pgSampleDelivery(wh.ID, app, acct)
+		d.NextAttemptAt = time.Now().Add(-time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		select id from app_webhook_deliveries
+		 where webhook_id = $1
+		 order by next_attempt_at, id
+		 limit 10 for update
+	`, wh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		locked[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(locked) != 10 {
+		t.Fatalf("locked %d rows, want 10", len(locked))
+	}
+	claimed, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 10 {
+		t.Fatalf("claimed %d rows despite 20 unlocked rows, want 10", len(claimed))
+	}
+	for _, d := range claimed {
+		if locked[d.ID] {
+			t.Errorf("claimed locked row %s", d.ID)
+		}
 	}
 }
 

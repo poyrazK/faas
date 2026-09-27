@@ -3317,9 +3317,8 @@ func (e *AlertRuleQuotaError) Error() string {
 //
 // AppWebhook is an app-, account-, or platform-tenant subscription;
 // AppWebhookDelivery is the persistent ledger row drained by cmd/schedd's
-// pkg/webhook.Dispatcher. The wire format, signing scheme, and
-// per-account fairness algorithm live on the dispatcher side; the
-// Store only owns the durable shape.
+// pkg/webhook.Dispatcher. The dispatcher owns the wire format and signing;
+// the Store's claim methods provide per-account fairness.
 //
 // Why a parallel outbound surface (not alert_deliveries):
 //   - alert_deliveries is alert-shaped (rule_id, observed_value,
@@ -3586,6 +3585,11 @@ type TCPListener struct {
 
 // AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
 const AppWebhookClaimLease = 30 * time.Second
+
+// appWebhookFairnessPeriodSeconds matches the dispatcher's default five-second
+// tick. Advancing the account rotation by one batch per tick spreads the extra
+// slots when the batch size is not divisible by the active account count.
+const appWebhookFairnessPeriodSeconds int64 = 5
 
 // AppWebhookDelivery is one (event × target) ledger row. The
 // dispatcher mutates the row in place on every attempt until

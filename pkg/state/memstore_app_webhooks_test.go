@@ -9,6 +9,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -414,10 +415,8 @@ func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
 
 func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
-	// Two accounts, three deliveries each. The claim query returns
-	// rows sorted by (account_id ASC, next_attempt_at ASC). With
-	// limit >= total rows, all rows are returned in that order;
-	// the in-memory impl pins that contract.
+	// Two accounts, three deliveries each. Claims alternate accounts,
+	// regardless of which account gets the first slot this tick.
 	mk := func(acctID, appID, id string) {
 		wh, _ := m.CreateAppWebhook(ctx, AppWebhook{
 			AccountID: acctID, AppID: appID,
@@ -443,24 +442,53 @@ func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	if len(claimed) != 6 {
 		t.Fatalf("claimed = %d, want 6", len(claimed))
 	}
-	// Verify ordering: every acct-A row comes before any acct-B row.
-	lastA := -1
-	firstB := -1
+	counts := map[string]int{}
 	for i, c := range claimed {
-		switch c.AccountID {
-		case "acct-A":
-			lastA = i
-		case "acct-B":
-			if firstB == -1 {
-				firstB = i
+		counts[c.AccountID]++
+		if i > 0 && claimed[i-1].AccountID == c.AccountID {
+			t.Errorf("adjacent claims belong to %s; want alternating accounts", c.AccountID)
+		}
+	}
+	if counts["acct-A"] != 3 || counts["acct-B"] != 3 {
+		t.Errorf("claimed counts = %+v, want three per account", counts)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimRotatesBeyondBatchSize(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	const accounts, batchSize = 12, 4
+	for i := 0; i < accounts; i++ {
+		accountID := fmt.Sprintf("acct-%02d", i)
+		webhookID := fmt.Sprintf("wh-%02d", i)
+		if _, err := m.CreateAppWebhook(ctx, AppWebhook{
+			ID: webhookID, AccountID: accountID, AppID: fmt.Sprintf("app-%02d", i),
+			TargetURL: "https://example.com/" + webhookID, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			if _, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(webhookID, fmt.Sprintf("app-%02d", i), accountID, fmt.Sprintf("%s-%d", webhookID, j))); err != nil {
+				t.Fatal(err)
 			}
 		}
 	}
-	if lastA == -1 || firstB == -1 {
-		t.Fatalf("missing one of the accounts; got %+v", claimed)
+	base := time.Now().Truncate(5 * time.Second).Add(5 * time.Second)
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, batchSize, base.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claimed %d rows, %v; want %d", tick, len(claimed), err, batchSize)
+		}
+		for _, d := range claimed {
+			if seen[d.AccountID] {
+				t.Errorf("account %s claimed again before every account received a slot", d.AccountID)
+			}
+			seen[d.AccountID] = true
+		}
 	}
-	if lastA >= firstB {
-		t.Errorf("rows not grouped by account; got %+v", claimed)
+	if len(seen) != accounts {
+		t.Errorf("claims reached %d accounts, want %d", len(seen), accounts)
 	}
 }
 

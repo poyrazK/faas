@@ -323,30 +323,66 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //     dispatcher restart) → 'in_flight'.
 //  3. Returns the locked rows.
 //
-// Mirrors pkg/sched/drain.go's claim shape. ORDER BY account_id,
-// next_attempt_at groups each account's rows; it does not provide
-// round-robin fairness across accounts.
+// Each claim batch interleaves the oldest due row from every selected account.
+// The leading account rotates every five-second tick so extra batch slots do
+// not always go to the lexicographically first account. The lateral read uses
+// the existing partial (account_id, next_attempt_at) index and fetches at most
+// four batches per selected account. The surplus lets another worker skip
+// rows locked by a concurrent claim without scanning every due delivery.
 func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
+	rotation := now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)
 	rows, err := tx.Query(ctx, `
-		select id, webhook_id, app_id, account_id, event, payload,
-		       attempt, status, last_error, last_response_code,
-		       next_attempt_at, delivered_at, created_at, updated_at
-		  from app_webhook_deliveries
-		 where status in ('pending','in_flight')
-		   and next_attempt_at <= $1
-		 order by account_id, next_attempt_at
+		with eligible_accounts as materialized (
+			select distinct account_id
+			  from app_webhook_deliveries
+			 where status in ('pending','in_flight') and next_attempt_at <= $1
+		), numbered_accounts as (
+			select account_id,
+			       row_number() over (order by account_id) - 1 as account_pos,
+			       count(*) over () as account_count
+			  from eligible_accounts
+		), selected_accounts as materialized (
+			select account_id,
+			       (account_pos + $3::bigint) % account_count as turn
+			  from numbered_accounts
+			 order by turn
+			 limit ($2::integer * 2)
+		), candidates as materialized (
+			select due.id, due.next_attempt_at, selected_accounts.turn,
+			       row_number() over (
+			           partition by selected_accounts.account_id
+			           order by due.next_attempt_at, due.id
+			       ) as slot
+			  from selected_accounts
+			 cross join lateral (
+				select id, next_attempt_at
+				  from app_webhook_deliveries
+				 where account_id = selected_accounts.account_id
+				   and status in ('pending','in_flight')
+				   and next_attempt_at <= $1
+				 order by next_attempt_at, id
+				 limit ($2::integer * 4)
+			 ) due
+		)
+		select d.id, d.webhook_id, d.app_id, d.account_id, d.event, d.payload,
+		       d.attempt, d.status, d.last_error, d.last_response_code,
+		       d.next_attempt_at, d.delivered_at, d.created_at, d.updated_at
+		  from candidates c
+		  join app_webhook_deliveries d on d.id = c.id
+		 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
+		 order by c.slot, c.turn, c.next_attempt_at, c.id
 		 limit $2
-		   for update skip locked
-	`, now, limit)
-	// Index app_webhook_deliveries_pending_idx
-	// (account_id, next_attempt_at) WHERE status IN ('pending','in_flight')
-	// covers both the bounding predicate and the claim ordering.
+		   for update of d skip locked
+	`, now, limit, rotation)
 	if err != nil {
 		return nil, fmt.Errorf("state: claim query: %w", err)
 	}
