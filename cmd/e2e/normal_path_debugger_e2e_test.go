@@ -649,6 +649,121 @@ func TestE2E_NormalPath_PublicRequestIDJournalWithoutDetailedTelemetry(t *testin
 	}
 }
 
+// adr: 127 pins exact public-ID durability and the fail-closed write boundary.
+// TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure pins
+// the failure boundary for the synchronous exact-ID journal. An ID accepted
+// before an apid restart must remain queryable, and a slow journal commit must
+// fail closed before the guest is reached; once the database recovers, retrying
+// the same public ID must be served and remain queryable.
+func TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure(t *testing.T) {
+	f := newNormalPathDebuggerFixtureWithTelemetry(t, "normal-request-id-restart", false)
+	if f == nil {
+		return
+	}
+
+	_, sourceInstance := createNormalPathLiveDeployment(t, f, f.app.ID, "request-id-restart-source")
+	f.vmmd.SetVersion(sourceInstance.ID, "request-id-restart-source")
+	waitForNormalPathDebuggerResponse(t, f, "normal-path:request-id-restart-source\n", 10*time.Second)
+
+	const durableRequestID = "customer-request-before-apid-restart"
+	requestHeaders, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
+		"/request-id-restart", nil, map[string]string{
+			"Authorization":     "Bearer " + f.key,
+			api.RequestIDHeader: durableRequestID,
+		})
+	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
+		t.Fatalf("pre-restart request: status=%d body=%q", statusCode, body)
+	}
+	if got := requestHeaders.Get(api.RequestIDHeader); got != durableRequestID {
+		t.Fatalf("pre-restart public request ID=%q, want %q", got, durableRequestID)
+	}
+
+	if err := f.h.RestartAPID(); err != nil {
+		t.Fatalf("restart apid: %v", err)
+	}
+	lookup := "/v1/apps/normal-request-id-restart/debug/requests/" + url.PathEscape(durableRequestID)
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet, lookup, nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("post-restart request-ID lookup: status=%d body=%s", statusCode, body)
+	}
+	var detail api.DebugTelemetryRequestItem
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("decode post-restart request-ID lookup: %v body=%s", err, body)
+	}
+	if detail.RequestID != durableRequestID || detail.EvidenceStatus != "request_id_only" || detail.ID != "" {
+		t.Fatalf("post-restart request-ID detail = %+v, want exact journal-only mapping", detail)
+	}
+	// Exercise the gateway's existing gRPC client after the apid listener has
+	// been recreated, not just the restarted HTTP debugger read path.
+	requestHeaders, body, statusCode = doReqHeaders(t, f.h, f.host, http.MethodGet,
+		"/request-id-after-restart", nil, map[string]string{
+			"Authorization":     "Bearer " + f.key,
+			api.RequestIDHeader: "customer-request-after-apid-restart",
+		})
+	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
+		t.Fatalf("post-restart journal write: status=%d body=%q", statusCode, body)
+	}
+	if got := requestHeaders.Get(api.RequestIDHeader); got != "customer-request-after-apid-restart" {
+		t.Fatalf("post-restart public request ID=%q, want customer-request-after-apid-restart", got)
+	}
+
+	// Hold the journal table so the real apid gRPC writer cannot commit. The
+	// gateway's bounded journal RPC must return 503 without forwarding to vmmd.
+	lockCtx, cancelLock := context.WithTimeout(f.ctx, 5*time.Second)
+	defer cancelLock()
+	tx, err := f.h.Pool.Begin(lockCtx)
+	if err != nil {
+		t.Fatalf("begin request-ID backpressure transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(lockCtx, "LOCK TABLE request_id_journal IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatalf("lock request-ID journal: %v", err)
+	}
+	requestsBeforeBackpressure := len(f.vmmd.Requests())
+
+	const backpressuredRequestID = "customer-request-during-journal-backpressure"
+	requestHeaders, body, statusCode = doReqHeaders(t, f.h, f.host, http.MethodGet,
+		"/request-id-backpressure", nil, map[string]string{
+			"Authorization":     "Bearer " + f.key,
+			api.RequestIDHeader: backpressuredRequestID,
+		})
+	if statusCode != http.StatusServiceUnavailable {
+		t.Fatalf("backpressured journal request: status=%d body=%q, want 503", statusCode, body)
+	}
+	if got := requestHeaders.Get(api.RequestIDHeader); got != backpressuredRequestID {
+		t.Fatalf("backpressured response public request ID=%q, want %q", got, backpressuredRequestID)
+	}
+	if got := len(f.vmmd.Requests()); got != requestsBeforeBackpressure {
+		t.Fatalf("backpressured request reached guest: vmmd requests=%d, want unchanged %d", got, requestsBeforeBackpressure)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("release request-ID journal lock: %v", err)
+	}
+
+	requestHeaders, body, statusCode = doReqHeaders(t, f.h, f.host, http.MethodGet,
+		"/request-id-backpressure", nil, map[string]string{
+			"Authorization":     "Bearer " + f.key,
+			api.RequestIDHeader: backpressuredRequestID,
+		})
+	if statusCode != http.StatusOK || string(body) != "normal-path:request-id-restart-source\n" {
+		t.Fatalf("request after journal recovery: status=%d body=%q", statusCode, body)
+	}
+	if got := requestHeaders.Get(api.RequestIDHeader); got != backpressuredRequestID {
+		t.Fatalf("recovered response public request ID=%q, want %q", got, backpressuredRequestID)
+	}
+	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
+		"/v1/apps/normal-request-id-restart/debug/requests/"+url.PathEscape(backpressuredRequestID), nil)
+	if statusCode != http.StatusOK {
+		t.Fatalf("request-ID lookup after backpressure recovery: status=%d body=%s", statusCode, body)
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("decode request-ID lookup after backpressure recovery: %v body=%s", err, body)
+	}
+	if detail.RequestID != backpressuredRequestID || detail.EvidenceStatus != "request_id_only" {
+		t.Fatalf("post-recovery request-ID detail = %+v, want exact journal-only mapping", detail)
+	}
+}
+
 func waitForNormalPathDebuggerRequestByPublicID(t *testing.T, f *normalPathFixture, publicRequestID string, timeout time.Duration) api.DebugTelemetryRequestItem {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
