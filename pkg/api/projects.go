@@ -463,6 +463,8 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
 	FromReleaseSet         *ProjectReleaseSetResponse           `json:"from_release_set,omitempty"`
 	ToReleaseSet           *ProjectReleaseSetResponse           `json:"to_release_set,omitempty"`
+	ReleaseGraphMode       bool                                 `json:"release_graph_mode"`
+	ReleaseTTLSeconds      int                                  `json:"release_ttl_seconds,omitempty"`
 	PromotionHash          string                               `json:"promotion_hash"`
 	PromotionToken         string                               `json:"promotion_token"`
 }
@@ -490,12 +492,23 @@ type ProjectEnvironmentPromotionWorkloadResponse struct {
 // ProjectEnvironmentPromotionResponse is returned after a guarded promotion
 // has applied all changed workloads in the current preview.
 type ProjectEnvironmentPromotionResponse struct {
-	PromotionID     string                                        `json:"promotion_id"`
-	ProjectSlug     string                                        `json:"project_slug"`
-	FromEnvironment string                                        `json:"from_environment"`
-	ToEnvironment   string                                        `json:"to_environment"`
-	PromotionHash   string                                        `json:"promotion_hash"`
-	Workloads       []ProjectEnvironmentPromotionWorkloadResponse `json:"workloads"`
+	PromotionID     string                                           `json:"promotion_id"`
+	ProjectSlug     string                                           `json:"project_slug"`
+	FromEnvironment string                                           `json:"from_environment"`
+	ToEnvironment   string                                           `json:"to_environment"`
+	PromotionHash   string                                           `json:"promotion_hash"`
+	ReleaseGraph    *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
+	Workloads       []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
+}
+
+// ProjectEnvironmentPromotionReleaseGraphResponse reports the immutable
+// graph identities involved in a graph-aware promotion and rollback.
+type ProjectEnvironmentPromotionReleaseGraphResponse struct {
+	SourceReleaseSetID         string `json:"source_release_set_id,omitempty"`
+	PreviousTargetReleaseSetID string `json:"previous_target_release_set_id,omitempty"`
+	TargetReleaseSetID         string `json:"target_release_set_id,omitempty"`
+	RestoredTargetReleaseSetID string `json:"restored_target_release_set_id,omitempty"`
+	TTLSeconds                 int    `json:"ttl_seconds"`
 }
 
 // ProjectEnvironmentPromotionStatusWorkloadResponse is one durable
@@ -536,6 +549,7 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	VerificationError       string                                              `json:"verification_error,omitempty"`
 	VerificationStartedAt   string                                              `json:"verification_started_at,omitempty"`
 	VerificationCompletedAt string                                              `json:"verification_completed_at,omitempty"`
+	ReleaseGraph            *ProjectEnvironmentPromotionReleaseGraphResponse    `json:"release_graph,omitempty"`
 	Workloads               []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
 }
 

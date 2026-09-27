@@ -624,6 +624,7 @@ export type { ProjectEnvironmentEdgeRuleResponse } from './ProjectEnvironmentEdg
 export type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionListResponse } from './ProjectEnvironmentPromotionListResponse.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './ProjectEnvironmentPromotionPreviewResponse.js';
+export type { ProjectEnvironmentPromotionReleaseGraphResponse } from './ProjectEnvironmentPromotionReleaseGraphResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './ProjectEnvironmentPromotionResponse.js';
 export type { ProjectEnvironmentPromotionStatusResponse } from './ProjectEnvironmentPromotionStatusResponse.js';
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';

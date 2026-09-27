@@ -6452,50 +6452,57 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                      string
-	AccountID               string
-	ProjectID               string
-	ProjectSlug             string
-	FromEnvironment         string
-	ToEnvironment           string
-	PromotionHash           string
-	IdempotencyKey          string
-	Status                  string
-	Error                   string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	CompletedAt             *time.Time
-	RollbackStatus          string
-	RollbackIdempotencyKey  string
-	RollbackError           string
-	RollbackStartedAt       *time.Time
-	RollbackCompletedAt     *time.Time
-	VerificationStatus      string
-	VerificationError       string
-	VerificationStartedAt   *time.Time
-	VerificationCompletedAt *time.Time
+	ID                         string
+	AccountID                  string
+	ProjectID                  string
+	ProjectSlug                string
+	FromEnvironment            string
+	ToEnvironment              string
+	PromotionHash              string
+	ReleaseGraphMode           bool
+	SourceReleaseSetID         string
+	PreviousTargetReleaseSetID string
+	TargetReleaseSetID         string
+	RestoredTargetReleaseSetID string
+	ReleaseTTLSeconds          int
+	IdempotencyKey             string
+	Status                     string
+	Error                      string
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	CompletedAt                *time.Time
+	RollbackStatus             string
+	RollbackIdempotencyKey     string
+	RollbackError              string
+	RollbackStartedAt          *time.Time
+	RollbackCompletedAt        *time.Time
+	VerificationStatus         string
+	VerificationError          string
+	VerificationStartedAt      *time.Time
+	VerificationCompletedAt    *time.Time
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
 // Deployment IDs are strings intentionally: the operation remains readable
 // if a legacy or test deployment identifier is not a UUID.
 type ProjectEnvironmentPromotionWorkload struct {
-	ID                         string
-	PromotionID                string
-	WorkloadSlug               string
-	WorkloadName               string
-	SourceDeploymentID         string
-	PreviousTargetDeploymentID string
-	TargetDeploymentID         string
-	Status                     string
-	Error                      string
-	RollbackStatus             string
-	RestoredTargetDeploymentID string
-	RollbackError              string
-	VerificationStatus         string
-	VerificationError          string
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ID                           string
+	PromotionID                  string
+	WorkloadSlug                 string
+	WorkloadName                 string
+	SourceDeploymentID           string
+	PreviousTargetDeploymentID   string
+	PreviousTargetTrafficPercent int
+	TargetDeploymentID           string
+	Status                       string
+	Error                        string
+	RollbackStatus               string
+	RestoredTargetDeploymentID   string
+	RollbackError                string
+	VerificationStatus           string
+	VerificationError            string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 // IsZero reports whether this is an unset Project (Go zero value).

@@ -37,6 +37,20 @@ type ProjectReleaseSetStore interface {
 	ResolveServiceRelease(context.Context, string, string, string, string) (string, string, error)
 }
 
+// ProjectReleaseSetPromotionStore exposes compare-and-swap graph activation
+// for environment promotion and rollback. An empty expected ID means that no
+// release set may be active.
+type ProjectReleaseSetPromotionStore interface {
+	PublishProjectReleaseSetIfActive(context.Context, string, string, string, string, []ProjectReleaseMember, int, []ProjectReleaseMember) (ProjectReleaseSet, error)
+	DeactivateProjectReleaseSetIfActive(context.Context, string, string, string, string, []ProjectReleaseMember) error
+}
+
+// ProjectPromotionDeploymentStore stages a live deployment at zero traffic
+// without changing the workload's current weighted route.
+type ProjectPromotionDeploymentStore interface {
+	MarkDeploymentLiveDark(context.Context, string) error
+}
+
 func validReleaseTTL(seconds int) bool {
 	return seconds > 0 && seconds <= api.RevisionPinMaxTTLSeconds
 }
@@ -61,6 +75,14 @@ func releaseMemberDeployment(ctx context.Context, tx pgx.Tx, appID, deploymentID
 }
 
 func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return s.publishProjectReleaseSet(ctx, accountID, projectID, environment, nil, nil, ttlSeconds, members)
+}
+
+func (s *PgStore) PublishProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return s.publishProjectReleaseSet(ctx, accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
+}
+
+func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -75,6 +97,18 @@ func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, proje
 	}
 	if err := tx.QueryRow(ctx, `select 1 from project_environments where project_id = $1 and slug = $2`, projectID, environment).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
+	}
+	var activeID string
+	activeErr := tx.QueryRow(ctx, `select id::text from project_release_sets
+		where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
+	if activeErr != nil && !errors.Is(activeErr, pgx.ErrNoRows) {
+		return ProjectReleaseSet{}, activeErr
+	}
+	if errors.Is(activeErr, pgx.ErrNoRows) {
+		activeID = ""
+	}
+	if expectedActiveID != nil && activeID != *expectedActiveID {
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	byApp := make(map[string]string, len(members))
 	for _, member := range members {
@@ -114,6 +148,15 @@ func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, proje
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if expectedActiveID != nil && *expectedActiveID == "" {
+		appIDs := make([]string, 0, len(appRows))
+		for _, appRow := range appRows {
+			appIDs = append(appIDs, appRow.id)
+		}
+		if err := validateProjectReleaseFallbackTx(ctx, tx, appIDs, environment, expectedFallback); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	if len(appRows) != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
@@ -168,6 +211,134 @@ func (s *PgStore) PublishProjectReleaseSet(ctx context.Context, accountID, proje
 		return ProjectReleaseSet{}, err
 	}
 	return release, nil
+}
+
+func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) error {
+	if expectedActiveID == "" {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: deactivate release set begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var found int
+	if err := tx.QueryRow(ctx, `select 1 from projects where id = $1 and account_id = $2 for update`, projectID, accountID).Scan(&found); err != nil {
+		return mapErr(err)
+	}
+	var activeID string
+	err = tx.QueryRow(ctx, `select id::text from project_release_sets
+		where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if activeID != expectedActiveID {
+		return ErrConflict
+	}
+	rows, err := tx.Query(ctx, `select id::text from apps
+		where project_id = $1 and account_id = $2 and status <> 'deleted'
+		  and coalesce(preview_of_slug, '') = '' order by id for update`, projectID, accountID)
+	if err != nil {
+		return fmt.Errorf("state: lock workloads for release rollback: %w", err)
+	}
+	var appIDs []string
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			rows.Close()
+			return err
+		}
+		appIDs = append(appIDs, appID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := validateProjectReleaseFallbackTx(ctx, tx, appIDs, environment, expectedFallback); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
+		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
+		  from project_release_sets rs
+		  join project_release_members rm on rm.release_id = rs.id
+		  join deployments d on d.id = rm.deployment_id
+		 where rs.id = $1 and rs.active and d.status = 'live' and d.traffic_percent = 0
+		on conflict (deployment_id) do update
+		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, expectedActiveID); err != nil {
+		return fmt.Errorf("state: retain deactivated release members: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `update project_release_sets set active = false,
+		expires_at = now() + (ttl_seconds * interval '1 second')
+		where id = $1 and project_id = $2 and environment_slug = $3 and active`, expectedActiveID, projectID, environment); err != nil {
+		return fmt.Errorf("state: deactivate release set: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit release set deactivation: %w", err)
+	}
+	return nil
+}
+
+var _ ProjectReleaseSetPromotionStore = (*PgStore)(nil)
+
+func validateProjectReleaseFallbackTx(ctx context.Context, tx pgx.Tx, appIDs []string, environment string, expected []ProjectReleaseMember) error {
+	expectedByApp := make(map[string]string, len(expected))
+	for _, member := range expected {
+		if _, err := uuid.Parse(member.AppID); err != nil {
+			return ErrInvalidArgument
+		}
+		if _, err := uuid.Parse(member.DeploymentID); err != nil {
+			return ErrInvalidArgument
+		}
+		if _, exists := expectedByApp[member.AppID]; exists {
+			return ErrInvalidArgument
+		}
+		expectedByApp[member.AppID] = member.DeploymentID
+	}
+	knownApps := make(map[string]struct{}, len(appIDs))
+	for _, appID := range appIDs {
+		knownApps[appID] = struct{}{}
+	}
+	for appID := range expectedByApp {
+		if _, ok := knownApps[appID]; !ok {
+			return ErrConflict
+		}
+	}
+	for _, appID := range appIDs {
+		rows, err := tx.Query(ctx, `select id::text, traffic_percent from deployments
+			where app_id = $1 and scope = $2 and status = 'live' and traffic_percent > 0
+			order by id for update`, appID, normalizedDeploymentScope(environment))
+		if err != nil {
+			return fmt.Errorf("state: inspect weighted fallback: %w", err)
+		}
+		type route struct {
+			id     string
+			weight int
+		}
+		var routes []route
+		for rows.Next() {
+			var item route
+			if err := rows.Scan(&item.id, &item.weight); err != nil {
+				rows.Close()
+				return err
+			}
+			routes = append(routes, item)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		want := expectedByApp[appID]
+		if want == "" {
+			if len(routes) != 0 {
+				return ErrConflict
+			}
+			continue
+		}
+		if len(routes) != 1 || routes[0].id != want || routes[0].weight != 100 {
+			return ErrConflict
+		}
+	}
+	return nil
 }
 
 // ResolveProjectRelease returns empty IDs only when no active release exists.

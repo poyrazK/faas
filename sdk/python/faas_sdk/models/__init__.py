@@ -1203,6 +1203,7 @@ from .project_environment_promotion_change_target_revision_kind import (
 )
 from .project_environment_promotion_list_response import ProjectEnvironmentPromotionListResponse
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
+from .project_environment_promotion_release_graph_response import ProjectEnvironmentPromotionReleaseGraphResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
 from .project_environment_promotion_status_response_rollback_status import (
@@ -2858,6 +2859,7 @@ __all__ = (
     "ProjectEnvironmentPromotionChangeTargetRevisionKind",
     "ProjectEnvironmentPromotionListResponse",
     "ProjectEnvironmentPromotionPreviewResponse",
+    "ProjectEnvironmentPromotionReleaseGraphResponse",
     "ProjectEnvironmentPromotionResponse",
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",

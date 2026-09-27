@@ -18,6 +18,14 @@ func (m *MemStore) validRetainedRevisionLocked(deploymentID string) bool {
 }
 
 func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(accountID, projectID, environment, nil, nil, ttlSeconds, members)
+}
+
+func (m *MemStore) PublishProjectReleaseSetIfActive(_ context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
+}
+
+func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -70,7 +78,16 @@ func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projec
 		return ProjectReleaseSet{}, ErrConflict
 	}
 	key := releaseKey(projectID, environment)
-	if previousID := m.activeProjectReleaseSets[key]; previousID != "" {
+	previousID := m.activeProjectReleaseSets[key]
+	if expectedActiveID != nil && previousID != *expectedActiveID {
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	if expectedActiveID != nil && *expectedActiveID == "" {
+		if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
 		expires := time.Now().UTC().Add(time.Duration(previous.TTLSeconds) * time.Second)
@@ -92,6 +109,93 @@ func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projec
 	m.activeProjectReleaseSets[key] = release.ID
 	return release, nil
 }
+
+func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) error {
+	if expectedActiveID == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.ownsReleaseEnvironmentLocked(accountID, projectID, environment) {
+		return ErrNotFound
+	}
+	key := releaseKey(projectID, environment)
+	activeID := m.activeProjectReleaseSets[key]
+	if activeID != expectedActiveID {
+		return ErrConflict
+	}
+	release, ok := m.projectReleaseSets[activeID]
+	if !ok || !release.Active {
+		return ErrConflict
+	}
+	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	expires := now.Add(time.Duration(release.TTLSeconds) * time.Second)
+	release.Active = false
+	release.ExpiresAt = &expires
+	for _, member := range release.Members {
+		dep := m.deployments[member.DeploymentID]
+		if dep.Status == DeployLive && dep.TrafficPercent == 0 {
+			if pin, exists := m.revisionPins[member.DeploymentID]; !exists || pin.Before(expires) {
+				m.revisionPins[member.DeploymentID] = expires
+			}
+		}
+	}
+	m.projectReleaseSets[activeID] = release
+	delete(m.activeProjectReleaseSets, key)
+	return nil
+}
+
+func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment string, expected []ProjectReleaseMember) error {
+	expectedByApp := make(map[string]string, len(expected))
+	for _, member := range expected {
+		if _, err := uuid.Parse(member.AppID); err != nil {
+			return ErrInvalidArgument
+		}
+		if _, err := uuid.Parse(member.DeploymentID); err != nil {
+			return ErrInvalidArgument
+		}
+		if _, exists := expectedByApp[member.AppID]; exists {
+			return ErrInvalidArgument
+		}
+		expectedByApp[member.AppID] = member.DeploymentID
+	}
+	apps := make(map[string]struct{})
+	for _, app := range m.apps {
+		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
+			apps[app.ID] = struct{}{}
+		}
+	}
+	for appID := range expectedByApp {
+		if _, ok := apps[appID]; !ok {
+			return ErrConflict
+		}
+	}
+	for appID := range apps {
+		want := expectedByApp[appID]
+		var live []Deployment
+		for _, dep := range m.deployments {
+			if dep.AppID == appID && normalizedDeploymentScope(dep.Scope) == normalizedDeploymentScope(environment) &&
+				dep.Status == DeployLive && dep.TrafficPercent > 0 {
+				live = append(live, dep)
+			}
+		}
+		if want == "" {
+			if len(live) != 0 {
+				return ErrConflict
+			}
+			continue
+		}
+		if len(live) != 1 || live[0].ID != want || live[0].TrafficPercent != 100 {
+			return ErrConflict
+		}
+	}
+	return nil
+}
+
+var _ ProjectReleaseSetPromotionStore = (*MemStore)(nil)
 
 func (m *MemStore) releaseTargetLiveLocked(appID, deploymentID string) bool {
 	dep, ok := m.deployments[deploymentID]

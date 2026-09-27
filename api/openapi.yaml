@@ -29613,7 +29613,7 @@ components:
     ProjectEnvironmentPromotionPreviewResponse:
       description: Read-only promotion preview between two registered project environments.
       type: object
-      required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, promotion_hash, promotion_token]
+      required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, release_graph_mode, promotion_hash, promotion_token]
       properties:
         project_slug: { type: string }
         from_environment: { type: string }
@@ -29636,6 +29636,14 @@ components:
           allOf:
             - $ref: '#/components/schemas/ProjectReleaseSetResponse'
           description: Immutable active release graph snapshot for the target environment, when present.
+        release_graph_mode:
+          type: boolean
+          description: True when promotion stages deployments dark and atomically activates a project release graph.
+        release_ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+          description: Compatibility window used by the promoted release graph.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         promotion_token: { type: string, minLength: 1 }
 
@@ -29726,9 +29734,21 @@ components:
         from_environment: { type: string }
         to_environment: { type: string }
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        release_graph: { $ref: '#/components/schemas/ProjectEnvironmentPromotionReleaseGraphResponse' }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionWorkloadResponse' }
+
+    ProjectEnvironmentPromotionReleaseGraphResponse:
+      description: Immutable graph identities involved in a graph-aware promotion and rollback.
+      type: object
+      required: [ttl_seconds]
+      properties:
+        source_release_set_id: { type: string, format: uuid }
+        previous_target_release_set_id: { type: string, format: uuid }
+        target_release_set_id: { type: string, format: uuid }
+        restored_target_release_set_id: { type: string, format: uuid }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
 
     ProjectEnvironmentPromotionStatusWorkloadResponse:
       description: Durable checkpoint for one workload in an environment promotion.
@@ -29783,6 +29803,7 @@ components:
         verification_error: { type: string }
         verification_started_at: { type: string, format: date-time }
         verification_completed_at: { type: string, format: date-time }
+        release_graph: { $ref: '#/components/schemas/ProjectEnvironmentPromotionReleaseGraphResponse' }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }

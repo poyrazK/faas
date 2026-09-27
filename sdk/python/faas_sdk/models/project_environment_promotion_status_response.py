@@ -22,6 +22,9 @@ from ..models.project_environment_promotion_status_response_verification_status 
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_environment_promotion_release_graph_response import (
+        ProjectEnvironmentPromotionReleaseGraphResponse,
+    )
     from ..models.project_environment_promotion_status_workload_response import (
         ProjectEnvironmentPromotionStatusWorkloadResponse,
     )
@@ -53,6 +56,8 @@ class ProjectEnvironmentPromotionStatusResponse:
     verification_error: str | Unset = UNSET
     verification_started_at: datetime.datetime | Unset = UNSET
     verification_completed_at: datetime.datetime | Unset = UNSET
+    release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
+    """Immutable graph identities involved in a graph-aware promotion and rollback."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -111,6 +116,10 @@ class ProjectEnvironmentPromotionStatusResponse:
         if not isinstance(self.verification_completed_at, Unset):
             verification_completed_at = self.verification_completed_at.isoformat()
 
+        release_graph: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release_graph, Unset):
+            release_graph = self.release_graph.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -146,11 +155,16 @@ class ProjectEnvironmentPromotionStatusResponse:
             field_dict["verification_started_at"] = verification_started_at
         if verification_completed_at is not UNSET:
             field_dict["verification_completed_at"] = verification_completed_at
+        if release_graph is not UNSET:
+            field_dict["release_graph"] = release_graph
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_promotion_release_graph_response import (
+            ProjectEnvironmentPromotionReleaseGraphResponse,
+        )
         from ..models.project_environment_promotion_status_workload_response import (
             ProjectEnvironmentPromotionStatusWorkloadResponse,
         )
@@ -236,6 +250,13 @@ class ProjectEnvironmentPromotionStatusResponse:
         else:
             verification_completed_at = datetime.datetime.fromisoformat(_verification_completed_at)
 
+        _release_graph = d.pop("release_graph", UNSET)
+        release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset
+        if isinstance(_release_graph, Unset):
+            release_graph = UNSET
+        else:
+            release_graph = ProjectEnvironmentPromotionReleaseGraphResponse.from_dict(_release_graph)
+
         project_environment_promotion_status_response = cls(
             promotion_id=promotion_id,
             project_slug=project_slug,
@@ -256,6 +277,7 @@ class ProjectEnvironmentPromotionStatusResponse:
             verification_error=verification_error,
             verification_started_at=verification_started_at,
             verification_completed_at=verification_completed_at,
+            release_graph=release_graph,
         )
 
         project_environment_promotion_status_response.additional_properties = d
