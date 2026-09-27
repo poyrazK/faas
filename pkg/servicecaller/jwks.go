@@ -152,27 +152,9 @@ func TrustedKeysFromJWKS(raw []byte) (TrustedKeys, error) {
 // Redirects are refused so an HTTPS trust URL cannot silently downgrade or
 // move to a different key issuer.
 func FetchTrustedKeys(ctx context.Context, client *http.Client, endpoint string) (TrustedKeys, error) {
-	parsed, err := url.Parse(endpoint)
+	parsed, err := validateJWKSURL(endpoint)
 	if err != nil {
-		return nil, errors.New("servicecaller: invalid JWKS URL")
-	}
-	if parsed.Host == "" {
-		return nil, errors.New("servicecaller: invalid JWKS URL")
-	}
-	if parsed.User != nil {
-		return nil, errors.New("servicecaller: invalid JWKS URL")
-	}
-	if parsed.Fragment != "" {
-		return nil, errors.New("servicecaller: invalid JWKS URL")
-	}
-	switch parsed.Scheme {
-	case "https":
-	case "http":
-		if !isLoopbackHost(parsed.Hostname()) {
-			return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
-		}
-	default:
-		return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
+		return nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -204,6 +186,23 @@ func FetchTrustedKeys(ctx context.Context, client *http.Client, endpoint string)
 		return nil, fmt.Errorf("servicecaller: JWKS exceeds %d bytes", MaxJWKSBytes)
 	}
 	return TrustedKeysFromJWKS(body)
+}
+
+func validateJWKSURL(endpoint string) (*url.URL, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return nil, errors.New("servicecaller: invalid JWKS URL")
+	}
+	switch parsed.Scheme {
+	case "https":
+	case "http":
+		if !isLoopbackHost(parsed.Hostname()) {
+			return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
+		}
+	default:
+		return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
+	}
+	return parsed, nil
 }
 
 func isLoopbackHost(host string) bool {

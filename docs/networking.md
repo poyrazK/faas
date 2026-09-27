@@ -537,16 +537,39 @@ node key rotation, the previous key stays published for the assertion's
 
 Verification must check the signature, issuer `gregale.svc`, audience equal to
 the target app's platform-injected `FAAS_APP_ID`, and the token time window.
-Gregale's Go `pkg/servicecaller` package exposes `FetchTrustedKeys` and
-`Verify` for this flow:
+For Go `net/http` services, `pkg/servicecaller` provides middleware with a
+five-second JWKS cache, single-flight refresh, and an immediate refresh when a
+new signing-key ID appears:
 
 ```go
-keys, err := servicecaller.FetchTrustedKeys(ctx, http.DefaultClient, apiOrigin+"/v1/service-caller-keys")
+middleware, err := servicecaller.NewHTTPMiddleware(servicecaller.HTTPMiddlewareOptions{
+    JWKSURL:  apiOrigin + "/v1/service-caller-keys",
+    Audience: os.Getenv("FAAS_APP_ID"),
+    Require:  true,
+})
 if err != nil {
-    return err
+    log.Fatal(err)
 }
-caller, err := servicecaller.Verify(r.Header.Get("X-Faas-Caller-Assertion"), keys, os.Getenv("FAAS_APP_ID"), time.Now())
+mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    if caller, verified := servicecaller.VerifiedCaller(r.Context()); verified {
+        log.Printf("verified internal caller: %s", caller.CallerAppID)
+    }
+    w.WriteHeader(http.StatusNoContent)
+})
+if err := http.ListenAndServe(":8080", middleware.Wrap(mux)); err != nil {
+    log.Fatal(err)
+}
 ```
+
+`Require: false` is the default rollout posture: missing or invalid assertions
+do not block a request, and are never added to its context as verified
+identity. Set `Require: true` only after assertion signing and key publication
+are enabled on every node that may originate calls; required mode returns 401
+if the assertion is missing, invalid, expired, or its key endpoint is
+unavailable. Requiring a valid assertion authenticates the caller but does not
+authorize that app; handlers must still apply their caller/business policy.
+Non-`net/http` integrations can use the lower-level
+`FetchTrustedKeys` and `Verify` functions.
 
 The signer remains opt-in and is not made a fleet-wide default by this
 endpoint. Enable `FAAS_SERVICE_CALLER_ASSERTIONS=1` on every node that may
