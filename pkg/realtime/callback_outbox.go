@@ -172,6 +172,71 @@ type callbackOutboxItem struct {
 	size            int64
 	enqueuedAt      time.Time
 	pendingAgeIndex int
+	connectionKey   string
+	connectionPrev  *callbackOutboxItem
+	connectionNext  *callbackOutboxItem
+	readyIndex      int
+	retryIndex      int
+}
+
+type callbackConnectionQueue struct {
+	head       *callbackOutboxItem
+	tail       *callbackOutboxItem
+	inFlightID string
+}
+
+type callbackReadyHeap []*callbackOutboxItem
+
+func (h callbackReadyHeap) Len() int { return len(h) }
+func (h callbackReadyHeap) Less(i, j int) bool {
+	return callbackReadyBefore(h[i], h[j])
+}
+func (h callbackReadyHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].readyIndex = i
+	h[j].readyIndex = j
+}
+func (h *callbackReadyHeap) Push(value any) {
+	item := value.(*callbackOutboxItem)
+	item.readyIndex = len(*h)
+	*h = append(*h, item)
+}
+func (h *callbackReadyHeap) Pop() any {
+	last := len(*h) - 1
+	item := (*h)[last]
+	(*h)[last] = nil
+	item.readyIndex = -1
+	*h = (*h)[:last]
+	return item
+}
+
+type callbackRetryHeap []*callbackOutboxItem
+
+func (h callbackRetryHeap) Len() int { return len(h) }
+func (h callbackRetryHeap) Less(i, j int) bool {
+	a, b := h[i], h[j]
+	if !a.record.NextAttemptAt.Equal(b.record.NextAttemptAt) {
+		return a.record.NextAttemptAt.Before(b.record.NextAttemptAt)
+	}
+	return callbackReadyBefore(a, b)
+}
+func (h callbackRetryHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].retryIndex = i
+	h[j].retryIndex = j
+}
+func (h *callbackRetryHeap) Push(value any) {
+	item := value.(*callbackOutboxItem)
+	item.retryIndex = len(*h)
+	*h = append(*h, item)
+}
+func (h *callbackRetryHeap) Pop() any {
+	last := len(*h) - 1
+	item := (*h)[last]
+	(*h)[last] = nil
+	item.retryIndex = -1
+	*h = (*h)[:last]
+	return item
 }
 
 // CallbackOutbox is a multi-producer durable spool for message and disconnect
@@ -193,6 +258,9 @@ type CallbackOutbox struct {
 	maxRetryInterval     time.Duration
 	items                map[string]*callbackOutboxItem
 	inFlight             map[string]struct{}
+	connections          map[string]*callbackConnectionQueue
+	ready                callbackReadyHeap
+	delayed              callbackRetryHeap
 	bytes                int64
 	replayDeliveries     uint64
 	deadBytes            int64
@@ -254,6 +322,7 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		maxRetryInterval:   cfg.MaxRetryInterval,
 		items:              make(map[string]*callbackOutboxItem),
 		inFlight:           make(map[string]struct{}),
+		connections:        make(map[string]*callbackConnectionQueue),
 		deadIDs:            make(map[string]struct{}),
 		callbackAuthTokens: make(map[string]string),
 	}
@@ -302,11 +371,15 @@ func (q *CallbackOutbox) load() error {
 		if enqueuedAt.IsZero() {
 			enqueuedAt = info.ModTime().UTC()
 		}
-		item := &callbackOutboxItem{record: record, path: path, size: info.Size(), enqueuedAt: enqueuedAt}
+		item := &callbackOutboxItem{
+			record: record, path: path, size: info.Size(), enqueuedAt: enqueuedAt,
+			readyIndex: -1, retryIndex: -1,
+		}
 		q.items[id] = item
 		heap.Push(&q.pendingAge, item)
 		q.bytes += info.Size()
 	}
+	q.rebuildConnectionIndexLocked()
 	deadEntries, err := os.ReadDir(q.deadRoot)
 	if err != nil {
 		return fmt.Errorf("realtime: read callback dead letters: %w", err)
@@ -387,10 +460,12 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 		if _, inFlight := q.inFlight[event.ID]; inFlight {
 			return false, nil
 		}
-		if q.hasPriorEvent(event) {
+		item := q.items[event.ID]
+		queue := q.connections[item.connectionKey]
+		if queue == nil || queue.head != item || queue.inFlightID != "" {
 			return false, nil
 		}
-		q.inFlight[event.ID] = struct{}{}
+		q.claimLocked(item)
 		return true, nil
 	}
 	if token, known := q.callbackAuthTokens[event.EndpointID]; known {
@@ -414,16 +489,21 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	if err := writeCallbackOutboxFile(path, payload); err != nil {
 		return false, fmt.Errorf("realtime: persist callback outbox item: %w", err)
 	}
-	item := &callbackOutboxItem{record: record, path: path, size: int64(len(payload)), enqueuedAt: record.EnqueuedAt}
+	item := &callbackOutboxItem{
+		record: record, path: path, size: int64(len(payload)), enqueuedAt: record.EnqueuedAt,
+		readyIndex: -1, retryIndex: -1,
+	}
 	q.items[event.ID] = item
 	heap.Push(&q.pendingAge, item)
+	q.addConnectionItemLocked(item)
 	q.bytes += int64(len(payload))
-	if q.hasPriorEvent(event) {
+	queue := q.connections[item.connectionKey]
+	if queue.inFlightID != "" || queue.head != item {
 		// The replay loop will deliver this after earlier events for the
 		// connection are acknowledged or dead-lettered.
 		return false, nil
 	}
-	q.inFlight[event.ID] = struct{}{}
+	q.claimLocked(item)
 	return true, nil
 }
 
@@ -483,15 +563,173 @@ func callbackEventBefore(a, b Event) bool {
 	return a.ID < b.ID
 }
 
-// hasPriorEvent is called with q.mu held.
-func (q *CallbackOutbox) hasPriorEvent(event Event) bool {
-	for id, item := range q.items {
-		if id != event.ID && item.record.Event.ConnectionID == event.ConnectionID &&
-			callbackEventBefore(item.record.Event, event) {
-			return true
+func callbackReadyBefore(a, b *callbackOutboxItem) bool {
+	if !a.record.Event.At.Equal(b.record.Event.At) {
+		return a.record.Event.At.Before(b.record.Event.At)
+	}
+	return a.record.Event.ID < b.record.Event.ID
+}
+
+func callbackConnectionKey(event Event) string {
+	if event.ConnectionID == "" {
+		return "event:" + event.ID
+	}
+	return "connection:" + event.ConnectionID
+}
+
+// addConnectionItemLocked keeps an ordered linked list per connection. It is
+// called while q.mu is held and only scans events from the same connection.
+func (q *CallbackOutbox) addConnectionItemLocked(item *callbackOutboxItem) {
+	item.connectionKey = callbackConnectionKey(item.record.Event)
+	queue := q.connections[item.connectionKey]
+	if queue == nil {
+		queue = &callbackConnectionQueue{}
+		q.connections[item.connectionKey] = queue
+	}
+	oldHead := queue.head
+	if queue.head == nil {
+		queue.head, queue.tail = item, item
+	} else if callbackEventBefore(item.record.Event, queue.head.record.Event) {
+		item.connectionNext = queue.head
+		queue.head.connectionPrev = item
+		queue.head = item
+	} else if !callbackEventBefore(item.record.Event, queue.tail.record.Event) {
+		item.connectionPrev = queue.tail
+		queue.tail.connectionNext = item
+		queue.tail = item
+	} else {
+		current := queue.head
+		for current.connectionNext != nil && !callbackEventBefore(item.record.Event, current.connectionNext.record.Event) {
+			current = current.connectionNext
+		}
+		item.connectionPrev = current
+		item.connectionNext = current.connectionNext
+		if current.connectionNext == nil {
+			queue.tail = item
+		} else {
+			current.connectionNext.connectionPrev = item
+		}
+		current.connectionNext = item
+	}
+	if queue.head != oldHead {
+		if oldHead != nil {
+			q.removeScheduledItemLocked(oldHead)
+		}
+		q.scheduleConnectionHeadLocked(queue)
+	}
+}
+
+// rebuildConnectionIndexLocked groups and sorts loaded records once at startup
+// instead of inserting each file into a growing per-connection list.
+func (q *CallbackOutbox) rebuildConnectionIndexLocked() {
+	groups := make(map[string][]*callbackOutboxItem)
+	for _, item := range q.items {
+		item.connectionKey = callbackConnectionKey(item.record.Event)
+		groups[item.connectionKey] = append(groups[item.connectionKey], item)
+	}
+	for key, items := range groups {
+		sort.Slice(items, func(i, j int) bool {
+			return callbackEventBefore(items[i].record.Event, items[j].record.Event)
+		})
+		queue := &callbackConnectionQueue{}
+		for _, item := range items {
+			item.connectionPrev = queue.tail
+			if queue.tail == nil {
+				queue.head = item
+			} else {
+				queue.tail.connectionNext = item
+			}
+			queue.tail = item
+		}
+		q.connections[key] = queue
+		q.scheduleConnectionHeadLocked(queue)
+	}
+}
+
+func (q *CallbackOutbox) removeScheduledItemLocked(item *callbackOutboxItem) {
+	if item.readyIndex >= 0 {
+		heap.Remove(&q.ready, item.readyIndex)
+	}
+	if item.retryIndex >= 0 {
+		heap.Remove(&q.delayed, item.retryIndex)
+	}
+}
+
+func (q *CallbackOutbox) scheduleConnectionHeadLocked(queue *callbackConnectionQueue) {
+	if queue == nil || queue.head == nil || queue.inFlightID != "" {
+		return
+	}
+	item := queue.head
+	q.removeScheduledItemLocked(item)
+	if item.record.NextAttemptAt.After(time.Now().UTC()) {
+		heap.Push(&q.delayed, item)
+		return
+	}
+	heap.Push(&q.ready, item)
+}
+
+func (q *CallbackOutbox) claimLocked(item *callbackOutboxItem) Event {
+	q.removeScheduledItemLocked(item)
+	queue := q.connections[item.connectionKey]
+	queue.inFlightID = item.record.Event.ID
+	q.inFlight[item.record.Event.ID] = struct{}{}
+	event := item.record.event()
+	event.Data = append([]byte(nil), event.Data...)
+	return event
+}
+
+func (q *CallbackOutbox) releaseLocked(id string) {
+	delete(q.inFlight, id)
+	item := q.items[id]
+	if item == nil {
+		return
+	}
+	queue := q.connections[item.connectionKey]
+	if queue != nil && queue.inFlightID == id {
+		queue.inFlightID = ""
+		q.scheduleConnectionHeadLocked(queue)
+	}
+}
+
+func (q *CallbackOutbox) removeConnectionItemLocked(item *callbackOutboxItem) {
+	q.removeScheduledItemLocked(item)
+	queue := q.connections[item.connectionKey]
+	if queue == nil {
+		return
+	}
+	wasHead := queue.head == item
+	wasInFlight := queue.inFlightID == item.record.Event.ID
+	if item.connectionPrev == nil {
+		queue.head = item.connectionNext
+	} else {
+		item.connectionPrev.connectionNext = item.connectionNext
+	}
+	if item.connectionNext == nil {
+		queue.tail = item.connectionPrev
+	} else {
+		item.connectionNext.connectionPrev = item.connectionPrev
+	}
+	item.connectionPrev, item.connectionNext = nil, nil
+	if wasInFlight {
+		queue.inFlightID = ""
+	}
+	if queue.head == nil {
+		delete(q.connections, item.connectionKey)
+		return
+	}
+	if wasHead || wasInFlight {
+		q.scheduleConnectionHeadLocked(queue)
+	}
+}
+
+func (q *CallbackOutbox) promoteDueLocked(now time.Time) {
+	for q.delayed.Len() > 0 && !q.delayed[0].record.NextAttemptAt.After(now) {
+		item := heap.Pop(&q.delayed).(*callbackOutboxItem)
+		queue := q.connections[item.connectionKey]
+		if queue != nil && queue.head == item && queue.inFlightID == "" {
+			heap.Push(&q.ready, item)
 		}
 	}
-	return false
 }
 
 // ClaimNext reserves the oldest eligible event while preserving each
@@ -503,41 +741,14 @@ func (q *CallbackOutbox) ClaimNext() (Event, bool, error) {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	firstByConnection := make(map[string]string)
-	for id, item := range q.items {
-		key := item.record.Event.ConnectionID
-		if key == "" {
-			key = id
-		}
-		if prior, ok := firstByConnection[key]; !ok ||
-			callbackEventBefore(item.record.Event, q.items[prior].record.Event) {
-			firstByConnection[key] = id
-		}
-	}
-	ids := make([]string, 0, len(firstByConnection))
-	for _, id := range firstByConnection {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		a, b := q.items[ids[i]].record.Event, q.items[ids[j]].record.Event
-		if !a.At.Equal(b.At) {
-			return a.At.Before(b.At)
-		}
-		return ids[i] < ids[j]
-	})
-	now := time.Now().UTC()
-	for _, id := range ids {
-		if _, inFlight := q.inFlight[id]; inFlight {
+	q.promoteDueLocked(time.Now().UTC())
+	for q.ready.Len() > 0 {
+		item := heap.Pop(&q.ready).(*callbackOutboxItem)
+		queue := q.connections[item.connectionKey]
+		if queue == nil || queue.head != item || queue.inFlightID != "" || q.items[item.record.Event.ID] != item {
 			continue
 		}
-		item := q.items[id]
-		if item.record.NextAttemptAt.After(now) {
-			continue
-		}
-		q.inFlight[id] = struct{}{}
-		event := item.record.event()
-		event.Data = append([]byte(nil), event.Data...)
-		return event, true, nil
+		return q.claimLocked(item), true, nil
 	}
 	return Event{}, false, nil
 }
@@ -573,6 +784,7 @@ func (q *CallbackOutbox) ack(id string, replay bool) error {
 	q.bytes -= item.size
 	delete(q.items, id)
 	delete(q.inFlight, id)
+	q.removeConnectionItemLocked(item)
 	if replay {
 		q.replayDeliveries++
 	}
@@ -606,12 +818,12 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 	item.record.NextAttemptAt = time.Now().UTC().Add(delay)
 	payload, err := json.Marshal(item.record)
 	if err != nil {
-		delete(q.inFlight, id)
+		q.releaseLocked(id)
 		return fmt.Errorf("realtime: encode failed callback outbox item: %w", err)
 	}
 	if item.record.Attempts >= q.maxAttempts {
 		if err := writeCallbackOutboxFile(item.path, payload); err != nil {
-			delete(q.inFlight, id)
+			q.releaseLocked(id)
 			return fmt.Errorf("realtime: persist callback dead letter: %w", err)
 		}
 		modified := time.Now().UTC()
@@ -620,7 +832,7 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 		}
 		deadPath := filepath.Join(q.deadRoot, id+".json")
 		if err := os.Rename(item.path, deadPath); err != nil {
-			delete(q.inFlight, id)
+			q.releaseLocked(id)
 			return fmt.Errorf("realtime: move callback dead letter: %w", err)
 		}
 		q.bytes -= item.size
@@ -632,6 +844,7 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 		}
 		delete(q.items, id)
 		delete(q.inFlight, id)
+		q.removeConnectionItemLocked(item)
 		if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
 			return fmt.Errorf("realtime: sync callback dead letter: %w", err)
 		}
@@ -641,12 +854,12 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 		return q.pruneDeadLetters()
 	}
 	if err := writeCallbackOutboxFile(item.path, payload); err != nil {
-		delete(q.inFlight, id)
+		q.releaseLocked(id)
 		return fmt.Errorf("realtime: persist callback retry: %w", err)
 	}
 	q.bytes += int64(len(payload)) - item.size
 	item.size = int64(len(payload))
-	delete(q.inFlight, id)
+	q.releaseLocked(id)
 	return nil
 }
 
@@ -818,9 +1031,13 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 		return fmt.Errorf("realtime: move callback dead-letter replay %q: %w", id, err)
 	}
 	q.removeDeadLetter(id)
-	item := &callbackOutboxItem{record: record, path: pendingPath, size: int64(len(payload)), enqueuedAt: enqueuedAt}
+	item := &callbackOutboxItem{
+		record: record, path: pendingPath, size: int64(len(payload)), enqueuedAt: enqueuedAt,
+		readyIndex: -1, retryIndex: -1,
+	}
 	q.items[id] = item
 	heap.Push(&q.pendingAge, item)
+	q.addConnectionItemLocked(item)
 	q.bytes += item.size
 	var syncErr error
 	if err := syncCallbackOutboxDir(q.root); err != nil {
@@ -875,7 +1092,7 @@ func (q *CallbackOutbox) Release(id string) {
 		return
 	}
 	q.mu.Lock()
-	delete(q.inFlight, id)
+	q.releaseLocked(id)
 	q.mu.Unlock()
 }
 
@@ -909,7 +1126,7 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 
 // Run replays pending events until ctx is canceled. The deliver function must
 // return nil only after a 2xx callback response; failures remain durable and
-// are retried after the configured interval.
+// become eligible according to their persisted retry schedule.
 func (q *CallbackOutbox) Run(ctx context.Context, deliver func(context.Context, Event) error) error {
 	if q == nil || deliver == nil {
 		return ErrCallbackOutboxItem
