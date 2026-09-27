@@ -18,8 +18,10 @@
 
 ## Requirements
 
-- Node ≥ 22.10 (uses `--experimental-strip-types` at dev-time and the
-  stable global `fetch` at runtime).
+- Node ≥ 22.10 for the Node SDK entry point (uses
+  `--experimental-strip-types` at dev-time and global `fetch` at runtime).
+- The browser subpath uses the standard Fetch API and has no Node-only runtime
+  imports.
 - npm ≥ 10 (or `pnpm`/`yarn` compatible).
 
 ## Install
@@ -155,6 +157,45 @@ async function checkout(request: Request) {
 The async context is isolated between concurrent handlers. Use it only around
 work caused by that inbound request; detached background jobs should capture
 the release explicitly when they are enqueued.
+
+### Browser SPA release pinning
+
+Browser clients can use the browser-safe fetch adapter without importing the
+Node-only SDK entry point:
+
+```ts
+import { createGregaleBrowserFetch } from '@gregale/sdk-node/browser';
+
+const releaseFromBootstrap = document
+  .querySelector('meta[name="gregale-release"]')
+  ?.getAttribute('content') ?? undefined;
+const gregale = createGregaleBrowserFetch({
+  managedOrigins: ['https://api.example.com'],
+  // Prefer the release that served this app when it is available.
+  initialRelease: releaseFromBootstrap,
+});
+
+const response = await gregale.fetch('https://api.example.com/v1/checkout', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ cartId: 'cart-123' }),
+});
+```
+
+The adapter adds `X-Gregale-Release` only to configured Gregale origins,
+captures it from the first eligible response when no initial release was
+provided, and pins later calls from that adapter instance. It serializes
+concurrent unpinned startup calls while discovering the release. The
+discovery request itself follows the active release, so inject `initialRelease`
+from the HTML/SSR/bootstrap response when the API must match the exact release
+that served the client. State is in-memory per adapter instance; create a new
+instance for a new client session. A 410 expired-release response is returned
+unchanged and is never retried against the active release. Call `clearRelease()`
+only when the application intentionally wants to start a new release context.
+
+For cross-origin APIs, configure CORS to expose `X-Gregale-Release` and allow
+it as a request header. The default CORS policy already exposes both release
+and revision response headers.
 
 ## Execution streaming
 
