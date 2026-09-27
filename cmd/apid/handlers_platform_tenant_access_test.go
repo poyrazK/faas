@@ -140,6 +140,14 @@ func TestPlatformTenantSelfActivationIsScopedAndRedacted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	const privateCommit = "0123456789abcdef0123456789abcdef01234567"
+	deployment, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:private-image-digest",
+		CommitSHA: privateCommit, Error: "private deployment failure details", Status: state.DeployFailed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "activation portal", Scopes: []string{api.ScopePlatformTenantActivationRead},
 	}, nil)
@@ -170,8 +178,14 @@ func TestPlatformTenantSelfActivationIsScopedAndRedacted(t *testing.T) {
 		snapshot.Surfaces[0].Hostnames[0].Verified {
 		t.Fatalf("self activation snapshot = %+v", snapshot)
 	}
+	deploymentView := snapshot.Surfaces[0].LatestDeployment
+	if deploymentView == nil || deploymentView.Status != string(deployment.Status) || deploymentView.Revision != deployment.Revision ||
+		deploymentView.StartedAt != deployment.CreatedAt.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("self activation deployment status = %+v, want safe projection of %+v", deploymentView, deployment)
+	}
 	body := response.Body.String()
-	for _, forbidden := range []string{"tenant_id", "app_id", "cert_last_error", "last_error", "challenge_token", "txt_record", challenge, providerFailure} {
+	for _, forbidden := range []string{"tenant_id", "app_id", appID, deployment.ID, deployment.ImageDigest, privateCommit,
+		"cert_last_error", "last_error", "challenge_token", "txt_record", challenge, providerFailure, deployment.Error} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("self activation leaked %q: %s", forbidden, body)
 		}

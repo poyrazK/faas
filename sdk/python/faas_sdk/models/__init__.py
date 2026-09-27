@@ -1103,6 +1103,8 @@ from .platform_tenant_self_activation_surface_response_cert_state import (
     PlatformTenantSelfActivationSurfaceResponseCertState,
 )
 from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
+from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
+from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
@@ -2802,6 +2804,8 @@ __all__ = (
     "PlatformTenantSelfActivationSurfaceResponse",
     "PlatformTenantSelfActivationSurfaceResponseCertState",
     "PlatformTenantSelfActivationSurfaceResponseStatus",
+    "PlatformTenantSelfDeploymentResponse",
+    "PlatformTenantSelfDeploymentResponseStatus",
     "PlatformTenantSelfStatementListResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",

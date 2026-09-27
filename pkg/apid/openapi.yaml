@@ -4715,7 +4715,7 @@ paths:
       tags: [platform-tenants]
       operationId: getPlatformTenantSelfActivation
       summary: Read this tenant's own redacted activation snapshot.
-      description: Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge tokens, and app IDs are omitted.
+      description: Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
       responses:
         '200':
           description: Current activation state for the caller's linked surfaces.
@@ -23671,9 +23671,20 @@ components:
         cert_state: { type: string, enum: [none, pending, issued, failed] }
         cert_not_after: { type: string, format: date-time }
         ready: { type: boolean }
+        latest_deployment:
+          $ref: '#/components/schemas/PlatformTenantSelfDeploymentResponse'
         hostnames:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantSelfActivationHostnameResponse' }
+
+    PlatformTenantSelfDeploymentResponse:
+      description: Safe status of the latest deployment attempt for the surface's app. This is not a claim that the attempt is currently serving; IDs, source metadata, logs, and errors are omitted.
+      type: object
+      required: [status, started_at]
+      properties:
+        status: { type: string, enum: [pending, building, imaging, snapshotting, live, failed, superseded, cancelled] }
+        revision: { type: integer, format: int32, minimum: 1, description: Positive app revision when assigned. }
+        started_at: { type: string, format: date-time }
 
     PlatformTenantSelfActivationResponse:
       description: Current read-only activation snapshot for the tenant bound to the bearer; ready requires every linked surface to be ready.

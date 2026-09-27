@@ -72,8 +72,9 @@ def sync_detailed(
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
-    from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge
-    tokens, and app IDs are omitted.
+    from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-
+    deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge
+    tokens, app IDs, deployment IDs, and source metadata are omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,8 +100,9 @@ def sync(
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
-    from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge
-    tokens, and app IDs are omitted.
+    from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-
+    deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge
+    tokens, app IDs, deployment IDs, and source metadata are omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,8 +124,9 @@ async def asyncio_detailed(
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
-    from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge
-    tokens, and app IDs are omitted.
+    from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-
+    deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge
+    tokens, app IDs, deployment IDs, and source metadata are omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,8 +150,9 @@ async def asyncio(
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
-    from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge
-    tokens, and app IDs are omitted.
+    from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-
+    deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge
+    tokens, app IDs, deployment IDs, and source metadata are omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

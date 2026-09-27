@@ -77,8 +77,9 @@ type PlatformTenantActivationResponse struct {
 }
 
 // PlatformTenantSelfActivationResponse is the downstream tenant's redacted
-// activation snapshot. It intentionally omits app IDs, DNS challenge tokens,
-// and raw DNS/certificate errors from the account-owner response.
+// activation snapshot. It intentionally omits app and deployment IDs, DNS
+// challenge tokens, source metadata, logs, and raw DNS/certificate/deployment
+// errors from the account-owner response.
 type PlatformTenantSelfActivationResponse struct {
 	Status   string                                        `json:"status"`
 	Enabled  bool                                          `json:"enabled"`
@@ -87,13 +88,24 @@ type PlatformTenantSelfActivationResponse struct {
 }
 
 type PlatformTenantSelfActivationSurfaceResponse struct {
-	ID           string                                         `json:"id"`
-	Name         string                                         `json:"name"`
-	Status       string                                         `json:"status"`
-	CertState    string                                         `json:"cert_state"`
-	CertNotAfter string                                         `json:"cert_not_after,omitempty"`
-	Ready        bool                                           `json:"ready"`
-	Hostnames    []PlatformTenantSelfActivationHostnameResponse `json:"hostnames"`
+	ID               string                                         `json:"id"`
+	Name             string                                         `json:"name"`
+	Status           string                                         `json:"status"`
+	CertState        string                                         `json:"cert_state"`
+	CertNotAfter     string                                         `json:"cert_not_after,omitempty"`
+	Ready            bool                                           `json:"ready"`
+	LatestDeployment *PlatformTenantSelfDeploymentResponse          `json:"latest_deployment,omitempty"`
+	Hostnames        []PlatformTenantSelfActivationHostnameResponse `json:"hostnames"`
+}
+
+// PlatformTenantSelfDeploymentResponse is a deliberately small projection of
+// the latest deployment attempt for a linked surface. It does not claim that
+// the attempt is the currently serving deployment and omits deployment IDs,
+// app IDs, source metadata, logs, and errors.
+type PlatformTenantSelfDeploymentResponse struct {
+	Status    string `json:"status"`
+	Revision  int    `json:"revision,omitempty"`
+	StartedAt string `json:"started_at"`
 }
 
 type PlatformTenantSelfActivationHostnameResponse struct {

@@ -44,12 +44,27 @@ func (s *server) getPlatformTenantSelfActivation(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	latestByApp := make(map[string]state.Deployment, len(snapshot.Surfaces))
+	if len(snapshot.Surfaces) > 0 {
+		latest, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load tenant deployment status"))
+			return
+		}
+		latestByApp = latest
+	}
 	out := api.PlatformTenantSelfActivationResponse{Status: snapshot.Status, Enabled: snapshot.Enabled,
 		Ready: snapshot.Ready, Surfaces: make([]api.PlatformTenantSelfActivationSurfaceResponse, 0, len(snapshot.Surfaces))}
 	for _, surface := range snapshot.Surfaces {
 		row := api.PlatformTenantSelfActivationSurfaceResponse{ID: surface.ID, Name: surface.Name,
 			Status: surface.Status, CertState: surface.CertState, CertNotAfter: surface.CertNotAfter,
 			Ready: surface.Ready, Hostnames: make([]api.PlatformTenantSelfActivationHostnameResponse, 0, len(surface.Hostnames))}
+		if deployment, found := latestByApp[surface.AppID]; found {
+			row.LatestDeployment = &api.PlatformTenantSelfDeploymentResponse{
+				Status: string(deployment.Status), Revision: deployment.Revision,
+				StartedAt: deployment.CreatedAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
 		for _, hostname := range surface.Hostnames {
 			row.Hostnames = append(row.Hostnames, api.PlatformTenantSelfActivationHostnameResponse{
 				Hostname: hostname.Hostname, Verified: hostname.Verified, VerifiedAt: hostname.VerifiedAt,

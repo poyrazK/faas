@@ -1129,7 +1129,7 @@ export class PlatformTenantsService {
   }
   /**
    * Read this tenant's own redacted activation snapshot.
-   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge tokens, and app IDs are omitted.
+   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
    * @returns PlatformTenantSelfActivationResponse Current activation state for the caller's linked surfaces.
    * @throws ApiError
    */

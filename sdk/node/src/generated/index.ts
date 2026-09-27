@@ -577,6 +577,7 @@ export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js'
 export type { PlatformTenantSelfActivationHostnameResponse } from './models/PlatformTenantSelfActivationHostnameResponse.js';
 export type { PlatformTenantSelfActivationResponse } from './models/PlatformTenantSelfActivationResponse.js';
 export type { PlatformTenantSelfActivationSurfaceResponse } from './models/PlatformTenantSelfActivationSurfaceResponse.js';
+export type { PlatformTenantSelfDeploymentResponse } from './models/PlatformTenantSelfDeploymentResponse.js';
 export type { PlatformTenantSelfStatementListResponse } from './models/PlatformTenantSelfStatementListResponse.js';
 export type { PlatformTenantStatementFinalizedWebhookPayload } from './models/PlatformTenantStatementFinalizedWebhookPayload.js';
 export type { PlatformTenantStatementHandoffResponse } from './models/PlatformTenantStatementHandoffResponse.js';

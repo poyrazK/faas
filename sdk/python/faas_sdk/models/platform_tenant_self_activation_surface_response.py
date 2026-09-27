@@ -20,6 +20,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.platform_tenant_self_activation_hostname_response import PlatformTenantSelfActivationHostnameResponse
+    from ..models.platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
 
 
 T = TypeVar("T", bound="PlatformTenantSelfActivationSurfaceResponse")
@@ -36,6 +37,9 @@ class PlatformTenantSelfActivationSurfaceResponse:
     ready: bool
     hostnames: list[PlatformTenantSelfActivationHostnameResponse]
     cert_not_after: datetime.datetime | Unset = UNSET
+    latest_deployment: PlatformTenantSelfDeploymentResponse | Unset = UNSET
+    """Safe status of the latest deployment attempt for the surface's app. This is not a claim that the attempt is
+    currently serving; IDs, source metadata, logs, and errors are omitted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +62,10 @@ class PlatformTenantSelfActivationSurfaceResponse:
         if not isinstance(self.cert_not_after, Unset):
             cert_not_after = self.cert_not_after.isoformat()
 
+        latest_deployment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.latest_deployment, Unset):
+            latest_deployment = self.latest_deployment.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +80,8 @@ class PlatformTenantSelfActivationSurfaceResponse:
         )
         if cert_not_after is not UNSET:
             field_dict["cert_not_after"] = cert_not_after
+        if latest_deployment is not UNSET:
+            field_dict["latest_deployment"] = latest_deployment
 
         return field_dict
 
@@ -80,6 +90,7 @@ class PlatformTenantSelfActivationSurfaceResponse:
         from ..models.platform_tenant_self_activation_hostname_response import (
             PlatformTenantSelfActivationHostnameResponse,
         )
+        from ..models.platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -106,6 +117,13 @@ class PlatformTenantSelfActivationSurfaceResponse:
         else:
             cert_not_after = datetime.datetime.fromisoformat(_cert_not_after)
 
+        _latest_deployment = d.pop("latest_deployment", UNSET)
+        latest_deployment: PlatformTenantSelfDeploymentResponse | Unset
+        if isinstance(_latest_deployment, Unset):
+            latest_deployment = UNSET
+        else:
+            latest_deployment = PlatformTenantSelfDeploymentResponse.from_dict(_latest_deployment)
+
         platform_tenant_self_activation_surface_response = cls(
             id=id,
             name=name,
@@ -114,6 +132,7 @@ class PlatformTenantSelfActivationSurfaceResponse:
             ready=ready,
             hostnames=hostnames,
             cert_not_after=cert_not_after,
+            latest_deployment=latest_deployment,
         )
 
         platform_tenant_self_activation_surface_response.additional_properties = d
