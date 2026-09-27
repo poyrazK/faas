@@ -1,4 +1,4 @@
-# ADR-259: Continuous primary-app readiness
+# ADR-281: Continuous primary-app readiness
 
 Status: accepted
 
