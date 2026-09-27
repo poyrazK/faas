@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// adr: 018 — conntrack attribution uses the instance's host-side IP.
 func TestLookupFlowOwnerLeaseReuseAndAmbiguity(t *testing.T) {
 	m := NewManager(nil, nil, Paths{}, "", nil, nil)
 	ip := netip.MustParseAddr("10.100.0.5")
