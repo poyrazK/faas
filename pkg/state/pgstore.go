@@ -22435,6 +22435,12 @@ func (s *PgStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, acco
 	if err := createPgSecretRevocationTargets(ctx, tx, queries, revocation.ID, targets); err != nil {
 		return AppSecretRevocation{}, err
 	}
+	for _, target := range targets {
+		revocation.Targets = append(revocation.Targets, AppSecretRevocationTarget{
+			InstanceID: target.InstanceID, WorkloadName: target.WorkloadName,
+			RuntimeState: target.RuntimeState, ReloadSupport: target.ReloadSupport, Status: "pending",
+		})
+	}
 	deleted, err := queries.DeleteCustomerAppSecret(ctx, tx, sqlc.DeleteCustomerAppSecretParams{
 		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: key,
 	})
