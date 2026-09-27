@@ -254,6 +254,38 @@ func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 	}
 }
 
+type outboundCoverageRetentionStore struct {
+	state.Store
+	cutoff      time.Time
+	limit       int
+	leaseCutoff time.Time
+	leaseLimit  int
+}
+
+func (s *outboundCoverageRetentionStore) DeleteOutboundFlowCaptureSamplesBefore(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	s.cutoff, s.limit = cutoff, limit
+	return 0, nil
+}
+
+func (s *outboundCoverageRetentionStore) DeleteOutboundFlowIPLeasesBefore(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	s.leaseCutoff, s.leaseLimit = cutoff, limit
+	return 0, nil
+}
+
+func TestRetentionSweepsOutboundCaptureCoverage(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	store := &outboundCoverageRetentionStore{Store: state.NewMemStore()}
+	if _, err := NewRetention(store, slog.Default()).WithClock(func() time.Time { return now }).SweepOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.cutoff.Equal(now.Add(-api.DefaultInstanceRetention)) || store.limit != outboundFlowRetentionBatch {
+		t.Fatalf("coverage retention cutoff=%s batch=%d", store.cutoff, store.limit)
+	}
+	if !store.leaseCutoff.Equal(now.Add(-api.DefaultInstanceRetention)) || store.leaseLimit != outboundFlowRetentionBatch {
+		t.Fatalf("lease retention cutoff=%s batch=%d", store.leaseCutoff, store.leaseLimit)
+	}
+}
+
 // TestRetentionSkipActiveStates is a focused negative test: a STOPPED
 // row with terminal_at = NULL is invisible to the sweep (the SQL
 // predicate `terminal_at is not null` would skip it; MemStore mirrors).

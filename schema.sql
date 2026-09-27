@@ -3047,6 +3047,69 @@ CREATE TABLE public.instances (
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );
 
+-- Network connection metadata is retained independently of instance,
+-- deployment, and app rows. Account erasure cascades through account_id.
+CREATE TABLE public.outbound_flow_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    node_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    app_id uuid,
+    deployment_id uuid,
+    image_digest text,
+    source_ip inet NOT NULL,
+    source_port integer NOT NULL,
+    destination_ip inet NOT NULL,
+    destination_port integer NOT NULL,
+    reply_destination_ip inet,
+    reply_destination_port integer,
+    protocol text NOT NULL,
+    egress_ip inet,
+    egress_ip_source text NOT NULL,
+    CONSTRAINT outbound_flow_events_pkey PRIMARY KEY (id),
+    CONSTRAINT outbound_flow_events_source_port_check CHECK ((source_port >= 0) AND (source_port <= 65535)),
+    CONSTRAINT outbound_flow_events_destination_port_check CHECK ((destination_port >= 0) AND (destination_port <= 65535)),
+    CONSTRAINT outbound_flow_events_reply_destination_port_check CHECK ((reply_destination_port >= 0) AND (reply_destination_port <= 65535)),
+    CONSTRAINT outbound_flow_events_reply_pair_check CHECK (((reply_destination_ip IS NULL) = (reply_destination_port IS NULL))),
+    CONSTRAINT outbound_flow_events_protocol_check CHECK ((protocol = ANY (ARRAY['tcp'::text, 'udp'::text]))),
+    CONSTRAINT outbound_flow_events_egress_ip_source_check CHECK ((egress_ip_source = ANY (ARRAY['app_static'::text, 'node_public'::text, 'unknown'::text]))),
+    CONSTRAINT outbound_flow_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE
+);
+CREATE INDEX outbound_flow_events_egress_time_idx ON public.outbound_flow_events USING btree (egress_ip, observed_at DESC);
+CREATE INDEX outbound_flow_events_reply_time_idx ON public.outbound_flow_events USING btree (reply_destination_ip, reply_destination_port, observed_at DESC) WHERE (reply_destination_ip IS NOT NULL);
+CREATE INDEX outbound_flow_events_account_time_idx ON public.outbound_flow_events USING btree (account_id, observed_at DESC);
+CREATE INDEX outbound_flow_events_instance_time_idx ON public.outbound_flow_events USING btree (instance_id, observed_at DESC);
+CREATE INDEX outbound_flow_events_retention_idx ON public.outbound_flow_events USING btree (observed_at, id);
+
+CREATE TABLE public.outbound_flow_capture_samples (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    public_ip inet,
+    sampled_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    listening boolean NOT NULL,
+    reason text NOT NULL,
+    queue_dropped_total bigint NOT NULL,
+    database_dropped_total bigint NOT NULL,
+    unparsed_total bigint NOT NULL,
+    unattributed_total bigint NOT NULL,
+    stderr_total bigint NOT NULL,
+    CONSTRAINT outbound_flow_capture_samples_pkey PRIMARY KEY (id),
+    CONSTRAINT outbound_flow_capture_samples_reason_check CHECK ((length(reason) >= 1) AND (length(reason) <= 64)),
+    CONSTRAINT outbound_flow_capture_samples_queue_dropped_total_check CHECK ((queue_dropped_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_database_dropped_total_check CHECK ((database_dropped_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_unparsed_total_check CHECK ((unparsed_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_unattributed_total_check CHECK ((unattributed_total >= 0)),
+    CONSTRAINT outbound_flow_capture_samples_stderr_total_check CHECK ((stderr_total >= 0))
+);
+CREATE INDEX outbound_flow_capture_samples_node_time_idx ON public.outbound_flow_capture_samples USING btree (node_id, sampled_at, id);
+CREATE INDEX outbound_flow_capture_samples_public_time_idx ON public.outbound_flow_capture_samples USING btree (public_ip, sampled_at, id);
+CREATE INDEX outbound_flow_capture_samples_retention_idx ON public.outbound_flow_capture_samples USING btree (sampled_at, id);
+
 
 --
 -- Name: app_secret_runtime_reload_observations; Type: TABLE; Schema: public; Owner: -
@@ -10530,3 +10593,88 @@ CREATE INDEX IF NOT EXISTS project_release_members_deployment_idx
 
 
 CREATE INDEX project_release_sets_history_idx ON project_release_sets (project_id, environment_slug, created_at DESC, id DESC);
+
+-- Historical host-private-IP ownership for outbound incident attribution.
+CREATE TABLE outbound_flow_ip_leases (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    node_id uuid NOT NULL,
+    host_ip inet NOT NULL,
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    org_id uuid,
+    app_id uuid,
+    deployment_id uuid,
+    active_from timestamptz NOT NULL,
+    active_until timestamptz,
+    recorded_at timestamptz NOT NULL DEFAULT now(),
+    CHECK (active_until IS NULL OR active_until >= active_from)
+);
+CREATE UNIQUE INDEX outbound_flow_ip_leases_open_instance_idx
+    ON outbound_flow_ip_leases (instance_id) WHERE active_until IS NULL;
+CREATE INDEX outbound_flow_ip_leases_node_ip_time_idx
+    ON outbound_flow_ip_leases (node_id, host_ip, active_from DESC);
+CREATE INDEX outbound_flow_ip_leases_retention_idx
+    ON outbound_flow_ip_leases (active_until, id) WHERE active_until IS NOT NULL;
+
+CREATE FUNCTION capture_outbound_flow_ip_lease()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    changed_at timestamptz := clock_timestamp();
+    old_active boolean := false;
+    new_active boolean := false;
+    identity_changed boolean := false;
+    owner_account uuid;
+    lease_start timestamptz;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        UPDATE outbound_flow_ip_leases
+           SET active_until = greatest(active_from, changed_at)
+         WHERE instance_id = OLD.id AND active_until IS NULL;
+        RETURN OLD;
+    END IF;
+    new_active := NEW.host_ip IS NOT NULL AND
+        NEW.state IN ('cold_booting', 'running', 'draining', 'snapshotting', 'migrating', 'warm');
+    IF TG_OP = 'UPDATE' THEN
+        old_active := OLD.host_ip IS NOT NULL AND
+            OLD.state IN ('cold_booting', 'running', 'draining', 'snapshotting', 'migrating', 'warm');
+        identity_changed := OLD.node_id IS DISTINCT FROM NEW.node_id OR
+            OLD.host_ip IS DISTINCT FROM NEW.host_ip OR
+            OLD.started_at IS DISTINCT FROM NEW.started_at OR
+            OLD.app_id IS DISTINCT FROM NEW.app_id OR
+            OLD.deployment_id IS DISTINCT FROM NEW.deployment_id OR
+            OLD.job_id IS DISTINCT FROM NEW.job_id;
+        IF old_active AND (NOT new_active OR identity_changed) THEN
+            UPDATE outbound_flow_ip_leases
+               SET active_until = greatest(active_from, changed_at)
+             WHERE instance_id = OLD.id AND active_until IS NULL;
+        END IF;
+    END IF;
+    IF new_active AND (TG_OP = 'INSERT' OR identity_changed) THEN
+        lease_start := changed_at;
+        IF TG_OP = 'INSERT' THEN
+            lease_start := coalesce(NEW.started_at, changed_at);
+        ELSIF OLD.started_at IS DISTINCT FROM NEW.started_at THEN
+            lease_start := coalesce(NEW.started_at, changed_at);
+        END IF;
+        IF NEW.app_id IS NOT NULL THEN
+            SELECT account_id INTO owner_account FROM apps WHERE id = NEW.app_id;
+        ELSIF NEW.job_id IS NOT NULL THEN
+            SELECT account_id INTO owner_account FROM jobs WHERE id = NEW.job_id;
+        END IF;
+        IF owner_account IS NOT NULL THEN
+            INSERT INTO outbound_flow_ip_leases
+                (node_id, host_ip, instance_id, account_id, org_id, app_id,
+                 deployment_id, active_from)
+            VALUES
+                (NEW.node_id, NEW.host_ip, NEW.id, owner_account, NEW.org_id,
+                 NEW.app_id, NEW.deployment_id, lease_start)
+            ON CONFLICT (instance_id) WHERE active_until IS NULL DO NOTHING;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER instances_outbound_flow_ip_lease_trigger
+AFTER INSERT OR UPDATE OF host_ip, node_id, started_at, state, app_id,
+                          deployment_id, job_id OR DELETE ON instances
+FOR EACH ROW EXECUTE FUNCTION capture_outbound_flow_ip_lease();

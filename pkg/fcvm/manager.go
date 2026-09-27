@@ -410,9 +410,12 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	Lease  Lease
-	Net    netns.Config
-	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	Lease Lease
+	// flowActivatedAt fences delayed conntrack events when a private IP is
+	// reused. A NEW event older than this live lease has another owner.
+	flowActivatedAt time.Time
+	Net             netns.Config
+	Method          WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -719,6 +722,9 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// Recently retired leases allow delayed conntrack events to resolve by
+	// event time after teardown, including when an address is reused.
+	retiredFlowLeases map[string][]retiredFlowLease
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -1106,6 +1112,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		fcVersion:           fcVersion,
 		log:                 log,
 		live:                make(map[string]*Instance),
+		retiredFlowLeases:   make(map[string][]retiredFlowLease),
 		appCPUPolicies:      make(map[string]appCPUPolicy),
 		jobBoots:            make(map[string]*jobBootFlight),
 		pendingProcessExits: make(map[string]int),
@@ -1700,6 +1707,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
+		m.retireFlowOwnerLocked(instance, inst)
 		delete(m.live, instance)
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
@@ -1714,6 +1722,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		return
 	}
 	m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
+	m.finishFlowOwnerRetirement(instance, inst)
 	m.log.Warn("firecracker process exited without schedd relay",
 		"instance", instance, "exit_code", exitCode)
 }
@@ -3581,6 +3590,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
+	inst.flowActivatedAt = time.Now().UTC()
 	m.live[req.Instance] = inst
 	m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
 	m.mu.Unlock()
@@ -4325,6 +4335,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
+		inst.flowActivatedAt = time.Now().UTC()
 		m.live[req.Instance] = inst
 		// Issue #470 / PR #470-FU-B: maintain the CID→instance
 		// reverse index so the framework_ready DGRAM receipt path
@@ -4788,6 +4799,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// VM, which cannot exit on its own. DestroyWithExport waits for a builder
 	// to finish and must not delay cleanup of this failed app snapshot.
 	m.mu.Lock()
+	m.retireFlowOwnerLocked(instance, inst)
 	delete(m.live, instance)
 	// Park drops the VM and releases its CID (the lease is freed by
 	// cleanup below); the reverse index must drop with it so a
@@ -4802,6 +4814,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	}
 	// An upload deadline must not cancel the cleanup owed by Park.
 	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	m.finishFlowOwnerRetirement(instance, inst)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
 	}
@@ -5040,6 +5053,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 
 	inst, ok := m.live[instance]
 	if ok {
+		m.retireFlowOwnerLocked(instance, inst)
 		delete(m.live, instance)
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
@@ -5072,6 +5086,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	// rationale as DestroyWithExport above — a cancelled caller's
 	// ctx must not leak netns / cgroup).
 	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	m.finishFlowOwnerRetirement(instance, inst)
 	m.mu.Lock()
 	delete(m.exportDirs, instance)
 	m.mu.Unlock()
@@ -5094,6 +5109,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
+		m.retireFlowOwnerLocked(instance, inst)
 		delete(m.live, instance)
 		// Drop the CID→instance join at the same instant the live
 		// row goes away. A framework_ready DGRAM racing this
@@ -5126,6 +5142,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	// arm64 metal path where nested-KVM cold boot can take >25s. The vmm wait
 	// above used the original ctx and is allowed to be cancelled by it.
 	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	m.finishFlowOwnerRetirement(instance, inst)
 	m.mu.Lock()
 	delete(m.exportDirs, instance)
 	m.mu.Unlock()
@@ -5296,6 +5313,113 @@ func (m *Manager) SnapshotLiveHostIPs() map[string]string {
 		out[id] = inst.Lease.HostIP.String()
 	}
 	return out
+}
+
+// FlowOwner is copied while holding the live-map lock. It is deliberately
+// independent of the instance row, which can be removed after teardown.
+type FlowOwner struct {
+	InstanceID   string
+	AccountID    string
+	AppID        string
+	DeploymentID string
+}
+
+const retiredFlowLeaseWindow = 2 * time.Minute
+
+type retiredFlowLease struct {
+	owner FlowOwner
+	from  time.Time
+	until time.Time
+}
+
+// Caller holds m.mu. The bounded window covers userspace/netlink delivery
+// after a VM leaves the live map; the database keeps the longer-lived ledger.
+func (m *Manager) retireFlowOwnerLocked(id string, inst *Instance) {
+	if inst == nil || !inst.Lease.HostIP.IsValid() || inst.flowActivatedAt.IsZero() || inst.AccountID == "" {
+		return
+	}
+	if m.retiredFlowLeases == nil {
+		m.retiredFlowLeases = make(map[string][]retiredFlowLease)
+	}
+	ip := inst.Lease.HostIP.String()
+	now := time.Now().UTC()
+	leases := m.retiredFlowLeases[ip][:0]
+	for _, lease := range m.retiredFlowLeases[ip] {
+		if lease.until.IsZero() || now.Sub(lease.until) <= retiredFlowLeaseWindow {
+			leases = append(leases, lease)
+		}
+	}
+	m.retiredFlowLeases[ip] = append(leases, retiredFlowLease{
+		owner: FlowOwner{InstanceID: id, AccountID: inst.AccountID, AppID: inst.AppID, DeploymentID: inst.DeploymentID},
+		from:  inst.flowActivatedAt,
+	})
+}
+
+// Close the retired interval only after network cleanup releases the address.
+// Until then a VM removed from live may still emit a conntrack NEW event.
+func (m *Manager) finishFlowOwnerRetirement(id string, inst *Instance) {
+	if inst == nil || !inst.Lease.HostIP.IsValid() {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ip := inst.Lease.HostIP.String()
+	for i := range m.retiredFlowLeases[ip] {
+		lease := &m.retiredFlowLeases[ip][i]
+		if lease.owner.InstanceID == id && lease.from.Equal(inst.flowActivatedAt) && lease.until.IsZero() {
+			lease.until = time.Now().UTC()
+			return
+		}
+	}
+}
+
+// LookupFlowOwner resolves a conntrack original-source address against the
+// current host lease. Ambiguous addresses fail closed instead of attributing a
+// connection to the wrong customer during an allocator or lifecycle fault.
+func (m *Manager) LookupFlowOwner(hostIP string, eventAt time.Time) (FlowOwner, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var owner FlowOwner
+	found := false
+	for id, inst := range m.live {
+		if inst == nil || !inst.Lease.HostIP.IsValid() || inst.Lease.HostIP.String() != hostIP {
+			continue
+		}
+		if inst.flowActivatedAt.IsZero() || eventAt.Before(inst.flowActivatedAt) {
+			continue
+		}
+		if found {
+			return FlowOwner{}, false
+		}
+		owner = FlowOwner{InstanceID: id, AccountID: inst.AccountID, AppID: inst.AppID, DeploymentID: inst.DeploymentID}
+		found = true
+	}
+	now := time.Now().UTC()
+	leases := m.retiredFlowLeases[hostIP][:0]
+	ambiguous := false
+	for _, lease := range m.retiredFlowLeases[hostIP] {
+		if !lease.until.IsZero() && now.Sub(lease.until) > retiredFlowLeaseWindow {
+			continue
+		}
+		leases = append(leases, lease)
+		if eventAt.Before(lease.from) || (!lease.until.IsZero() && !eventAt.Before(lease.until)) {
+			continue
+		}
+		if found {
+			ambiguous = true
+			continue
+		}
+		owner, found = lease.owner, true
+	}
+	if len(leases) == 0 {
+		delete(m.retiredFlowLeases, hostIP)
+	} else {
+		m.retiredFlowLeases[hostIP] = leases
+	}
+	if ambiguous {
+		return FlowOwner{}, false
+	}
+	return owner, found && owner.AccountID != ""
 }
 
 // LeasedCount reports how many allocator slots are held. After a clean teardown

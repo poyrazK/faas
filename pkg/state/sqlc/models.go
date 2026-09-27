@@ -1808,6 +1808,58 @@ type OrgMembership struct {
 	RemovedAt          pgtype.Timestamptz
 }
 
+type OutboundFlowCaptureSample struct {
+	ID                   pgtype.UUID
+	SessionID            pgtype.UUID
+	NodeID               pgtype.UUID
+	PublicIp             *netip.Addr
+	SampledAt            pgtype.Timestamptz
+	ReceivedAt           pgtype.Timestamptz
+	Listening            bool
+	Reason               string
+	QueueDroppedTotal    int64
+	DatabaseDroppedTotal int64
+	UnparsedTotal        int64
+	UnattributedTotal    int64
+	StderrTotal          int64
+}
+
+type OutboundFlowEvent struct {
+	ID                   pgtype.UUID
+	ObservedAt           pgtype.Timestamptz
+	ReceivedAt           pgtype.Timestamptz
+	NodeID               pgtype.UUID
+	InstanceID           pgtype.UUID
+	AccountID            pgtype.UUID
+	OrgID                pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ImageDigest          pgtype.Text
+	SourceIp             netip.Addr
+	SourcePort           int32
+	DestinationIp        netip.Addr
+	DestinationPort      int32
+	ReplyDestinationIp   *netip.Addr
+	ReplyDestinationPort pgtype.Int4
+	Protocol             string
+	EgressIp             *netip.Addr
+	EgressIpSource       string
+}
+
+type OutboundFlowIpLease struct {
+	ID           pgtype.UUID
+	NodeID       pgtype.UUID
+	HostIp       netip.Addr
+	InstanceID   pgtype.UUID
+	AccountID    pgtype.UUID
+	OrgID        pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ActiveFrom   pgtype.Timestamptz
+	ActiveUntil  pgtype.Timestamptz
+	RecordedAt   pgtype.Timestamptz
+}
+
 type PaddleOverageDedupe struct {
 	AccountID       pgtype.UUID
 	Month           pgtype.Timestamptz

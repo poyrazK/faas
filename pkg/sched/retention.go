@@ -39,6 +39,7 @@ type Retention struct {
 // SweepOnce repeats batches until the pre-existing backlog is drained, so a
 // sustained wake rate above one batch per hour cannot make retention diverge.
 const parkedInstanceRetentionBatch = 1000
+const outboundFlowRetentionBatch = 1000
 
 // NewRetention returns a Retention ready for the Loop ticker. Defaults:
 // retention api.DefaultInstanceRetention (30d), interval owner of the
@@ -115,6 +116,48 @@ func (r *Retention) SweepOnce(ctx context.Context) (int, error) {
 		deleted += int(parkedDeleted)
 		if parkedDeleted < parkedInstanceRetentionBatch {
 			break
+		}
+	}
+	// Network attribution is intentionally independent of the instance row.
+	// The same retention clock removes its metadata in bounded batches. The
+	// narrow interface keeps in-memory scheduler stores free of DB-only data.
+	if flows, ok := r.store.(interface {
+		DeleteOutboundFlowEventsBefore(context.Context, time.Time, int) (int64, error)
+	}); ok {
+		for {
+			n, err := flows.DeleteOutboundFlowEventsBefore(ctx, cutoff, outboundFlowRetentionBatch)
+			if err != nil {
+				return deleted, err
+			}
+			if n < outboundFlowRetentionBatch {
+				break
+			}
+		}
+	}
+	if coverage, ok := r.store.(interface {
+		DeleteOutboundFlowCaptureSamplesBefore(context.Context, time.Time, int) (int64, error)
+	}); ok {
+		for {
+			n, err := coverage.DeleteOutboundFlowCaptureSamplesBefore(ctx, cutoff, outboundFlowRetentionBatch)
+			if err != nil {
+				return deleted, err
+			}
+			if n < outboundFlowRetentionBatch {
+				break
+			}
+		}
+	}
+	if leases, ok := r.store.(interface {
+		DeleteOutboundFlowIPLeasesBefore(context.Context, time.Time, int) (int64, error)
+	}); ok {
+		for {
+			n, err := leases.DeleteOutboundFlowIPLeasesBefore(ctx, cutoff, outboundFlowRetentionBatch)
+			if err != nil {
+				return deleted, err
+			}
+			if n < outboundFlowRetentionBatch {
+				break
+			}
 		}
 	}
 	if deleted > 0 {

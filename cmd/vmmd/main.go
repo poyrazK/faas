@@ -314,6 +314,8 @@ type runDeps struct {
 	// the legacy default-local path skips the DB entirely (no upsert).
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
+	// Nil in runDeps{} tests; production streams host conntrack NEW events.
+	startFlowCapture func(context.Context, flowOwnerLookup, flowCaptureSink, string, netip.Prefix, *slog.Logger) <-chan struct{}
 	// detectOverlayIP — best-effort, default shelles out to
 	// `tailscale ip -4`. nil means "skip overlay detection"
 	// (WireGuard-mode operators set [compute_node].overlay_ip
@@ -409,7 +411,15 @@ func defaultDeps() runDeps {
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
-		openStore:           state.NewPgStore,
+		openStore: state.NewPgStore,
+		startFlowCapture: func(ctx context.Context, owners flowOwnerLookup, sink flowCaptureSink, nodeID string, bridge netip.Prefix, log *slog.Logger) <-chan struct{} {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				runOutboundFlowCapture(ctx, owners, sink, nodeID, bridge, log)
+			}()
+			return done
+		},
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
 		loadHostKeys:        secretbox.LoadFleetAndHostKeys,
@@ -1483,6 +1493,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	serveErr := make(chan error, 1)
+	if nodeID != "" && deps.startFlowCapture != nil {
+		if flowStore, ok := store.(*state.PgStore); ok {
+			captureCtx, stopCapture := context.WithCancel(ctx)
+			captureDone := deps.startFlowCapture(captureCtx, mgr, flowStore, nodeID, parsedBridge, log)
+			defer func() {
+				stopCapture()
+				if captureDone == nil {
+					return
+				}
+				select {
+				case <-captureDone:
+				case <-time.After(4 * time.Second):
+					log.Warn("outbound flow capture shutdown timed out", "node_id", nodeID)
+				}
+			}()
+		}
+	}
 	go func() {
 		log.Info("grpc listening", "addr", listenTarget, "service", vmmdpb.Vmmd_ServiceDesc.ServiceName)
 		// Flip the gRPC bound signal immediately before
