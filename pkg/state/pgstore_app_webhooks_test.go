@@ -464,6 +464,70 @@ func TestPgStore_ClaimDueAppWebhookDeliveries_RotatesBeyondBatchSize(t *testing.
 	}
 }
 
+func TestPgStore_AppWebhookDelivery_AttemptHistorySurvivesReplay(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "attempt-history")
+	wh, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.RecordAppWebhookDelivery(ctx, pgSampleDelivery(wh.ID, app, acct))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := func() state.AppWebhookDelivery {
+		t.Helper()
+		rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 1, time.Now().Add(time.Second))
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("claim = %+v, err=%v", rows, err)
+		}
+		return rows[0]
+	}
+	first := claim()
+	started := time.Now().UTC().Add(-150 * time.Millisecond).Truncate(time.Microsecond)
+	finished := started.Add(75 * time.Millisecond)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, d.ID, 503, first.Attempt, first.NextAttemptAt,
+		"receiver unavailable", time.Now().Add(-time.Second), state.AppWebhookAttemptMetadata{StartedAt: started, FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	second := claim()
+	if err := s.MarkAppWebhookDeliveryDead(ctx, d.ID, second.Attempt, second.NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, acct, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	third := claim()
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 204, third.Attempt, third.NextAttemptAt, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, first.Attempt, first.NextAttemptAt, time.Now()); !errors.Is(err, state.ErrConflict) {
+		t.Errorf("stale outcome = %v, want conflict", err)
+	}
+	page, next, err := s.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct, 2, "")
+	if err != nil || len(page) != 2 || next == "" {
+		t.Fatalf("first page = %+v, next=%q, err=%v", page, next, err)
+	}
+	if page[0].ReplayGeneration != 1 || page[0].AttemptNumber != 1 || page[0].Outcome != "succeeded" || page[0].ResponseCode != 204 {
+		t.Errorf("replay attempt = %+v", page[0])
+	}
+	if page[1].ReplayGeneration != 0 || page[1].AttemptNumber != 2 || page[1].Outcome != "dead" || page[1].ResponseCode != 410 {
+		t.Errorf("terminal attempt = %+v", page[1])
+	}
+	older, next, err := s.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct, 2, next)
+	if err != nil || len(older) != 1 || next != "" {
+		t.Fatalf("older page = %+v, next=%q, err=%v", older, next, err)
+	}
+	if older[0].Outcome != "retrying" || older[0].ResponseCode != 503 || !older[0].StartedAt.Equal(started) || !older[0].FinishedAt.Equal(finished) || older[0].NextAttemptAt == nil {
+		t.Errorf("first attempt = %+v", older[0])
+	}
+	foreign, _, err := s.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, "00000000-0000-0000-0000-000000000000", 10, "")
+	if err != nil || len(foreign) != 0 {
+		t.Errorf("foreign history = %+v, err=%v", foreign, err)
+	}
+}
+
 func TestPgStore_ClaimDueAppWebhookDeliveries_SkipsLockedRowsWithinAccount(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	acct, app, _ := seedLiveDeploy(t, s, ctx, "locked-claim")

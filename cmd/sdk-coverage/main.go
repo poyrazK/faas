@@ -663,6 +663,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries":              "ListPlatformTenantWebhookDeliveries",
 	"POST /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry": "RetryPlatformTenantWebhookDelivery",
 
+	// Completed outbound delivery history is shared by all three webhook scopes.
+	"GET /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts":                           "ListAppWebhookDeliveryAttempts",
+	"GET /v1/account/release-webhooks/{id}/deliveries/{did}/attempts":                       "ListAccountReleaseWebhookDeliveryAttempts",
+	"GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts": "ListPlatformTenantWebhookDeliveryAttempts",
+
 	// ADR-212 — signature-verified durable inbound webhook configuration.
 	// The provider-facing /v1/hooks route is excluded above because it is not
 	// a bearer-auth SDK operation.

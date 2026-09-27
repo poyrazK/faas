@@ -6075,20 +6075,20 @@ type Store interface {
 	// delivered_at=deliveredAt, last_response_code=responseCode,
 	// attempt=currentAttempt+1 (the successful attempt count). A write
 	// only succeeds for the matching in-flight claim deadline.
-	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil, deliveredAt time.Time) error
+	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil, deliveredAt time.Time, meta ...AppWebhookAttemptMetadata) error
 	// MarkAppWebhookDeliveryFailed stamps status='pending',
 	// next_attempt_at=nextAttemptAt, attempt=currentAttempt+1,
 	// last_error=errMsg, last_response_code=responseCode. The
 	// dispatcher calls this on a retryable error (5xx/408/429/
 	// network) when the next attempt is within the budget.
-	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error
+	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error
 	// MarkAppWebhookDeliveryDead stamps status='dead' with the
 	// supplied errMsg. The dispatcher calls this on:
 	//   - attempt >= 7 (budget exhausted)
 	//   - terminal 4xx (non-408/429)
 	// Once dead, the row stays dead until the customer POSTs
 	// /deliveries/{id}/retry.
-	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error
+	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string, meta ...AppWebhookAttemptMetadata) error
 	// ResetAppWebhookDeliveryFromDead is the customer-facing
 	// "retry a dead delivery" path. Stamps status='pending',
 	// next_attempt_at=now, attempt=0 (full budget re-armed). Used
@@ -6112,6 +6112,9 @@ type Store interface {
 	// /deliveries/{id}/retry) and the dispatcher-side audit
 	// emission that needs to read the row's account_id + app_id.
 	AppWebhookDeliveryByID(ctx context.Context, id string) (AppWebhookDelivery, error)
+	// ListAppWebhookDeliveryAttempts returns a bounded, newest-first history.
+	// The delivery, webhook, and account IDs are all enforced in the store query.
+	ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error)
 
 	// --- ADR-096 customer-facing automatic error grouping ---
 	//

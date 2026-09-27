@@ -462,14 +462,16 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		HeaderSet:   webhookout.HeaderSetWebhook,
 		Format:      webhookout.DeliveryFormat(hook.DeliveryFormat),
 	})
+	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
 		URL:    hook.TargetURL,
 		Signer: webhookout.NewSigner(secret),
 	}, evt)
 
 	now := d.Now()
+	meta := state.AppWebhookAttemptMetadata{StartedAt: startedAt, FinishedAt: now, ResponseCode: res.StatusCode}
 	if res.Err == nil {
-		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now); d.markRecorded(row, err) {
+		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now, meta); d.markRecorded(row, err) {
 			d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
 		}
 		return
@@ -477,7 +479,7 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	if errors.Is(res.Err, webhookout.ErrTerminal) ||
 		errors.Is(res.Err, webhookout.ErrBodyTooLarge) ||
 		errors.Is(res.Err, oci.ErrImageEgressDenied) {
-		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err)) {
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err), meta) {
 			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
 		}
 		return
@@ -488,7 +490,7 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	schedule := d.scheduleFor(hook.RetryPolicy)
 	if len(schedule) == 0 {
 		// retry_policy='none' — first failure is terminal.
-		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err)) {
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err), meta) {
 			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
 		}
 		return
@@ -496,7 +498,7 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	delay, scheduleErr := ComputeBackoff(schedule, row.Attempt)
 	if scheduleErr != nil {
 		// Past the schedule → DLQ.
-		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1)) {
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1), meta) {
 			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
 		}
 		return
@@ -505,13 +507,13 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
 	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), now.Add(delay)); d.markRecorded(row, err) {
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), now.Add(delay), meta); d.markRecorded(row, err) {
 		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
 	}
 }
 
-func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string) bool {
-	return d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason))
+func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string, meta ...state.AppWebhookAttemptMetadata) bool {
+	return d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason, meta...))
 }
 
 func (d *Dispatcher) markRecorded(row state.AppWebhookDelivery, err error) bool {

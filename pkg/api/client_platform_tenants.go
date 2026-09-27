@@ -291,6 +291,11 @@ func (c *Client) ListPlatformTenantWebhookDeliveries(ctx context.Context, tenant
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) ListPlatformTenantWebhookDeliveryAttempts(ctx context.Context, tenantID, webhookID, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/deliveries/" + url.PathEscape(deliveryID) + "/attempts"
+	return c.listWebhookAttemptPath(ctx, path, opts)
+}
+
 func (c *Client) RetryPlatformTenantWebhookDelivery(ctx context.Context, tenantID, webhookID, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
 	var out AppWebhookRetryDeliveryResponse
 	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/deliveries/" + url.PathEscape(deliveryID) + "/retry"

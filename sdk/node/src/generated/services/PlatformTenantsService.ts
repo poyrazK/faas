@@ -9,6 +9,7 @@ import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRe
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
 import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
 import type { ApplyPlatformTenantSelfConsumersResponse } from '../models/ApplyPlatformTenantSelfConsumersResponse.js';
+import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -1149,6 +1150,58 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect completed attempts for one tenant webhook delivery.
+   * @returns AppWebhookDeliveryAttemptListResponse Tenant delivery attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhookDeliveryAttempts({
+    id,
+    webhookId,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Tenant context used to authorize attempt inspection.
+     */
+    id: string,
+    /**
+     * Tenant webhook that owns this attempt history.
+     */
+    webhookId: string,
+    /**
+     * Tenant webhook delivery to inspect.
+     */
+    did: string,
+    /**
+     * Maximum tenant attempt records per page.
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the preceding tenant attempt page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

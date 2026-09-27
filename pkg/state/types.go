@@ -3615,6 +3615,32 @@ type AppWebhookDelivery struct {
 	UpdatedAt        time.Time
 }
 
+// AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
+// ResponseCode is used for terminal outcomes, whose older Mark method had no
+// response-code parameter. Zero timestamps are filled by the store for callers
+// that use the original Mark methods.
+type AppWebhookAttemptMetadata struct {
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	ResponseCode int
+}
+
+// AppWebhookDeliveryAttempt is one immutable outcome in a delivery's history.
+// ReplayGeneration separates budgets when a dead delivery is manually retried.
+// No request body, response body, headers, or signing secret is retained.
+type AppWebhookDeliveryAttempt struct {
+	ID               string
+	DeliveryID       string
+	ReplayGeneration int
+	AttemptNumber    int
+	Outcome          string // succeeded | retrying | dead
+	ResponseCode     int    // 0 when no HTTP response arrived
+	Error            string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+	NextAttemptAt    *time.Time
+}
+
 // AppWebhookQuotaError is returned by CreateAppWebhookIfUnderQuota
 // when either cap (per-app or per-account) is reached. Mirrors
 // AlertRuleQuotaError at types.go:1030-1053.

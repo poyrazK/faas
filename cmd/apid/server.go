@@ -1464,6 +1464,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/webhooks/{webhook_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deletePlatformTenantWebhook))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotatePlatformTenantWebhookSecret))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantWebhookDeliveries))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantWebhookDeliveryAttempts))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryPlatformTenantWebhookDelivery))))
 	// API consumer monetization: rate cards are immutable versions, so
 	// publishing a new price is a POST rather than an in-place update.
@@ -2215,6 +2216,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppWebhook))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
+	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveryAttempts))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
 	// ADR-224: one account-owned release receiver covers current and future
 	// apps. Public writes are enabled only after transactional fan-out landed.
@@ -2225,6 +2227,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/account/release-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAccountReleaseWebhook))))
 	mux.HandleFunc("POST /v1/account/release-webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAccountReleaseWebhookSecret))))
 	mux.HandleFunc("GET /v1/account/release-webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountReleaseWebhookDeliveries))))
+	mux.HandleFunc("GET /v1/account/release-webhooks/{id}/deliveries/{did}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountReleaseWebhookDeliveryAttempts))))
 	mux.HandleFunc("POST /v1/account/release-webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAccountReleaseWebhookDelivery))))
 	mux.HandleFunc("POST /v1/apps/{slug}/outbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deliverAppEvent)))))
 

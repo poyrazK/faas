@@ -535,6 +535,7 @@ type AppWebhookDelivery struct {
 	Event            string
 	Payload          []byte
 	Attempt          int32
+	ReplayGeneration int32
 	Status           string
 	LastError        pgtype.Text
 	LastResponseCode pgtype.Int4
@@ -542,6 +543,19 @@ type AppWebhookDelivery struct {
 	DeliveredAt      pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type AppWebhookDeliveryAttempt struct {
+	ID               pgtype.UUID
+	DeliveryID       pgtype.UUID
+	ReplayGeneration int32
+	AttemptNumber    int32
+	Outcome          string
+	ResponseCode     int32
+	Error            string
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	NextAttemptAt    pgtype.Timestamptz
 }
 
 type AuditLog struct {

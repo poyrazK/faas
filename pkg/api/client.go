@@ -5335,6 +5335,26 @@ func (c *Client) ListAppWebhookDeliveries(ctx context.Context, slug, id string, 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) ListAppWebhookDeliveryAttempts(ctx context.Context, slug, webhookID, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	path := "/v1/apps/" + slug + "/webhooks/" + webhookID + "/deliveries/" + deliveryID + "/attempts"
+	return c.listWebhookAttemptPath(ctx, path, opts)
+}
+
+func (c *Client) listWebhookAttemptPath(ctx context.Context, path string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	var out AppWebhookDeliveryAttemptListResponse
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("page_size", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("page_token", opts.PageToken)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // RetryAppWebhookDelivery moves a `dead` row back to `pending` and
 // resets next_attempt_at to now(). Returns the refreshed delivery
 // row so callers can show "queued for attempt N+1 at HH:MM:SS".
@@ -5388,6 +5408,10 @@ func (c *Client) ListAccountReleaseWebhookDeliveries(ctx context.Context, id str
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhookDeliveryAttempts(ctx context.Context, id, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	return c.listWebhookAttemptPath(ctx, "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/attempts", opts)
 }
 
 func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {

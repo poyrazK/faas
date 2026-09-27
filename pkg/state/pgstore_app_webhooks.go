@@ -433,66 +433,56 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	return claimed, nil
 }
 
-func (s *PgStore) MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time) error {
-	tag, err := s.pool.Exec(ctx, `
-		update app_webhook_deliveries set
-			status = 'succeeded',
-			delivered_at = $2,
-			last_response_code = $3,
-			attempt = $4,
-			next_attempt_at = 'epoch'::timestamptz,
-			updated_at = now()
-		where id = $1 and status = 'in_flight' and attempt = $5
-		  and next_attempt_at = $6
-	`, id, deliveredAt, responseCode, currentAttempt+1, currentAttempt, claimUntil)
-	if err != nil {
-		return fmt.Errorf("state: mark succeeded: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return s.appWebhookMarkMiss(ctx, id)
-	}
-	return nil
+func (s *PgStore) MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return s.completeAppWebhookDelivery(ctx, id, currentAttempt, claimUntil, "succeeded", responseCode, "", time.Time{}, deliveredAt, meta)
 }
 
-func (s *PgStore) MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error {
-	// Reset status='pending' (not 'failed') so the dispatcher's
-	// partial-index claim (`WHERE status IN ('pending','in_flight')
-	// AND next_attempt_at <= now()`) re-picks the row up when the
-	// rescheduled time arrives. last_error + last_response_code
-	// preserve the historical failure record.
-	tag, err := s.pool.Exec(ctx, `
-		update app_webhook_deliveries set
-			status = 'pending',
-			next_attempt_at = $2,
-			last_response_code = $3,
-			last_error = $4,
-			attempt = $5,
-			updated_at = now()
-		where id = $1 and status = 'in_flight' and attempt = $6
-		  and next_attempt_at = $7
-	`, id, nextAttemptAt, responseCode, errMsg, currentAttempt+1, currentAttempt, claimUntil)
-	if err != nil {
-		return fmt.Errorf("state: mark failed: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return s.appWebhookMarkMiss(ctx, id)
-	}
-	return nil
+func (s *PgStore) MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return s.completeAppWebhookDelivery(ctx, id, currentAttempt, claimUntil, "retrying", responseCode, errMsg, nextAttemptAt, time.Time{}, meta)
 }
 
-func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error {
+func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string, meta ...AppWebhookAttemptMetadata) error {
+	_, _, responseCode := appWebhookAttemptTimes(meta)
+	return s.completeAppWebhookDelivery(ctx, id, currentAttempt, claimUntil, "dead", responseCode, errMsg, time.Time{}, time.Time{}, meta)
+}
+
+// The UPDATE and INSERT are one SQL statement. A stale claim produces no
+// updated row and therefore cannot append a phantom attempt. A failed INSERT
+// rolls the UPDATE back as well.
+func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, outcome string, responseCode int, errMsg string, nextAttemptAt, deliveredAt time.Time, meta []AppWebhookAttemptMetadata) error {
+	started, finished, _ := appWebhookAttemptTimes(meta)
+	status := outcome
+	var attemptNextAt any
+	var deliveryNextAt any = time.Unix(0, 0).UTC()
+	if outcome == "retrying" {
+		status = "pending"
+		attemptNextAt = nextAttemptAt
+		deliveryNextAt = nextAttemptAt
+	}
+	var delivered any
+	if outcome == "succeeded" {
+		delivered = deliveredAt
+	}
 	tag, err := s.pool.Exec(ctx, `
-		update app_webhook_deliveries set
-			status = 'dead',
-			last_error = $2,
-			attempt = $3,
-			next_attempt_at = 'epoch'::timestamptz,
-			updated_at = now()
-		where id = $1 and status = 'in_flight' and attempt = $4
-		  and next_attempt_at = $5
-	`, id, errMsg, currentAttempt+1, currentAttempt, claimUntil)
+		with updated as (
+			update app_webhook_deliveries set
+				status = $4, last_response_code = $5, last_error = $6,
+				attempt = $3 + 1, next_attempt_at = $7,
+				delivered_at = coalesce($8::timestamptz, delivered_at),
+				updated_at = $9
+			where id = $1 and status = 'in_flight' and attempt = $3
+			  and next_attempt_at = $2
+			returning id, replay_generation
+		)
+		insert into app_webhook_delivery_attempts
+			(delivery_id, replay_generation, attempt_number, outcome,
+			 response_code, error, started_at, finished_at, next_attempt_at)
+		select id, replay_generation, $3 + 1, $10, $5, $6, $11, $9, $12
+		  from updated
+	`, id, claimUntil, currentAttempt, status, responseCode, errMsg,
+		deliveryNextAt, delivered, finished, outcome, started, attemptNextAt)
 	if err != nil {
-		return fmt.Errorf("state: mark dead: %w", err)
+		return fmt.Errorf("state: complete app webhook delivery: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return s.appWebhookMarkMiss(ctx, id)
@@ -526,7 +516,9 @@ func (s *PgStore) ResetAppWebhookDeliveryFromDead(ctx context.Context, id, webho
 		update app_webhook_deliveries set
 			status = 'pending',
 			attempt = 0,
+			replay_generation = replay_generation + 1,
 			last_error = '',
+			last_response_code = 0,
 			next_attempt_at = $4,
 			updated_at = now()
 		where id = $1 and webhook_id = $2 and account_id = $3 and status = 'dead'
@@ -627,6 +619,53 @@ func (s *PgStore) AppWebhookDeliveryByID(ctx context.Context, id string) (AppWeb
 		return AppWebhookDelivery{}, fmt.Errorf("state: read delivery: %w", err)
 	}
 	return d, nil
+}
+
+func (s *PgStore) ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error) {
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 50
+	}
+	generation, number := -1, 0
+	if pageToken != "" {
+		var ok bool
+		generation, number, ok = decodeAppWebhookAttemptPageToken(pageToken)
+		if !ok {
+			return nil, "", ErrInvalidAppWebhookAttemptPageToken
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+		select a.id, a.delivery_id, a.replay_generation, a.attempt_number,
+		       a.outcome, a.response_code, a.error, a.started_at,
+		       a.finished_at, a.next_attempt_at
+		  from app_webhook_delivery_attempts a
+		  join app_webhook_deliveries d on d.id = a.delivery_id
+		 where d.id = $1 and d.webhook_id = $2 and d.account_id = $3
+		   and ($4::integer < 0 or (a.replay_generation, a.attempt_number) < ($4, $5))
+		 order by a.replay_generation desc, a.attempt_number desc
+		 limit $6
+	`, deliveryID, webhookID, accountID, generation, number, pageSize+1)
+	if err != nil {
+		return nil, "", fmt.Errorf("state: list webhook attempts: %w", err)
+	}
+	defer rows.Close()
+	var out []AppWebhookDeliveryAttempt
+	for rows.Next() {
+		var a AppWebhookDeliveryAttempt
+		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.ReplayGeneration, &a.AttemptNumber,
+			&a.Outcome, &a.ResponseCode, &a.Error, &a.StartedAt, &a.FinishedAt, &a.NextAttemptAt); err != nil {
+			return nil, "", fmt.Errorf("state: scan webhook attempt: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("state: read webhook attempts: %w", err)
+	}
+	var nextToken string
+	if len(out) > pageSize {
+		nextToken = encodeAppWebhookAttemptPageToken(out[pageSize-1])
+		out = out[:pageSize]
+	}
+	return out, nextToken, nil
 }
 
 // ----------------------------------------------------------------------------

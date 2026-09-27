@@ -105,6 +105,8 @@ export type { AppTrustedSignerListResponse } from './AppTrustedSignerListRespons
 export type { AppUsageSummaryResponse } from './AppUsageSummaryResponse.js';
 export type { AppWakeResponse } from './AppWakeResponse.js';
 export type { AppWakeTimelineResponse } from './AppWakeTimelineResponse.js';
+export type { AppWebhookDeliveryAttemptListResponse } from './AppWebhookDeliveryAttemptListResponse.js';
+export type { AppWebhookDeliveryAttemptResponse } from './AppWebhookDeliveryAttemptResponse.js';
 export type { AppWebhookDeliveryListResponse } from './AppWebhookDeliveryListResponse.js';
 export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js';
 export type { AppWebhookResponse } from './AppWebhookResponse.js';

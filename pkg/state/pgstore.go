@@ -30168,6 +30168,7 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		tag, err = tx.Exec(ctx, `
 			update app_webhook_deliveries
 			   set status = 'pending', attempt = 0, last_error = '',
+			       replay_generation = replay_generation + 1,
 			       last_response_code = null, next_attempt_at = now(), updated_at = now()
 			 where id = $1 and account_id = $2 and app_id = $3 and status = 'dead'`,
 			ev.SourceID, accountID, appID)

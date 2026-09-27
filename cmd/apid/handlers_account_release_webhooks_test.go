@@ -107,6 +107,20 @@ func TestAccountReleaseWebhooks_CRUDAndScope(t *testing.T) {
 	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), "pending") {
 		t.Fatalf("retry status %d: %s", retry.Code, retry.Body)
 	}
+	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim replayed release delivery = %+v, err=%v", claimed, err)
+	}
+	if err := e.store.MarkAppWebhookDeliverySucceeded(t.Context(), delivery.ID, 204, claimed[0].Attempt, claimed[0].NextAttemptAt, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	attempts := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+created.ID+"/deliveries/"+delivery.ID+"/attempts", nil, nil)
+	if attempts.Code != http.StatusOK || !strings.Contains(attempts.Body.String(), `"replay_generation":1`) || !strings.Contains(attempts.Body.String(), `"response_code":204`) {
+		t.Fatalf("release attempts status %d: %s", attempts.Code, attempts.Body)
+	}
+	if other := e.do(t, http.MethodGet, accountReleaseWebhooksPath+"/"+appHook.ID+"/deliveries/"+delivery.ID+"/attempts", nil, nil); other.Code != http.StatusNotFound {
+		t.Errorf("app webhook on release attempt path = %d: %s", other.Code, other.Body)
+	}
 	if got := e.do(t, http.MethodDelete, accountReleaseWebhooksPath+"/"+created.ID, nil, nil); got.Code != http.StatusNoContent {
 		t.Fatalf("delete status %d: %s", got.Code, got.Body)
 	}

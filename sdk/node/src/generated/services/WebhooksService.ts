@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccountReleaseWebhookResponse } from '../models/AccountReleaseWebhookResponse.js';
+import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
@@ -420,6 +421,64 @@ export class WebhooksService {
     });
   }
   /**
+   * List completed delivery attempts, newest first.
+   * Manual retry creates a new replay generation and preserves older outcomes. No request or response body is retained in this history.
+   * @returns AppWebhookDeliveryAttemptListResponse The attempt history page.
+   * @throws ApiError
+   */
+  public static listAppWebhookDeliveryAttempts({
+    slug,
+    id,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Delivery whose completed dispatch attempts are requested.
+     */
+    did: string,
+    /**
+     * Maximum attempt records per page (1..100; default 50).
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the previous attempt history page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts',
+      path: {
+        'slug': slug,
+        'id': id,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * List release receivers owned by the active account.
    * @returns AccountReleaseWebhookResponse Account-owned release receivers.
    * @throws ApiError
@@ -667,6 +726,57 @@ export class WebhooksService {
       },
       errors: {
         400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List completed attempts for one account release delivery.
+   * @returns AppWebhookDeliveryAttemptListResponse Release delivery attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listAccountReleaseWebhookDeliveryAttempts({
+    id,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Release delivery whose completed attempts are requested.
+     */
+    did: string,
+    /**
+     * Maximum release attempt records per page.
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the previous release attempt page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}/deliveries/{did}/attempts',
+      path: {
+        'id': id,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,

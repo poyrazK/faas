@@ -4737,6 +4737,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to authorize attempt inspection.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Tenant webhook that owns this attempt history.
+        schema: { type: string, format: uuid }
+      - name: did
+        in: path
+        required: true
+        description: Tenant webhook delivery to inspect.
+        schema: { type: string, format: uuid }
+      - name: page_size
+        in: query
+        description: Maximum tenant attempt records per page.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: page_token
+        in: query
+        description: Cursor returned by the preceding tenant attempt page.
+        schema: { type: string }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantWebhookDeliveryAttempts
+      summary: Inspect completed attempts for one tenant webhook delivery.
+      responses:
+        '200':
+          description: Tenant delivery attempt history, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryAttemptListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/credentials:
     parameters:
       - name: id
@@ -16196,6 +16235,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - in: path
+        name: did
+        required: true
+        description: Delivery whose completed dispatch attempts are requested.
+        schema: { type: string, pattern: '^[0-9a-f]{32}$' }
+      - in: query
+        name: page_size
+        description: Maximum attempt records per page (1..100; default 50).
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - in: query
+        name: page_token
+        description: Cursor returned by the previous attempt history page.
+        schema: { type: string }
+    get:
+      tags: [webhooks]
+      operationId: listAppWebhookDeliveryAttempts
+      summary: List completed delivery attempts, newest first.
+      description: Manual retry creates a new replay generation and preserves older outcomes. No request or response body is retained in this history.
+      responses:
+        '200':
+          description: The attempt history page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryAttemptListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/release-webhooks:
     get:
       tags: [webhooks]
@@ -16351,6 +16424,38 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
         '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/deliveries/{did}/attempts:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - in: path
+        name: did
+        required: true
+        description: Release delivery whose completed attempts are requested.
+        schema: { type: string, pattern: '^[0-9a-f]{32}$' }
+      - in: query
+        name: page_size
+        description: Maximum release attempt records per page.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - in: query
+        name: page_token
+        description: Cursor returned by the previous release attempt page.
+        schema: { type: string }
+    get:
+      tags: [webhooks]
+      operationId: listAccountReleaseWebhookDeliveryAttempts
+      summary: List completed attempts for one account release delivery.
+      responses:
+        '200':
+          description: Release delivery attempt history, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryAttemptListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -39763,6 +39868,33 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AppWebhookDeliveryResponse' }
         next_token: { type: string, description: "Cursor for the next page; empty/absent when the page is the last." }
+
+    AppWebhookDeliveryAttemptResponse:
+      type: object
+      description: One completed outbound dispatch, including its replay round and receiver outcome.
+      required: [id, delivery_id, replay_generation, attempt_number, outcome, response_code, started_at, finished_at, duration_ms]
+      properties:
+        id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid }
+        replay_generation: { type: integer, minimum: 0 }
+        attempt_number: { type: integer, minimum: 1, maximum: 8 }
+        outcome: { type: string, enum: [succeeded, retrying, dead] }
+        response_code: { type: integer, minimum: 0, maximum: 999 }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+
+    AppWebhookDeliveryAttemptListResponse:
+      type: object
+      description: A newest-first page of attempts for one account-owned delivery.
+      required: [attempts]
+      properties:
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/AppWebhookDeliveryAttemptResponse' }
+        next_token: { type: string, description: Cursor for the next page. }
 
     AppWebhookRetryDeliveryResponse:
       type: object

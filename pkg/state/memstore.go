@@ -343,6 +343,8 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
+	appWebhookReplayGenerations     map[string]int
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
@@ -1064,6 +1066,8 @@ func NewMemStore() *MemStore {
 		alertDeliveries:                 map[string]AlertDelivery{},
 		appWebhooks:                     map[string]AppWebhook{},
 		appWebhookDeliveries:            map[string]AppWebhookDelivery{},
+		appWebhookDeliveryAttempts:      map[string][]AppWebhookDeliveryAttempt{},
+		appWebhookReplayGenerations:     map[string]int{},
 		inboundWebhookEndpoints:         map[string]InboundWebhookEndpoint{},
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
 		queueBindings:                   map[string]QueueBinding{},
@@ -24809,6 +24813,10 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		delivery.NextAttemptAt = now
 		delivery.UpdatedAt = now
 		m.appWebhookDeliveries[event.SourceID] = delivery
+		if m.appWebhookReplayGenerations == nil {
+			m.appWebhookReplayGenerations = make(map[string]int)
+		}
+		m.appWebhookReplayGenerations[event.SourceID]++
 	case "job_run":
 		return m.replayAccountJobDeadLetterLocked(accountID, *event)
 	case "workflow_run":

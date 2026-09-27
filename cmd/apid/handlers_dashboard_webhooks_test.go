@@ -83,6 +83,31 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardWebhooksCSRFCookie); cookie == nil || cookie.Value == "" {
 		t.Fatalf("GET webhooks: missing %s cookie", dashboardWebhooksCSRFCookie)
 	}
+	tracked, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{"private":"do-not-render"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, err=%v", claimed, err)
+	}
+	if err := store.MarkAppWebhookDeliveryDead(t.Context(), tracked.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	history := httptest.NewRecorder()
+	historyReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks?delivery_id="+tracked.ID, nil)
+	historyReq.AddCookie(cookie)
+	h.ServeHTTP(history, historyReq)
+	if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), "Attempts for") || !strings.Contains(history.Body.String(), "410") {
+		t.Fatalf("attempt history page = %d: %s", history.Code, history.Body)
+	}
+	if strings.Contains(history.Body.String(), "do-not-render") {
+		t.Error("attempt history page exposed delivery payload")
+	}
 }
 
 func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {

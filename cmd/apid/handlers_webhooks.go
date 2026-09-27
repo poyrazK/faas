@@ -10,6 +10,7 @@ package main
 //   DELETE /v1/apps/{slug}/webhooks/{id}                  — deleteAppWebhook
 //   POST   /v1/apps/{slug}/webhooks/{id}/rotate-secret    — rotateAppWebhookSecret
 //   GET    /v1/apps/{slug}/webhooks/{id}/deliveries       — listAppWebhookDeliveries
+//   GET    /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts — listAppWebhookDeliveryAttempts
 //   POST   /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry — retryAppWebhookDelivery
 //
 // Mirrors cmd/apid/handlers_alerts.go phase order:
@@ -671,6 +672,70 @@ func (s *server) listAppWebhookDeliveries(w http.ResponseWriter, r *http.Request
 		out.Deliveries = append(out.Deliveries, appWebhookDeliveryResponse(row))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) listAppWebhookDeliveryAttempts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || limits.WebhookPerApp == 0 {
+		api.WriteProblem(w, api.ErrPlanWebhooksNotAllowed(acct.Plan))
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	webhookID, deliveryID := r.PathValue("id"), r.PathValue("did")
+	hook, err := s.store.AppWebhookByID(r.Context(), webhookID)
+	if err != nil || hook.AppID != app.ID || hook.AccountID != acct.ID {
+		s.notFound(w, "webhook not found")
+		return
+	}
+	delivery, err := s.store.AppWebhookDeliveryByID(r.Context(), deliveryID)
+	if err != nil || delivery.WebhookID != webhookID || delivery.AppID != app.ID || delivery.AccountID != acct.ID {
+		s.notFound(w, "delivery not found")
+		return
+	}
+	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
+}
+
+func (s *server) writeAppWebhookAttemptPage(w http.ResponseWriter, r *http.Request, accountID string, delivery state.AppWebhookDelivery) {
+	pageSize := 50
+	if raw := r.URL.Query().Get("page_size"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 100 {
+			pageSize = n
+		}
+	}
+	rows, next, err := s.store.ListAppWebhookDeliveryAttempts(r.Context(), delivery.ID, delivery.WebhookID, accountID, pageSize, r.URL.Query().Get("page_token"))
+	if errors.Is(err, state.ErrInvalidAppWebhookAttemptPageToken) {
+		api.WriteProblem(w, api.ErrValidation("invalid page_token"))
+		return
+	}
+	if err != nil {
+		s.log.WarnContext(r.Context(), "list app webhook delivery attempts", slog.String("err", err.Error()))
+		api.WriteProblem(w, api.ErrCapacity("could not list delivery attempts"))
+		return
+	}
+	out := api.AppWebhookDeliveryAttemptListResponse{
+		Attempts: make([]api.AppWebhookDeliveryAttemptResponse, 0, len(rows)), NextToken: next,
+	}
+	for _, row := range rows {
+		out.Attempts = append(out.Attempts, appWebhookAttemptResponse(row))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func appWebhookAttemptResponse(row state.AppWebhookDeliveryAttempt) api.AppWebhookDeliveryAttemptResponse {
+	out := api.AppWebhookDeliveryAttemptResponse{
+		ID: row.ID, DeliveryID: row.DeliveryID, ReplayGeneration: row.ReplayGeneration,
+		AttemptNumber: row.AttemptNumber, Outcome: row.Outcome,
+		ResponseCode: row.ResponseCode, Error: row.Error,
+		StartedAt: api.FormatAlertTime(row.StartedAt), FinishedAt: api.FormatAlertTime(row.FinishedAt),
+		DurationMS: row.FinishedAt.Sub(row.StartedAt).Milliseconds(),
+	}
+	if row.NextAttemptAt != nil {
+		out.NextAttemptAt = api.FormatAlertTime(*row.NextAttemptAt)
+	}
+	return out
 }
 
 // retryAppWebhookDelivery resets a dead row to pending with

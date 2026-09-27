@@ -583,6 +583,14 @@ func TestMemStoreAppWebhookDelivery_DeadLetterProjectionAndReplay(t *testing.T) 
 	if got.Status != AppWebhookDeliveryPending || got.Attempt != 0 {
 		t.Fatalf("delivery after replay = status %q attempt %d, want pending/0", got.Status, got.Attempt)
 	}
+	reclaimed := claimMemWebhookDelivery(t, m, ctx, delivery.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, delivery.ID, 204, reclaimed.Attempt, reclaimed.NextAttemptAt, time.Now()); err != nil {
+		t.Fatalf("MarkSucceeded after dead-letter replay: %v", err)
+	}
+	attempts, _, err := m.ListAppWebhookDeliveryAttempts(ctx, delivery.ID, wh.ID, acct.ID, 10, "")
+	if err != nil || len(attempts) != 2 || attempts[0].ReplayGeneration != 1 || attempts[1].ReplayGeneration != 0 {
+		t.Fatalf("attempts after dead-letter replay = %+v, err=%v", attempts, err)
+	}
 }
 
 func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
@@ -604,6 +612,61 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
 	}
 	if !got.NextAttemptAt.Equal(now) {
 		t.Errorf("NextAttemptAt = %v, want %v", got.NextAttemptAt, now)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_AttemptHistorySurvivesReplay(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	wh, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "history"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	started := time.Now().Add(-150 * time.Millisecond)
+	finished := started.Add(75 * time.Millisecond)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 503, d.Attempt, d.NextAttemptAt,
+		"receiver unavailable", time.Now().Add(-time.Second), AppWebhookAttemptMetadata{StartedAt: started, FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt,
+		"receiver rejected", AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, acct.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 204, d.Attempt, d.NextAttemptAt, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	page, next, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 2, "")
+	if err != nil || len(page) != 2 || next == "" {
+		t.Fatalf("first page = %+v, next=%q, err=%v", page, next, err)
+	}
+	if page[0].ReplayGeneration != 1 || page[0].AttemptNumber != 1 || page[0].Outcome != "succeeded" || page[0].ResponseCode != 204 {
+		t.Errorf("replay attempt = %+v", page[0])
+	}
+	if page[1].ReplayGeneration != 0 || page[1].AttemptNumber != 2 || page[1].Outcome != "dead" || page[1].ResponseCode != 410 {
+		t.Errorf("original terminal attempt = %+v", page[1])
+	}
+	older, next, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 2, next)
+	if err != nil || len(older) != 1 || next != "" {
+		t.Fatalf("older page = %+v, next=%q, err=%v", older, next, err)
+	}
+	if older[0].Outcome != "retrying" || older[0].ResponseCode != 503 || !older[0].StartedAt.Equal(started) || !older[0].FinishedAt.Equal(finished) || older[0].NextAttemptAt == nil {
+		t.Errorf("first attempt = %+v", older[0])
+	}
+	foreign, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, "another-account", 10, "")
+	if err != nil || len(foreign) != 0 {
+		t.Errorf("foreign history = %+v, err=%v", foreign, err)
+	}
+	if _, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 10, "invalid"); !errors.Is(err, ErrInvalidAppWebhookAttemptPageToken) {
+		t.Errorf("invalid cursor error = %v", err)
 	}
 }
 

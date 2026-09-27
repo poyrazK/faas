@@ -653,14 +653,35 @@ type FailedEventPageItem struct {
 // outbound-webhook page (issue #1397 / G8). Secrets are never projected;
 // the page only carries the masked marker returned by the API contract.
 type AppWebhooksData struct {
-	App           AppListItem
-	PlanAllowed   bool
-	Events        []string
-	RetryPolicies []string
-	Webhooks      []WebhookPageItem
-	ActionCSRF    string
-	Action        string
-	ErrorMessage  string
+	App              AppListItem
+	PlanAllowed      bool
+	Events           []string
+	RetryPolicies    []string
+	Webhooks         []WebhookPageItem
+	SelectedDelivery *WebhookDeliveryHistoryPageItem
+	ActionCSRF       string
+	Action           string
+	ErrorMessage     string
+}
+
+// WebhookDeliveryHistoryPageItem is loaded only when a customer opens one
+// delivery, keeping the subscription page's query count bounded.
+type WebhookDeliveryHistoryPageItem struct {
+	ID        string
+	Event     string
+	Attempts  []WebhookAttemptPageItem
+	NextToken string
+}
+
+type WebhookAttemptPageItem struct {
+	ReplayGeneration int
+	AttemptNumber    int
+	Outcome          string
+	ResponseCode     int
+	Error            string
+	StartedAt        string
+	DurationMS       int64
+	NextAttemptAt    string
 }
 
 // AppLogDrainsData is the customer-facing delivery-health projection for one

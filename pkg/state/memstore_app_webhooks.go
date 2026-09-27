@@ -473,28 +473,20 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	return out, nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.appWebhookDeliveries[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
-		return ErrConflict
-	}
-	d.Status = AppWebhookDeliverySucceeded
-	d.LastResponseCode = responseCode
-	d.Attempt = currentAttempt + 1
-	delivered := deliveredAt
-	d.DeliveredAt = &delivered
-	d.NextAttemptAt = time.Time{}
-	d.UpdatedAt = time.Now()
-	m.appWebhookDeliveries[id] = d
-	return nil
+func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "succeeded", responseCode, "", time.Time{}, deliveredAt, meta)
 }
 
-func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time) error {
+func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "retrying", responseCode, errMsg, nextAttemptAt, time.Time{}, meta)
+}
+
+func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string, meta ...AppWebhookAttemptMetadata) error {
+	_, _, responseCode := appWebhookAttemptTimes(meta)
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "dead", responseCode, errMsg, time.Time{}, time.Time{}, meta)
+}
+
+func (m *MemStore) completeAppWebhookDelivery(id string, currentAttempt int, claimUntil time.Time, outcome string, responseCode int, errMsg string, nextAttemptAt, deliveredAt time.Time, meta []AppWebhookAttemptMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.appWebhookDeliveries[id]
@@ -504,37 +496,37 @@ func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, re
 	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
 		return ErrConflict
 	}
-	// Reset to 'pending' so the dispatcher's claim query
-	// (`WHERE status IN ('pending','in_flight') AND next_attempt_at <= now()`)
-	// picks the row up when the rescheduled time arrives. The
-	// `last_response_code` + `last_error` columns preserve the
-	// historical failure record; status only tracks lifecycle.
-	d.Status = AppWebhookDeliveryPending
+	started, finished, _ := appWebhookAttemptTimes(meta)
+	d.Status = AppWebhookDeliveryStatus(outcome)
+	if outcome == "retrying" {
+		d.Status = AppWebhookDeliveryPending
+		d.NextAttemptAt = nextAttemptAt
+	} else {
+		d.NextAttemptAt = time.Time{}
+	}
+	if outcome == "succeeded" {
+		delivered := deliveredAt
+		d.DeliveredAt = &delivered
+	}
 	d.LastResponseCode = responseCode
 	d.LastError = errMsg
 	d.Attempt = currentAttempt + 1
-	d.NextAttemptAt = nextAttemptAt
-	d.UpdatedAt = time.Now()
+	d.UpdatedAt = finished
 	m.appWebhookDeliveries[id] = d
-	return nil
-}
-
-func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.appWebhookDeliveries[id]
-	if !ok {
-		return ErrNotFound
+	a := AppWebhookDeliveryAttempt{
+		ID: newID(), DeliveryID: id,
+		ReplayGeneration: m.appWebhookReplayGenerations[id], AttemptNumber: d.Attempt,
+		Outcome: outcome, ResponseCode: responseCode, Error: errMsg,
+		StartedAt: started, FinishedAt: finished,
 	}
-	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
-		return ErrConflict
+	if outcome == "retrying" {
+		next := nextAttemptAt
+		a.NextAttemptAt = &next
 	}
-	d.Status = AppWebhookDeliveryDead
-	d.LastError = errMsg
-	d.Attempt = currentAttempt + 1
-	d.NextAttemptAt = time.Time{}
-	d.UpdatedAt = time.Now()
-	m.appWebhookDeliveries[id] = d
+	if m.appWebhookDeliveryAttempts == nil {
+		m.appWebhookDeliveryAttempts = make(map[string][]AppWebhookDeliveryAttempt)
+	}
+	m.appWebhookDeliveryAttempts[id] = append(m.appWebhookDeliveryAttempts[id], a)
 	return nil
 }
 
@@ -561,9 +553,14 @@ func (m *MemStore) ResetAppWebhookDeliveryFromDead(_ context.Context, id, webhoo
 	d.Status = AppWebhookDeliveryPending
 	d.Attempt = 0
 	d.LastError = ""
+	d.LastResponseCode = 0
 	d.NextAttemptAt = now
 	d.UpdatedAt = now
 	m.appWebhookDeliveries[id] = d
+	if m.appWebhookReplayGenerations == nil {
+		m.appWebhookReplayGenerations = make(map[string]int)
+	}
+	m.appWebhookReplayGenerations[id]++
 	return nil
 }
 
@@ -602,4 +599,41 @@ func (m *MemStore) AppWebhookDeliveryByID(_ context.Context, id string) (AppWebh
 		return AppWebhookDelivery{}, ErrNotFound
 	}
 	return d, nil
+}
+
+func (m *MemStore) ListAppWebhookDeliveryAttempts(_ context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.appWebhookDeliveries[deliveryID]
+	if !ok || d.WebhookID != webhookID || d.AccountID != accountID {
+		return nil, "", nil
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 50
+	}
+	generation, number := -1, 0
+	if pageToken != "" {
+		generation, number, ok = decodeAppWebhookAttemptPageToken(pageToken)
+		if !ok {
+			return nil, "", ErrInvalidAppWebhookAttemptPageToken
+		}
+	}
+	all := m.appWebhookDeliveryAttempts[deliveryID]
+	out := make([]AppWebhookDeliveryAttempt, 0, min(len(all), pageSize+1))
+	for i := len(all) - 1; i >= 0; i-- {
+		a := all[i]
+		if generation >= 0 && (a.ReplayGeneration > generation || (a.ReplayGeneration == generation && a.AttemptNumber >= number)) {
+			continue
+		}
+		out = append(out, a)
+		if len(out) > pageSize {
+			break
+		}
+	}
+	var nextToken string
+	if len(out) > pageSize {
+		nextToken = encodeAppWebhookAttemptPageToken(out[pageSize-1])
+		out = out[:pageSize]
+	}
+	return out, nextToken, nil
 }

@@ -342,6 +342,22 @@ func (s *server) listAccountReleaseWebhookDeliveries(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *server) listAccountReleaseWebhookDeliveryAttempts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if _, ok := accountReleaseWebhookLimits(w, acct); !ok {
+		return
+	}
+	hook, ok := s.accountReleaseWebhookByRequest(w, r, acct)
+	if !ok {
+		return
+	}
+	delivery, err := s.store.AppWebhookDeliveryByID(r.Context(), r.PathValue("did"))
+	if err != nil || delivery.WebhookID != hook.ID || delivery.AccountID != acct.ID {
+		s.notFound(w, "delivery not found")
+		return
+	}
+	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
+}
+
 func (s *server) retryAccountReleaseWebhookDelivery(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if _, ok := accountReleaseWebhookLimits(w, acct); !ok {
 		return

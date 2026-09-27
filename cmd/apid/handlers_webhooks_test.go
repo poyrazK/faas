@@ -23,9 +23,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func webhookReq() api.CreateAppWebhookRequest {
@@ -55,6 +57,50 @@ func setupWebhookTest(t *testing.T, plan api.Plan) testEnv {
 	teardown := withTestRecipient(t)
 	t.Cleanup(teardown)
 	return setup(t, plan)
+}
+
+func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "attempt-api")
+	hook := mustCreateWebhook(t, e, "attempt-api", webhookReq())
+	d, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, err=%v", claimed, err)
+	}
+	if err := e.store.MarkAppWebhookDeliveryDead(t.Context(), d.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/attempt-api/webhooks/" + hook.ID + "/deliveries/" + d.ID + "/attempts"
+	rec := e.do(t, http.MethodGet, path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list attempts = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppWebhookDeliveryAttemptListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Attempts) != 1 || out.Attempts[0].ResponseCode != 410 || out.Attempts[0].Outcome != "dead" {
+		t.Errorf("attempts = %+v", out.Attempts)
+	}
+	if strings.Contains(rec.Body.String(), "payload") || strings.Contains(rec.Body.String(), "secret") {
+		t.Error("attempt history exposed payload or secret")
+	}
+	invalid := e.do(t, http.MethodGet, path+"?page_token=bad", nil, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Errorf("invalid cursor = %d: %s", invalid.Code, invalid.Body)
+	}
+	foreign := e.do(t, http.MethodGet, "/v1/apps/attempt-api/webhooks/00000000000000000000000000000000/deliveries/"+d.ID+"/attempts", nil, nil)
+	if foreign.Code != http.StatusNotFound {
+		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
+	}
 }
 
 // TestCreateAppWebhook_HappyPath pins the basic round-trip:

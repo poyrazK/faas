@@ -123,6 +123,20 @@ in case any other PR is concurrently claiming 139 or 141. ADR-041
 fence pattern; renumber past reservations at PR creation per
 memory `migration-slot-renumber-at-pr-creation`.
 
+### 3.9 Immutable attempt history
+
+`app_webhook_delivery_attempts` records one completed outcome per
+delivery attempt: retry round, attempt number, receiver status, error,
+start/finish times, and next scheduled retry. The attempt insert and
+the lease-fenced delivery update run in one SQL statement, so a stale
+worker cannot create an outcome that did not take effect. Manual
+retry, including the shared dead-letter replay path, increments the
+delivery's `replay_generation` before attempt numbers restart at 1.
+`GET /deliveries/{did}/attempts` and the dashboard expose bounded,
+newest-first pages. Request and response bodies, headers, and signing
+secrets are not retained. Existing delivery rows have no backfilled
+attempt history; the ledger begins when this migration deploys.
+
 ## Consequences
 
 Positive:

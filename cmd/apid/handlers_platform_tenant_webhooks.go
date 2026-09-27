@@ -324,6 +324,26 @@ func (s *server) listPlatformTenantWebhookDeliveries(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *server) listPlatformTenantWebhookDeliveryAttempts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenant, _, ok := s.tenantWebhookOwner(w, r, acct)
+	if !ok {
+		return
+	}
+	if _, ok := platformTenantWebhookLimits(w, acct); !ok {
+		return
+	}
+	hook, ok := s.platformTenantWebhookByRequest(w, r, acct, tenant)
+	if !ok {
+		return
+	}
+	delivery, err := s.store.AppWebhookDeliveryByID(r.Context(), r.PathValue("did"))
+	if err != nil || delivery.WebhookID != hook.ID || delivery.AccountID != acct.ID {
+		s.notFound(w, "delivery not found")
+		return
+	}
+	s.writeAppWebhookAttemptPage(w, r, acct.ID, delivery)
+}
+
 func (s *server) retryPlatformTenantWebhookDelivery(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	tenant, _, ok := s.tenantWebhookOwner(w, r, acct)
 	if !ok {

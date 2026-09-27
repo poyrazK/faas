@@ -551,6 +551,32 @@ type AppWebhookDeliveryListResponse struct {
 	NextToken  string                       `json:"next_token,omitempty"`
 }
 
+// AppWebhookDeliveryAttemptResponse is one completed dispatch. Response bodies,
+// request headers, payloads, and signing secrets are deliberately excluded.
+type AppWebhookDeliveryAttemptResponse struct {
+	ID               string `json:"id"`
+	DeliveryID       string `json:"delivery_id"`
+	ReplayGeneration int    `json:"replay_generation"`
+	AttemptNumber    int    `json:"attempt_number"`
+	Outcome          string `json:"outcome"`
+	ResponseCode     int    `json:"response_code"`
+	Error            string `json:"error,omitempty"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at"`
+	DurationMS       int64  `json:"duration_ms"`
+	NextAttemptAt    string `json:"next_attempt_at,omitempty"`
+}
+
+type AppWebhookDeliveryAttemptListResponse struct {
+	Attempts  []AppWebhookDeliveryAttemptResponse `json:"attempts"`
+	NextToken string                              `json:"next_token,omitempty"`
+}
+
+type ListAppWebhookDeliveryAttemptsOptions struct {
+	PageSize  int
+	PageToken string
+}
+
 // AppWebhookRetryDeliveryResponse is the POST /deliveries/{id}/retry
 // response shape. Returns the freshly-reset row so the customer can
 // confirm the attempt counter went back to 0.

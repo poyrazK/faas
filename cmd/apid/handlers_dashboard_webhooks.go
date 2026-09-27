@@ -72,6 +72,37 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 			}
 			data.Webhooks = s.projectDashboardWebhooks(ctx, log, rows, app.ID, acct.ID)
 		}
+		if deliveryID := r.URL.Query().Get("delivery_id"); deliveryID != "" {
+			delivery, readErr := s.store.AppWebhookDeliveryByID(ctx, deliveryID)
+			if readErr != nil || delivery.AppID != app.ID || delivery.AccountID != acct.ID {
+				http.NotFound(w, r)
+				return
+			}
+			hook, hookErr := s.store.AppWebhookByID(ctx, delivery.WebhookID)
+			if hookErr != nil || hook.AppID != app.ID || hook.AccountID != acct.ID {
+				http.NotFound(w, r)
+				return
+			}
+			attempts, next, listErr := s.store.ListAppWebhookDeliveryAttempts(ctx, delivery.ID, hook.ID, acct.ID, 20, r.URL.Query().Get("attempt_page_token"))
+			if listErr != nil {
+				data.ErrorMessage = "Delivery history is temporarily unavailable. Please try again shortly."
+				log.Warn("dashboard webhooks: list attempts", "delivery_id", delivery.ID, "err", listErr)
+			} else {
+				history := &dashboard.WebhookDeliveryHistoryPageItem{ID: delivery.ID, Event: string(delivery.Event), NextToken: next}
+				for _, a := range attempts {
+					item := dashboard.WebhookAttemptPageItem{
+						ReplayGeneration: a.ReplayGeneration, AttemptNumber: a.AttemptNumber,
+						Outcome: a.Outcome, ResponseCode: a.ResponseCode, Error: a.Error,
+						StartedAt: dashboardJobsTime(a.StartedAt), DurationMS: a.FinishedAt.Sub(a.StartedAt).Milliseconds(),
+					}
+					if a.NextAttemptAt != nil {
+						item.NextAttemptAt = dashboardJobsTime(*a.NextAttemptAt)
+					}
+					history.Attempts = append(history.Attempts, item)
+				}
+				data.SelectedDelivery = history
+			}
+		}
 	}
 
 	if s.sessions != nil {
