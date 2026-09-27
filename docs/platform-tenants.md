@@ -71,22 +71,33 @@ The older app-local key-create endpoint still returns plaintext once, but no lon
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day and app. Each bucket identifies either a linked `consumer_id` or a verified `surface_id`. Linking a consumer or surface later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
-## Let downstream customers inspect their own activation, usage, and statements
+## Let downstream customers manage hostnames and inspect their own activation, usage, and statements
 
-Platform owners can issue a separate read-only credential to one downstream tenant:
+Platform owners can issue a separate tenant-bound credential with only the capabilities the downstream integration needs:
 
 ```http
 POST /v1/account/platform-tenants/{id}/access-tokens
 Content-Type: application/json
 
-{"name":"customer portal","scopes":["platform_tenant:activation:read","platform_tenant:usage:read","platform_tenant:statements:read"]}
+{"name":"customer portal","scopes":["platform_tenant:activation:read","platform_tenant:usage:read","platform_tenant:statements:read","platform_tenant:hostnames:manage"]}
 ```
 
 The response contains an `fp_tenant_` bearer exactly once. Save it in the customer's secret manager; Gregale persists only its SHA-256 hash. The default lifetime is 90 days and the maximum is 365 days. Grant only the scopes each integration needs. Keep names unique among active tokens and issue no more than ten at a time; list metadata with `GET .../{id}/access-tokens` and revoke with `DELETE .../{id}/access-tokens/{token_id}`. Revocation is immediate. These special scopes cannot be added to ordinary account API keys.
 
 With `platform_tenant:activation:read`, the downstream service can call `GET /v1/platform-tenant-self/activation` to read the current readiness of its own linked surfaces, hostnames, and certificates. Tenant identity always comes from the credential, not a caller-supplied tenant ID. The redacted snapshot omits upstream app IDs, DNS challenge material, and raw DNS/certificate errors; the owner-only activation endpoint retains those diagnostics. `ready` follows the same all-linked-surfaces contract as the owner snapshot.
 
-The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. There is no write, invoice-handoff, activity, or account-management access through this bearer. See [ADR-247](adr/247-platform-tenant-self-service.md) and [ADR-284](adr/284-platform-tenant-self-activation.md).
+With `platform_tenant:hostnames:manage`, the customer can add a hostname to one of the surfaces listed in that snapshot:
+
+```http
+POST /v1/platform-tenant-self/hostnames
+Content-Type: application/json
+
+{"surface_id":"<surface-id-from-activation>","hostname":"shop.customer.example.com"}
+```
+
+Only pre-linked surfaces are eligible. The hostname must match an owner-configured DNS suffix and both tenant-wide and per-surface plan limits apply. The response gives the `_faas-verify.<hostname>` TXT record and challenge token while it remains unverified; publish the token as its value. Repeating the same request safely returns the existing pending challenge, and a verified hostname response no longer includes the token. DNS verification and certificate issuance remain asynchronous. This scope cannot create surfaces, change policy, remove hostnames, or access another tenant's data. See [ADR-300](adr/300-platform-tenant-self-service-hostnames.md).
+
+The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. No other writes, invoice handoff, activity, or account management are exposed by these tenant-bound scopes. See [ADR-247](adr/247-platform-tenant-self-service.md) and [ADR-284](adr/284-platform-tenant-self-activation.md).
 
 ## Control customer requests across apps
 

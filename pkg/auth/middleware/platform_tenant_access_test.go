@@ -29,7 +29,7 @@ func TestRequireSession_PlatformTenantAccessTokenIsTenantSelfOnly(t *testing.T) 
 	}
 	if _, err := store.CreatePlatformTenantAccessToken(context.Background(), state.PlatformTenantAccessTokenInput{
 		AccountID: account.ID, TenantID: tenant.ID, Name: "statement reader", Prefix: prefix, TokenHash: hash,
-		Scopes: []string{api.ScopePlatformTenantStatementsRead, api.ScopePlatformTenantActivationRead}, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Scopes: []string{api.ScopePlatformTenantStatementsRead, api.ScopePlatformTenantActivationRead, api.ScopePlatformTenantHostnamesManage}, ExpiresAt: time.Now().UTC().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +59,19 @@ func TestRequireSession_PlatformTenantAccessTokenIsTenantSelfOnly(t *testing.T) 
 	})(activationAccepted, activationRequest)
 	if activationAccepted.Code != http.StatusNoContent {
 		t.Fatalf("tenant activation status = %d, want 204", activationAccepted.Code)
+	}
+	hostnameAccepted := httptest.NewRecorder()
+	hostnameRequest := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/hostnames", nil)
+	hostnameRequest.Header.Set("Authorization", "Bearer "+plaintext)
+	mw.RequireSession(func(w http.ResponseWriter, r *http.Request, got state.Account) {
+		_, key, ok := authmw.AccountFromContext(r)
+		if !ok || key == nil || key.PlatformTenantID != tenant.ID || got.ID != account.ID {
+			t.Errorf("hostname tenant principal = account %q, key %+v, ok=%v", got.ID, key, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})(hostnameAccepted, hostnameRequest)
+	if hostnameAccepted.Code != http.StatusNoContent {
+		t.Fatalf("tenant hostname status = %d, want 204", hostnameAccepted.Code)
 	}
 
 	for _, tc := range []struct {

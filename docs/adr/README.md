@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
 | 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
 | 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
 | 297 | [Shared outbound provider cooldown](297-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |

@@ -4707,8 +4707,8 @@ paths:
     post:
       tags: [platform-tenants]
       operationId: createPlatformTenantAccessToken
-      summary: Mint a tenant-bound read-only self-service credential.
-      description: The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+      summary: Mint a tenant-bound, explicitly scoped self-service credential.
+      description: The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
       requestBody:
         required: true
         content:
@@ -4764,8 +4764,31 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantSelfActivationResponse' }
+
+  /v1/platform-tenant-self/hostnames:
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantSelfHostname
+      summary: Request a hostname on one of the caller tenant's linked surfaces.
+      description: Requires platform_tenant:hostnames:manage. Hostnames must match the platform owner's delegated DNS suffix policy, remain within account/plan quotas, and pass DNS TXT ownership verification. The same request safely replays its pending challenge; the response is never cached.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantSelfHostnameRequest' }
+      responses:
+        '202':
+          description: Hostname intent accepted; DNS verification and certificate issuance are asynchronous.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfHostnameResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403':
+          description: Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -23707,6 +23730,27 @@ components:
         verified: { type: boolean }
         verified_at: { type: string, format: date-time }
 
+    CreatePlatformTenantSelfHostnameRequest:
+      description: Add a DNS hostname to an existing surface already linked to the authenticated platform tenant.
+      type: object
+      required: [surface_id, hostname]
+      properties:
+        surface_id: { type: string, format: uuid }
+        hostname: { type: string, maxLength: 253, pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$' }
+
+    PlatformTenantSelfHostnameResponse:
+      description: A redacted hostname intent and DNS TXT challenge. DNS and certificate status remain asynchronous.
+      type: object
+      required: [surface_id, hostname, action, verified, txt_record]
+      properties:
+        surface_id: { type: string, format: uuid }
+        hostname: { type: string }
+        action: { type: string, enum: [created, unchanged] }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+        txt_record: { type: string, description: DNS TXT record name to publish for ownership proof. }
+        challenge_token: { type: string, description: Returned only while DNS ownership remains unverified; store securely and publish as the TXT value. }
+
     PlatformTenantSelfActivationSurfaceResponse:
       description: Redacted state for one surface linked to the caller's platform tenant.
       type: object
@@ -23970,7 +24014,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -23984,7 +24028,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -24001,7 +24045,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }

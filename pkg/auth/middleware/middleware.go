@@ -761,17 +761,20 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 }
 
 func platformTenantSelfPathAllowed(method, path string) bool {
-	if method != http.MethodGet {
-		return false
-	}
 	suffix := strings.TrimPrefix(path, "/v1/platform-tenant-self/")
 	if suffix == path {
 		return false
 	}
-	if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" {
+	if method == http.MethodPost && suffix == "hostnames" {
 		return true
 	}
-	return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")
+	if method == http.MethodGet {
+		if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" {
+			return true
+		}
+		return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")
+	}
+	return false
 }
 
 // RequireSessionCookie is the live-row cross-check (IAM-3).

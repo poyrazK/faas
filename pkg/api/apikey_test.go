@@ -58,7 +58,7 @@ func TestGeneratePlatformTenantAccessToken(t *testing.T) {
 		t.Fatal("generated token hash is not the SHA-256 of the bearer")
 	}
 	if IsValidScope(ScopePlatformTenantUsageRead) || IsValidScope(ScopePlatformTenantStatementsRead) ||
-		IsValidScope(ScopePlatformTenantActivationRead) {
+		IsValidScope(ScopePlatformTenantActivationRead) || IsValidScope(ScopePlatformTenantHostnamesManage) {
 		t.Fatal("tenant-self scopes must not be mintable as account-wide API-key scopes")
 	}
 }

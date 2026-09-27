@@ -81,15 +81,15 @@ func (s *server) createPlatformTenantAccessToken(w http.ResponseWriter, r *http.
 	}
 	if invalidName || len(req.Scopes) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid platform tenant token", "name must be 1-64 characters and at least one read scope is required"))
+			"Invalid platform tenant token", "name must be 1-64 characters and at least one supported scope is required"))
 		return
 	}
 	seen := make(map[string]bool, len(req.Scopes))
 	for _, scope := range req.Scopes {
 		if (scope != api.ScopePlatformTenantUsageRead && scope != api.ScopePlatformTenantStatementsRead &&
-			scope != api.ScopePlatformTenantActivationRead) || seen[scope] {
+			scope != api.ScopePlatformTenantActivationRead && scope != api.ScopePlatformTenantHostnamesManage) || seen[scope] {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid platform tenant token scopes", "scopes may contain platform_tenant:usage:read, platform_tenant:statements:read, and/or platform_tenant:activation:read"))
+				"Invalid platform tenant token scopes", "scopes may contain platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, and/or platform_tenant:hostnames:manage"))
 			return
 		}
 		seen[scope] = true

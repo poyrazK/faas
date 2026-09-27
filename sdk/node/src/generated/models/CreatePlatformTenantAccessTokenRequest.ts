@@ -7,7 +7,7 @@
  */
 export type CreatePlatformTenantAccessTokenRequest = {
   name: string;
-  scopes: Array<'platform_tenant:usage:read' | 'platform_tenant:statements:read' | 'platform_tenant:activation:read'>;
+  scopes: Array<'platform_tenant:usage:read' | 'platform_tenant:statements:read' | 'platform_tenant:activation:read' | 'platform_tenant:hostnames:manage'>;
   /**
    * Defaults to 90 days from creation; maximum 365 days.
    */

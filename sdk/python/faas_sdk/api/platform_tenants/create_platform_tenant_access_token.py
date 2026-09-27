@@ -86,10 +86,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> Response[CreatePlatformTenantAccessTokenResponse | Problem]:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
+     The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or
+    the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked
+    surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint
     these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
     after a lost response, list token metadata and create a replacement under a new name.
 
@@ -124,10 +125,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> CreatePlatformTenantAccessTokenResponse | Problem | None:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
+     The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or
+    the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked
+    surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint
     these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
     after a lost response, list token metadata and create a replacement under a new name.
 
@@ -157,10 +159,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> Response[CreatePlatformTenantAccessTokenResponse | Problem]:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
+     The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or
+    the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked
+    surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint
     these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
     after a lost response, list token metadata and create a replacement under a new name.
 
@@ -193,10 +196,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> CreatePlatformTenantAccessTokenResponse | Problem | None:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
+     The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or
+    the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked
+    surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint
     these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
     after a lost response, list token metadata and create a replacement under a new name.
 

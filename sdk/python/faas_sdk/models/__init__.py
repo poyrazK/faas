@@ -401,6 +401,7 @@ from .create_platform_tenant_access_token_response import CreatePlatformTenantAc
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_request import CreatePlatformTenantRequest
+from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
 from .create_platform_tenant_webhook_request_event_filter_item import CreatePlatformTenantWebhookRequestEventFilterItem
@@ -1106,6 +1107,8 @@ from .platform_tenant_self_activation_surface_response_cert_state import (
 from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
 from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
 from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
+from .platform_tenant_self_hostname_response import PlatformTenantSelfHostnameResponse
+from .platform_tenant_self_hostname_response_action import PlatformTenantSelfHostnameResponseAction
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
@@ -2120,6 +2123,7 @@ __all__ = (
     "CreatePlatformTenantAccessTokenResponseScopesItem",
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRequest",
+    "CreatePlatformTenantSelfHostnameRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
     "CreatePlatformTenantWebhookRequestEventFilterItem",
@@ -2815,6 +2819,8 @@ __all__ = (
     "PlatformTenantSelfActivationSurfaceResponseStatus",
     "PlatformTenantSelfDeploymentResponse",
     "PlatformTenantSelfDeploymentResponseStatus",
+    "PlatformTenantSelfHostnameResponse",
+    "PlatformTenantSelfHostnameResponseAction",
     "PlatformTenantSelfStatementListResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",

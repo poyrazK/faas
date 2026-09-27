@@ -15,6 +15,7 @@ import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePla
 import type { CreatePlatformTenantAccessTokenResponse } from '../models/CreatePlatformTenantAccessTokenResponse.js';
 import type { CreatePlatformTenantRateCardRequest } from '../models/CreatePlatformTenantRateCardRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
+import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
@@ -31,6 +32,7 @@ import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRat
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
+import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
@@ -1123,8 +1125,8 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Mint a tenant-bound read-only self-service credential.
-   * The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+   * Mint a tenant-bound, explicitly scoped self-service credential.
+   * The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
    * @returns CreatePlatformTenantAccessTokenResponse Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
    * @throws ApiError
    */
@@ -1194,11 +1196,30 @@ export class PlatformTenantsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/activation',
+    });
+  }
+  /**
+   * Request a hostname on one of the caller tenant's linked surfaces.
+   * Requires platform_tenant:hostnames:manage. Hostnames must match the platform owner's delegated DNS suffix policy, remain within account/plan quotas, and pass DNS TXT ownership verification. The same request safely replays its pending challenge; the response is never cached.
+   * @returns PlatformTenantSelfHostnameResponse Hostname intent accepted; DNS verification and certificate issuance are asynchronous.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfHostname({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfHostnameRequest,
+  }): CancelablePromise<PlatformTenantSelfHostnameResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/hostnames',
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        403: `Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

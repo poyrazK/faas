@@ -201,6 +201,7 @@ export type { CreatePlatformTenantAccessTokenRequest } from './models/CreatePlat
 export type { CreatePlatformTenantAccessTokenResponse } from './models/CreatePlatformTenantAccessTokenResponse.js';
 export type { CreatePlatformTenantRateCardRequest } from './models/CreatePlatformTenantRateCardRequest.js';
 export type { CreatePlatformTenantRequest } from './models/CreatePlatformTenantRequest.js';
+export type { CreatePlatformTenantSelfHostnameRequest } from './models/CreatePlatformTenantSelfHostnameRequest.js';
 export type { CreatePlatformTenantWebhookRequest } from './models/CreatePlatformTenantWebhookRequest.js';
 export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
 export type { CreatePrivateNetworkPeeringRequest } from './models/CreatePrivateNetworkPeeringRequest.js';
@@ -579,6 +580,7 @@ export type { PlatformTenantSelfActivationHostnameResponse } from './models/Plat
 export type { PlatformTenantSelfActivationResponse } from './models/PlatformTenantSelfActivationResponse.js';
 export type { PlatformTenantSelfActivationSurfaceResponse } from './models/PlatformTenantSelfActivationSurfaceResponse.js';
 export type { PlatformTenantSelfDeploymentResponse } from './models/PlatformTenantSelfDeploymentResponse.js';
+export type { PlatformTenantSelfHostnameResponse } from './models/PlatformTenantSelfHostnameResponse.js';
 export type { PlatformTenantSelfStatementListResponse } from './models/PlatformTenantSelfStatementListResponse.js';
 export type { PlatformTenantStatementFinalizedWebhookPayload } from './models/PlatformTenantStatementFinalizedWebhookPayload.js';
 export type { PlatformTenantStatementHandoffResponse } from './models/PlatformTenantStatementHandoffResponse.js';
