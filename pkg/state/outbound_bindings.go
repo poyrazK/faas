@@ -100,7 +100,8 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 	if policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
 		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 ||
 		policy.MaxRetries < 0 || policy.MaxRetries > api.MaxOutboundRetries ||
-		policy.ResponseCacheTTLSeconds < 0 || policy.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds {
+		policy.ResponseCacheTTLSeconds < 0 || policy.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds ||
+		!api.ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) {
 		return ErrInvalidArgument
 	}
 	if len(offer.Name) < 1 || len(offer.Name) > 63 || !isOutboundIntegrationName(offer.Name) {

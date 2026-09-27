@@ -25,6 +25,12 @@ class OutboundRequestPolicy:
     response_cache_ttl_seconds: int | Unset = 0
     """Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache
     directives can shorten or prohibit storage."""
+    circuit_breaker_failure_threshold: int | Unset = 0
+    """Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and
+    requires circuit_breaker_open_seconds to be zero too."""
+    circuit_breaker_open_seconds: int | Unset = 0
+    """Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is
+    allowed. Must be set with a nonzero failure threshold."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +46,10 @@ class OutboundRequestPolicy:
 
         response_cache_ttl_seconds = self.response_cache_ttl_seconds
 
+        circuit_breaker_failure_threshold = self.circuit_breaker_failure_threshold
+
+        circuit_breaker_open_seconds = self.circuit_breaker_open_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -54,6 +64,10 @@ class OutboundRequestPolicy:
             field_dict["max_retries"] = max_retries
         if response_cache_ttl_seconds is not UNSET:
             field_dict["response_cache_ttl_seconds"] = response_cache_ttl_seconds
+        if circuit_breaker_failure_threshold is not UNSET:
+            field_dict["circuit_breaker_failure_threshold"] = circuit_breaker_failure_threshold
+        if circuit_breaker_open_seconds is not UNSET:
+            field_dict["circuit_breaker_open_seconds"] = circuit_breaker_open_seconds
 
         return field_dict
 
@@ -72,6 +86,10 @@ class OutboundRequestPolicy:
 
         response_cache_ttl_seconds = d.pop("response_cache_ttl_seconds", UNSET)
 
+        circuit_breaker_failure_threshold = d.pop("circuit_breaker_failure_threshold", UNSET)
+
+        circuit_breaker_open_seconds = d.pop("circuit_breaker_open_seconds", UNSET)
+
         outbound_request_policy = cls(
             rate_per_second=rate_per_second,
             burst=burst,
@@ -79,6 +97,8 @@ class OutboundRequestPolicy:
             request_timeout_ms=request_timeout_ms,
             max_retries=max_retries,
             response_cache_ttl_seconds=response_cache_ttl_seconds,
+            circuit_breaker_failure_threshold=circuit_breaker_failure_threshold,
+            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
         )
 
         outbound_request_policy.additional_properties = d

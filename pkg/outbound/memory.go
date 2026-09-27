@@ -20,6 +20,11 @@ type memoryState struct {
 	dailyUsageDate     string
 	dailyRequestCount  int64
 	bindingDailyCounts map[string]int64
+	circuitFailures    int
+	circuitOpenUntil   time.Time
+	circuitProbeLease  string
+	circuitThreshold   int
+	circuitOpenSeconds int
 	initialized        bool
 }
 
@@ -55,6 +60,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
 		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
 	}
+	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
+		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
+	}
 	ttl := spec.LeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -80,6 +88,13 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		state.tokens = float64(spec.Burst)
 		state.last = now
 		state.initialized = true
+	}
+	if state.circuitThreshold != spec.CircuitBreakerFailureThreshold || state.circuitOpenSeconds != spec.CircuitBreakerOpenSeconds {
+		state.circuitFailures = 0
+		state.circuitOpenUntil = time.Time{}
+		state.circuitProbeLease = ""
+		state.circuitThreshold = spec.CircuitBreakerFailureThreshold
+		state.circuitOpenSeconds = spec.CircuitBreakerOpenSeconds
 	}
 	for id, lease := range state.leases {
 		if !lease.expiresAt.After(now) {
@@ -136,7 +151,103 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	}
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl)}
-	return Decision{Granted: true, LeaseID: id, RequestTimeout: ttl}, nil
+	return Decision{
+		Granted: true, LeaseID: id, RequestTimeout: ttl,
+		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
+	}, nil
+}
+
+func (b *MemoryBackend) AllowCircuit(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int) (CircuitBreakerDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return CircuitBreakerDecision{}, err
+	}
+	if integrationID == "" || !validUUID(leaseID) || !api.ValidOutboundCircuitBreakerPolicy(threshold, openSeconds) {
+		return CircuitBreakerDecision{}, fmt.Errorf("%w: invalid circuit-breaker request", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return CircuitBreakerDecision{}, fmt.Errorf("outbound admission state is missing")
+	}
+	now := b.now()
+	lease, ok := state.leases[leaseID]
+	if !ok || !lease.expiresAt.After(now) {
+		return CircuitBreakerDecision{}, fmt.Errorf("outbound admission lease is missing or expired")
+	}
+	if state.circuitThreshold != threshold || state.circuitOpenSeconds != openSeconds {
+		state.circuitFailures = 0
+		state.circuitOpenUntil = time.Time{}
+		state.circuitProbeLease = ""
+		state.circuitThreshold = threshold
+		state.circuitOpenSeconds = openSeconds
+	}
+	if threshold == 0 || state.circuitOpenUntil.IsZero() {
+		return CircuitBreakerDecision{Allowed: true}, nil
+	}
+	if state.circuitOpenUntil.After(now) {
+		return CircuitBreakerDecision{RetryAfter: state.circuitOpenUntil.Sub(now)}, nil
+	}
+	if probeLease, active := state.leases[state.circuitProbeLease]; state.circuitProbeLease != "" && active && probeLease.expiresAt.After(now) {
+		retry := probeLease.expiresAt.Sub(now)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return CircuitBreakerDecision{RetryAfter: retry}, nil
+	}
+	state.circuitProbeLease = leaseID
+	return CircuitBreakerDecision{Allowed: true, Probe: true}, nil
+}
+
+func (b *MemoryBackend) RecordCircuitOutcome(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int, outcome CircuitBreakerOutcome) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if integrationID == "" || !validUUID(leaseID) || !api.ValidOutboundCircuitBreakerPolicy(threshold, openSeconds) ||
+		(outcome != CircuitOutcomeSuccess && outcome != CircuitOutcomeFailure && outcome != CircuitOutcomeNeutral) {
+		return fmt.Errorf("%w: invalid circuit-breaker outcome", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.circuitThreshold != threshold || state.circuitOpenSeconds != openSeconds || threshold == 0 {
+		return nil
+	}
+	now := b.now()
+	_, hasLease := state.leases[leaseID]
+	if !hasLease {
+		return nil
+	}
+	probe := state.circuitProbeLease == leaseID
+	if probe {
+		state.circuitProbeLease = ""
+		switch outcome {
+		case CircuitOutcomeSuccess:
+			state.circuitFailures = 0
+			state.circuitOpenUntil = time.Time{}
+		case CircuitOutcomeFailure, CircuitOutcomeNeutral:
+			state.circuitFailures = 0
+			state.circuitOpenUntil = now.Add(time.Duration(openSeconds) * time.Second)
+		}
+		return nil
+	}
+	// Requests admitted before another call opened the breaker are no longer
+	// evidence for the current closed-state failure streak.
+	if !state.circuitOpenUntil.IsZero() {
+		return nil
+	}
+	switch outcome {
+	case CircuitOutcomeSuccess:
+		state.circuitFailures = 0
+	case CircuitOutcomeFailure:
+		state.circuitFailures++
+		if state.circuitFailures >= threshold {
+			state.circuitFailures = 0
+			state.circuitOpenUntil = now.Add(time.Duration(openSeconds) * time.Second)
+		}
+	}
+	return nil
 }
 
 func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID string) error {
@@ -147,6 +258,16 @@ func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID stri
 	defer b.mu.Unlock()
 	if state := b.states[integrationID]; state != nil {
 		delete(state.leases, leaseID)
+		if state.circuitProbeLease == leaseID {
+			state.circuitProbeLease = ""
+		}
 	}
 	return nil
 }
+
+func validUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
+}
+
+var _ CircuitBreakerBackend = (*MemoryBackend)(nil)

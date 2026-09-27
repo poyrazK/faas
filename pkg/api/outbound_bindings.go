@@ -14,6 +14,14 @@ const MaxOutboundRetries = 2
 // change outside Gregale's control.
 const MaxOutboundResponseCacheTTLSeconds = 300
 
+// Outbound circuit-breaker settings are deliberately bounded. A zero pair
+// disables the breaker; enabled policies need a failure threshold and a
+// finite cool-down before one half-open probe is allowed.
+const (
+	MaxOutboundCircuitBreakerFailureThreshold = 20
+	MaxOutboundCircuitBreakerOpenSeconds      = 300
+)
+
 // OutboundIntegrationOffer is an account-visible managed integration. It
 // intentionally contains no provider credential or gateway admission token;
 // its request limits are effective for customer integrations after applying
@@ -46,6 +54,13 @@ type OutboundRequestPolicy struct {
 	// ResponseCacheTTLSeconds opts into a private, process-local cache for
 	// eligible GET responses. Zero disables caching.
 	ResponseCacheTTLSeconds int `json:"response_cache_ttl_seconds"`
+	// CircuitBreakerFailureThreshold opens the integration after this many
+	// consecutive transient provider failures. Zero disables the breaker and
+	// requires CircuitBreakerOpenSeconds to be zero too.
+	CircuitBreakerFailureThreshold int `json:"circuit_breaker_failure_threshold"`
+	// CircuitBreakerOpenSeconds is the cool-down before one provider probe is
+	// admitted. Zero disables the breaker and requires a zero threshold.
+	CircuitBreakerOpenSeconds int `json:"circuit_breaker_open_seconds"`
 }
 
 // DefaultOutboundRequestPolicy preserves the original customer-integration
@@ -53,12 +68,14 @@ type OutboundRequestPolicy struct {
 func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 	limits := MustLimitsFor(PlanFree)
 	return OutboundRequestPolicy{
-		RatePerSecond:           limits.OutboundRatePerSecondMax,
-		Burst:                   limits.OutboundBurstMax,
-		MaxInFlight:             limits.OutboundMaxInFlightMax,
-		RequestTimeoutMS:        limits.OutboundRequestTimeoutMSMax,
-		MaxRetries:              0,
-		ResponseCacheTTLSeconds: 0,
+		RatePerSecond:                  limits.OutboundRatePerSecondMax,
+		Burst:                          limits.OutboundBurstMax,
+		MaxInFlight:                    limits.OutboundMaxInFlightMax,
+		RequestTimeoutMS:               limits.OutboundRequestTimeoutMSMax,
+		MaxRetries:                     0,
+		ResponseCacheTTLSeconds:        0,
+		CircuitBreakerFailureThreshold: 0,
+		CircuitBreakerOpenSeconds:      0,
 	}
 }
 
@@ -72,7 +89,7 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 		limits.OutboundResponseCacheTTLSecondsMax < 0 ||
 		policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
 		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 || policy.MaxRetries < 0 ||
-		policy.ResponseCacheTTLSeconds < 0 {
+		policy.ResponseCacheTTLSeconds < 0 || !ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) {
 		return OutboundRequestPolicy{}, false
 	}
 	if policy.RatePerSecond > limits.OutboundRatePerSecondMax {
@@ -94,6 +111,16 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 		policy.ResponseCacheTTLSeconds = limits.OutboundResponseCacheTTLSecondsMax
 	}
 	return policy, true
+}
+
+// ValidOutboundCircuitBreakerPolicy accepts either the disabled zero pair or
+// a bounded threshold/cool-down pair. Partial configurations are rejected.
+func ValidOutboundCircuitBreakerPolicy(failureThreshold, openSeconds int) bool {
+	if failureThreshold == 0 || openSeconds == 0 {
+		return failureThreshold == 0 && openSeconds == 0
+	}
+	return failureThreshold >= 1 && failureThreshold <= MaxOutboundCircuitBreakerFailureThreshold &&
+		openSeconds >= 1 && openSeconds <= MaxOutboundCircuitBreakerOpenSeconds
 }
 
 // OutboundRequestPolicyAllowedForPlan reports whether a customer-selected

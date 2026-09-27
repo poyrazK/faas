@@ -17,6 +17,7 @@ type Metrics struct {
 	upstreamRequests *prometheus.CounterVec
 	upstreamLatency  *prometheus.HistogramVec
 	cacheRequests    *prometheus.CounterVec
+	circuitEvents    *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -52,6 +53,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_response_cache_requests_total",
 			Help: "Outbound response-cache lookups by integration and outcome (hit or miss).",
 		}, []string{"integration_id", "outcome"}),
+		circuitEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_circuit_breaker_events_total",
+			Help: "Outbound circuit-breaker checks and outcomes by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -60,6 +65,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.upstreamRequests,
 		m.upstreamLatency,
 		m.cacheRequests,
+		m.circuitEvents,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -133,4 +139,11 @@ func (m *Metrics) ObserveCache(integrationID, outcome string) {
 		return
 	}
 	m.cacheRequests.WithLabelValues(integrationID, outcome).Inc()
+}
+
+func (m *Metrics) ObserveCircuit(integrationID, event string) {
+	if m == nil || m.circuitEvents == nil {
+		return
+	}
+	m.circuitEvents.WithLabelValues(integrationID, event).Inc()
 }
