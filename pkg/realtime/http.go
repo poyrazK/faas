@@ -55,10 +55,10 @@ func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, erro
 			return claimed, nil
 		}
 		if !errors.Is(err, ErrCallbackOutboxFull) {
-			return false, errors.Join(ErrCallbackOutboxAdmission, err)
+			return false, errors.Join(ErrCallbackNotPersisted, ErrCallbackOutboxAdmission, err)
 		}
 		if ctx.Done() == nil {
-			return false, errors.Join(ErrCallbackOutboxAdmission, err)
+			return false, errors.Join(ErrCallbackNotPersisted, ErrCallbackOutboxAdmission, err)
 		}
 
 		timer := time.NewTimer(h.DurableQueue.retryInterval)
@@ -70,7 +70,7 @@ func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, erro
 				default:
 				}
 			}
-			return false, errors.Join(ErrCallbackOutboxAdmission, ErrCallbackOutboxFull, ctx.Err())
+			return false, errors.Join(ErrCallbackNotPersisted, ErrCallbackOutboxAdmission, ErrCallbackOutboxFull, ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -132,7 +132,11 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 		}
 		return nil
 	}
-	return h.deliverMessage(ctx, event)
+	err := h.deliverMessage(ctx, event)
+	if err != nil {
+		return errors.Join(ErrCallbackNotPersisted, err)
+	}
+	return nil
 }
 
 func (h HTTPHooks) deliverMessage(ctx context.Context, event Event) error {
@@ -178,7 +182,11 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		}
 		return nil
 	}
-	return h.deliverDisconnect(ctx, event)
+	err := h.deliverDisconnect(ctx, event)
+	if err != nil {
+		return errors.Join(ErrCallbackNotPersisted, err)
+	}
+	return nil
 }
 
 func (h HTTPHooks) deliverDisconnect(ctx context.Context, event Event) error {

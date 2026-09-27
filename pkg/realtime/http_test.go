@@ -246,6 +246,29 @@ func TestHTTPHooksMarksOutboxPersistenceFailureAsAdmissionFailure(t *testing.T) 
 	}
 }
 
+func TestHTTPHooksMarksNonDurableMessageAndDisconnectFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	hooks := HTTPHooks{Client: server.Client(), MaxAttempts: 1}
+
+	message := testCallbackEvent()
+	message.CallbackURL = server.URL
+	message.CallbackPath = "/message"
+	if err := hooks.Message(context.Background(), message); !errors.Is(err, ErrCallbackNotPersisted) {
+		t.Fatalf("Message error = %v, want ErrCallbackNotPersisted", err)
+	}
+
+	disconnect := message
+	disconnect.ID = "evt_disconnect"
+	disconnect.Type = EventDisconnect
+	disconnect.CallbackPath = "/disconnect"
+	if err := hooks.Disconnect(context.Background(), disconnect); !errors.Is(err, ErrCallbackNotPersisted) {
+		t.Fatalf("Disconnect error = %v, want ErrCallbackNotPersisted", err)
+	}
+}
+
 func TestHTTPHooksRetryBackoffHonorsContext(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -1,4 +1,4 @@
-# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, ADR-290, and ADR-291).
+# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, ADR-290, ADR-291, and ADR-292).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -6,6 +6,35 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - interval: 30s
+    name: "unpersisted callback failure pages"
+    input_series:
+      - series: 'realtimed_callback_unpersisted_failures_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0+1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackUnpersisted
+        exp_alerts:
+          - exp_labels:
+              job: realtimed
+              instance: compute-a:9107
+              severity: page
+              component: realtimed
+              family: realtime_callbacks
+            exp_annotations:
+              summary: "Realtime callback failed without durable persistence"
+              description: "A message or disconnect callback failed while no durable outbox was configured. Message failures close the live WebSocket with code 1013. Configure a durable outbox for production callback delivery."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+  - interval: 30s
+    name: "unpersisted callback failure stays quiet"
+    input_series:
+      - series: 'realtimed_callback_unpersisted_failures_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0x11'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRealtimeCallbackUnpersisted
+
   - interval: 30s
     name: "callback outbox admission failure pages"
     input_series:

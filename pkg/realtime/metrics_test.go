@@ -22,6 +22,7 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 	manager.callbackErrors.Store(1)
 	manager.callbackOutboxFull.Store(2)
 	manager.callbackOutboxAdmissionErrors.Store(3)
+	manager.callbackUnpersistedFailures.Store(4)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeAccepted)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
@@ -41,6 +42,7 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 		`realtimed_callback_errors_total 1`,
 		`realtimed_callback_outbox_full_total 2`,
 		`realtimed_callback_outbox_admission_errors_total 3`,
+		`realtimed_callback_unpersisted_failures_total 4`,
 		`realtimed_callback_pending_capacity_bytes 0`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="accepted"} 1`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="rejected"} 2`,

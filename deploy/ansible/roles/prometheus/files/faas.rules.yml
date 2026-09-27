@@ -83,6 +83,18 @@ groups:
           description: "The node failed to admit a callback to its durable outbox for a reason other than capacity exhaustion. Check local storage health and permissions; a live WebSocket is closed with code 1013 when its message cannot be saved."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
+      - alert: FaasRealtimeCallbackUnpersisted
+        expr: increase(realtimed_callback_unpersisted_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback failed without durable persistence"
+          description: "A message or disconnect callback failed while no durable outbox was configured. Message failures close the live WebSocket with code 1013. Configure a durable outbox for production callback delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
       - alert: FaasRealtimeCallbackDeadLettersPresent
         expr: realtimed_callback_dead_letters > 0
         for: 5m

@@ -268,6 +268,9 @@ could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
 `realtimed_callback_outbox_admission_errors_total` counts failures to persist
 callbacks caused by local admission or storage errors, and
 `FaasRealtimeCallbackOutboxAdmissionFailed` pages on any occurrence.
+`realtimed_callback_unpersisted_failures_total` counts failed direct HTTP
+callbacks without a durable outbox; `FaasRealtimeCallbackUnpersisted`
+pages on any occurrence.
 The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the

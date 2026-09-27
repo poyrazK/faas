@@ -30,6 +30,13 @@ connection whose message could not be saved is closed with WebSocket code 1013.
 Restore node-local outbox storage health; clients can then reconnect and retry
 according to their application protocol.
 
+`FaasRealtimeCallbackUnpersisted` means a direct HTTP callback failed
+while no durable outbox was configured. Check
+`realtimed_callback_unpersisted_failures_total` and the receiver's health. The
+client connection is closed with code 1013 after a failed message callback.
+Configure a durable outbox for production delivery, and make clients retry
+unacknowledged messages according to their application protocol.
+
 `FaasRealtimeCallbackOutboxNearCapacity` means pending callback data has stayed
 above 80% of the outbox byte limit for five minutes. Check
 `realtimed_callback_pending_bytes` and
