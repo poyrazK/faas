@@ -48,7 +48,7 @@ func (s *PgStore) SetPlatformTenantCredentialPolicy(ctx context.Context, account
 	_, err := scanPlatformTenantCredentialPolicy(s.pool.QueryRow(ctx, `
 		insert into platform_tenant_credential_policies
 		       (account_id, tenant_id, allowed_scopes, max_keys_per_consumer)
-		select account_id, id, $3::text[], $4 from platform_tenants
+		select account_id, id, coalesce($3::text[], ARRAY[]::text[]), $4 from platform_tenants
 		where account_id = $1::uuid and id = $2::uuid
 		on conflict (tenant_id) do update
 		set allowed_scopes = excluded.allowed_scopes,

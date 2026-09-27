@@ -53,7 +53,8 @@ func testPlatformTenantCredentialPolicyRoundTrip(t *testing.T, store platformTen
 	if err != nil || !replay.UpdatedAt.Equal(configured.UpdatedAt) {
 		t.Fatalf("idempotent policy replay=%+v err=%v", replay, err)
 	}
-	if _, err := store.SetPlatformTenantCredentialPolicy(ctx, account.ID, tenant.ID, nil, 0); err != nil {
+	disabled, err := store.SetPlatformTenantCredentialPolicy(ctx, account.ID, tenant.ID, nil, 0)
+	if err != nil || len(disabled.AllowedScopes) != 0 || disabled.MaxKeysPerConsumer != 0 {
 		t.Fatalf("disable policy: %v", err)
 	}
 	foreign, err := store.CreateAccount(ctx, "credential-policy-foreign-"+uuid.NewString()+"@example.test", api.PlanPro)
