@@ -60,8 +60,7 @@ that could duplicate old application side effects. Delivery remains at least
 once. Invocation IDs and workflow step idempotency keys remain stable on
 recovery.
 
-Fanout reads the currently enabled subscriptions when it processes a receipt.
-Disabling or deleting a subscription during an outage excludes its backlog;
-preserving the subscription set at publish time needs a separate snapshot
-design. Producer scopes are account-wide, without per-source or per-app
-restrictions.
+ADR-285 adds acceptance-time subscription snapshots for new receipts. Receipts
+accepted before that migration still read the currently enabled subscriptions
+when processed. Producer scopes are account-wide, without per-source or
+per-app restrictions.

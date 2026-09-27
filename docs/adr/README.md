@@ -343,6 +343,7 @@ note instead of the banner.
 - [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
 - [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
 - [ADR-345: durable event fanout and workflow leases](345-durable-event-fanout-and-workflow-leases.md) — persistent event claims, per-step workflow recovery, and versioned event schemas
+- [ADR-285: event fanout recipient snapshots](285-event-fanout-recipient-snapshots.md) — capture eligible subscription candidates when an event is accepted
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
