@@ -27,6 +27,10 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 	if !loopbackListenAddr(listenerAddr) {
 		return fmt.Errorf("apid: Safe Deploy operator listener %q must bind to loopback", listenerAddr)
 	}
+	mux.HandleFunc("GET /v1/internal/safe-deploy/canary/readyz",
+		internalSafeDeployAuth(canaryToken, s.internalSafeDeployReady))
+	mux.HandleFunc("GET /v1/internal/safe-deploy/action/readyz",
+		internalSafeDeployAuth(actionToken, s.internalSafeDeployReady))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/advance",
 		internalSafeDeployAuth(canaryToken, s.internalAdvanceCanary))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/rollouts/recover",
@@ -36,6 +40,15 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollback",
 		internalSafeDeployAuth(actionToken, s.internalForApp(s.rollbackApp)))
 	return nil
+}
+
+func (s *server) internalSafeDeployReady(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.store.Ping(r.Context()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func loopbackListenAddr(addr string) bool {

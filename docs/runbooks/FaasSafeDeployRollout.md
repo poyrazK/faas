@@ -21,23 +21,29 @@ FAAS_SAFEDEPLOY_TOKEN=<random-service-secret-2>
 Keep file modes and ownership managed by the normal secrets/deploy workflow;
 do not put either token in a unit file, TOML file, dashboard, issue, or command
 line. `FAAS_APID_INTERNAL_BASE_URL` defaults to `http://127.0.0.1:9101` and
-may only name a loopback HTTP origin. The three Safe Deploy mutation routes
+may only name a loopback HTTP origin. The Safe Deploy mutation routes
 are mounted only on APID's loopback operator listener, never its public API
-listener; the canary token can only advance a step, and the action token can
-only recover or request rollback. Both routes resolve the actual deployment's
-account before applying the normal plan/state gates and audit write.
+listener. For mutations, the canary token authorizes only step advancement,
+and the action token authorizes only recovery or rollback. Those routes resolve
+the actual deployment's account before applying the normal plan/state gates
+and audit write.
 
 Apply the `safe_release_worker_lease` migration before upgrading either
 daemon. New canary requests return `503 safe_release_unavailable` until both
-meterd release ticks have succeeded and meterd renews the database lease.
-They also return that code when either tick fails, the lease expires, or the
-database check fails. A meterd restart may therefore pause new canaries for
-roughly one tick interval. Check the lease before creating a test rollout:
+meterd release ticks have succeeded, both APID operator credentials have
+passed their loopback and database probes, and meterd renews the database
+lease. They also return that code when a tick or probe fails, the lease expires,
+or the database check fails. An APID or meterd restart may therefore pause new
+canaries for roughly one tick interval. Check the lease before creating a test
+rollout:
 
 ```sql
 SELECT healthy_at, expires_at, expires_at > now() AS ready
 FROM safe_release_worker_lease;
 ```
+
+The probes are read-only; the staging recovery drill below still verifies the
+atomic mutation path.
 
 For a canary, imaged also requires a verified public hosting smoke result
 before moving the live pointer. Configure `FAAS_API_HOSTING_SMOKE_URL` on

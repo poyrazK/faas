@@ -1182,7 +1182,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCanaryProgression(canaryProg).
 		WithSafeDeploy(safeDeployOrch)
 	if canaryProg != nil && safeDeployOrch != nil {
-		go safeReleaseWorkerLeaseLoop(ctx, loop, store, log)
+		go safeReleaseWorkerLeaseLoop(ctx, loop, store, canaryAPID, log)
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
