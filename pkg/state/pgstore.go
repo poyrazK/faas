@@ -22402,19 +22402,137 @@ func (s *PgStore) DeleteAppSecret(ctx context.Context, accountID, appID, key str
 // (app_id, scope, key) means the WHERE clause gains a `scope = $3`
 // predicate.
 func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error {
-	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
-		`delete from app_secrets
-		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-		   and managed_postgres_binding_id is null
-		   and managed_object_storage_credential_id is null`,
-		accountID, appID, scope, key)
-	if err != nil {
-		return err
+	_, err := s.DeleteAppSecretInScopeWithRevocation(ctx, accountID, appID, scope, key)
+	return err
+}
+
+func (s *PgStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
+	if accountID == "" || appID == "" || scope == "" || key == "" {
+		return AppSecretRevocation{}, ErrInvalidArgument
 	}
-	if tag.RowsAffected() == 0 {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AppSecretRevocation{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
+		return AppSecretRevocation{}, err
+	}
+	queries := sqlc.New()
+	if err := rejectManagedSecretDelete(ctx, tx, queries, accountID, appID, scope, key); err != nil {
+		return AppSecretRevocation{}, err
+	}
+	targets, err := queries.ListAppSecretRuntimeReloadTargets(ctx, tx, sqlc.ListAppSecretRuntimeReloadTargetsParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: key,
+	})
+	if err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	revocation, err := createPgSecretRevocation(ctx, tx, queries, accountID, appID, scope, key)
+	if err != nil {
+		return AppSecretRevocation{}, err
+	}
+	if err := createPgSecretRevocationTargets(ctx, tx, queries, revocation.ID, targets); err != nil {
+		return AppSecretRevocation{}, err
+	}
+	deleted, err := queries.DeleteCustomerAppSecret(ctx, tx, sqlc.DeleteCustomerAppSecretParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: key,
+	})
+	if err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	if deleted != 1 {
+		return AppSecretRevocation{}, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	return revocation, nil
+}
+
+func rejectManagedSecretDelete(ctx context.Context, tx pgx.Tx, queries *sqlc.Queries, accountID, appID, scope, key string) error {
+	var claimed bool
+	if err := tx.QueryRow(ctx,
+		`select exists(select 1 from managed_postgres_bindings where app_id = $1 and scope = $2 and environment_key = $3 and state <> 'deleted')`,
+		appID, scope, key,
+	).Scan(&claimed); err != nil {
+		return mapErr(err)
+	}
+	if claimed {
+		return ErrConflict
+	}
+	guard, err := queries.GetCustomerAppSecretForDeletion(ctx, tx, sqlc.GetCustomerAppSecretForDeletionParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: key,
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if !guard.Present {
 		return ErrNotFound
 	}
+	if guard.Managed {
+		return ErrConflict
+	}
 	return nil
+}
+
+func createPgSecretRevocation(ctx context.Context, tx pgx.Tx, queries *sqlc.Queries, accountID, appID, scope, key string) (AppSecretRevocation, error) {
+	now := time.Now().UTC()
+	row, err := queries.CreateAppSecretRevocation(ctx, tx, sqlc.CreateAppSecretRevocationParams{
+		ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID),
+		Scope: scope, Key: key, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	return AppSecretRevocation{
+		ID: row.ID, AccountID: row.AccountID, AppID: row.AppID, Scope: row.Scope, Key: row.Key,
+		CreatedAt: row.CreatedAt.Time.UTC(),
+	}, nil
+}
+
+func createPgSecretRevocationTargets(ctx context.Context, tx pgx.Tx, queries *sqlc.Queries, revocationID string, rows []sqlc.ListAppSecretRuntimeReloadTargetsRow) error {
+	for _, row := range rows {
+		if err := queries.CreateAppSecretRevocationTarget(ctx, tx, sqlc.CreateAppSecretRevocationTargetParams{
+			RevocationID: mustPgUUID(revocationID), InstanceID: mustPgUUID(row.InstanceID),
+			WorkloadName: row.WorkloadName, RuntimeState: row.RuntimeState, ReloadSupport: row.ReloadSupport,
+		}); err != nil {
+			return mapErr(err)
+		}
+	}
+	return nil
+}
+
+func (s *PgStore) GetAppSecretRevocation(ctx context.Context, accountID, appID, revocationID string) (AppSecretRevocation, error) {
+	if accountID == "" || appID == "" {
+		return AppSecretRevocation{}, ErrInvalidArgument
+	}
+	if _, err := uuid.Parse(revocationID); err != nil {
+		return AppSecretRevocation{}, ErrNotFound
+	}
+	queries := sqlc.New()
+	row, err := queries.GetAppSecretRevocation(ctx, s.pool, sqlc.GetAppSecretRevocationParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(revocationID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppSecretRevocation{}, ErrNotFound
+	}
+	if err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	revocation := AppSecretRevocation{ID: row.ID, AccountID: row.AccountID, AppID: row.AppID, Scope: row.Scope, Key: row.Key, CreatedAt: row.CreatedAt.Time.UTC()}
+	targets, err := queries.ListAppSecretRevocationTargets(ctx, s.pool, mustPgUUID(revocationID))
+	if err != nil {
+		return AppSecretRevocation{}, mapErr(err)
+	}
+	for _, target := range targets {
+		revocation.Targets = append(revocation.Targets, AppSecretRevocationTarget{
+			InstanceID: target.InstanceID, WorkloadName: target.WorkloadName, RuntimeState: target.RuntimeState,
+			ReloadSupport: target.ReloadSupport, Status: target.Status, AckRevision: target.AckRevision,
+			AckAt: timestamptzToTimePtr(target.AckAt), ErrorCode: target.ErrorCode,
+		})
+	}
+	return revocation, nil
 }
 
 // mutateCustomerAppSecret serializes customer mutations with managed binding
@@ -22778,9 +22896,6 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 	if !validAppSecretRuntimeReloadAckResult(result) {
 		return 0, ErrInvalidArgument
 	}
-	if len(result.Candidates) == 0 {
-		return 0, nil
-	}
 	attemptedAt := result.AttemptedAt.UTC()
 	if attemptedAt.IsZero() {
 		attemptedAt = time.Now().UTC()
@@ -22816,6 +22931,16 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 		}
 		updated++
 	}
+	revoked, err := sqlc.New().RecordAppSecretRevocationAck(ctx, tx, sqlc.RecordAppSecretRevocationAckParams{
+		Status: string(result.Status), AckRevision: result.Revision,
+		AckAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true}, ErrorCode: result.ErrorCode,
+		AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID),
+		InstanceID: mustPgUUID(result.InstanceID), WorkloadName: result.WorkloadName,
+	})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	updated += int(revoked)
 	if err := tx.Commit(ctx); err != nil {
 		return 0, mapErr(err)
 	}
@@ -22924,7 +23049,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, account
 	}
 	rows, err := sqlc.New().ListAppSecretRuntimeReloadTargets(ctx, s.pool,
 		sqlc.ListAppSecretRuntimeReloadTargetsParams{
-			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope,
+			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: "",
 		})
 	if err != nil {
 		return nil, mapErr(err)

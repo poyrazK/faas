@@ -2682,6 +2682,7 @@ func (s *server) handler() http.Handler {
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
 	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSecrets))))
+	mux.HandleFunc("GET /v1/apps/{slug}/secret-revocations/{revocation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSecretRevocation))))
 	// Account-scoped sealed-secret list (issue #393). Each row
 	// carries the owning app's id and slug so the dashboard can
 	// render "foo-app / DATABASE_URL" without a parallel /v1/apps

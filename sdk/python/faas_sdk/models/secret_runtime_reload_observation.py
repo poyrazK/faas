@@ -42,8 +42,9 @@ T = TypeVar("T", bound="SecretRuntimeReloadObservation")
 
 @_attrs_define
 class SecretRuntimeReloadObservation:
-    """Non-sensitive active runtime target and optional guest-init projection/signal outcome plus application-owned reload
-    acknowledgement. An application acknowledgement is a self-attestation, not independent verification.
+    """Non-sensitive active main or explicitly authorized sidecar workload target and optional guest-init projection/signal
+    outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not
+    independent verification.
 
     """
 
@@ -56,6 +57,8 @@ class SecretRuntimeReloadObservation:
     metadata."""
     reported: bool
     """Whether this runtime has reported a guest-init outcome. False is unknown, never success."""
+    workload_name: str | Unset = UNSET
+    """Sidecar workload name. Omitted for the main workload."""
     version: int | Unset = UNSET
     """Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only
     when reported is true."""
@@ -82,6 +85,8 @@ class SecretRuntimeReloadObservation:
         reload_support: str = self.reload_support
 
         reported = self.reported
+
+        workload_name = self.workload_name
 
         version = self.version
 
@@ -125,6 +130,8 @@ class SecretRuntimeReloadObservation:
                 "reported": reported,
             }
         )
+        if workload_name is not UNSET:
+            field_dict["workload_name"] = workload_name
         if version is not UNSET:
             field_dict["version"] = version
         if projection is not UNSET:
@@ -156,6 +163,8 @@ class SecretRuntimeReloadObservation:
         reload_support = check_secret_runtime_reload_observation_reload_support(d.pop("reload_support"))
 
         reported = d.pop("reported")
+
+        workload_name = d.pop("workload_name", UNSET)
 
         version = d.pop("version", UNSET)
 
@@ -217,6 +226,7 @@ class SecretRuntimeReloadObservation:
             runtime_state=runtime_state,
             reload_support=reload_support,
             reported=reported,
+            workload_name=workload_name,
             version=version,
             projection=projection,
             signal=signal,

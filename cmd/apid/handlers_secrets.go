@@ -27,6 +27,7 @@ import (
 	"filippo.io/age"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -510,7 +511,8 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
-	if err := s.store.DeleteAppSecretInScope(r.Context(), acct.ID, app.ID, scope, key); err != nil {
+	revocation, err := s.store.DeleteAppSecretInScopeWithRevocation(r.Context(), acct.ID, app.ID, scope, key)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrSecretNotFound(key))
 			return
@@ -531,22 +533,69 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
 		return
 	}
-	s.log.Info("secret deleted",
-		"app", app.Slug,
-		"key", logsanitize.Field(key),
-		"scope", scope,
-		"account", acct.ID,
-	)
+	s.recordSecretDeleteEvents(r.Context(), acct, app, scope, key, invalidated, revocation.ID)
+	if prefersSecretRevocationRepresentation(r.Header.Get("Prefer")) {
+		w.Header().Set("Preference-Applied", "return=representation")
+		writeJSON(w, http.StatusOK, secretRevocationResponse(revocation))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) recordSecretDeleteEvents(ctx context.Context, acct state.Account, app state.App, scope, key string, invalidated int, revocationID string) {
+	s.log.Info("secret deleted", "app", app.Slug, "key", logsanitize.Field(key), "scope", scope, "account", acct.ID)
 	// IAM-4 (ADR-035): record the secret delete. data.scope is the
 	// env-scope the row was deleted from (ADR-092 PR-B).
-	s.audit.Emit(r.Context(), "secret.deleted", &acct.ID, map[string]any{
-		"app_id":                app.ID,
-		"name":                  key,
-		"scope":                 scope,
-		"snapshots_invalidated": invalidated,
+	s.audit.Emit(ctx, "secret.deleted", &acct.ID, map[string]any{
+		"app_id": app.ID, "name": key, "scope": scope,
+		"snapshots_invalidated": invalidated, "revocation_id": revocationID,
 	})
-	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "delete", scope, key)
-	w.WriteHeader(http.StatusNoContent)
+	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "delete", scope, key)
+}
+
+func prefersSecretRevocationRepresentation(prefer string) bool {
+	for _, preference := range strings.Split(prefer, ",") {
+		if strings.TrimSpace(preference) == "return=representation" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *server) getSecretRevocation(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	id := r.PathValue("revocation_id")
+	revocation, err := s.store.GetAppSecretRevocation(r.Context(), acct.ID, app.ID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrSecretRevocationNotFound(id))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read secret revocation status"))
+		return
+	}
+	writeJSON(w, http.StatusOK, secretRevocationResponse(revocation))
+}
+
+func secretRevocationResponse(revocation state.AppSecretRevocation) api.AppSecretRevocationResponse {
+	status, acknowledged, pending := revocation.Progress()
+	out := api.AppSecretRevocationResponse{
+		ID: revocation.ID, Scope: revocation.Scope, Key: revocation.Key,
+		CreatedAt: revocation.CreatedAt.UTC().Format(time.RFC3339Nano), Status: status,
+		TargetCount: len(revocation.Targets), AcknowledgedCount: acknowledged, PendingCount: pending,
+		Targets: make([]api.SecretRevocationTarget, 0, len(revocation.Targets)),
+	}
+	for _, target := range revocation.Targets {
+		out.Targets = append(out.Targets, api.SecretRevocationTarget{
+			InstanceID: target.InstanceID, WorkloadName: target.WorkloadName, RuntimeState: target.RuntimeState,
+			ReloadSupport: target.ReloadSupport, Status: target.Status, AckRevision: target.AckRevision,
+			AckAt: formatOptionalSecretTime(target.AckAt), ErrorCode: target.ErrorCode,
+		})
+	}
+	return out
 }
 
 func (s *server) managedSecretConflictProblem(ctx stdctx, accountID, appID, scope, key string) *api.Problem {

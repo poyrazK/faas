@@ -6168,6 +6168,58 @@ type AppSecretRuntimeReloadTarget struct {
 	ApplicationAckErrorCode string
 }
 
+// AppSecretRevocation is a durable, value-free record of one secret deletion
+// and the active authorized workloads that were expected to remove it.
+type AppSecretRevocation struct {
+	ID        string
+	AccountID string
+	AppID     string
+	Scope     string
+	Key       string
+	CreatedAt time.Time
+	Targets   []AppSecretRevocationTarget
+}
+
+// AppSecretRevocationTarget snapshots one authorized runtime at deletion
+// time. InstanceID intentionally has no lifetime FK: acknowledgement evidence
+// must survive deletion of the secret row and later instance cleanup.
+type AppSecretRevocationTarget struct {
+	InstanceID    string
+	WorkloadName  string
+	RuntimeState  string
+	ReloadSupport string
+	Status        string
+	AckRevision   string
+	AckAt         *time.Time
+	ErrorCode     string
+}
+
+// Progress summarizes a revocation without treating missing or failed
+// acknowledgements as success. An empty target roster is complete because no
+// active authorized runtime existed when the deletion committed.
+func (r AppSecretRevocation) Progress() (status string, acknowledged, pending int) {
+	blocked, failed := false, false
+	for _, target := range r.Targets {
+		if target.Status == "applied" {
+			acknowledged++
+			continue
+		}
+		pending++
+		blocked = blocked || target.ReloadSupport != "enabled"
+		failed = failed || target.Status == "failed"
+	}
+	if pending == 0 {
+		return "complete", acknowledged, 0
+	}
+	if blocked {
+		return "blocked", acknowledged, pending
+	}
+	if failed {
+		return "failed", acknowledged, pending
+	}
+	return "pending", acknowledged, pending
+}
+
 // AccountAppSecret is the per-row shape returned by
 // ListAppSecretsForAccount (issue #393). Distinct from AppSecret
 // because the account-scoped variant needs the app_slug (the per-app

@@ -311,6 +311,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}":                                                    "DeleteApp",
 	"POST /v1/apps/{slug}/restore":                                              "RestoreApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                      "UnsetSecret",
+	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                    "GetSecretRevocation",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                         "SetSecret",
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":                                 "RotateSecret",
 	"PATCH /v1/apps/{slug}":                                                     "UpdateApp",

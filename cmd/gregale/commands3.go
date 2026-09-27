@@ -8,7 +8,7 @@
 // Operations:
 //   gregale secrets list   --app <slug> [--scope <name>]
 //   gregale secrets set    --app <slug> KEY=VALUE [--from-stdin] [--scope <name>]
-//   gregale secrets unset  --app <slug> KEY [--scope <name>]
+//   gregale secrets unset  --app <slug> KEY [--scope <name>] [--wait-for-ack [--timeout 2m]]
 //
 // `--from-stdin` reads the value from stdin (one pair per line, KEY=VALUE)
 // for pipelines that need to avoid putting the plaintext in shell
@@ -34,6 +34,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -613,11 +614,32 @@ func secretsUnset(args []string) int {
 	fs := newFlagSet("secrets unset", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (defaults to linked project environment)")
-	if err := fs.Parse(args); err != nil {
+	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
+	orderedArgs, err := reorderSecretsSetArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "secret unset:", err)
+		return 1
+	}
+	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
 	if *app == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>] [--wait-for-ack [--timeout 2m]]", "secrets")
+		return 1
+	}
+	if *timeout <= 0 {
+		fmt.Fprintln(os.Stderr, "secret unset: --timeout must be greater than zero")
+		return 1
+	}
+	timeoutSpecified := false
+	fs.Visit(func(value *flag.Flag) {
+		if value.Name == "timeout" {
+			timeoutSpecified = true
+		}
+	})
+	if timeoutSpecified && !*waitForAck {
+		fmt.Fprintln(os.Stderr, "secret unset: --timeout requires --wait-for-ack")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -630,10 +652,20 @@ func secretsUnset(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.UnsetSecretWithScope(context.Background(), *app, key, *scope); err != nil {
+	revocation, err := client.UnsetSecretWithScopeAndStatus(context.Background(), *app, key, *scope)
+	if err != nil {
 		return printErr("Unset failed", err)
 	}
-	PrintOK(osStdout, "%s unset (scope=%s)", key, scopeOrDefault(*scope))
+	PrintOK(osStdout, "%s unset (scope=%s, revocation=%s)", key, scopeOrDefault(*scope), revocation.ID)
+	if *waitForAck {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		progress, err := waitForSecretRevocationAck(ctx, client, *app, revocation.ID)
+		if err != nil {
+			return printErr("Secret revocation acknowledgement incomplete", err)
+		}
+		PrintOK(osStdout, "All %d authorized runtime(s) acknowledged secret removal", progress.AcknowledgedCount)
+	}
 	return 0
 }
 
