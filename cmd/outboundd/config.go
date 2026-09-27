@@ -76,6 +76,7 @@ type IntegrationConfig struct {
 	DailyRequestLimit        int64         `toml:"daily_request_limit"`
 	RequestTimeout           time.Duration `toml:"request_timeout"`
 	MaxRetries               int           `toml:"max_retries"`
+	ResponseCacheTTLSeconds  int           `toml:"response_cache_ttl_seconds"`
 	Enabled                  *bool         `toml:"enabled"`
 }
 
@@ -189,6 +190,7 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		}
 		policy.CredentialSource = credentialSource
 		policy.MaxRetries = raw.MaxRetries
+		policy.ResponseCacheTTLSeconds = raw.ResponseCacheTTLSeconds
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit

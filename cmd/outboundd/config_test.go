@@ -51,6 +51,7 @@ burst = 50
 max_in_flight = 20
 request_timeout = 30000000000
 max_retries = 2
+response_cache_ttl_seconds = 45
 enabled = true
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
@@ -69,7 +70,7 @@ enabled = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Record.Policy.RequestTimeout != 30*time.Second || items[0].Record.Policy.MaxRetries != 2 {
+	if len(items) != 1 || items[0].Record.Policy.RequestTimeout != 30*time.Second || items[0].Record.Policy.MaxRetries != 2 || items[0].Record.Policy.ResponseCacheTTLSeconds != 45 {
 		t.Fatalf("policies = %#v", items)
 	}
 	if !items[0].Record.Policy.AllowsApp("00000000-0000-0000-0000-000000000020") {

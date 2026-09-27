@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 284 | [Opt-in outbound HTTP response cache](284-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
 | 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |

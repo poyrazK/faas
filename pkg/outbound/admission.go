@@ -61,12 +61,16 @@ type Integration struct {
 	BindingDailyRequestLimits map[string]*int64
 	RequestTimeout            time.Duration
 	MaxRetries                int
-	ProviderAuthMode          string
-	CredentialSource          string
-	OwnerKind                 string
-	AllowedMethods            []string
-	AllowedPathPrefixes       []string
-	Enabled                   bool
+	ResponseCacheTTLSeconds   int
+	// PolicyRevision invalidates process-local response entries after a
+	// database-backed integration policy changes.
+	PolicyRevision      int64
+	ProviderAuthMode    string
+	CredentialSource    string
+	OwnerKind           string
+	AllowedMethods      []string
+	AllowedPathPrefixes []string
+	Enabled             bool
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -139,6 +143,9 @@ func (i Integration) Validate() error {
 	}
 	if i.MaxRetries < 0 || i.MaxRetries > api.MaxOutboundRetries {
 		return fmt.Errorf("%w: max_retries must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetries)
+	}
+	if i.ResponseCacheTTLSeconds < 0 || i.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds {
+		return fmt.Errorf("%w: response_cache_ttl_seconds must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundResponseCacheTTLSeconds)
 	}
 	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)

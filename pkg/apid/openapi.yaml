@@ -20778,6 +20778,12 @@ components:
           maximum: 2
           default: 0
           description: Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
+        response_cache_ttl_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
     PutOutboundRequestPolicyRequest:
       type: object
       description: Replace admission policy values for a customer-owned integration.

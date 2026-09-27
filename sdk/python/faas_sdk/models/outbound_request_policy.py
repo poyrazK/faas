@@ -22,6 +22,9 @@ class OutboundRequestPolicy:
     max_retries: int | Unset = 0
     """Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request
     timeout and count as one admission."""
+    response_cache_ttl_seconds: int | Unset = 0
+    """Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache
+    directives can shorten or prohibit storage."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +38,8 @@ class OutboundRequestPolicy:
 
         max_retries = self.max_retries
 
+        response_cache_ttl_seconds = self.response_cache_ttl_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +52,8 @@ class OutboundRequestPolicy:
         )
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
+        if response_cache_ttl_seconds is not UNSET:
+            field_dict["response_cache_ttl_seconds"] = response_cache_ttl_seconds
 
         return field_dict
 
@@ -63,12 +70,15 @@ class OutboundRequestPolicy:
 
         max_retries = d.pop("max_retries", UNSET)
 
+        response_cache_ttl_seconds = d.pop("response_cache_ttl_seconds", UNSET)
+
         outbound_request_policy = cls(
             rate_per_second=rate_per_second,
             burst=burst,
             max_in_flight=max_in_flight,
             request_timeout_ms=request_timeout_ms,
             max_retries=max_retries,
+            response_cache_ttl_seconds=response_cache_ttl_seconds,
         )
 
         outbound_request_policy.additional_properties = d
