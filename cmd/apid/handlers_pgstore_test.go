@@ -282,8 +282,8 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	if coverage.AppID != app.ID || coverage.RepresentedRequests != 1 || coverage.TelemetryRows != 1 {
 		t.Fatalf("debug coverage = %+v, want one represented request and one row", coverage)
 	}
-	if coverage.TraceLinked.Requests != 0 || coverage.SpanEvidence.Requests != 0 || coverage.WakeEvidence.Requests != 0 || coverage.GuestEvidence.Requests != 0 {
-		t.Fatalf("debug coverage optional signals = %+v, want zero for fixture", coverage)
+	if coverage.TraceLinked.Rows != 1 || coverage.TraceLinked.Requests != 1 || coverage.TraceLinked.RatePct != 100 || coverage.SpanEvidence.Requests != 0 || coverage.WakeEvidence.Requests != 0 || coverage.GuestEvidence.Requests != 0 {
+		t.Fatalf("debug coverage optional signals = %+v, want the fixture's one trace link and no other optional signals", coverage)
 	}
 
 	getRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+reqID, nil, nil)
