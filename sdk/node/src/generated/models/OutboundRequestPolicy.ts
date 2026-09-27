@@ -18,5 +18,17 @@ export type OutboundRequestPolicy = {
    * Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
    */
   response_cache_ttl_seconds?: number;
+  /**
+   * Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and requires circuit_breaker_open_seconds to be zero too.
+   */
+  circuit_breaker_failure_threshold?: number;
+  /**
+   * Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is allowed. Must be set with a nonzero failure threshold.
+   */
+  circuit_breaker_open_seconds?: number;
+  /**
+   * Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling.
+   */
+  retry_budget_per_minute?: number;
 };
 

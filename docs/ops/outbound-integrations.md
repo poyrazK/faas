@@ -17,8 +17,11 @@ The daemon also exposes an operator-only Prometheus endpoint on
 `127.0.0.1:9108` by default (override with `metrics_addr`). It publishes
 `outbound_admissions_total`, `outbound_rejections_total`,
 `outbound_in_flight`, `outbound_upstream_requests_total`, and
-`outbound_upstream_latency_seconds`, and
-`outbound_response_cache_requests_total`. Operator integrations use their
+`outbound_upstream_latency_seconds`,
+`outbound_response_cache_requests_total`,
+`outbound_circuit_breaker_events_total`,
+`outbound_retry_budget_events_total`, and
+`outbound_provider_cooldown_events_total`. Operator integrations use their
 configuration-owned IDs; all customer-created integrations share the bounded
 `customer_managed` label. Outcomes and rejection reasons also use bounded
 vocabularies. The in-flight gauge is per gateway process; the Postgres-backed
@@ -129,7 +132,10 @@ any attached app may use. This request-policy example fits the Pro plan:
     "max_in_flight": 100,
     "request_timeout_ms": 2000,
     "max_retries": 1,
-    "response_cache_ttl_seconds": 60
+    "retry_budget_per_minute": 60,
+    "response_cache_ttl_seconds": 60,
+    "circuit_breaker_failure_threshold": 5,
+    "circuit_breaker_open_seconds": 30
   }
 }
 ```
@@ -142,10 +148,11 @@ checked before it is stored and checked again on every new gateway connection;
 private, loopback, and special-use destinations are rejected. The customer's
 method/path policy is the integration-wide ceiling; each app binding can narrow
 it further. The optional `request_policy` configures rate, burst, concurrency,
-upstream timeout, retries, and response-cache freshness for this integration.
+upstream timeout, retries, an aggregate retry budget, response-cache freshness,
+and the circuit breaker.
 If omitted, it defaults to 10 requests/second, burst 20, 10 concurrent
-requests, 30 seconds, no retries, and no response caching. Customer
-integrations can be changed later with
+requests, 30 seconds, no retries, no aggregate retry budget, no response
+caching, and no circuit breaker. Customer integrations can be changed later with
 `PUT /v1/outbound/integrations/{id}/request-policy`; send the full
 `request_policy` object shown above. Updates affect subsequent admissions
 without an `outboundd` restart. Requests already admitted retain their original
@@ -156,12 +163,12 @@ allowed per account.
 
 The account plan bounds each integration's request policy:
 
-| Plan | Rate/sec | Burst | In flight | Timeout | Max retries | Cache TTL |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Free | 10 | 20 | 10 | 30 s | 2 | 300 s |
-| Hobby | 20 | 100 | 50 | 60 s | 2 | 300 s |
-| Pro | 100 | 500 | 250 | 120 s | 2 | 300 s |
-| Scale | 500 | 2,000 | 1,000 | 300 s | 2 | 300 s |
+| Plan | Rate/sec | Burst | In flight | Timeout | Max retries | Retry budget/min | Cache TTL |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Free | 10 | 20 | 10 | 30 s | 2 | 60 | 300 s |
+| Hobby | 20 | 100 | 50 | 60 s | 2 | 120 | 300 s |
+| Pro | 100 | 500 | 250 | 120 s | 2 | 600 | 300 s |
+| Scale | 500 | 2,000 | 1,000 | 300 s | 2 | 3,000 | 300 s |
 
 These are configurable ceilings, not included usage. A plan downgrade clamps
 the effective policy on subsequent admissions and in API reads; upgrading later
@@ -280,13 +287,44 @@ By default, Gregale makes one upstream attempt. A configured `max_retries`
 (0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
 for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
 `504` responses. Other methods and requests with bodies are never retried.
-Exponential backoff starts at 100 ms; a provider `Retry-After` value is
-honored but capped at one second. Every attempt shares the original
+Exponential backoff starts at 100 ms. Automatic retries honor a valid provider
+`Retry-After` only when it fits within the one-second retry window; longer
+delays are never shortened into an early retry, and the current provider
+response is returned instead. Every attempt shares the original
 request-timeout deadline. Retries stay inside one admission lease and consume
 one daily-budget unit; `outbound_upstream_requests_total` and its latency
 histogram record each actual provider attempt. The gateway does not follow
 redirects and does not transparently intercept encrypted egress. A final
 provider response (including `429`) passes through.
+`retry_budget_per_minute` (0–3,000; default 0) optionally adds one token bucket
+per integration for extra attempts. A token is consumed only after the retry
+backoff, immediately before an eligible second or later upstream attempt; the
+first attempt and other integrations do not share that bucket. Capacity is the
+configured per-minute value, replenished continuously at that rate, and the
+Postgres row lock coordinates all `outboundd` replicas. Customer integrations
+are capped by plan (60/120/600/3,000 per minute for Free/Hobby/Pro/Scale); a
+plan downgrade clamps the effective bucket on the next admission. If the
+budget is empty or its shared state cannot be reached, Gregale stops retrying
+and returns the last provider response, or the original transport error,
+without replacing it with a platform-generated retry error. A zero budget
+leaves the existing per-request `max_retries` behavior unchanged. The
+`outbound_retry_budget_events_total` metric records bounded `consumed`,
+`exhausted`, `state_error`, and `unavailable` events using the same integration
+label policy as the other outbound metrics. See
+[ADR-286](../adr/286-shared-outbound-retry-budget.md).
+When a provider returns `429` with a valid `Retry-After`, outboundd shares a
+per-integration cooldown through Postgres, capped at one hour. Fresh requests
+are rejected locally with `429` and
+`X-Gregale-Outbound-Rejection: provider_cooldown` until that deadline, so
+replicas do not continue sending calls while the provider has asked them to
+wait. The original provider `429` remains unchanged; a delay longer than the
+one-second retry window is never shortened into an early retry. Eligible cache
+hits still return during the cooldown. Updating the integration policy clears
+the old provider cooldown. Cooldown checks run after normal admission, so
+blocked uncached requests count against configured request budgets. The
+`outbound_provider_cooldown_events_total` metric reports bounded `recorded`,
+`blocked`, `state_error`, and `unavailable` events. See
+[ADR-287](../adr/287-shared-outbound-provider-cooldown.md).
 An optional `response_cache_ttl_seconds` (0–300; default 0) enables a
 process-local, bounded cache for bodyless `GET` responses with status 200.
 Range and conditional requests bypass it. Responses marked `private`,
@@ -304,6 +342,23 @@ If a provider response is interrupted or exceeds the gateway's body cap after
 headers have been sent, the gateway aborts the response stream. Callers must
 treat the resulting read error as an incomplete response, not a successful
 download of the received prefix.
+
+An optional circuit breaker opens after a configured number of consecutive
+transient provider failures, then permits one provider probe after its cool-down.
+Set both `circuit_breaker_failure_threshold` (1–20) and
+`circuit_breaker_open_seconds` (1–300); both default to zero, which disables
+the breaker. Network errors, timeouts, and final 408/425/429/5xx responses are
+failures; ordinary 4xx responses indicate a reachable provider and reset the
+streak. A successful retry also counts as success. Caller cancellation and
+local failures before a provider outcome is available do not add a failure; an
+inconclusive half-open probe starts another cool-down. The open decision and
+exclusive half-open probe are coordinated through Postgres across outboundd
+replicas; state resets if the configured breaker policy changes. An open
+breaker returns 503 with `X-Gregale-Outbound-Rejection: circuit_breaker_open`
+and `Retry-After`. It is checked after normal admission, so an open-circuit
+response counts toward configured admission budgets. Eligible response-cache
+hits still return while the breaker is open because they do not call the provider. See
+[ADR-281](../adr/281-outbound-circuit-breaker.md).
 
 The listener also serves `/metrics` and `/readyz` on port `8095` by default.
 Daemon HTTP request metrics record bounded status classes (`1xx` through `5xx`),

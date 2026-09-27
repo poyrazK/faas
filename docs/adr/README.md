@@ -54,6 +54,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 286 | [Shared outbound retry budget](286-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
+| 281 | [Per-integration outbound circuit breaker](281-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
 | 280 | [Opt-in outbound HTTP response cache](280-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |

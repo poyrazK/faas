@@ -57,6 +57,10 @@ func TestOutboundIntegrationValidation(t *testing.T) {
 		{"oversized response cache TTL", func(o *OutboundIntegrationOffer) {
 			o.RequestPolicy.ResponseCacheTTLSeconds = api.MaxOutboundResponseCacheTTLSeconds + 1
 		}},
+		{"negative retry budget", func(o *OutboundIntegrationOffer) { o.RequestPolicy.RetryBudgetPerMinute = -1 }},
+		{"oversized retry budget", func(o *OutboundIntegrationOffer) {
+			o.RequestPolicy.RetryBudgetPerMinute = api.MaxOutboundRetryBudgetPerMinute + 1
+		}},
 		{"uppercase name", func(o *OutboundIntegrationOffer) { o.Name = "Stripe" }},
 		{"leading hyphen", func(o *OutboundIntegrationOffer) { o.Name = "-stripe" }},
 		{"trailing hyphen", func(o *OutboundIntegrationOffer) { o.Name = "stripe-" }},
@@ -102,7 +106,7 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	if created.RequestPolicy != api.DefaultOutboundRequestPolicy() {
 		t.Fatalf("default request policy = %+v", created.RequestPolicy)
 	}
-	requestPolicy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 250, MaxInFlight: 100, RequestTimeoutMS: 60_000}
+	requestPolicy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 250, MaxInFlight: 100, RequestTimeoutMS: 60_000, RetryBudgetPerMinute: 30}
 	if err := m.SetOutboundRequestPolicy(ctx, account.ID, created.ID, requestPolicy); err != nil {
 		t.Fatalf("SetOutboundRequestPolicy: %v", err)
 	}
@@ -110,6 +114,11 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	tooHighPolicy.RatePerSecond = 101
 	if err := m.SetOutboundRequestPolicy(ctx, account.ID, created.ID, tooHighPolicy); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("over-plan request policy = %v, want ErrInvalidArgument", err)
+	}
+	tooHighRetryBudget := requestPolicy
+	tooHighRetryBudget.RetryBudgetPerMinute = 601
+	if err := m.SetOutboundRequestPolicy(ctx, account.ID, created.ID, tooHighRetryBudget); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("over-plan retry-budget policy = %v, want ErrInvalidArgument", err)
 	}
 	if err := m.SetOutboundRequestPolicy(ctx, uuid.NewString(), created.ID, requestPolicy); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account request policy = %v, want ErrNotFound", err)
