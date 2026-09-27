@@ -247,15 +247,41 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, loginPath, http.StatusFound)
 			return
 		}
+		// IAM-3: the /v1 cookie path checks the live sessions row
+		// (sid-less legacy cookie, revoked row, binding mismatch); the
+		// dashboard only checked the signature, so a revoked or
+		// stolen-then-revoked cookie kept the whole dashboard,
+		// including the data export. Same check, redirect on failure.
+		sess, ok := s.dashboardSessionRow(w, r, env)
+		if !ok {
+			http.Redirect(w, r, loginPath, http.StatusFound)
+			return
+		}
 		acct, err := s.store.AccountByID(r.Context(), env.AccountID)
 		if err != nil {
 			http.Redirect(w, r, loginPath, http.StatusFound)
 			return
 		}
-		if !acct.Active() && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
+		// An mfa_pending session has proved one factor. The dashboard
+		// ignored the flag, so MFA protected only /v1: the password or
+		// inbox alone opened every page. Until the TOTP challenge is
+		// passed, only the challenge itself is reachable.
+		mfaPending := session.IsMFAPending(env)
+		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, dashboardMFAPath, http.StatusFound)
+			return
+		}
+		if !acct.Active() && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
+		// The session and pending flag feed cookie re-issue on
+		// /dashboard/mfa, the same context shape RequireSession builds.
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
+		r = r.WithContext(authmw.WithSession(r.Context(), sess))
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
+		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
@@ -441,4 +467,38 @@ func dashboardRecoveryPage(acct state.Account) string {
 		return "/dashboard/account"
 	}
 	return "/dashboard/billing"
+}
+
+// dashboardSessionRow runs RequireSessionCookie's live-row checks for a
+// dashboard request. That helper answers failures with a 401 problem; the
+// dashboard redirects to /login instead, so the problem body is discarded
+// and only its Set-Cookie (the cleared session cookie) is kept.
+func (s *server) dashboardSessionRow(w http.ResponseWriter, r *http.Request, env session.Envelope) (state.Session, bool) {
+	capture := &headerCaptureWriter{header: http.Header{}}
+	sess, handled, err := s.authMw.RequireSessionCookie(capture, r, env)
+	if handled || err != nil {
+		if err != nil && s.log != nil {
+			s.log.Warn("dashboard session check failed", "err", err)
+		}
+		for _, v := range capture.header.Values("Set-Cookie") {
+			w.Header().Add("Set-Cookie", v)
+		}
+		return state.Session{}, false
+	}
+	return sess, true
+}
+
+// headerCaptureWriter keeps headers and drops the body and status.
+type headerCaptureWriter struct{ header http.Header }
+
+func (c *headerCaptureWriter) Header() http.Header         { return c.header }
+func (c *headerCaptureWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (c *headerCaptureWriter) WriteHeader(int)             {}
+
+const dashboardMFAPath = "/dashboard/mfa"
+
+// dashboardMFARoute is what an mfa_pending session may reach: the TOTP
+// challenge and its form post.
+func dashboardMFARoute(method, path string) bool {
+	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost)
 }

@@ -173,6 +173,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/account/keys/{id}/delete":                   true, // HTML form (issue #248)
 	"POST /dashboard/account/plan":                               true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                            true, // HTML form
+	"GET /dashboard/mfa":                                         true, // TOTP challenge page for mfa_pending sessions
+	"POST /dashboard/mfa":                                        true, // HTML form, TOTP challenge
 	"GET /dashboard/account/export":                              true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/dpa":                                 true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)

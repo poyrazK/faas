@@ -103,7 +103,7 @@ func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -239,7 +239,7 @@ func newGitHubWizardPostServer(t *testing.T, gh GithubdClient) (http.Handler, *s
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

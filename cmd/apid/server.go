@@ -1353,7 +1353,7 @@ func (s *server) handler() http.Handler {
 	// can take a final export or cancel during the 30-day grace.
 	// DELETE /v1/account is admin-only — losing the account is
 	// irreversible.
-	mux.HandleFunc("GET /v1/account/export", s.auth(s.requireScope(api.ScopesReadSurface...)(s.exportAccount)))
+	mux.HandleFunc("GET /v1/account/export", s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount))))
 	mux.HandleFunc("DELETE /v1/account", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.deleteAccount))))))
 	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
@@ -3083,6 +3083,14 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardDelete)))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+	// TOTP challenge for mfa_pending sessions (sessionAuth confines them
+	// here). The POST shares the dashboard's per-IP auth-failure bucket
+	// and answers a wrong code with 401, so guesses count against §11's
+	// 10/min/IP budget like /login does.
+	mux.Handle("GET /dashboard/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFA))))
+	mux.Handle("POST /dashboard/mfa", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusUnauthorized},
+	}, s.sessionAuth(http.HandlerFunc(s.dashboardMFAVerify))))
 	// Issue #248 slice A: revoke an account-owned API key from the
 	// dashboard. The handler verifies its dedicated named CSRF cookie and
 	// a typed key-prefix confirmation before calling the REST revocation core.

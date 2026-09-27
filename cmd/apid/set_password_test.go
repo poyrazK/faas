@@ -398,7 +398,7 @@ func newSetPasswordServer(t *testing.T, store state.Store, accountID string) (ht
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mgr.Issue(accountID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, accountID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

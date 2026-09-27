@@ -64,7 +64,7 @@ func newGitHubConnectionTestServer(t *testing.T, gh GithubdClient, repos []Repo)
 	if err != nil {
 		t.Fatalf("NewEphemeralManager: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("Issue session: %v", err)
 	}

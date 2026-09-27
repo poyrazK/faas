@@ -76,7 +76,7 @@ func newOAuthTestServerWithLogin(t *testing.T, gh GithubdClient, login string) (
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -103,7 +103,7 @@ func wrapWithGithubLogin(t *testing.T, h http.Handler, c *http.Cookie, login str
 	if err != nil {
 		t.Fatalf("verify existing cookie: %v", err)
 	}
-	cookie, err := mgr.SealGithubLogin(env.AccountID, login, false)
+	cookie, err := mgr.IssueWithSessionAndGithubLogin(env.Sid, env.AccountID, login, false)
 	if err != nil {
 		t.Fatalf("seal github login: %v", err)
 	}

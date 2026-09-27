@@ -1,0 +1,174 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+var dashboardCSRFField = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
+
+func dashboardGet(h http.Handler, path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+func responseCookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// TestDashboard_MFAPendingSessionIsConfinedToTheChallenge — the dashboard
+// ignored mfa_pending, so MFA protected only /v1: a password or magic
+// link alone opened every dashboard page, including the account export.
+// A pending session now reaches only /dashboard/mfa until a code verifies.
+func TestDashboard_MFAPendingSessionIsConfinedToTheChallenge(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	_, secret, _ := e.generateEnrolledAccount(t)
+	pending := e.mfaIssueWithPending(t, true)
+
+	for _, path := range []string{"/dashboard/", "/dashboard/apps", "/dashboard/account/export"} {
+		rec := dashboardGet(e.h, path, pending)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != dashboardMFAPath {
+			t.Fatalf("mfa_pending GET %s = %d Location=%q, want 302 %s", path, rec.Code, rec.Header().Get("Location"), dashboardMFAPath)
+		}
+	}
+
+	challenge := func() (string, *http.Cookie) {
+		t.Helper()
+		rec := dashboardGet(e.h, dashboardMFAPath, pending)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", dashboardMFAPath, rec.Code, rec.Body)
+		}
+		m := dashboardCSRFField.FindStringSubmatch(rec.Body.String())
+		csrf := responseCookie(rec, dashboardMFACSRFCookie)
+		if m == nil || csrf == nil {
+			t.Fatalf("challenge page missing CSRF token or cookie:\n%s", rec.Body)
+		}
+		return m[1], csrf
+	}
+	post := func(code string) *httptest.ResponseRecorder {
+		t.Helper()
+		token, csrf := challenge()
+		form := url.Values{"csrf_token": {token}, "code": {code}}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, dashboardMFAPath, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(pending)
+		r.AddCookie(csrf)
+		e.h.ServeHTTP(rec, r)
+		return rec
+	}
+
+	if rec := post("000000"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong code = %d, want 401 (counted by the auth limiter)", rec.Code)
+	}
+	code, err := totp.GenerateCodeCustom(secret, time.Now().UTC(), totp.ValidateOpts{Period: 30, Digits: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := post(code)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/" {
+		t.Fatalf("right code = %d Location=%q, want 303 /dashboard/", rec.Code, rec.Header().Get("Location"))
+	}
+	cleared := responseCookie(rec, sessionCookie)
+	if cleared == nil {
+		t.Fatal("verify did not re-issue the session cookie")
+	}
+	if env, err := e.mgr.Verify(cleared.Value); err != nil || env.MfaPending {
+		t.Fatalf("re-issued cookie: pending=%v err=%v, want cleared", env.MfaPending, err)
+	}
+	if rec := dashboardGet(e.h, "/dashboard/account/export", cleared); rec.Code != http.StatusOK {
+		t.Fatalf("export after MFA = %d, want 200", rec.Code)
+	}
+}
+
+// TestDashboard_RevokedSessionIsSignedOut — /v1 checks the live sessions
+// row; the dashboard only checked the cookie signature, so a revoked
+// session (sign-out everywhere, stolen-cookie revoke) and a sid-less
+// legacy cookie kept every dashboard page, including the export.
+func TestDashboard_RevokedSessionIsSignedOut(t *testing.T) {
+	h, cookie, store, mgr := newAuthedDashboardServerFull(t)
+	if rec := dashboardGet(h, "/dashboard/account/export", cookie); rec.Code != http.StatusOK {
+		t.Fatalf("live session export = %d, want 200", rec.Code)
+	}
+	env, err := mgr.Verify(cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeSession(t.Context(), env.Sid, env.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := mgr.Issue(env.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]*http.Cookie{"revoked": cookie, "sid-less": {Name: sessionCookie, Value: legacy}} {
+		rec := dashboardGet(h, "/dashboard/account/export", c)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != loginPath {
+			t.Errorf("%s session export = %d Location=%q, want 302 %s", name, rec.Code, rec.Header().Get("Location"), loginPath)
+		}
+	}
+}
+
+// TestAccountExport_RequiresCompletedMFA — the /v1 export twin had no
+// requireMFA either: an mfa_pending cookie could download the account.
+func TestAccountExport_RequiresCompletedMFA(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	e.generateEnrolledAccount(t)
+	pending := e.mfaIssueWithPending(t, true)
+	rec := dashboardGet(e.h, "/v1/account/export", pending)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeMFARequired) {
+		t.Fatalf("mfa_pending export = %d %s, want 403 %s", rec.Code, rec.Body, api.CodeMFARequired)
+	}
+}
+
+// TestDashboardMFA_PolicyWithoutEnrollmentPointsAtTheCLI — an account an
+// explicit policy requires to use MFA has no code to enter yet.
+func TestDashboardMFA_PolicyWithoutEnrollmentPointsAtTheCLI(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, true, false)
+	rec := dashboardGet(e.h, dashboardMFAPath, e.mfaIssueWithPending(t, true))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "gregale mfa enroll") || strings.Contains(rec.Body.String(), `name="code"`) {
+		t.Fatalf("GET %s for an unenrolled required account = %d:\n%s", dashboardMFAPath, rec.Code, rec.Body)
+	}
+}
+
+// TestEventsStream_RejectsRevokedAndPendingSessions — /v1/events verified
+// only the cookie signature, so a revoked or mfa_pending session could
+// hold the account's live event stream open.
+func TestEventsStream_RejectsRevokedAndPendingSessions(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	e.generateEnrolledAccount(t)
+	if rec := dashboardGet(e.h, "/v1/events", e.mfaIssueWithPending(t, true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("mfa_pending /v1/events = %d, want 401", rec.Code)
+	}
+
+	h, cookie, store, mgr := newAuthedDashboardServerFull(t)
+	env, err := mgr.Verify(cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeSession(t.Context(), env.Sid, env.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dashboardGet(h, "/v1/events", cookie); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked /v1/events = %d, want 401", rec.Code)
+	}
+}

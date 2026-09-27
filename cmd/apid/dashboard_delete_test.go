@@ -225,7 +225,7 @@ func TestDashboardRestore_HappyPath(t *testing.T) {
 	if err := store.MarkAccountDeletionPending(t.Context(), acct.ID); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := mgr.Issue(acct.ID)
+	raw, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestDashboardDPA_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	token, err := mgr.Issue(acct.ID)
+	token, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

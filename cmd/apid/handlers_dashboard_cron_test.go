@@ -288,7 +288,7 @@ func newAuthedDashboardServerFullFull(t *testing.T, plan, email string) (http.Ha
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

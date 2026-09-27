@@ -41,7 +41,7 @@ func newDashboardFailedEventsTestEnv(t *testing.T) dashboardFailedEventsTestEnv 
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	sessionToken, err := sessions.Issue(account.ID)
+	sessionToken, err := mintDashboardSession(t.Context(), store, sessions, account.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
