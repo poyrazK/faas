@@ -32,6 +32,44 @@ func runNodeStarter(t *testing.T, name, script string) {
 	}
 }
 
+func runNodeStarterTests(t *testing.T, name, testFile string) {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is not installed")
+	}
+	dest := filepath.Join(t.TempDir(), name)
+	if err := Materialize(name, dest); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, "--test", filepath.Join(dest, testFile))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s tests failed: %v\n%s", name, err, output)
+	}
+}
+
+func TestSecretReloadNodeStarterHelper(t *testing.T) {
+	runNodeStarterTests(t, "secret-reload-node", "secret-reload.test.js")
+}
+
+func TestSecretReloadNodeStarterOptsIntoSIGHUP(t *testing.T) {
+	dir, cleanup, err := MaterializeForTest("secret-reload-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	dockerfile, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dockerfile), `LABEL com.gregale.secret-reload-signal="SIGHUP"`) {
+		t.Fatal("Dockerfile missing the SIGHUP secret reload opt-in label")
+	}
+}
+
 func TestEventWorkerStarterReadsParsedAndRawEnvelope(t *testing.T) {
 	runNodeStarter(t, "event-worker", `
 import assert from "node:assert/strict";

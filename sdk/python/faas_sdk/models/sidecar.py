@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.sidecar_env import SidecarEnv
+    from ..models.sidecar_env_secrets import SidecarEnvSecrets
     from ..models.sidecar_probe import SidecarProbe
     from ..models.workload_dependency import WorkloadDependency
 
@@ -36,6 +37,11 @@ class Sidecar:
     envelope-sealed at rest via secretbox (namespace
     `"sidecar_env"`); the wire shape is plaintext, the
     column is sealed ciphertext.
+    `env_secrets` grants this workload only the same-named
+    app secrets selected by explicit `secret:KEY` references.
+    References resolve in the deployment's scope at each wake;
+    sidecars do not inherit main-workload secrets. Secret rotation
+    reaches sidecars through a restart, not in-process reload.
 
     - `name` matches RFC 1123 label (lowercase alphanumeric
       + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -52,6 +58,11 @@ class Sidecar:
       per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
       `EnvValueMaxBytes`. Plaintext values NEVER appear in
       any log, audit, or error.
+    - `env_secrets` is a per-sidecar positive allowlist, for example
+      `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
+      and referenced app-secret name must match. Missing secrets fail
+      the wake; an empty/omitted map grants no app secrets to this
+      sidecar. These values refresh on cold boot or restart only.
     - `port` ∈ {0, 1..65535}. 0 = absent.
     - `primary_ingress` routes the application's normal hostname and
       custom domains through this long-running helper. It requires port.
@@ -93,6 +104,9 @@ class Sidecar:
     """Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty."""
     env: SidecarEnv | Unset = UNSET
     """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
+    env_secrets: SidecarEnvSecrets | Unset = UNSET
+    """Per-sidecar positive allowlist of same-named app secrets, resolved at wake in the deployment scope. Values
+    refresh on restart; sidecars do not inherit main secrets."""
     port: int | Unset = UNSET
     """Listen port. 0 = absent / fall back to image default."""
     primary_ingress: bool | Unset = False
@@ -149,6 +163,10 @@ class Sidecar:
         if not isinstance(self.env, Unset):
             env = self.env.to_dict()
 
+        env_secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.env_secrets, Unset):
+            env_secrets = self.env_secrets.to_dict()
+
         port = self.port
 
         primary_ingress = self.primary_ingress
@@ -202,6 +220,8 @@ class Sidecar:
             field_dict["cmd"] = cmd
         if env is not UNSET:
             field_dict["env"] = env
+        if env_secrets is not UNSET:
+            field_dict["env_secrets"] = env_secrets
         if port is not UNSET:
             field_dict["port"] = port
         if primary_ingress is not UNSET:
@@ -230,6 +250,7 @@ class Sidecar:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sidecar_env import SidecarEnv
+        from ..models.sidecar_env_secrets import SidecarEnvSecrets
         from ..models.sidecar_probe import SidecarProbe
         from ..models.workload_dependency import WorkloadDependency
 
@@ -255,6 +276,13 @@ class Sidecar:
             env = UNSET
         else:
             env = SidecarEnv.from_dict(_env)
+
+        _env_secrets = d.pop("env_secrets", UNSET)
+        env_secrets: SidecarEnvSecrets | Unset
+        if isinstance(_env_secrets, Unset):
+            env_secrets = UNSET
+        else:
+            env_secrets = SidecarEnvSecrets.from_dict(_env_secrets)
 
         port = d.pop("port", UNSET)
 
@@ -317,6 +345,7 @@ class Sidecar:
             preset=preset,
             cmd=cmd,
             env=env,
+            env_secrets=env_secrets,
             port=port,
             primary_ingress=primary_ingress,
             ram_mb=ram_mb,

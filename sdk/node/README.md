@@ -18,8 +18,10 @@
 
 ## Requirements
 
-- Node ≥ 22.10 (uses `--experimental-strip-types` at dev-time and the
-  stable global `fetch` at runtime).
+- Node ≥ 22.10 for the Node SDK entry point (uses
+  `--experimental-strip-types` at dev-time and global `fetch` at runtime).
+- The browser subpath uses the standard Fetch API and has no Node-only runtime
+  imports.
 - npm ≥ 10 (or `pnpm`/`yarn` compatible).
 
 ## Install
@@ -73,6 +75,14 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 `tx_id` for support tickets.
 
 ## Supported surface
+
+Server-side Node services can also use the hand-written
+`createServiceCallerVerifier` helper to verify Gregale's incoming internal
+service-call assertions. It uses the platform public JWKS endpoint and Node's
+built-in Ed25519 support. See [the networking guide](../../docs/networking.md#verifying-the-caller-preview)
+for setup, rollout requirements, and an HTTP handler example. Verification
+authenticates the caller but does not replace the target's caller allowlist or
+business authorization.
 
 Every operation in `api/openapi.yaml` is reachable through the
 generated services. The canonical mapping:
@@ -132,6 +142,98 @@ The `client.setIdempotencyKey` API is the only public stable-key wire-in
 in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
 docs customers request it) would layer on top without breaking the
 existing contract.
+
+## Project release context
+
+Capture the release selected for an inbound Gregale request and use the
+wrapped fetch for outbound managed service calls. The helper forwards only
+`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+`X-Gregale-Revision` header on that hop:
+
+```ts
+import { createGregaleFetch, withGregaleRequestContext } from '@gregale/sdk-node';
+
+const serviceFetch = createGregaleFetch();
+
+async function checkout(request: Request) {
+  return withGregaleRequestContext(request.headers, async () => {
+    return serviceFetch('http://billing.svc.gregale:10080/checkout', { method: 'POST' });
+  });
+}
+```
+
+The async context is isolated between concurrent handlers. Use it only around
+work caused by that inbound request; detached background jobs should capture
+the release explicitly when they are enqueued.
+
+### Browser SPA release pinning
+
+For an SSR-rendered document, put the release selected on the inbound page
+request into the HTML before sending it. Gregale has already resolved the
+active release and forwarded it to the app as `X-Gregale-Release`:
+
+```ts
+import { gregaleReleaseMetaTag } from '@gregale/sdk-node';
+
+function renderPage(request: Request): Response {
+  const releaseMeta = gregaleReleaseMetaTag(request.headers);
+  const html = `<!doctype html>
+<html>
+  <head>${releaseMeta}</head>
+  <body><div id="app"></div><script type="module" src="/app.js"></script></body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+```
+
+The helper emits nothing when the request has no valid release ID, and only
+emits the UUID form accepted by the gateway's release-pin API. Since this
+value is request-specific, shared caches for rendered HTML must be disabled or
+keyed by `X-Gregale-Release`.
+
+Browser clients can use the browser-safe fetch adapter without importing the
+Node-only SDK entry point:
+
+```ts
+import { createGregaleBrowserFetch } from '@gregale/sdk-node/browser';
+
+const releaseFromBootstrap = document
+  .querySelector('meta[name="gregale-release"]')
+  ?.getAttribute('content') ?? undefined;
+const gregale = createGregaleBrowserFetch({
+  managedOrigins: ['https://api.example.com'],
+  // Prefer the release that served this app when it is available.
+  initialRelease: releaseFromBootstrap,
+});
+
+const response = await gregale.fetch('https://api.example.com/v1/checkout', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ cartId: 'cart-123' }),
+});
+```
+
+The adapter adds `X-Gregale-Release` only to configured Gregale origins,
+captures it from the first eligible response when no initial release was
+provided, and pins later calls from that adapter instance. It serializes
+concurrent unpinned startup calls while discovering the release. The
+discovery request itself follows the active release, so inject `initialRelease`
+from the HTML/SSR/bootstrap response when the API must match the exact release
+that served the client. State is in-memory per adapter instance; create a new
+instance for a new client session. A 410 expired-release response is returned
+unchanged and is never retried against the active release. Call `clearRelease()`
+only when the application intentionally wants to start a new release context.
+
+For cross-origin APIs, configure CORS to expose `X-Gregale-Release` and allow
+it as a request header. The default CORS policy already exposes both release
+and revision response headers.
+
+This SSR bootstrap binds the browser to the release that served its document.
+A static HTML file served without request-time rendering cannot read the
+navigation response headers from JavaScript; it must provide a release-specific
+bootstrap value during publishing, or use a dynamic document/bootstrap route.
+Without a seeded value, the adapter can only learn the active release from its
+first API response and pin subsequent calls.
 
 ## Execution streaming
 

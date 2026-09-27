@@ -183,6 +183,28 @@ func TestOpsMetrics_BuildCacheOutcomeClosedSet(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_CanaryCircuitBreakerEventsAreClosed(t *testing.T) {
+	m := wire.NewOpsMetrics("meterd")
+	m.CanaryProgressionCircuitBreakerTotal("abort_5xx").Inc()
+	if counter := m.CanaryProgressionCircuitBreakerTotal("customer-controlled-event"); counter != nil {
+		counter.Inc()
+	}
+
+	body := render(t, m)
+	for _, want := range []string{
+		`meterd_canary_progression_circuit_breaker_total{event="abort_5xx"} 1`,
+		`meterd_canary_progression_circuit_breaker_total{event="abort_dependency_errors"} 0`,
+		`meterd_canary_progression_circuit_breaker_total{event="hold_insufficient_samples"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing circuit-breaker metric line %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "customer-controlled-event") {
+		t.Errorf("unexpected unbounded circuit-breaker label in:\n%s", body)
+	}
+}
+
 func TestOpsMetrics_BuilderWarmRestoreClosedSet(t *testing.T) {
 	m := wire.NewOpsMetrics("builderd")
 	m.ObserveBuilderWarmRestore("hit")

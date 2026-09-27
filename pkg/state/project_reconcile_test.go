@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,6 +52,97 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 	}
 	if len(crons) != 1 || crons[0].Schedule != "*/5 * * * *" {
 		t.Fatalf("cron mutation leaked after rollback: %#v", crons)
+	}
+}
+
+func TestTargetCallerDenyAllSurvivesManifestRoundTrip(t *testing.T) {
+	empty := []string{}
+	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallers: &empty})
+	if manifest.IsZero() {
+		t.Fatal("deny-all manifest must not be considered empty")
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AppManifest
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.AllowedServiceCallers == nil || len(*decoded.AllowedServiceCallers) != 0 {
+		t.Fatalf("deny-all policy lost across JSON round-trip: %s", encoded)
+	}
+}
+
+// adr: 099 — project reconciliation leaves independently managed command crons intact.
+func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	acct, err := store.CreateAccount(ctx, "project-command-cron@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "command-cron", ScanSource: ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	commandCron, err := store.CreateCronWithOptions(ctx, app.ID, "0 2 * * *", "/", true, CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions(command): %v", err)
+	}
+	if _, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/old", true); err != nil {
+		t.Fatalf("CreateCron(http): %v", err)
+	}
+
+	_, err = store.ApplyProjectReconcile(ctx, project, nil, []ProjectReconcileCron{{
+		WorkloadName: "api", Schedule: "*/10 * * * *", Path: "/new", Enabled: true,
+	}}, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
+	if err != nil {
+		t.Fatalf("ApplyProjectReconcile: %v", err)
+	}
+	crons, err := store.ListCronsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListCronsForApp: %v", err)
+	}
+	if len(crons) != 2 {
+		t.Fatalf("crons after HTTP reconciliation = %#v; want command cron plus desired HTTP cron", crons)
+	}
+	foundCommand, foundHTTP := false, false
+	for _, cron := range crons {
+		if cron.ID == commandCron.ID && len(cron.Command) == 1 && cron.Command[0] == "bin/maintenance" {
+			foundCommand = true
+		}
+		if cron.Schedule == "*/10 * * * *" && cron.Path == "/new" && len(cron.Command) == 0 {
+			foundHTTP = true
+		}
+	}
+	if !foundCommand || !foundHTTP {
+		t.Fatalf("crons after reconciliation lost an independently-managed command or desired HTTP cron: %#v", crons)
+	}
+}
+
+func TestTargetCallerScopesSurviveManifestRoundTrip(t *testing.T) {
+	scopes := api.ServiceCallerScopes{}
+	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallScopes: &scopes})
+	if manifest.IsZero() {
+		t.Fatal("deny-all scope manifest must not be considered empty")
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AppManifest
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.AllowedServiceCallScopes == nil || len(*decoded.AllowedServiceCallScopes) != 0 {
+		t.Fatalf("deny-all caller scopes lost across JSON round-trip: %s", encoded)
 	}
 }
 
@@ -115,8 +207,9 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	existing := AppManifest{
 		Env: map[string]string{
-			"CUSTOM":                          "kept",
-			"GREGALE_SERVICE_OLD_SERVICE_URL": "http://old-service.svc.gregale:10080",
+			"CUSTOM":                                "kept",
+			"GREGALE_SERVICE_OLD_SERVICE_URL":       "http://old-service.svc.gregale:10080",
+			"GREGALE_SERVICE_OLD_SERVICE_HTTPS_URL": "https://old-service.internal",
 		},
 		ServiceBindings: []api.AppServiceBinding{{
 			Binding: "GREGALE_SERVICE_OLD_SERVICE_URL",
@@ -125,26 +218,35 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 	desired := AppManifest{
 		Env: map[string]string{
-			"GREGALE_SERVICE_API_URL": "http://api.svc.gregale:10080",
+			"GREGALE_SERVICE_API_URL":       "https://api.internal",
+			"GREGALE_SERVICE_API_HTTPS_URL": "https://api.internal",
 		},
 		ServiceBindings: []api.AppServiceBinding{{
 			Binding: "GREGALE_SERVICE_API_URL",
 			Service: "api",
 		}},
-		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindingPolicy:    api.ServiceBindingPolicyDeclared,
+		ServiceBindingTransport: api.ServiceBindingTransportHTTPS,
 	}
 
 	got := mergeProjectManagedManifest(existing, desired)
-	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] == "" {
+	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] != "https://api.internal" ||
+		got.Env["GREGALE_SERVICE_API_HTTPS_URL"] != "https://api.internal" {
 		t.Fatalf("merged env = %#v, want custom env and current service binding", got.Env)
 	}
 	if _, ok := got.Env["GREGALE_SERVICE_OLD_SERVICE_URL"]; ok {
 		t.Fatalf("merged env = %#v, stale service binding was retained", got.Env)
+	}
+	if _, ok := got.Env["GREGALE_SERVICE_OLD_SERVICE_HTTPS_URL"]; ok {
+		t.Fatalf("merged env = %#v, stale HTTPS service binding was retained", got.Env)
 	}
 	if len(got.ServiceBindings) != 1 || got.ServiceBindings[0] != desired.ServiceBindings[0] {
 		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, desired.ServiceBindings)
 	}
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
+	}
+	if got.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service binding transport = %q, want https", got.ServiceBindingTransport)
 	}
 }

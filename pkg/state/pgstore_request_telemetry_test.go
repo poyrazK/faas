@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -172,6 +173,74 @@ func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *te
 	})
 	if err != nil || len(filtered) != 1 || filtered[0].Count != 3 {
 		t.Fatalf("filtered tenant activity = %+v, err=%v; want one matching 503 row", filtered, err)
+	}
+}
+
+func TestPgStoreRequestTelemetry_AnalyticsByDeploymentCPUIsRequestWeighted(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID := uuid.NewString()
+	appID := uuid.NewString()
+	olderDeploymentID := uuid.NewString()
+	newerDeploymentID := uuid.NewString()
+	now := time.Now().UTC().Truncate(time.Second)
+	createdAt := now.Format(time.RFC3339Nano)
+
+	rows := []struct {
+		deploymentID string
+		createdAt    string
+		cpuMS        int32
+		count        int32
+		available    bool
+	}{
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 10, count: 2, available: true},
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 20, count: 3, available: true},
+		{deploymentID: olderDeploymentID, createdAt: createdAt, cpuMS: 99, count: 100, available: false},
+		{deploymentID: newerDeploymentID, createdAt: now.Add(time.Minute).Format(time.RFC3339Nano), cpuMS: 20, count: 4, available: true},
+	}
+	for i, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, row.deploymentID), Valid: true},
+			Route:        "GET /cpu", Method: "GET", Status: 200, LatencyMs: 10,
+			ReceivedAt: pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:      row.count, UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			CommitSha: row.deploymentID, DeploymentCreatedAt: row.createdAt,
+			GuestCpuTimeMs: row.cpuMS, GuestResourceUsageAvailable: row.available,
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry row %d: %v", i, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+		AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Minute * 2), Valid: true},
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("RequestTelemetryAnalyticsByDeployment: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d deployments, want 2", len(got))
+	}
+	byID := make(map[string]sqlc.RequestTelemetryAnalyticsByDeploymentRow, len(got))
+	for _, row := range got {
+		byID[row.DeploymentID] = row
+	}
+	older := byID[olderDeploymentID]
+	if older.Requests != 105 || older.GuestCpuMeasuredRequests != 5 || older.GuestCpuAvgMs != 16 {
+		t.Fatalf("older deployment aggregate = %+v, want 105 requests, 5 CPU samples, 16ms weighted mean", older)
+	}
+	newer := byID[newerDeploymentID]
+	if newer.Requests != 4 || newer.GuestCpuMeasuredRequests != 4 || newer.GuestCpuAvgMs != 20 {
+		t.Fatalf("newer deployment aggregate = %+v, want 4 requests, 4 CPU samples, 20ms mean", newer)
+	}
+	for _, row := range got {
+		if row.TotalRequests != 109 {
+			t.Fatalf("total_requests = %d, want 109", row.TotalRequests)
+		}
 	}
 }
 
@@ -589,6 +658,64 @@ func TestPgStoreRequestTelemetry_CHECKRejection(t *testing.T) {
 	// (the closed-enum CHECK at migration 00427 line 103).
 	if !strings.Contains(pgErr.ConstraintName, "method") {
 		t.Errorf("constraint name = %q, expected substring 'method'", pgErr.ConstraintName)
+	}
+}
+
+func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx)
+	now := time.Now().UTC()
+	instance, err := store.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 128, resolveDefaultLocal(t, ctx, store), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := store.AppendUsage(ctx, accountID, appID, instance.ID, now.Truncate(time.Minute), 0, 12, 500_000, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	rows := []struct {
+		status   int32
+		latency  int32
+		coldBoot bool
+		count    int32
+	}{
+		{status: 200, latency: 10, count: 9},
+		{status: 500, latency: 100, coldBoot: true, count: 2},
+		{status: 200, latency: 200, coldBoot: true, count: 2},
+		{status: 200, latency: 300, count: 1},
+	}
+	for i, sample := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /breaker-summary",
+			Method:       "GET",
+			Status:       sample.status,
+			LatencyMs:    sample.latency,
+			ColdBoot:     sample.coldBoot,
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        sample.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("Insert sample %d: %v", i, err)
+		}
+	}
+
+	requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := store.RequestTelemetryCircuitBreakerSummary(
+		ctx, appID, deploymentID, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryCircuitBreakerSummary: %v", err)
+	}
+	if requests != 14 || serverErrors != 2 || p95 != 300 {
+		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 14/2/300", requests, serverErrors, p95)
+	}
+	if coldBootRequests != 4 || coldBootP95 != 200 {
+		t.Errorf("cold-boot summary = requests:%d p95:%g, want 4/200", coldBootRequests, coldBootP95)
+	}
+	if cpuUsec != 500_000 || cpuRequests != 12 {
+		t.Errorf("CPU/request summary = cpu_usec:%d requests:%d, want 500000/12", cpuUsec, cpuRequests)
 	}
 }
 

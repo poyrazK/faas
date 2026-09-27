@@ -44,12 +44,22 @@ type OutboundIntegrationUsage struct {
 	ResetsAt          time.Time
 }
 
+// OutboundBindingUsage is the UTC-day request usage and optional cap for one
+// app-to-integration binding. It counts calls granted by outbound admission.
+type OutboundBindingUsage struct {
+	DailyRequestCount int64
+	DailyRequestLimit *int64
+	UsageDate         string
+	ResetsAt          time.Time
+}
+
 type OutboundAppBinding struct {
 	OutboundIntegrationOffer
-	AppID             string
-	RouteMethods      []string
-	RoutePathPrefixes []string
-	CreatedAt         time.Time
+	AppID                    string
+	BindingDailyRequestLimit *int64
+	RouteMethods             []string
+	RoutePathPrefixes        []string
+	CreatedAt                time.Time
 }
 
 // OutboundBindingStore owns customer-created integration lifecycle, app
@@ -66,6 +76,8 @@ type OutboundBindingStore interface {
 	BindOutboundIntegration(context.Context, string, string, string) (OutboundAppBinding, error)
 	UnbindOutboundIntegration(context.Context, string, string, string) error
 	UpdateOutboundBindingPolicy(context.Context, string, string, string, []string, []string) error
+	SetOutboundBindingDailyRequestLimit(context.Context, string, string, string, *int64) error
+	GetOutboundBindingUsage(context.Context, string, string, string) (OutboundBindingUsage, error)
 	SetOutboundCredential(context.Context, string, string, []byte) error
 	DeleteOutboundCredential(context.Context, string, string) error
 }

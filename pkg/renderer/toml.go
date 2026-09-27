@@ -211,6 +211,12 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return boolConfigValue(dc.RouteMetricsEnabled, true), nil
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
+	case "service_proxy_https_listen":
+		return dc.ServiceProxyHTTPSListen, nil
+	case "service_proxy_ca_path":
+		return dc.ServiceProxyCAPath, nil
+	case "service_proxy_tls_cert_path", "service_proxy_tls_key_path", "service_proxy_tls_ca_path":
+		return tlsMaterialValue(dc.ServiceProxyTLS, key, "service_proxy_tls_"), nil
 	case "schedd_tls_cert_path", "schedd_tls_key_path", "schedd_tls_ca_path":
 		return tlsMaterialValue(dc.ScheddTLS, key, "schedd_tls_"), nil
 	case "egress_tls_cert_path", "egress_tls_key_path", "egress_tls_ca_path":

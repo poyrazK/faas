@@ -28,13 +28,19 @@ from ..models.create_app_request_restart_policy import (
     check_create_app_request_restart_policy,
 )
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
+from ..models.create_app_request_service_binding_policy import (
+    CreateAppRequestServiceBindingPolicy,
+    check_create_app_request_service_binding_policy,
+)
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
 from ..models.create_app_request_visibility import CreateAppRequestVisibility, check_create_app_request_visibility
 from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
+    from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -54,8 +60,23 @@ class CreateAppRequest:
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
-    """Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro
-    and Scale."""
+    """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
+    normalized to lowercase, sorted, and deduplicated."""
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
+    service_binding_targets: list[str] | Unset = UNSET
+    """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
+    derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
+    canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
+    service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
+    """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
+    service_binding_targets."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -124,6 +145,8 @@ class CreateAppRequest:
     version_affinity_managed_cookie: bool | Unset = False
     """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
     version_affinity_cookie; omitted uses false."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -174,6 +197,26 @@ class CreateAppRequest:
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
+        service_binding_targets: list[str] | Unset = UNSET
+        if not isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = self.service_binding_targets
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -260,6 +303,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -299,6 +344,16 @@ class CreateAppRequest:
             field_dict["type"] = type_
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -353,6 +408,8 @@ class CreateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -383,6 +440,7 @@ class CreateAppRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -403,6 +461,31 @@ class CreateAppRequest:
             visibility = UNSET
         else:
             visibility = check_create_app_request_visibility(_visibility)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
+
+        service_binding_targets = cast(list[str], d.pop("service_binding_targets", UNSET))
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_create_app_request_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -524,6 +607,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
 
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -562,6 +647,11 @@ class CreateAppRequest:
             slug=slug,
             type_=type_,
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            service_binding_targets=service_binding_targets,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,
@@ -589,6 +679,7 @@ class CreateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

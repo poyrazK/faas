@@ -372,6 +372,55 @@ func TestInvocationListForAccount_OrdersDescAndCaps(t *testing.T) {
 	}
 }
 
+func TestListAsyncInvocationsForAccountFiltersSourceAndPages(t *testing.T) {
+	m, appID, acctID := seedInvocationApp(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	var asyncIDs []string
+	for i, source := range []InvocationSource{InvocationAsyncInvoke, InvocationQueue, InvocationAsyncInvoke} {
+		inv, err := m.EnqueueInvocation(ctx, Invocation{
+			AppID: appID, AccountID: acctID, Source: source,
+			CreatedAt: now.Add(time.Duration(i) * time.Second), DueAt: now,
+		})
+		if err != nil {
+			t.Fatalf("EnqueueInvocation(%s): %v", source, err)
+		}
+		if source == InvocationAsyncInvoke {
+			asyncIDs = append(asyncIDs, inv.ID)
+		}
+	}
+	other, err := m.CreateAccount(ctx, "other-async@localhost", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount other: %v", err)
+	}
+	otherApp, err := m.CreateApp(ctx, App{ID: newID(), Slug: "other-async-app", AccountID: other.ID, RAMMB: 256, Runtime: "node22"})
+	if err != nil {
+		t.Fatalf("CreateApp other: %v", err)
+	}
+	if _, err := m.EnqueueInvocation(ctx, Invocation{
+		AppID: otherApp.ID, AccountID: other.ID, Source: InvocationAsyncInvoke,
+		CreatedAt: now.Add(10 * time.Second), DueAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation other account: %v", err)
+	}
+
+	first, err := m.ListAsyncInvocationsForAccount(ctx, acctID, 1, "")
+	if err != nil || len(first) != 1 || first[0].ID != asyncIDs[1] {
+		t.Fatalf("first async page = (%+v, %v), want newest account row %s", first, err, asyncIDs[1])
+	}
+	second, err := m.ListAsyncInvocationsForAccount(ctx, acctID, 1, first[0].ID)
+	if err != nil || len(second) != 1 || second[0].ID != asyncIDs[0] {
+		t.Fatalf("second async page = (%+v, %v), want older async row %s", second, err, asyncIDs[0])
+	}
+	if second[0].Source != InvocationAsyncInvoke || second[0].AccountID != acctID {
+		t.Fatalf("second page leaked a non-async or foreign row: %+v", second[0])
+	}
+	last, err := m.ListAsyncInvocationsForAccount(ctx, acctID, 1, second[0].ID)
+	if err != nil || len(last) != 0 {
+		t.Fatalf("last async page = (%+v, %v), want empty", last, err)
+	}
+}
+
 func TestListDelayedTasksForAppFiltersSourceAndPages(t *testing.T) {
 	m, appID, acctID := seedInvocationApp(t)
 	ctx := context.Background()

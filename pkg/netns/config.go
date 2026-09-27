@@ -26,6 +26,7 @@ const (
 	TapARPRetransMs         = 50
 	AppPort                 = 8080         // the :8080 contract (spec §2)
 	ServiceProxyPort        = 10080        // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
 	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
 	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
@@ -50,6 +51,12 @@ const (
 // every per-VM default-route points at the right bridge IP on this
 // host (the .1 of the operator-supplied /16).
 var DefaultHostBridgeIP = netip.MustParseAddr("10.100.0.1")
+
+// DefaultServiceProxyHTTPS is seeded by vmmd before any network is prepared.
+// The port is never admitted when guest trust material has not been configured.
+var DefaultServiceProxyHTTPS bool
+
+func SetDefaultServiceProxyHTTPS(enabled bool) { DefaultServiceProxyHTTPS = enabled }
 
 // SetDefaultHostBridgeIP is the boot-time setter for the per-host
 // bridge IP. Mirrors the pattern of pkg/fcvm.SetHostIPBase: callers
@@ -93,10 +100,11 @@ type Config struct {
 	// When set, SetupCommands assigns tap ownership to that UID so the
 	// unprivileged Firecracker process can attach to the existing device.
 	// Zero preserves the command shape used by legacy direct callers/tests.
-	TapUID       int
-	HostBridgeIP netip.Addr // root-ns bridge IP the netns default-routes through (HostBridgeCIDR/.1). Defaults to DefaultHostBridgeIP (10.100.0.1); multi-host deployments override per-host.
-	HostBits     int        // prefix length for HostIP (16)
-	EgressMbit   int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	TapUID            int
+	HostBridgeIP      netip.Addr // root-ns bridge IP the netns default-routes through (HostBridgeCIDR/.1). Defaults to DefaultHostBridgeIP (10.100.0.1); multi-host deployments override per-host.
+	ServiceProxyHTTPS bool       // admit :443 only when vmmd stages the private service CA
+	HostBits          int        // prefix length for HostIP (16)
+	EgressMbit        int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
 	// forward chain. Defaults to NewDefaultDenySet() when zero
 	// (pkg/fcvm/manager.go::Wake does not set it; the renderer falls
@@ -191,14 +199,15 @@ func NewConfig(instance, netnsName, vethHost, vethPeer string, hostIP netip.Addr
 // commands silently fail when the route points at an invalid gateway.
 func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP, bridgeIP netip.Addr) Config {
 	return Config{
-		Instance:     instance,
-		Netns:        netnsName,
-		Tap:          "tap0",
-		VethHost:     vethHost,
-		VethPeer:     vethPeer,
-		HostIP:       hostIP,
-		HostBridgeIP: bridgeIP,
-		HostBits:     16,
+		Instance:          instance,
+		Netns:             netnsName,
+		Tap:               "tap0",
+		VethHost:          vethHost,
+		VethPeer:          vethPeer,
+		HostIP:            hostIP,
+		HostBridgeIP:      bridgeIP,
+		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
+		HostBits:          16,
 	}
 }
 
@@ -513,6 +522,10 @@ func (c Config) NftCommands() [][]string {
 	if c.HostBridgeIP.IsValid() {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		if c.ServiceProxyHTTPS {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
+		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,

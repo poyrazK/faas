@@ -92,12 +92,12 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		rate, burst, maxInFlight, timeoutMS = policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true
+		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint
 		  FROM outbound_integration_apps attachment
 		  JOIN apps app ON app.id = attachment.app_id
 		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
 		UNION ALL
-		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false
+		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false, binding.daily_request_limit
 		  FROM outbound_app_bindings binding
 		  JOIN apps app ON app.id = binding.app_id
 		 WHERE binding.integration_id = $1 AND binding.account_id = $3
@@ -109,30 +109,47 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	defer rows.Close()
 	apps := make(map[string]struct{})
 	operatorApps := make(map[string]struct{})
+	bindingApps := make(map[string]struct{})
 	customerRoutes := make(map[string]RoutePolicy)
+	bindingDailyRequestLimits := make(map[string]*int64)
 	for rows.Next() {
 		var appID string
 		var methods, paths []string
 		var operator bool
-		if err := rows.Scan(&appID, &methods, &paths, &operator); err != nil {
+		var bindingDailyRequestLimit *int64
+		if err := rows.Scan(&appID, &methods, &paths, &operator, &bindingDailyRequestLimit); err != nil {
 			return Integration{}, err
 		}
 		apps[appID] = struct{}{}
 		if operator {
 			operatorApps[appID] = struct{}{}
-		} else if methods != nil || paths != nil {
-			customerRoutes[appID] = RoutePolicy{AllowedMethods: methods, AllowedPathPrefixes: paths}
+		} else {
+			bindingApps[appID] = struct{}{}
+			if methods != nil || paths != nil {
+				customerRoutes[appID] = RoutePolicy{AllowedMethods: methods, AllowedPathPrefixes: paths}
+			}
+			if bindingDailyRequestLimit != nil && *bindingDailyRequestLimit > 0 {
+				maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+				if !ok {
+					return Integration{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+				}
+				if *bindingDailyRequestLimit > maximum {
+					*bindingDailyRequestLimit = maximum
+				}
+				bindingDailyRequestLimits[appID] = bindingDailyRequestLimit
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return Integration{}, err
 	}
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
-		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
+		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
-		DailyRequestLimit: dailyRequestLimit,
-		RequestTimeout:    time.Duration(timeoutMS) * time.Millisecond,
-		ProviderAuthMode:  providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
+		DailyRequestLimit:         dailyRequestLimit,
+		BindingDailyRequestLimits: bindingDailyRequestLimits,
+		RequestTimeout:            time.Duration(timeoutMS) * time.Millisecond,
+		ProviderAuthMode:          providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err

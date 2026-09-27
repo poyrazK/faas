@@ -94,14 +94,12 @@ def sync_detailed(
 ) -> Response[FireCronResponse | Problem]:
     """Manually fire a cron now (bypasses the schedule boundary).
 
-     Issue #791 PR-C / ADR-090. Inserts a pending row into
+     Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery and calls
-    `RunCronNow` in its own process. The response is the
-    immediate 202 with the request id; the customer's
-    `GET /v1/crons/{id}/runs` will surface the matching
-    `cron.fired.manually` audit row once schedd stamps the
-    terminal state.
+    schedd claims the row on the next LISTEN delivery. HTTP crons
+    dispatch through `RunCronNow`; command crons enqueue a task
+    pinned to the current live deployment. Poll the request to
+    obtain its invocation id or command task id.
 
     Idempotent: a replay with the same Idempotency-Key returns
     the stored 202 without enqueuing a second fire.
@@ -109,7 +107,10 @@ def sync_detailed(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. For a command cron, its saved command, timeout,
+    output limit, retry policy, skip_if_running behavior, and
+    current live deployment are used; no ad-hoc command may be
+    supplied here.
 
     Args:
         id (str):
@@ -143,14 +144,12 @@ def sync(
 ) -> FireCronResponse | Problem | None:
     """Manually fire a cron now (bypasses the schedule boundary).
 
-     Issue #791 PR-C / ADR-090. Inserts a pending row into
+     Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery and calls
-    `RunCronNow` in its own process. The response is the
-    immediate 202 with the request id; the customer's
-    `GET /v1/crons/{id}/runs` will surface the matching
-    `cron.fired.manually` audit row once schedd stamps the
-    terminal state.
+    schedd claims the row on the next LISTEN delivery. HTTP crons
+    dispatch through `RunCronNow`; command crons enqueue a task
+    pinned to the current live deployment. Poll the request to
+    obtain its invocation id or command task id.
 
     Idempotent: a replay with the same Idempotency-Key returns
     the stored 202 without enqueuing a second fire.
@@ -158,7 +157,10 @@ def sync(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. For a command cron, its saved command, timeout,
+    output limit, retry policy, skip_if_running behavior, and
+    current live deployment are used; no ad-hoc command may be
+    supplied here.
 
     Args:
         id (str):
@@ -187,14 +189,12 @@ async def asyncio_detailed(
 ) -> Response[FireCronResponse | Problem]:
     """Manually fire a cron now (bypasses the schedule boundary).
 
-     Issue #791 PR-C / ADR-090. Inserts a pending row into
+     Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery and calls
-    `RunCronNow` in its own process. The response is the
-    immediate 202 with the request id; the customer's
-    `GET /v1/crons/{id}/runs` will surface the matching
-    `cron.fired.manually` audit row once schedd stamps the
-    terminal state.
+    schedd claims the row on the next LISTEN delivery. HTTP crons
+    dispatch through `RunCronNow`; command crons enqueue a task
+    pinned to the current live deployment. Poll the request to
+    obtain its invocation id or command task id.
 
     Idempotent: a replay with the same Idempotency-Key returns
     the stored 202 without enqueuing a second fire.
@@ -202,7 +202,10 @@ async def asyncio_detailed(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. For a command cron, its saved command, timeout,
+    output limit, retry policy, skip_if_running behavior, and
+    current live deployment are used; no ad-hoc command may be
+    supplied here.
 
     Args:
         id (str):
@@ -234,14 +237,12 @@ async def asyncio(
 ) -> FireCronResponse | Problem | None:
     """Manually fire a cron now (bypasses the schedule boundary).
 
-     Issue #791 PR-C / ADR-090. Inserts a pending row into
+     Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery and calls
-    `RunCronNow` in its own process. The response is the
-    immediate 202 with the request id; the customer's
-    `GET /v1/crons/{id}/runs` will surface the matching
-    `cron.fired.manually` audit row once schedd stamps the
-    terminal state.
+    schedd claims the row on the next LISTEN delivery. HTTP crons
+    dispatch through `RunCronNow`; command crons enqueue a task
+    pinned to the current live deployment. Poll the request to
+    obtain its invocation id or command task id.
 
     Idempotent: a replay with the same Idempotency-Key returns
     the stored 202 without enqueuing a second fire.
@@ -249,7 +250,10 @@ async def asyncio(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. For a command cron, its saved command, timeout,
+    output limit, retry policy, skip_if_running behavior, and
+    current live deployment are used; no ad-hoc command may be
+    supplied here.
 
     Args:
         id (str):

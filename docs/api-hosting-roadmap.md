@@ -2,7 +2,7 @@
 
 **Status:** working product and engineering plan
 
-**Date:** 2026-09-06
+**Date:** 2026-09-26
 
 **Audience:** product, developer experience, platform, runtime, edge, data, and
 operations contributors
@@ -126,6 +126,34 @@ communicates.
 | Async | Cron, delayed tasks, queues, triggers, jobs, workflows, `waitUntil`, and outbound webhooks | Reduce the vocabulary to a small set of resource bindings and ship end-to-end examples and reliability gates |
 | Teams and automation | Scoped keys, organizations, audit, JSON output, SDKs, GitHub Action | Terraform/OpenTofu provider and an explicit safe contract for coding agents |
 | Fleet | Multi-node placement and migration work is in progress | Do not promise high availability or global placement until failure drills prove it |
+
+## Highest-priority release safety gap
+
+Gregale has canary traffic splitting, readiness checks, request telemetry,
+per-deployment OOM counters, and atomic rollout recovery. The missing product
+behavior is rollout-safety verification and productization: the first built-in
+circuit-breaker implementation is in the canary progression path, but it still
+needs staging drills before we promote it as the normal production deploy
+default.
+
+The intended default is for every production release to compare the candidate
+with the currently serving revision, hold when the sample is too small to
+judge, and atomically return traffic to the predecessor when the candidate
+clearly regresses. The first implementation slice covers 5xx rate,
+overall and cold-boot request p95 latency, CPU per request, and workload OOM
+kills, plus unsampled errors from Gregale-managed service-proxy dependencies
+during staged canaries. The dependency signal is attributed to the trusted
+caller instance's deployment and counts authorized managed-call 5xx outcomes,
+including route/wake failures, plus nonzero, missing, or malformed
+`grpc-status` trailers for native gRPC targets; arbitrary customer-owned
+outbound HTTP clients are not yet covered. The cold-boot
+comparison uses the gateway's full request latency for requests marked as a
+cold boot; it is not a standalone VM wake-time measurement. Broader dependency
+instrumentation and richer startup signals remain follow-up work because
+customer OTLP spans are sampled and slowest-span-truncated, not a safe
+deployment-scoped denominator for automatic aborts. Promote the behavior to the
+normal production deploy default after the rollback and low-traffic drills
+pass.
 
 Feature presence in a handler or schema is not availability. Every capability
 must have one maturity state: `internal`, `preview`, `beta`, or `ga`. The public
@@ -333,8 +361,9 @@ deploying, not a separate setup project.
    billed dimensions. Keep payload capture off by default and separately
    consented, redacted, size-bounded, and short-lived when enabled.
 3. Turn production deploys into a health-gated progression: preview -> smoke ->
-   canary -> full traffic. Automatically stop or roll back on bounded error,
-   latency, crash-loop, readiness, and schema-regression policies.
+   canary -> full traffic. This is the release-safety priority above:
+   automatically stop or roll back on bounded error, latency, crash-loop,
+   readiness, OOM, and schema-regression policies.
 4. Make rollback one command and one button, with a measured recovery result
    and an audit record. Never rebuild during rollback.
 5. Ship useful alert presets for availability, latency, error rate, OOM,

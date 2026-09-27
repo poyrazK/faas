@@ -148,7 +148,7 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 			_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", s+"/"+row.Key,
 				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
-					row.RuntimeReloadObservations))
+					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete))
 		}
 	}
 }
@@ -168,7 +168,7 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 		_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", scopeOrDefault(s.Scope)+"/"+s.Key,
 			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
-				s.RuntimeReloadObservations))
+				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete))
 	}
 }
 
@@ -179,7 +179,10 @@ func secretDeliveryLabel(status string) string {
 	return "delivery " + status
 }
 
-func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection, signal, instanceID string, observations []api.SecretRuntimeReloadObservation) string {
+func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection, signal, instanceID string, observations []api.SecretRuntimeReloadObservation, targetsComplete ...bool) string {
+	if len(targetsComplete) > 0 && targetsComplete[0] {
+		return secretRuntimeReloadTargetsLabel(currentVersion, observations)
+	}
 	if len(observations) > 0 {
 		current, stale, sent, queued, unchanged, failed := 0, 0, 0, 0, 0, 0
 		appApplied, appFailed, appAckStale := 0, 0, 0
@@ -259,6 +262,42 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 	if instanceID != "" {
 		label += " (" + instanceID + ")"
 	}
+	return label
+}
+
+func secretRuntimeReloadTargetsLabel(currentVersion int64, targets []api.SecretRuntimeReloadObservation) string {
+	eligible, disabled, unknown, reported, eligibleReported, current, appApplied, appFailed := 0, 0, 0, 0, 0, 0, 0, 0
+	for _, target := range targets {
+		switch target.ReloadSupport {
+		case "enabled":
+			eligible++
+		case "disabled":
+			disabled++
+		case "unknown":
+			unknown++
+		}
+		if !target.Reported {
+			continue
+		}
+		reported++
+		if target.ReloadSupport == "enabled" {
+			eligibleReported++
+		}
+		if target.Version == currentVersion {
+			current++
+		}
+		if target.ApplicationAckVersion == currentVersion && target.ApplicationAck == "applied" {
+			appApplied++
+		} else if target.ApplicationAckVersion == currentVersion && target.ApplicationAck == "failed" {
+			appFailed++
+		}
+	}
+	missing := eligible - eligibleReported
+	label := fmt.Sprintf("runtime status: %d active authorized (%d reload-enabled, %d reported, %d missing; %d current", len(targets), eligible, reported, missing, current)
+	if disabled > 0 || unknown > 0 {
+		label += fmt.Sprintf("; reload support: %d disabled, %d unknown", disabled, unknown)
+	}
+	label += fmt.Sprintf("; app ack: %d applied, %d failed)", appApplied, appFailed)
 	return label
 }
 
@@ -403,12 +442,21 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			}
 			flags = append(flags, a, args[i+1])
 			i++
+		case a == "--timeout" || a == "-timeout":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("%s requires a value", a)
+			}
+			flags = append(flags, a, args[i+1])
+			i++
 		case strings.HasPrefix(a, "--app=") || strings.HasPrefix(a, "-app=") ||
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
+			strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "-timeout=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
 			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||
 			a == "--restart" || a == "-restart" ||
-			strings.HasPrefix(a, "--restart=") || strings.HasPrefix(a, "-restart="):
+			strings.HasPrefix(a, "--restart=") || strings.HasPrefix(a, "-restart=") ||
+			a == "--wait-for-ack" || a == "-wait-for-ack" ||
+			strings.HasPrefix(a, "--wait-for-ack=") || strings.HasPrefix(a, "-wait-for-ack="):
 			flags = append(flags, a)
 		default:
 			pairs = append(pairs, a)

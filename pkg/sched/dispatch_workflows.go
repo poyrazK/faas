@@ -54,9 +54,13 @@ func (o *WorkflowOrchestrator) emitAudit(ctx context.Context, kind string, paylo
 	}
 }
 
-const workflowNoTimeoutWake = 100 * 365 * 24 * time.Hour
-
-var workflowTimeoutOutput = json.RawMessage(`{"timeout":true}`)
+func workflowTimedOutOutput(raw json.RawMessage) bool {
+	var value map[string]any
+	if json.Unmarshal(raw, &value) != nil || len(value) != 1 {
+		return false
+	}
+	return value["timeout"] == true
+}
 
 func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
 	if attempt < 1 {
@@ -76,14 +80,17 @@ func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
 	return delay
 }
 
-func workflowWaitDeadline(createdAt time.Time, timeout time.Duration) time.Time {
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
+// workflowStepIdempotencyKey identifies the logical step across all of its
+// handler retries. The attempt header remains separate for observability.
+func workflowStepIdempotencyKey(runID, stepName string) string {
+	return fmt.Sprintf("workflow/%s/%s", runID, stepName)
+}
+
+func workflowHTTPStatus(statusCode int, callErr error) *int {
+	if callErr != nil || statusCode < 100 || statusCode > 599 {
+		return nil
 	}
-	if timeout <= 0 {
-		return time.Now().UTC().Add(workflowNoTimeoutWake)
-	}
-	return createdAt.Add(timeout)
+	return &statusCode
 }
 
 // workflowStepPath resolves the target used by the HTTP wake executor.
@@ -124,7 +131,7 @@ func workflowTimeoutHandlerDecision(stepName string, specs []api.WorkflowStepSpe
 		}
 		switch step.Status {
 		case state.WorkflowStepStatusSucceeded:
-			if bytes.Equal(step.Output, workflowTimeoutOutput) {
+			if workflowTimedOutOutput(step.Output) {
 				triggered = true
 			}
 		case state.WorkflowStepStatusSkipped:
@@ -140,6 +147,104 @@ func workflowTimeoutHandlerDecision(stepName string, specs []api.WorkflowStepSpe
 		return true, false
 	}
 	return false, true
+}
+
+// workflowFailureHandlerDecision holds an on_failure target until its source
+// either fails terminally or succeeds. A source that succeeds (or is skipped)
+// makes the failure-only handler ineligible.
+func workflowFailureHandlerDecision(stepName string, specs []api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) (blocked, skip bool) {
+	referenced := false
+	waiting := false
+	triggered := false
+	for _, spec := range specs {
+		if spec.OnFailure != stepName {
+			continue
+		}
+		referenced = true
+		source, ok := steps[spec.Name]
+		if !ok {
+			waiting = true
+			continue
+		}
+		switch source.Status {
+		case state.WorkflowStepStatusFailed, state.WorkflowStepStatusDead:
+			triggered = true
+		case state.WorkflowStepStatusSucceeded, state.WorkflowStepStatusSkipped:
+			// A successful or skipped source cannot trigger recovery.
+		default:
+			waiting = true
+		}
+	}
+	if !referenced || triggered {
+		return false, false
+	}
+	if waiting {
+		return true, false
+	}
+	return false, true
+}
+
+func workflowFailureHandlerPending(specs []api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) bool {
+	for _, sourceSpec := range specs {
+		if sourceSpec.OnFailure == "" {
+			continue
+		}
+		source, sourceExists := steps[sourceSpec.Name]
+		if !sourceExists || (source.Status != state.WorkflowStepStatusFailed && source.Status != state.WorkflowStepStatusDead) {
+			continue
+		}
+		handler, handlerExists := steps[sourceSpec.OnFailure]
+		if handlerExists && (handler.Status == state.WorkflowStepStatusPending || handler.Status == state.WorkflowStepStatusRunning) {
+			return true
+		}
+	}
+	return false
+}
+
+func workflowFailureError(specs []api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) *string {
+	// A handler may appear before its source in manifest order. Prefer the
+	// routed source error so a failed compensation does not hide why it ran.
+	for _, spec := range specs {
+		if spec.OnFailure == "" {
+			continue
+		}
+		step, ok := steps[spec.Name]
+		if ok && (step.Status == state.WorkflowStepStatusFailed || step.Status == state.WorkflowStepStatusDead) && step.Error != nil {
+			message := *step.Error
+			return &message
+		}
+	}
+	for _, spec := range specs {
+		step, ok := steps[spec.Name]
+		if ok && (step.Status == state.WorkflowStepStatusFailed || step.Status == state.WorkflowStepStatusDead) && step.Error != nil {
+			message := *step.Error
+			return &message
+		}
+	}
+	return nil
+}
+
+func workflowFailureContextForHandler(handlerName string, specs []api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) (json.RawMessage, error) {
+	for _, sourceSpec := range specs {
+		if sourceSpec.OnFailure != handlerName {
+			continue
+		}
+		source, ok := steps[sourceSpec.Name]
+		if !ok || (source.Status != state.WorkflowStepStatusFailed && source.Status != state.WorkflowStepStatusDead) {
+			continue
+		}
+		message := ""
+		if source.Error != nil {
+			message = *source.Error
+		}
+		return json.Marshal(struct {
+			Step    string `json:"step"`
+			Status  string `json:"status"`
+			Attempt int    `json:"attempt"`
+			Message string `json:"message"`
+		}{Step: source.StepName, Status: source.Status, Attempt: source.Attempt, Message: message})
+	}
+	return nil, nil
 }
 
 // DispatchTick runs one iteration of claiming pending runs and advancing active ones.
@@ -267,8 +372,10 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		}
 	}
 
-	if hasDead {
-		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusDead, nil, nil); err != nil {
+	failureHandlerPending := workflowFailureHandlerPending(spec.Steps, stepMap)
+	failureMessage := workflowFailureError(spec.Steps, stepMap)
+	if hasDead && !failureHandlerPending {
+		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusDead, nil, failureMessage); err != nil {
 			return err
 		}
 		if o.metrics != nil {
@@ -277,8 +384,8 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		return nil
 	}
 
-	if hasFailed {
-		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+	if hasFailed && !failureHandlerPending {
+		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusFailed, nil, failureMessage); err != nil {
 			return err
 		}
 		if o.metrics != nil {
@@ -311,8 +418,9 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		return nil
 	}
 
-	// First revisit a due parked wait. This is the timeout path; normal event
-	// delivery marks the step succeeded before advancing the run.
+	// First revisit parked waits. A duration wait may complete here, while
+	// an event wait may take its timeout path. Event delivery normally marks
+	// the event step succeeded before advancing the run.
 	advancedAny := false
 	for _, s := range steps {
 		if s.Status != state.WorkflowStepStatusAwaitingEvent {
@@ -322,7 +430,7 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		if !exists {
 			continue
 		}
-		adv, err := o.executeStep(ctx, run, s, stepSpec)
+		adv, err := o.executeStep(ctx, run, s, stepSpec, stepMap, spec.Steps)
 		if err != nil {
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: resume wait error", "run_id", runID, "step", s.StepName, "err", err)
@@ -337,13 +445,17 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		if s.Status != state.WorkflowStepStatusPending {
 			continue
 		}
+		if s.NextRetryAt != nil && time.Now().UTC().Before(*s.NextRetryAt) {
+			continue
+		}
 
 		stepSpec, exists := specStepMap[s.StepName]
 		if !exists {
 			continue
 		}
-		blocked, skip := workflowTimeoutHandlerDecision(s.StepName, spec.Steps, stepMap)
-		if skip {
+		timeoutBlocked, timeoutSkip := workflowTimeoutHandlerDecision(s.StepName, spec.Steps, stepMap)
+		failureBlocked, failureSkip := workflowFailureHandlerDecision(s.StepName, spec.Steps, stepMap)
+		if timeoutSkip || failureSkip {
 			if err := o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusSkipped, s.Attempt, nil, nil); err != nil {
 				return err
 			}
@@ -351,7 +463,7 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 			advancedAny = true
 			continue
 		}
-		if blocked {
+		if timeoutBlocked || failureBlocked {
 			continue
 		}
 
@@ -359,10 +471,11 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		depFailed := false
 		for _, dep := range stepSpec.DependsOn {
 			depStep, ok := stepMap[dep]
-			if !ok || depStep.Status != state.WorkflowStepStatusSucceeded {
+			failureRouteDependency := ok && (depStep.Status == state.WorkflowStepStatusFailed || depStep.Status == state.WorkflowStepStatusDead) && specStepMap[dep].OnFailure == s.StepName
+			if !ok || (depStep.Status != state.WorkflowStepStatusSucceeded && !failureRouteDependency) {
 				depsMet = false
 			}
-			if ok && (depStep.Status == state.WorkflowStepStatusFailed || depStep.Status == state.WorkflowStepStatusDead) {
+			if ok && (depStep.Status == state.WorkflowStepStatusFailed || depStep.Status == state.WorkflowStepStatusDead) && !failureRouteDependency {
 				depFailed = true
 			}
 		}
@@ -382,7 +495,7 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		}
 
 		// Step is ready to execute!
-		adv, err := o.executeStep(ctx, run, s, stepSpec)
+		adv, err := o.executeStep(ctx, run, s, stepSpec, stepMap, spec.Steps)
 		if err != nil {
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: execute step error", "run_id", runID, "step", s.StepName, "err", err)
@@ -398,15 +511,193 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		// Recurse to see if downstream steps are unlocked
 		return o.AdvanceWorkflowRun(ctx, runID)
 	}
+	// Reconcile all parked waits and retry deadlines after this pass. This also
+	// corrects the run wake after an unrelated event caused an early dispatch.
+	if err := o.reconcileWorkflowWake(ctx, runID, spec); err != nil {
+		return err
+	}
 
 	return nil
 }
 
-func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec) (bool, error) {
-	// Case A: wait_for_event step
-	if spec.WaitForEvent != "" {
-		evt, err := o.store.FindMatchingEvent(ctx, run.ID, spec.WaitForEvent)
-		if err == nil && evt != nil {
+func (o *WorkflowOrchestrator) reconcileWorkflowWake(ctx context.Context, runID string, spec api.WorkflowSpec) error {
+	steps, err := o.store.GetWorkflowSteps(ctx, runID)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string]api.WorkflowStepSpec, len(spec.Steps))
+	for _, item := range spec.Steps {
+		byName[item.Name] = item
+	}
+	var earliest time.Time
+	nextStatus := ""
+	consider := func(due time.Time, status string) {
+		if due.IsZero() {
+			return
+		}
+		if earliest.IsZero() || due.Before(earliest) || (due.Equal(earliest) && status == state.WorkflowRunStatusPending) {
+			earliest = due
+			nextStatus = status
+		}
+	}
+	for _, step := range steps {
+		if step.Status == state.WorkflowStepStatusPending && step.NextRetryAt != nil {
+			consider(*step.NextRetryAt, state.WorkflowRunStatusPending)
+		}
+		if step.Status != state.WorkflowStepStatusAwaitingEvent || step.StartedAt == nil {
+			continue
+		}
+		item := byName[step.StepName]
+		var due time.Time
+		switch {
+		case item.WaitForCondition != nil && step.NextCheckAt != nil:
+			due = *step.NextCheckAt
+		case item.WaitForDuration > 0:
+			due = step.StartedAt.Add(item.WaitForDuration)
+		case item.WaitForEvent != "" || item.WaitForCallback:
+			due = step.StartedAt.Add(item.Timeout)
+		}
+		consider(due, state.WorkflowRunStatusAwaitingEvent)
+	}
+	if !earliest.IsZero() {
+		return o.store.SetWorkflowRunWake(ctx, runID, nextStatus, earliest)
+	}
+	return nil
+}
+
+func workflowStepInput(run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, steps map[string]*state.WorkflowStep, failureContext json.RawMessage) ([]byte, error) {
+	if step.Attempt > 0 && len(step.Input) > 0 {
+		if len(spec.Input) == 0 || !workflowJSONEqual(step.Input, run.Input) {
+			return append([]byte(nil), step.Input...), nil
+		}
+		// An older scheduler persisted run.Input on every step. Re-render only
+		// that recognizable legacy case; inputs persisted by this version are
+		// returned above and never re-evaluated on retry.
+	}
+	if len(spec.Input) == 0 && len(failureContext) > 0 {
+		return json.Marshal(struct {
+			Input   json.RawMessage `json:"input"`
+			Failure json.RawMessage `json:"failure"`
+		}{Input: run.Input, Failure: failureContext})
+	}
+	dependencyOutputs := make(map[string]json.RawMessage, len(spec.DependsOn))
+	for _, dependency := range spec.DependsOn {
+		if completed, ok := steps[dependency]; ok && completed.Status == state.WorkflowStepStatusSucceeded {
+			dependencyOutputs[dependency] = completed.Output
+		}
+	}
+	resolved, err := api.ResolveWorkflowStepInput(spec.Input, run.Input, dependencyOutputs, failureContext)
+	if err != nil {
+		return nil, err
+	}
+
+	// In the legacy retry case, retain the stored payload if it already
+	// matches the rendered template; otherwise replace the old run input.
+	if step.Attempt > 0 && len(step.Input) > 0 && workflowJSONEqual(step.Input, resolved) {
+		return append([]byte(nil), step.Input...), nil
+	}
+	return resolved, nil
+}
+
+func workflowJSONEqual(left, right []byte) bool {
+	canonical := func(raw []byte) ([]byte, error) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		return json.Marshal(value)
+	}
+	canonicalLeft, err := canonical(left)
+	if err != nil {
+		return false
+	}
+	canonicalRight, err := canonical(right)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(canonicalLeft, canonicalRight)
+}
+
+func (o *WorkflowOrchestrator) failWorkflowStepInput(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, failureContext json.RawMessage, cause error) (bool, error) {
+	errMsg := "invalid step input: " + cause.Error()
+	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt, nil, &errMsg); err != nil {
+		return false, err
+	}
+	if spec.OnFailure == "" && len(failureContext) == 0 {
+		if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, &errMsg); err != nil {
+			return false, err
+		}
+	}
+	if o.metrics != nil {
+		o.metrics.ObserveStepComplete(run.AppID, "unknown", step.StepName, state.WorkflowStepStatusFailed, 0)
+	}
+	o.emitAudit(ctx, events.WorkflowStepFailed, map[string]any{
+		"run_id": run.ID, "app_id": run.AppID,
+		"workflow_name": run.WorkflowName, "step_name": step.StepName,
+		"attempt": step.Attempt, "status": state.WorkflowStepStatusFailed,
+		"error": errMsg,
+	})
+	return true, nil
+}
+
+func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, steps map[string]*state.WorkflowStep, workflowSpecs []api.WorkflowStepSpec) (bool, error) {
+	if spec.WaitForCondition != nil {
+		return o.executeConditionCheck(ctx, run, step, spec)
+	}
+	// A duration wait has no executor call: only a persisted deadline is left
+	// behind while the run is parked. The step's first started_at is the source
+	// of truth, so an unrelated event cannot move the deadline forward.
+	if spec.WaitForDuration > 0 {
+		if step.StartedAt != nil && !time.Now().UTC().Before(step.StartedAt.Add(spec.WaitForDuration)) {
+			if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, nil, nil); err != nil {
+				return false, err
+			}
+			o.emitAudit(ctx, events.WorkflowStepSucceeded, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"status": state.WorkflowStepStatusSucceeded,
+			})
+			return true, nil
+		}
+		deadline, err := o.store.ParkWorkflowTimer(ctx, run.ID, step.StepName, spec.WaitForDuration)
+		if err != nil {
+			return false, err
+		}
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingTimer, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"duration": spec.WaitForDuration.String(), "wake_at": deadline,
+			})
+		}
+		return false, nil
+	}
+
+	// Case A: event or account-authorized callback wait. Registration and
+	// event lookup share the run lock with event insertion, so an arrival in
+	// the check/park window cannot be lost.
+	eventName := spec.WaitForEvent
+	if spec.WaitForCallback {
+		eventName = api.WorkflowCallbackEventName(run.ID, step.StepName)
+	}
+	if eventName != "" {
+		evt, deadline, err := o.store.ParkWorkflowEvent(ctx, run.ID, step.StepName, eventName, spec.Timeout)
+		if err != nil {
+			return false, err
+		}
+		if evt == nil && !time.Now().UTC().Before(deadline) {
+			var timedOut bool
+			evt, timedOut, err = o.store.ResolveWorkflowEventWait(ctx, run.ID, step.StepName, eventName, spec.Timeout, spec.OnTimeout != "")
+			if err != nil {
+				return false, err
+			}
+			if timedOut {
+				return true, nil
+			}
+		}
+		if evt != nil {
 			// Event already received! Complete step.
 			if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, evt.Payload, nil); err != nil {
 				return false, err
@@ -421,50 +712,14 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			})
 			return true, nil
 		}
-		if err != nil && !errors.Is(err, state.ErrWorkflowEventNotFound) {
-			return false, err
-		}
 
-		// Check timeout. scheduled_for is the durable deadline, but retain the
-		// created_at calculation as a safe fallback for old rows.
-		deadline := workflowWaitDeadline(step.CreatedAt, spec.Timeout)
-		if !time.Now().UTC().Before(deadline) {
-			if spec.OnTimeout != "" {
-				if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, workflowTimeoutOutput, nil); err != nil {
-					return false, err
-				}
-				if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending, time.Now().UTC()); err != nil {
-					return false, err
-				}
-			} else {
-				errMsg := "wait_for_event timed out with no handler"
-				if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusDead, step.Attempt, nil, &errMsg); err != nil {
-					return false, err
-				}
-				if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusDead, nil, &errMsg); err != nil {
-					return false, err
-				}
-			}
-			return true, nil
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingEvent, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"event_name": eventName, "timeout": spec.Timeout.String(),
+			})
 		}
-
-		// Park run in awaiting_event. The scheduler deadline makes timeout
-		// handling durable across schedd restarts; waits without a timeout are
-		// parked far in the future and resume only through event injection.
-		if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusAwaitingEvent, step.Attempt, nil, nil); err != nil {
-			return false, err
-		}
-		if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusAwaitingEvent, deadline); err != nil {
-			return false, err
-		}
-		o.emitAudit(ctx, events.WorkflowAwaitingEvent, map[string]any{
-			"run_id":        run.ID,
-			"app_id":        run.AppID,
-			"workflow_name": run.WorkflowName,
-			"step_name":     step.StepName,
-			"event_name":    spec.WaitForEvent,
-			"timeout":       spec.Timeout.String(),
-		})
 		return false, nil
 	}
 
@@ -473,10 +728,21 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		return false, errors.New("no workflow step executor configured")
 	}
 
-	start := time.Now()
-	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusRunning, step.Attempt+1, nil, nil); err != nil {
+	failureContext, err := workflowFailureContextForHandler(step.StepName, workflowSpecs, steps)
+	if err != nil {
 		return false, err
 	}
+	inputBytes, err := workflowStepInput(run, step, spec, steps, failureContext)
+	if err != nil {
+		return o.failWorkflowStepInput(ctx, run, step, spec, failureContext, err)
+	}
+
+	start := time.Now()
+	persistedInput, err := o.store.StartWorkflowStep(ctx, run.ID, step.StepName, step.Attempt+1, inputBytes)
+	if err != nil {
+		return false, err
+	}
+	inputBytes = persistedInput
 	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusRunning, nil, nil); err != nil {
 		return false, err
 	}
@@ -491,13 +757,8 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		"X-Faas-Workflow-Run-Id":  run.ID,
 		"X-Faas-Workflow-Step":    step.StepName,
 		"X-Faas-Workflow-Attempt": fmt.Sprintf("%d", step.Attempt+1),
-		"Idempotency-Key":         fmt.Sprintf("workflow/%s/%s/%d", run.ID, step.StepName, step.Attempt+1),
+		"Idempotency-Key":         workflowStepIdempotencyKey(run.ID, step.StepName),
 		"Content-Type":            "application/json",
-	}
-
-	inputBytes := step.Input
-	if len(inputBytes) == 0 {
-		inputBytes = run.Input
 	}
 
 	timeout := spec.Timeout
@@ -510,7 +771,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 
 	if err == nil && statusCode >= 200 && statusCode < 300 {
 		// Success (2xx)
-		if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, body, nil); err != nil {
+		if err := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, workflowHTTPStatus(statusCode, err), body, nil); err != nil {
 			return false, err
 		}
 		if o.metrics != nil {
@@ -544,11 +805,8 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	if (statusCode >= 500 || err != nil) && step.Attempt+1 < maxAttempts {
 		// Retry eligible — schedule the next attempt after the configured
 		// backoff so a failing dependency cannot hot-loop the dispatcher.
-		if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusPending, step.Attempt+1, nil, &errMsg); err != nil {
-			return false, err
-		}
-		if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending,
-			time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1))); err != nil {
+		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1))
+		if err := o.store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, step.StepName, step.Attempt+1, retryAt, workflowHTTPStatus(statusCode, err), errMsg); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -560,11 +818,13 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		finalStatus = state.WorkflowStepStatusDead
 	}
 
-	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, finalStatus, step.Attempt+1, nil, &errMsg); err != nil {
+	if err := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, finalStatus, step.Attempt+1, workflowHTTPStatus(statusCode, err), nil, &errMsg); err != nil {
 		return false, err
 	}
-	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, finalStatus, nil, &errMsg); err != nil {
-		return false, err
+	if spec.OnFailure == "" && len(failureContext) == 0 {
+		if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, finalStatus, nil, &errMsg); err != nil {
+			return false, err
+		}
 	}
 
 	if o.metrics != nil {
@@ -584,6 +844,107 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		"error":         errMsg,
 	})
 
+	return true, nil
+}
+
+// executeConditionCheck makes at most one bounded checker call. Every false or
+// transient result commits the next wake before returning to the scheduler.
+func (o *WorkflowOrchestrator) executeConditionCheck(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec) (bool, error) {
+	condition := spec.WaitForCondition
+	update := state.WorkflowConditionUpdate{
+		RunID: run.ID, StepName: step.StepName, Interval: condition.Interval,
+		Timeout: spec.Timeout, MaxAttempts: condition.MaxAttempts, OnTimeout: spec.OnTimeout != "",
+	}
+	outcome, err := o.store.ResolveWorkflowCondition(ctx, update)
+	if err != nil {
+		return false, err
+	}
+	switch outcome.Status {
+	case state.WorkflowConditionWaiting:
+		return false, nil
+	case state.WorkflowConditionTimedOut:
+		return true, nil
+	case state.WorkflowConditionReady:
+		// Continue below.
+	default:
+		return false, fmt.Errorf("unexpected workflow condition status %q", outcome.Status)
+	}
+	if o.executor == nil {
+		return false, errors.New("no workflow step executor configured")
+	}
+	attempt := step.Attempt + 1
+	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusRunning, nil, nil); err != nil {
+		return false, err
+	}
+	input := step.Input
+	if step.Attempt > 0 && len(step.Output) > 0 {
+		input = step.Output
+	} else if len(input) == 0 {
+		input = run.Input
+	}
+	persistedInput, err := o.store.StartWorkflowStep(ctx, run.ID, step.StepName, attempt, input)
+	if err != nil {
+		return false, err
+	}
+	input = persistedInput
+	headers := map[string]string{
+		"X-Faas-Internal-Wake": "workflow", "X-Faas-Workflow-Run-Id": run.ID,
+		"X-Faas-Workflow-Step": step.StepName, "X-Faas-Workflow-Attempt": fmt.Sprintf("%d", attempt),
+		"Idempotency-Key": fmt.Sprintf("workflow/%s/%s/%d", run.ID, step.StepName, attempt),
+		"Content-Type":    "application/json",
+	}
+	statusCode, body, callErr := o.executor.ExecuteStep(ctx, run.AppID, "/"+condition.Run, "POST", headers, input, 30*time.Second)
+	update.Checked = true
+	update.HTTPStatus = workflowHTTPStatus(statusCode, callErr)
+	if callErr == nil && statusCode >= 200 && statusCode < 300 {
+		var response struct {
+			Done *bool `json:"done"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil || response.Done == nil {
+			return o.failConditionCheck(ctx, run, step, attempt, "condition checker must return a JSON object with boolean done", state.WorkflowStepStatusDead, update.HTTPStatus)
+		}
+		update.Done = *response.Done
+		update.Result = json.RawMessage(body)
+	} else if callErr != nil || statusCode >= 500 {
+		message := fmt.Sprintf("condition checker HTTP %d", statusCode)
+		if callErr != nil {
+			message = callErr.Error()
+		}
+		update.Error = &message
+		update.Result = json.RawMessage(`{"done":false}`)
+	} else {
+		return o.failConditionCheck(ctx, run, step, attempt, fmt.Sprintf("condition checker HTTP %d", statusCode), state.WorkflowStepStatusFailed, update.HTTPStatus)
+	}
+	outcome, err = o.store.ResolveWorkflowCondition(ctx, update)
+	if err != nil {
+		return false, err
+	}
+	if outcome.Status == state.WorkflowConditionWaiting {
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingCondition, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID, "workflow_name": run.WorkflowName,
+				"step_name": step.StepName, "next_check_at": outcome.NextCheckAt,
+			})
+		}
+		return false, nil
+	}
+	if outcome.Status == state.WorkflowConditionSucceeded || outcome.Status == state.WorkflowConditionTimedOut {
+		return true, nil
+	}
+	return false, fmt.Errorf("unexpected workflow condition status %q", outcome.Status)
+}
+
+func (o *WorkflowOrchestrator) failConditionCheck(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, attempt int, message, status string, httpStatus *int) (bool, error) {
+	if err := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, status, attempt, httpStatus, nil, &message); err != nil {
+		return false, err
+	}
+	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, status, nil, &message); err != nil {
+		return false, err
+	}
+	o.emitAudit(ctx, events.WorkflowStepFailed, map[string]any{
+		"run_id": run.ID, "app_id": run.AppID, "workflow_name": run.WorkflowName,
+		"step_name": step.StepName, "attempt": attempt, "status": status, "error": message,
+	})
 	return true, nil
 }
 

@@ -56,6 +56,13 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 			},
 		},
 		{
+			name: "explicit-app-secret-grant",
+			s: Sidecar{
+				Name: "proxy", Image: "r/x@sha256:" + strings.Repeat("9", 64), Type: SidecarTypeSidecar,
+				EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"},
+			},
+		},
+		{
 			name: "minimal-port-ram-absent",
 			s: Sidecar{
 				Name:  "only",
@@ -240,6 +247,21 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "cmd-empty-element",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeInit, Cmd: []string{"--to", ""}},
 			wantSub: "every argv element",
+		},
+		{
+			name:    "sidecar-secret-missing-prefix",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "DATABASE_URL"}},
+			wantSub: "must reference an app secret",
+		},
+		{
+			name:    "sidecar-secret-name-mismatch",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "secret:OTHER"}},
+			wantSub: "same app secret name",
+		},
+		{
+			name:    "sidecar-secret-collides-with-direct-env",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, Env: map[string]string{"DATABASE_URL": "plaintext"}, EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}},
+			wantSub: "both define",
 		},
 		{
 			name:    "startup-probe-empty-test",

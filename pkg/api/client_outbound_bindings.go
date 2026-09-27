@@ -57,6 +57,17 @@ func (c *Client) UpdateOutboundBindingPolicy(ctx context.Context, slug, integrat
 	return c.do(ctx, "PATCH", path, req, nil)
 }
 
+func (c *Client) GetOutboundBindingUsage(ctx context.Context, slug, integrationID string) (OutboundBindingUsageResponse, error) {
+	var out OutboundBindingUsageResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/usage"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) SetOutboundBindingDailyBudget(ctx context.Context, slug, integrationID string, limit *int64) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/budget"
+	return c.do(ctx, "PUT", path, PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: limit}, nil)
+}
+
 func (c *Client) PutOutboundCredential(ctx context.Context, integrationID, authorization string) error {
 	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/credential"
 	return c.do(ctx, "PUT", path, PutOutboundCredentialRequest{Authorization: authorization}, nil)

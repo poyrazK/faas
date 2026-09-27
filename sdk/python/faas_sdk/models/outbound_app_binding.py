@@ -17,7 +17,7 @@ T = TypeVar("T", bound="OutboundAppBinding")
 
 @_attrs_define
 class OutboundAppBinding:
-    """An app's customer-owned attachment to a managed integration."""
+    """An app's attachment to a managed integration."""
 
     integration: OutboundIntegrationOffer
     """Account-owned managed integration metadata; never contains a provider key or gateway token."""
@@ -26,6 +26,8 @@ class OutboundAppBinding:
     """App-specific methods, bounded by the integration ceiling."""
     allowed_path_prefixes: list[str]
     """App-specific path prefixes, bounded by the integration ceiling."""
+    daily_request_limit: int | None
+    """Optional per-binding daily admitted-request limit."""
     created_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -38,6 +40,9 @@ class OutboundAppBinding:
 
         allowed_path_prefixes = self.allowed_path_prefixes
 
+        daily_request_limit: int | None
+        daily_request_limit = self.daily_request_limit
+
         created_at = self.created_at.isoformat()
 
         field_dict: dict[str, Any] = {}
@@ -48,6 +53,7 @@ class OutboundAppBinding:
                 "app_id": app_id,
                 "allowed_methods": allowed_methods,
                 "allowed_path_prefixes": allowed_path_prefixes,
+                "daily_request_limit": daily_request_limit,
                 "created_at": created_at,
             }
         )
@@ -67,6 +73,13 @@ class OutboundAppBinding:
 
         allowed_path_prefixes = cast(list[str], d.pop("allowed_path_prefixes"))
 
+        def _parse_daily_request_limit(data: object) -> int | None:
+            if data is None:
+                return data
+            return cast(int | None, data)
+
+        daily_request_limit = _parse_daily_request_limit(d.pop("daily_request_limit"))
+
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         outbound_app_binding = cls(
@@ -74,6 +87,7 @@ class OutboundAppBinding:
             app_id=app_id,
             allowed_methods=allowed_methods,
             allowed_path_prefixes=allowed_path_prefixes,
+            daily_request_limit=daily_request_limit,
             created_at=created_at,
         )
 

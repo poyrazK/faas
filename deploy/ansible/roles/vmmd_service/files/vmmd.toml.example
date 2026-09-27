@@ -57,6 +57,12 @@
 # tls_key_path = "/etc/faas/tls/vmmd.key"
 # tls_ca_path = "/etc/faas/tls/ca.pem"
 
+# ADR-272: opt-in guest service HTTPS trust bundle. This must be a dedicated
+# public service CA (not the daemon mTLS CA); vmmd stages it into networked
+# guests at /etc/faas/service-proxy-ca.crt and admits bridge port 443.
+# Default: "" (HTTPS guest path disabled)
+# service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"
+
 # schedd_client_cert_path / schedd_client_key_path / schedd_client_ca_path:
 # client mTLS material vmmd uses to dial schedd for ReportCapacity
 # (ADR-052 / issue #95 slice 2). All three empty => no TLS (single-box

@@ -52,6 +52,31 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &binding); err != nil || binding.AppID != app.ID || binding.Integration.ID != integrationID || binding.CreatedAt.IsZero() {
 		t.Fatalf("binding = %+v, %v", binding, err)
 	}
+	if binding.DailyRequestLimit != nil {
+		t.Fatalf("new binding daily request limit = %v, want unset", *binding.DailyRequestLimit)
+	}
+	budgetPath := path + "/budget"
+	limit := int64(5000)
+	setBudget := e.do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: &limit}, nil)
+	if setBudget.Code != http.StatusNoContent || setBudget.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("set binding budget = %d %s", setBudget.Code, setBudget.Body.String())
+	}
+	usageResponse := e.do(t, http.MethodGet, path+"/usage", nil, nil)
+	var usage api.OutboundBindingUsageResponse
+	if usageResponse.Code != http.StatusOK || usageResponse.Header().Get("Cache-Control") != "no-store" ||
+		json.Unmarshal(usageResponse.Body.Bytes(), &usage) != nil || usage.DailyRequestCount != 0 ||
+		usage.DailyRequestLimit == nil || *usage.DailyRequestLimit != limit || usage.UsageDate == "" || usage.ResetsAt.IsZero() {
+		t.Fatalf("binding usage = %d %s (%+v)", usageResponse.Code, usageResponse.Body.String(), usage)
+	}
+	maximum, ok := api.OutboundRequestsPerDayMaxForPlan(e.acct.Plan)
+	if !ok {
+		t.Fatalf("missing outbound budget ceiling for plan %q", e.acct.Plan)
+	}
+	tooHigh := maximum + 1
+	assertProblem(t, e.do(t, http.MethodPut, budgetPath,
+		api.PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: &tooHigh}, nil), http.StatusBadRequest, api.CodeValidation)
+	assertProblem(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID+"/usage", nil, nil),
+		http.StatusNotFound, api.CodeNotFound)
 	if len(binding.AllowedMethods) != 2 || len(binding.AllowedPathPrefixes) != 1 || binding.AllowedPathPrefixes[0] != "/v1" {
 		t.Fatalf("initial binding policy = %+v", binding)
 	}
@@ -86,10 +111,21 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 		len(bindings.Items[0].AllowedPathPrefixes) != 1 || bindings.Items[0].AllowedPathPrefixes[0] != "/v1/customers" {
 		t.Fatalf("binding route narrowing not returned: %+v", bindings.Items[0])
 	}
+	if bindings.Items[0].DailyRequestLimit == nil || *bindings.Items[0].DailyRequestLimit != limit {
+		t.Fatalf("binding list daily request limit = %v, want %d", bindings.Items[0].DailyRequestLimit, limit)
+	}
 	repeated = e.do(t, http.MethodPut, path, nil, nil)
 	if repeated.Code != http.StatusOK || json.Unmarshal(repeated.Body.Bytes(), &repeatedBinding) != nil ||
 		len(repeatedBinding.AllowedPathPrefixes) != 1 || repeatedBinding.AllowedPathPrefixes[0] != "/v1/customers" {
 		t.Fatalf("idempotent bind widened policy = %d %s", repeated.Code, repeated.Body.String())
+	}
+	clearBudget := e.do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{}, nil)
+	if clearBudget.Code != http.StatusNoContent {
+		t.Fatalf("clear binding budget = %d %s", clearBudget.Code, clearBudget.Body.String())
+	}
+	usageResponse = e.do(t, http.MethodGet, path+"/usage", nil, nil)
+	if usageResponse.Code != http.StatusOK || json.Unmarshal(usageResponse.Body.Bytes(), &usage) != nil || usage.DailyRequestLimit != nil {
+		t.Fatalf("cleared binding usage = %d %s (%+v)", usageResponse.Code, usageResponse.Body.String(), usage)
 	}
 	deleted := e.do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {

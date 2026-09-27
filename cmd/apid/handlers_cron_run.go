@@ -76,7 +76,6 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		s.notFound(w, "no such cron")
 		return
 	}
-
 	// Plan-tier gate runs BEFORE InsertFireNowRequest so a Free
 	// customer never creates a row that schedd will then stamp as
 	// failed. Same shape as createCron at handlers_ext.go:1598-1601.

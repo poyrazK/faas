@@ -295,21 +295,27 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"ApplyResponseApp":             true, // inline {slug,id} row in ApplyResponse.apis schema
-	"CliAuthCodeResponse":          true, // POST /v1/cli-auth/code (anonymous)
-	"CliAuthExchangeRequest":       true, // POST /v1/cli-auth/exchange
-	"CliAuthExchangeResponse":      true, // POST /v1/cli-auth/exchange
-	"CliAuthStatus":                true, // enum used by CLI auth
-	"ComputeNodeEnrollmentRequest": true, // authenticated operator-only compute-node mutation payload
-	"ComputeNodeOperatorResponse":  true, // authenticated operator-only compute-node projection
-	"StatusPage":                   true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
-	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
-	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
-	"ResolvedCreateAppTaskRequest": true, // validated state admission input, not a public DTO
-	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
+	"CliAuthExchangeRequest":          true, // POST /v1/cli-auth/exchange
+	"CliAuthExchangeResponse":         true, // POST /v1/cli-auth/exchange
+	"CliAuthStatus":                   true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest":    true, // authenticated operator-only compute-node mutation payload
+	"ComputeNodeOperatorResponse":     true, // authenticated operator-only compute-node projection
+	"StatusPage":                      true, // GET /status/slo.json (public status)
+	"SessionsRevokeRequest":           true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":       true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":                  true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":          true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":        true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest":    true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest": true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"AlertRuleRow":                    true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	// Canary and smoke reports are emitted through app-task stdout for the CLI
+	// to decode; these structs are not standalone HTTP request/response DTOs.
+	"ServiceBindingProbeCheck":  true,
+	"ServiceBindingProbeReport": true,
+	"ServiceBindingSmokeReport": true,
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types
@@ -543,7 +549,9 @@ var schemaSpecOnly = map[string]bool{
 	"EnvDiffKind":               true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
 	"ResourceProfile":           true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
 	"ServiceBindingPolicy":      true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
+	"ServiceBindingTransport":   true, // Typed-string enum in pkg/api/service_bindings.go; the schema is part of the binding transport wire contract.
 	"PreviewServiceCallsPolicy": true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
+	"ServiceCallerScopes":       true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

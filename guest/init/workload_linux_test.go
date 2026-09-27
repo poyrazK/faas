@@ -101,6 +101,32 @@ func TestDiscoverRoster_MalformedFile(t *testing.T) {
 	// "other" — the test just asserts non-nil.
 }
 
+func TestBuildLegacySidecarBaseEnvDoesNotInheritMainSecrets(t *testing.T) {
+	mainSecrets := map[string]string{"DATABASE_URL": "main-only"}
+	apiEnv := map[string]string{"LOG_LEVEL": "debug"}
+	base := buildLegacySidecarBaseEnv([]string{"PATH=/bin"}, apiEnv)
+	got := applySidecarEnvOverrides(base, map[string]string{"PROXY_DATABASE_URL": "proxy-only"})
+
+	values := make(map[string]string, len(got))
+	for _, entry := range got {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	for key := range mainSecrets {
+		if _, present := values[key]; present {
+			t.Errorf("legacy sidecar inherited main secret %q", key)
+		}
+	}
+	if values["LOG_LEVEL"] != "debug" {
+		t.Errorf("legacy sidecar api_env = %q, want debug", values["LOG_LEVEL"])
+	}
+	if values["PROXY_DATABASE_URL"] != "proxy-only" {
+		t.Errorf("explicit sidecar secret = %q, want proxy-only", values["PROXY_DATABASE_URL"])
+	}
+}
+
 // TestNewSupervisorFor_NonEssentialZeroRestarts pins the non-essential
 // sidecar policy: Max=0 means a crash is logged and the supervisor
 // returns immediately, the orchestrator's WaitGroup unblocks, and the
@@ -110,7 +136,7 @@ func TestDiscoverRoster_MalformedFile(t *testing.T) {
 // deployments.sidecars jsonb column.
 func TestNewSupervisorFor_NonEssentialZeroRestarts(t *testing.T) {
 	spec := workloadSpec{Name: "metrics", Type: "sidecar", Essential: false, RamMB: 64}
-	sup := newSupervisorFor(spec, nil, nil, nil, nil)
+	sup := newSupervisorFor(spec, nil, nil, nil)
 	if sup == nil {
 		t.Fatal("newSupervisorFor returned nil")
 	}
@@ -139,7 +165,7 @@ func TestNewSupervisorFor_NonEssentialZeroRestarts(t *testing.T) {
 // crash-loop must NOT silently take down the deploy.
 func TestNewSupervisorFor_EssentialUsesMaxRestarts(t *testing.T) {
 	spec := workloadSpec{Name: "metrics", Type: "sidecar", Essential: true, RamMB: 64}
-	sup := newSupervisorFor(spec, nil, nil, nil, nil)
+	sup := newSupervisorFor(spec, nil, nil, nil)
 	if sup.Max != MaxRestarts {
 		t.Errorf("essential Max = %d, want %d", sup.Max, MaxRestarts)
 	}

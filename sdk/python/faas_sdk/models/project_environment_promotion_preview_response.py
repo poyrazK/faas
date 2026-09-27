@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
     from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+    from ..models.project_release_set_response import ProjectReleaseSetResponse
 
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionPreviewResponse")
@@ -32,6 +33,12 @@ class ProjectEnvironmentPromotionPreviewResponse:
     promotion_hash: str
     promotion_token: str
     blocking_reasons: list[str] | Unset = UNSET
+    from_release_set: ProjectReleaseSetResponse | Unset = UNSET
+    """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
+    expires_at is set."""
+    to_release_set: ProjectReleaseSetResponse | Unset = UNSET
+    """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
+    expires_at is set."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +69,14 @@ class ProjectEnvironmentPromotionPreviewResponse:
         if not isinstance(self.blocking_reasons, Unset):
             blocking_reasons = self.blocking_reasons
 
+        from_release_set: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.from_release_set, Unset):
+            from_release_set = self.from_release_set.to_dict()
+
+        to_release_set: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.to_release_set, Unset):
+            to_release_set = self.to_release_set.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -80,6 +95,10 @@ class ProjectEnvironmentPromotionPreviewResponse:
         )
         if blocking_reasons is not UNSET:
             field_dict["blocking_reasons"] = blocking_reasons
+        if from_release_set is not UNSET:
+            field_dict["from_release_set"] = from_release_set
+        if to_release_set is not UNSET:
+            field_dict["to_release_set"] = to_release_set
 
         return field_dict
 
@@ -87,6 +106,7 @@ class ProjectEnvironmentPromotionPreviewResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
         from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+        from ..models.project_release_set_response import ProjectReleaseSetResponse
 
         d = dict(src_dict)
         project_slug = d.pop("project_slug")
@@ -116,6 +136,20 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         blocking_reasons = cast(list[str], d.pop("blocking_reasons", UNSET))
 
+        _from_release_set = d.pop("from_release_set", UNSET)
+        from_release_set: ProjectReleaseSetResponse | Unset
+        if isinstance(_from_release_set, Unset):
+            from_release_set = UNSET
+        else:
+            from_release_set = ProjectReleaseSetResponse.from_dict(_from_release_set)
+
+        _to_release_set = d.pop("to_release_set", UNSET)
+        to_release_set: ProjectReleaseSetResponse | Unset
+        if isinstance(_to_release_set, Unset):
+            to_release_set = UNSET
+        else:
+            to_release_set = ProjectReleaseSetResponse.from_dict(_to_release_set)
+
         project_environment_promotion_preview_response = cls(
             project_slug=project_slug,
             from_environment=from_environment,
@@ -128,6 +162,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
             promotion_hash=promotion_hash,
             promotion_token=promotion_token,
             blocking_reasons=blocking_reasons,
+            from_release_set=from_release_set,
+            to_release_set=to_release_set,
         )
 
         project_environment_promotion_preview_response.additional_properties = d

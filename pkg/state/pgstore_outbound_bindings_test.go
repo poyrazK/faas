@@ -94,12 +94,50 @@ func TestPgStore_OutboundBindingCustomerLifecycle(t *testing.T) {
 	if err != nil || binding.ID != offer.ID || binding.AppID != appID || binding.CredentialConfigured != true {
 		t.Fatalf("BindOutboundIntegration = %+v, %v", binding, err)
 	}
+	bindingLimit := int64(750)
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, accountID, appID, offer.ID, &bindingLimit); err != nil {
+		t.Fatalf("SetOutboundBindingDailyRequestLimit: %v", err)
+	}
+	binding, err = s.BindOutboundIntegration(ctx, accountID, appID, offer.ID)
+	if err != nil || binding.BindingDailyRequestLimit == nil || *binding.BindingDailyRequestLimit != bindingLimit {
+		t.Fatalf("binding daily limit after update = %+v, %v", binding, err)
+	}
+	bindingUsage, err := s.GetOutboundBindingUsage(ctx, accountID, appID, offer.ID)
+	if err != nil || bindingUsage.DailyRequestCount != 0 || bindingUsage.DailyRequestLimit == nil ||
+		*bindingUsage.DailyRequestLimit != bindingLimit || bindingUsage.UsageDate == "" || bindingUsage.ResetsAt.IsZero() {
+		t.Fatalf("GetOutboundBindingUsage = %+v, %v", bindingUsage, err)
+	}
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, uuid.NewString(), appID, offer.ID, &bindingLimit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account binding daily limit = %v, want ErrNotFound", err)
+	}
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, accountID, uuid.NewString(), offer.ID, &bindingLimit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing app binding daily limit = %v, want ErrNotFound", err)
+	}
+	bindingMaxForPlan, bindingPlanKnown := api.OutboundRequestsPerDayMaxForPlan(api.PlanPro)
+	if !bindingPlanKnown {
+		t.Fatal("Pro plan has no outbound daily limit")
+	}
+	overBindingPlan := bindingMaxForPlan + 1
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, accountID, appID, offer.ID, &overBindingPlan); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("over-plan binding daily limit = %v, want ErrInvalidArgument", err)
+	}
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, accountID, appID, offer.ID, nil); err != nil {
+		t.Fatalf("clear binding daily limit: %v", err)
+	}
+	bindingUsage, err = s.GetOutboundBindingUsage(ctx, accountID, appID, offer.ID)
+	if err != nil || bindingUsage.DailyRequestLimit != nil {
+		t.Fatalf("binding usage after clearing limit = %+v, %v", bindingUsage, err)
+	}
+	if err := s.SetOutboundBindingDailyRequestLimit(ctx, accountID, appID, offer.ID, &bindingLimit); err != nil {
+		t.Fatalf("restore binding daily limit: %v", err)
+	}
 	// Existing bindings are idempotent and return the effective route ceiling.
 	if got, err := s.BindOutboundIntegration(ctx, accountID, appID, offer.ID); err != nil || got.ID != offer.ID {
 		t.Fatalf("repeat bind = %+v, %v", got, err)
 	}
 	bindings, err := s.ListOutboundAppBindings(ctx, accountID, appID)
-	if err != nil || len(bindings) != 1 || len(bindings[0].RouteMethods) != 2 || bindings[0].RouteMethods[0] != "GET" {
+	if err != nil || len(bindings) != 1 || len(bindings[0].RouteMethods) != 2 || bindings[0].RouteMethods[0] != "GET" ||
+		bindings[0].BindingDailyRequestLimit == nil || *bindings[0].BindingDailyRequestLimit != bindingLimit {
 		t.Fatalf("ListOutboundAppBindings = %+v, %v", bindings, err)
 	}
 	if err := s.UpdateOutboundBindingPolicy(ctx, accountID, appID, offer.ID, []string{"GET"}, []string{"/v1/items"}); err != nil {
@@ -142,6 +180,9 @@ func TestPgStore_OutboundBindingCustomerLifecycle(t *testing.T) {
 	}
 	if err := s.UnbindOutboundIntegration(ctx, accountID, appID, offer.ID); err != nil {
 		t.Fatalf("repeat unbind: %v", err)
+	}
+	if _, err := s.GetOutboundBindingUsage(ctx, accountID, appID, offer.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("binding usage after unbind = %v, want ErrNotFound", err)
 	}
 	if err := s.UpdateOutboundBindingPolicy(ctx, accountID, appID, offer.ID, []string{"GET"}, []string{"/v1"}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("policy update after unbind = %v, want ErrNotFound", err)

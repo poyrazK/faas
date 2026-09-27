@@ -511,6 +511,97 @@ func TestCmdSecretsRotateRestartUsesFreshRestart(t *testing.T) {
 	}
 }
 
+func TestCmdSecretsRotateWaitForAckAfterKeyPair(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/secrets/DATABASE_URL/rotate":
+			calls = append(calls, "rotate")
+			writeJSONTest(w, api.RotateAppSecretResponse{Key: "DATABASE_URL", RotatedAt: "2026-09-26T12:00:00Z"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			calls = append(calls, "status")
+			writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+				Key: "DATABASE_URL", Scope: api.DefaultEnvScope, DeliveryVersion: 2, RuntimeReloadTargetsComplete: true,
+				RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
+					InstanceID: "instance-1", ReloadSupport: "enabled", Reported: true, Version: 2,
+					ApplicationAckVersion: 2, ApplicationAck: "applied",
+				}},
+			}}})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
+		t.Fatalf("cmdSecrets rotate --wait-for-ack = %d, want 0", code)
+	}
+	if len(calls) != 2 || calls[0] != "rotate" || calls[1] != "status" {
+		t.Fatalf("calls = %v, want [rotate status]", calls)
+	}
+	if !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
+		t.Fatalf("acknowledgement output = %q", stdout.String())
+	}
+}
+
+func TestCmdSecretsRotateRestartWaitsForColdStartAcknowledgement(t *testing.T) {
+	var calls []string
+	const wakeID = "wake-secret-restart-1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/secrets/DATABASE_URL/rotate":
+			calls = append(calls, "rotate")
+			writeJSONTest(w, api.RotateAppSecretResponse{Key: "DATABASE_URL", RotatedAt: "2026-09-26T12:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			calls = append(calls, "restart")
+			if r.URL.Query().Get("fresh") != "true" {
+				t.Fatalf("restart query = %q, want fresh=true", r.URL.RawQuery)
+			}
+			writeJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/instances":
+			calls = append(calls, "wake")
+			if r.URL.Query().Get("history") != "true" {
+				t.Fatalf("instance history query = %q, want true", r.URL.RawQuery)
+			}
+			writeJSONTest(w, []api.InstanceResponse{{ID: "instance-1", State: "running", WakeID: wakeID}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			calls = append(calls, "status")
+			writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+				Key: "DATABASE_URL", Scope: api.DefaultEnvScope, DeliveryVersion: 2, RuntimeReloadTargetsComplete: true,
+				RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
+					InstanceID: "instance-1", ReloadSupport: "disabled", Reported: true,
+					ApplicationAckVersion: 2, ApplicationAck: "applied",
+				}},
+			}}})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--restart", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
+		t.Fatalf("cmdSecrets rotate --restart --wait-for-ack = %d", code)
+	}
+	if len(calls) != 4 || calls[0] != "rotate" || calls[1] != "restart" || calls[2] != "wake" || calls[3] != "status" {
+		t.Fatalf("calls = %v, want [rotate restart wake status]", calls)
+	}
+	if !strings.Contains(stdout.String(), "Restart completed") || !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
+		t.Fatalf("restart acknowledgement output = %q", stdout.String())
+	}
+}
+
 func TestCmdSecrets_Set_TrailingScopeTargetsPreview(t *testing.T) {
 	var putScopes []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

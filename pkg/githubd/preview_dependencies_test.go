@@ -91,8 +91,11 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	apiPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-demo-app")
 	workerPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-worker")
 	if apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "http://worker.svc.gregale:10080" ||
+		apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_HTTPS_URL"] != "https://worker.internal" ||
 		apiPreview.Manifest.Env["GREGALE_SERVICE_REDIS_URL"] != "" ||
-		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_URL"] != "http://db.svc.gregale:10080" {
+		workerPreview.Manifest.Env["GREGALE_SERVICE_REDIS_HTTPS_URL"] != "" ||
+		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_URL"] != "http://db.svc.gregale:10080" ||
+		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_HTTPS_URL"] != "https://db.internal" {
 		t.Fatalf("PR-head service env not applied: api=%v worker=%v", apiPreview.Manifest.Env, workerPreview.Manifest.Env)
 	}
 	if apiPreview.Manifest.BuildDockerfile != "Dockerfile.preview" || apiPreview.StartCommand != "node api.js" {

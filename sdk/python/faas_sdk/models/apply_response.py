@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.applied_build import AppliedBuild
     from ..models.apply_response_apps_item import ApplyResponseAppsItem
     from ..models.plan_affected_app import PlanAffectedApp
+    from ..models.plan_async_route import PlanAsyncRoute
     from ..models.plan_cron import PlanCron
     from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
@@ -34,6 +35,8 @@ class ApplyResponse:
     workloads: list[PlanWorkload] | Unset = UNSET
     managed: list[PlanManaged] | Unset = UNSET
     crons: list[PlanCron] | Unset = UNSET
+    async_routes: list[PlanAsyncRoute] | Unset = UNSET
+    """Structured async-route reconciliation returned with the applied plan."""
     warnings: list[str] | Unset = UNSET
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
     """Structured skipped/merged detector decisions returned with the applied plan."""
@@ -95,6 +98,13 @@ class ApplyResponse:
             for crons_item_data in self.crons:
                 crons_item = crons_item_data.to_dict()
                 crons.append(crons_item)
+
+        async_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.async_routes, Unset):
+            async_routes = []
+            for async_routes_item_data in self.async_routes:
+                async_routes_item = async_routes_item_data.to_dict()
+                async_routes.append(async_routes_item)
 
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
@@ -194,6 +204,8 @@ class ApplyResponse:
             field_dict["managed"] = managed
         if crons is not UNSET:
             field_dict["crons"] = crons
+        if async_routes is not UNSET:
+            field_dict["async_routes"] = async_routes
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
         if detection_warnings is not UNSET:
@@ -240,6 +252,7 @@ class ApplyResponse:
         from ..models.applied_build import AppliedBuild
         from ..models.apply_response_apps_item import ApplyResponseAppsItem
         from ..models.plan_affected_app import PlanAffectedApp
+        from ..models.plan_async_route import PlanAsyncRoute
         from ..models.plan_cron import PlanCron
         from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
@@ -284,6 +297,15 @@ class ApplyResponse:
                 crons_item = PlanCron.from_dict(crons_item_data)
 
                 crons.append(crons_item)
+
+        _async_routes = d.pop("async_routes", UNSET)
+        async_routes: list[PlanAsyncRoute] | Unset = UNSET
+        if _async_routes is not UNSET:
+            async_routes = []
+            for async_routes_item_data in _async_routes:
+                async_routes_item = PlanAsyncRoute.from_dict(async_routes_item_data)
+
+                async_routes.append(async_routes_item)
 
         warnings = cast(list[str], d.pop("warnings", UNSET))
 
@@ -375,6 +397,7 @@ class ApplyResponse:
             workloads=workloads,
             managed=managed,
             crons=crons,
+            async_routes=async_routes,
             warnings=warnings,
             detection_warnings=detection_warnings,
             observed_apps=observed_apps,

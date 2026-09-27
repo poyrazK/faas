@@ -37,6 +37,24 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 		event.PlatformTenantID, event.PlatformTenantSurfaceID, event.PlatformTenantJWTAuthorizationRuleID,
 	).Scan(&inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// An older apid may have committed usage but ignored the new audit
+		// envelope. Replay must fill the missing exact record without applying
+		// the financial increment twice.
+		if event.Audit != nil {
+			if err := insertRequestAuditTx(ctx, tx, event); err != nil {
+				return false, err
+			}
+		}
+		if discoveredRouteFor(event) != "" {
+			if err := recordDiscoveredRouteTx(ctx, tx, event); err != nil {
+				return false, err
+			}
+		}
+		if event.Audit != nil || discoveredRouteFor(event) != "" {
+			if err := tx.Commit(ctx); err != nil {
+				return false, err
+			}
+		}
 		return false, nil
 	}
 	if err != nil {
@@ -81,10 +99,58 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	if err != nil {
 		return false, err
 	}
+	if event.Audit != nil {
+		if err := insertRequestAuditTx(ctx, tx, event); err != nil {
+			return false, err
+		}
+	}
+	if discoveredRouteFor(event) != "" {
+		if err := recordDiscoveredRouteTx(ctx, tx, event); err != nil {
+			return false, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return inserted, nil
+}
+
+// insertRequestAuditTx is idempotent but refuses a reused event ID from a
+// different account/app. The matching usage row already exists in this tx.
+func insertRequestAuditTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent) error {
+	audit := event.Audit
+	if audit == nil {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		insert into request_audit_events
+		       (event_id, account_id, app_id, consumer_key, platform_tenant_id,
+		        route_template, method, http_status, latency_ms, trace_id,
+		        deployment_id, commit_sha, occurred_at, request_id, source_ip)
+		select u.event_id, u.account_id, u.app_id, u.consumer_key, u.platform_tenant_id,
+		       $4, $5, $6, $7, $8, nullif($9::text, '')::uuid, $10, $11, $12,
+		       nullif($13::text, '')::inet
+		  from api_consumer_usage_events u
+		  join apps a on a.id = u.app_id and a.account_id = u.account_id
+		 where u.event_id = $1::uuid and u.account_id = $2::uuid and u.app_id = $3::uuid
+		on conflict (event_id) do nothing`,
+		event.EventID, event.AccountID, event.AppID,
+		audit.RouteTemplate, audit.Method, audit.HTTPStatus, audit.LatencyMS,
+		audit.TraceID, audit.DeploymentID, audit.CommitSHA, audit.OccurredAt.UTC(), audit.RequestID, audit.SourceIP)
+	if err != nil {
+		return err
+	}
+	var matched bool
+	if err := tx.QueryRow(ctx, `select exists (
+		select 1 from request_audit_events
+		where event_id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid)`,
+		event.EventID, event.AccountID, event.AppID).Scan(&matched); err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("request audit: event ID belongs to a different account or app")
+	}
+	return nil
 }
 
 func (s *PgStore) ListAPIConsumerUsage(ctx context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerUsageBucket, error) {

@@ -41,6 +41,12 @@ type stubStore struct {
 	healthErr     error
 }
 
+type baseOnlyStore struct{ rows []CanaryRow }
+
+func (s *baseOnlyStore) ListCanaryInFlight(context.Context) ([]CanaryRow, error) {
+	return append([]CanaryRow(nil), s.rows...), nil
+}
+
 func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
@@ -50,6 +56,12 @@ func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
 	out := make([]CanaryRow, len(s.rows))
 	copy(out, s.rows)
 	return out, nil
+}
+
+func (s *stubStore) CircuitBreakerObservation(context.Context, CanaryRow, time.Time, time.Time) (CircuitBreakerObservation, error) {
+	// Existing progression tests model a first deployment unless they opt into
+	// an explicit candidate/stable comparison below.
+	return CircuitBreakerObservation{OOMSignalAvailable: true}, nil
 }
 
 func (s *stubStore) MirrorSummaryForDeployment(_ context.Context, _, _ string, _ time.Time) (MirrorSummary, error) {
@@ -94,6 +106,35 @@ func (a *stubAPID) RecoverRollout(_ context.Context, slug, action, reason string
 		slug, action, reason string
 	}{slug: slug, action: action, reason: reason})
 	return api.RolloutTransitionResponse{}, nil
+}
+
+type observedCircuitBreakerStore struct {
+	*stubStore
+	observation CircuitBreakerObservation
+	err         error
+}
+
+func (s *observedCircuitBreakerStore) CircuitBreakerObservation(context.Context, CanaryRow, time.Time, time.Time) (CircuitBreakerObservation, error) {
+	return s.observation, s.err
+}
+
+type exactRecoveryStub struct {
+	*stubAPID
+	deploymentID   string
+	predecessorID  string
+	action         string
+	reason         string
+	idempotencyKey string
+	err            error
+}
+
+func (a *exactRecoveryStub) RecoverDeploymentRolloutAndIdempotencyKey(_ context.Context, deploymentID, predecessorID, action, reason, key string) (api.RolloutTransitionResponse, error) {
+	a.deploymentID = deploymentID
+	a.predecessorID = predecessorID
+	a.action = action
+	a.reason = reason
+	a.idempotencyKey = key
+	return api.RolloutTransitionResponse{}, a.err
 }
 
 func mirrorCleanRow(t *testing.T, now time.Time) CanaryRow {
@@ -218,6 +259,251 @@ func TestProgressionOnce_HealthGateReadErrorFailsClosed(t *testing.T) {
 	}
 	if stats.Errors != 1 || stats.Advanced != 0 || len(apid.advances) != 0 {
 		t.Fatalf("health-gate read error was not fail-closed: stats=%+v advances=%d", stats, len(apid.advances))
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerAbortsExactCandidate(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	const candidateID = "00000000-0000-0000-0000-000000000001"
+	const appID = "00000000-0000-0000-0000-000000000002"
+	const stableID = "00000000-0000-0000-0000-000000000003"
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                candidateID,
+			AppID:             appID,
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: 100, ServerErrors: 20, P95LatencyMS: 100},
+			Stable:                    HealthWindow{Requests: 100, ServerErrors: 0, P95LatencyMS: 100},
+			StableDeploymentID:        stableID,
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			DependencySignalAvailable: true,
+		},
+	}
+	apid := &exactRecoveryStub{stubAPID: &stubAPID{}}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, apid, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.CircuitBreakerAborted != 1 || stats.Aborted != 1 || stats.Advanced != 0 {
+		t.Fatalf("stats = %+v; want one circuit-breaker abort and no advance", stats)
+	}
+	if apid.deploymentID != candidateID || apid.predecessorID != stableID || apid.action != "abort" {
+		t.Fatalf("recovery target = candidate:%q predecessor:%q action:%q; want exact candidate/predecessor abort", apid.deploymentID, apid.predecessorID, apid.action)
+	}
+	if !strings.Contains(apid.reason, "5xx") || apid.idempotencyKey != "canary-circuit-breaker-abort-"+candidateID+"-"+stableID {
+		t.Fatalf("recovery reason/key = %q / %q; want stable 5xx reason and deterministic idempotency key", apid.reason, apid.idempotencyKey)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("abort_5xx")); got != 1 {
+		t.Fatalf("abort_5xx metric = %g, want 1", got)
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                "00000000-0000-0000-0000-000000000001",
+			AppID:             "00000000-0000-0000-0000-000000000002",
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: CircuitBreakerMinRequests - 1},
+			Stable:                    HealthWindow{Requests: 100},
+			StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			DependencySignalAvailable: true,
+		},
+	}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, &stubAPID{}, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.SkippedCircuitBreaker != 1 || stats.Advanced != 0 {
+		t.Fatalf("stats = %+v; want one hold and no advance", stats)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("hold_insufficient_samples")); got != 1 {
+		t.Fatalf("hold_insufficient_samples metric = %g, want 1", got)
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerMissingStoreAdapterExportsEvent(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	store := &baseOnlyStore{rows: []CanaryRow{{
+		ID:                "00000000-0000-0000-0000-000000000001",
+		AppID:             "00000000-0000-0000-0000-000000000002",
+		CanaryPreset:      "balanced",
+		CanaryStep:        0,
+		CanaryTotalSteps:  4,
+		CanaryStepStarted: now.Add(-time.Hour),
+		RolloutState:      "rolling_out",
+	}}}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, &stubAPID{}, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.Errors != 1 || stats.SkippedCircuitBreaker != 1 || stats.Advanced != 0 {
+		t.Fatalf("stats = %+v; want missing adapter to fail closed", stats)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("hold_observation_unavailable")); got != 1 {
+		t.Fatalf("hold_observation_unavailable metric = %g, want 1", got)
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerColdBootAbortHasSpecificReason(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	const candidateID = "00000000-0000-0000-0000-000000000001"
+	const appID = "00000000-0000-0000-0000-000000000002"
+	const stableID = "00000000-0000-0000-0000-000000000003"
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                candidateID,
+			AppID:             appID,
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate: HealthWindow{
+				Requests: 100, P95LatencyMS: 100,
+				ColdBootRequests: CircuitBreakerMinColdBootRequests, ColdBootP95LatencyMS: 2000,
+			},
+			Stable: HealthWindow{
+				Requests: 100, P95LatencyMS: 100,
+				ColdBootRequests: CircuitBreakerMinColdBootRequests, ColdBootP95LatencyMS: 800,
+			},
+			StableDeploymentID:        stableID,
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			DependencySignalAvailable: true,
+		},
+	}
+	apid := &exactRecoveryStub{stubAPID: &stubAPID{}}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, apid, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.CircuitBreakerAborted != 1 || !strings.Contains(apid.reason, "cold-boot request latency") {
+		t.Fatalf("stats/reason = %+v / %q; want exact cold-boot regression abort", stats, apid.reason)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("abort_cold_boot_p95")); got != 1 {
+		t.Fatalf("abort_cold_boot_p95 metric = %g, want 1", got)
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerCPUPerRequestAbortHasSpecificReason(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	const candidateID = "00000000-0000-0000-0000-000000000001"
+	const appID = "00000000-0000-0000-0000-000000000002"
+	const stableID = "00000000-0000-0000-0000-000000000003"
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                candidateID,
+			AppID:             appID,
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: 100, P95LatencyMS: 100, CPURequests: 100, CPUUsec: 80_000_000},
+			Stable:                    HealthWindow{Requests: 100, P95LatencyMS: 100, CPURequests: 100, CPUUsec: 10_000_000},
+			StableDeploymentID:        stableID,
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			CPURequestSignalAvailable: true,
+			DependencySignalAvailable: true,
+		},
+	}
+	apid := &exactRecoveryStub{stubAPID: &stubAPID{}}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, apid, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.CircuitBreakerAborted != 1 || !strings.Contains(apid.reason, "CPU per request") {
+		t.Fatalf("stats/reason = %+v / %q; want CPU/request regression abort", stats, apid.reason)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("abort_cpu_per_request")); got != 1 {
+		t.Fatalf("abort_cpu_per_request metric = %g, want 1", got)
+	}
+}
+
+func TestProgressionOnce_CircuitBreakerDependencyErrorAbortHasSpecificReason(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	const candidateID = "00000000-0000-0000-0000-000000000001"
+	const appID = "00000000-0000-0000-0000-000000000002"
+	const stableID = "00000000-0000-0000-0000-000000000003"
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                candidateID,
+			AppID:             appID,
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: 100, P95LatencyMS: 100, CPURequests: 100, CPUUsec: 10_000_000, DependencyCalls: 20, DependencyErrors: 7},
+			Stable:                    HealthWindow{Requests: 100, P95LatencyMS: 100, CPURequests: 100, CPUUsec: 10_000_000, DependencyCalls: 40},
+			StableDeploymentID:        stableID,
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			CPURequestSignalAvailable: true,
+			DependencySignalAvailable: true,
+		},
+	}
+	apid := &exactRecoveryStub{stubAPID: &stubAPID{}}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, apid, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.CircuitBreakerAborted != 1 || !strings.Contains(apid.reason, "managed dependency error") {
+		t.Fatalf("stats/reason = %+v / %q; want managed dependency error abort", stats, apid.reason)
+	}
+	if apid.deploymentID != candidateID || apid.predecessorID != stableID {
+		t.Fatalf("recovery target = candidate:%q predecessor:%q; want exact candidate and stable predecessor", apid.deploymentID, apid.predecessorID)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("abort_dependency_errors")); got != 1 {
+		t.Fatalf("abort_dependency_errors metric = %g, want 1", got)
 	}
 }
 

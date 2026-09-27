@@ -328,7 +328,7 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
 	for _, sc := range roster.Sidecars {
-		sup := newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy, workloadEnv)
+		sup := newSupervisorFor(sc, apiEnv, log, sidecarProxy, workloadEnv)
 		if baked, found, manifestErr := sidecarManifestForRuntime(sc.Name); manifestErr != nil {
 			return fmt.Errorf("workload %q: load sidecar runtime manifest: %w", sc.Name, manifestErr)
 		} else if found {
@@ -626,7 +626,7 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // can increment vmmd_sidecar_restart_total{app, sidecar}.
 // A nil sidecarProxy (no-signal contract when bind fails)
 // keeps the OnCrash hook log-only.
-func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
+func newSupervisorFor(spec workloadSpec, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
 	maxRestarts := MaxRestarts
 	if spec.Type == "init" || !spec.Essential {
 		maxRestarts = 0 // init and non-essential sidecars do not restart
@@ -638,7 +638,7 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 		stopGrace:  MaxAppManifestStopGracePeriodFallback,
 	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
-	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, workloadEnv, supRef) }
+	supRef.Start = func() error { return runSidecar(spec, apiEnv, workloadEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
@@ -672,7 +672,18 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 // spec.Name and spec.Port remain the wire-stable scheduling and log fields.
 // The effective command and image defaults are baked into the sidecar layer;
 // the roster command fields are retained for legacy layers.
-func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
+func buildLegacySidecarBaseEnv(base []string, apiEnv map[string]string) []string {
+	// Legacy sidecar layers lack baked image env metadata. Keep the
+	// non-sensitive api_env compatibility layer, but never pass the main
+	// workload's app-secret map into a sidecar.
+	return BuildEnvWithSecrets(base, api.AppManifest{}, nil, apiEnv)
+}
+
+func applySidecarEnvOverrides(base []string, sidecarEnv map[string]string) []string {
+	return BuildEnvWithSecrets(base, api.AppManifest{}, sidecarEnv, nil)
+}
+
+func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
 	directRoot, rootErr := fullRootfsSidecarRoot(spec.Name)
 	if rootErr != nil {
 		return fmt.Errorf("run sidecar %s: resolve direct root: %w", spec.Name, rootErr)
@@ -717,9 +728,10 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		env = os.Environ()
 		port = spec.Port
 		// Legacy sidecar layers did not contain a workload manifest. Keep
-		// their compatibility path, including the old shared env surface.
-		if len(secrets) > 0 || len(apiEnv) > 0 {
-			env = BuildEnvWithSecrets(env, api.AppManifest{}, secrets, apiEnv)
+		// their command and non-sensitive api_env compatibility path, without
+		// inheriting the main workload's app secrets.
+		if len(apiEnv) > 0 {
+			env = buildLegacySidecarBaseEnv(env, apiEnv)
 		}
 	} else {
 		return fmt.Errorf("run sidecar %s: load baked manifest: %w", spec.Name, manifestErr)
@@ -748,7 +760,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	// shared env fallback), but main-workload secrets/API env never leak into
 	// the new sidecar manifest path.
 	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
-		env = BuildEnvWithSecrets(env, api.AppManifest{}, sidecarEnv, nil)
+		env = applySidecarEnvOverrides(env, sidecarEnv)
 	} else if !isNotExist(envErr) {
 		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
 	}
@@ -765,6 +777,11 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
+	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", directRoot)
+	if trustErr != nil {
+		return fmt.Errorf("run sidecar %s: prepare service proxy trust: %w", spec.Name, trustErr)
+	}
+	env = StampServiceProxyTrustEnv(env, serviceProxyTrust)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image

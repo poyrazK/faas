@@ -467,6 +467,33 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if retryProblem != nil {
 		return state.App{}, retryProblem
 	}
+	allowedCallers, callersProblem := serviceCallersForCreate(req.AllowedServiceCallers)
+	if callersProblem != nil {
+		return state.App{}, callersProblem
+	}
+	allowedCallScopes, callScopesProblem := serviceCallScopesForCreate(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		return state.App{}, callScopesProblem
+	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, req.Slug)
+	if bindingsProblem != nil {
+		return state.App{}, bindingsProblem
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		return state.App{}, servicePolicyProblem
+	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		return state.App{}, serviceTransportProblem
+	}
+	appManifest := stateManifestFromAPI(lifecycle)
+	appManifest.AllowedServiceCallers = allowedCallers
+	appManifest.AllowedServiceCallScopes = allowedCallScopes
+	appManifest.ServiceBindings = bindings
+	appManifest.ServiceBindingPolicy = servicePolicy
+	appManifest.ServiceBindingTransport = serviceTransport
+	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,
@@ -519,7 +546,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// path above assigns appProtocol explicitly.
 		AppProtocol:     appProtocol,
 		RetryPolicyJSON: retryPolicy,
-		Manifest:        stateManifestFromAPI(lifecycle),
+		Manifest:        appManifest,
 	}, nil
 }
 
@@ -738,6 +765,22 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	var allowedCallers *[]string
+	if a.Manifest.AllowedServiceCallers != nil {
+		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
+		allowedCallers = &copyOfNames
+	}
+	var allowedCallScopes *api.ServiceCallerScopes
+	if a.Manifest.AllowedServiceCallScopes != nil {
+		copyOfScopes := make(api.ServiceCallerScopes, len(*a.Manifest.AllowedServiceCallScopes))
+		for caller, scope := range *a.Manifest.AllowedServiceCallScopes {
+			copyOfScopes[caller] = api.ServiceCallScope{
+				Methods:      append([]string(nil), scope.Methods...),
+				PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+			}
+		}
+		allowedCallScopes = &copyOfScopes
+	}
 	consumerAuthMode := string(a.ConsumerAuthMode)
 	if consumerAuthMode == "" {
 		consumerAuthMode = api.ConsumerAuthModeOptional
@@ -813,7 +856,10 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
+		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
+		AllowedServiceCallers:     allowedCallers,
+		AllowedServiceCallScopes:  allowedCallScopes,
 		EgressAllowlist:           ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive

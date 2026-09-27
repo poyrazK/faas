@@ -95,12 +95,11 @@ which node is affected obvious.
 
 - A target can verify its caller independently of trusting a header, and the
   same assertion works for a cross-node call where source-IP identity does not.
-- **Nothing consumes it yet.** This ADR covers minting and the verification
-  library. Guest-reachable JWKS, a runtime helper, and `allow_callers` policy
-  are follow-ups. Until those land the assertion is additive metadata, so
-  minting is behind `FAAS_SERVICE_CALLER_ASSERTIONS` and off by default — an
-  unconsumed signature on the hot path should cost nothing until something
-  reads it.
+- At the time this ADR was accepted, no guest could discover keys. ADR-279 adds
+  public-only JWKS discovery and a bounded Go fetch/verify path. Signing remains
+  additive and behind `FAAS_SERVICE_CALLER_ASSERTIONS`; workloads can opt into
+  enforcement only after the operator has enabled signing on every possible
+  source node.
 - The 30 s TTL matches ADR-119's internal-token bound. It is short enough that
   replay needs a live position on the node bridge, and long enough to survive a
   wake hold without re-minting mid-request.

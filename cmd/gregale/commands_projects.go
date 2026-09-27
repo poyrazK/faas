@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -54,6 +54,10 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
 		return cmdProjectsEnvironmentProtection(args[1:], false)
+	case "inspect":
+		return cmdProjectsEnvironmentInspect(args[1:])
+	case "release-sets":
+		return cmdProjectsEnvironmentReleaseSets(args[1:])
 	case "releases", "release":
 		return cmdProjectsEnvironmentReleases(args[1:])
 	case "history":
@@ -687,10 +691,22 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	for _, reason := range preview.BlockingReasons {
 		_, _ = fmt.Fprintf(osStdout, "  blocked: %s\n", reason)
 	}
+	printPromotionReleaseSet("source", preview.FromReleaseSet)
+	printPromotionReleaseSet("target", preview.ToReleaseSet)
 	for _, change := range preview.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
 	}
 	return 0
+}
+
+func printPromotionReleaseSet(label string, release *api.ProjectReleaseSetResponse) {
+	if release == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "  %s release set: %s (%d workloads)\n", label, release.ID, len(release.Members))
+	for _, member := range release.Members {
+		_, _ = fmt.Fprintf(osStdout, "    %s -> %s\n", member.AppID, member.DeploymentID)
+	}
 }
 
 func cmdProjectsEnvironmentsList(args []string) int {

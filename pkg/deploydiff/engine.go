@@ -712,6 +712,9 @@ func diffCrons(out *Diff, base []api.CronResponse, pending []api.CreateCronReque
 	type cronKey struct{ schedule, path string }
 	baseByKey := map[cronKey]api.CronResponse{}
 	for _, c := range base {
+		if c.Kind == "command" {
+			continue // deployment manifests own HTTP crons only
+		}
 		baseByKey[cronKey{c.Schedule, c.Path}] = c
 	}
 	// Index pending by same key.

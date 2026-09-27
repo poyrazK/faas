@@ -15,7 +15,11 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,15 +29,20 @@ import (
 // below don't exercise dispatch — the dispatcher counters land
 // in TestArbiter_Tick_DispatchCounts instead.
 type noopDispatcher struct {
+	mu            sync.Mutex // Tick dispatches a node's migrations concurrently
 	enqueueCalls  []string
 	recreateCalls []string
 }
 
 func (n *noopDispatcher) Enqueue(_ context.Context, id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.enqueueCalls = append(n.enqueueCalls, id)
 	return nil
 }
 func (n *noopDispatcher) RecreateInstance(_ context.Context, id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.recreateCalls = append(n.recreateCalls, id)
 	return nil
 }
@@ -366,5 +375,129 @@ func TestDecision_String(t *testing.T) {
 		if got := tc.in.String(); got != tc.want {
 			t.Errorf("(%d).String() = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// gatedDispatcher holds every live migration until release closes, so a test
+// can observe how many Tick runs at once.
+type gatedDispatcher struct {
+	mu          sync.Mutex
+	inFlight    int
+	maxInFlight int
+	calls       []string
+	release     chan struct{}
+}
+
+func (g *gatedDispatcher) Enqueue(_ context.Context, id string) error {
+	g.mu.Lock()
+	g.inFlight++
+	if g.inFlight > g.maxInFlight {
+		g.maxInFlight = g.inFlight
+	}
+	g.calls = append(g.calls, id)
+	g.mu.Unlock()
+	<-g.release
+	g.mu.Lock()
+	g.inFlight--
+	g.mu.Unlock()
+	return nil
+}
+
+func (g *gatedDispatcher) running() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inFlight
+}
+
+func runningInstances(n int) []state.RecoveryInstance {
+	out := make([]state.RecoveryInstance, n)
+	for i := range out {
+		out[i] = state.RecoveryInstance{ID: fmt.Sprintf("i%d", i), State: string(state.StateRunning)}
+	}
+	return out
+}
+
+// A draining node's live migrations run concurrently, bounded by the
+// configured limit: each handoff takes ~85 s, so dispatching them one by one
+// made a drain last that long per running instance.
+func TestArbiter_Tick_MigratesNodeConcurrentlyWithinLimit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ limit, instances int }{{1, 3}, {2, 5}, {4, 6}, {4, 2}} {
+		t.Run(fmt.Sprintf("limit=%d/instances=%d", tc.limit, tc.instances), func(t *testing.T) {
+			t.Parallel()
+			gate := &gatedDispatcher{release: make(chan struct{})}
+			a := NewArbiter(gate, &noopDispatcher{}).WithLiveMigrationConcurrency(tc.limit)
+			type result struct {
+				liveMig int
+				err     error
+			}
+			done := make(chan result, 1)
+			go func() {
+				liveMig, _, _, err := a.Tick(context.Background(),
+					[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleDraining}},
+					map[string][]state.RecoveryInstance{"n1": runningInstances(tc.instances)})
+				done <- result{liveMig, err}
+			}()
+			want := min(tc.limit, tc.instances)
+			deadline := time.Now().Add(5 * time.Second)
+			for gate.running() < want {
+				if time.Now().After(deadline) {
+					t.Fatalf("only %d migrations started, want %d at once", gate.running(), want)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			time.Sleep(20 * time.Millisecond) // give an over-limit dispatch time to show up
+			if got := gate.running(); got != want {
+				t.Fatalf("%d migrations in flight, want exactly %d", got, want)
+			}
+			close(gate.release)
+			res := <-done
+			if res.err != nil || res.liveMig != tc.instances {
+				t.Fatalf("Tick = (%d, %v), want (%d, nil)", res.liveMig, res.err, tc.instances)
+			}
+			if gate.maxInFlight != want {
+				t.Fatalf("max in flight = %d, want %d", gate.maxInFlight, want)
+			}
+			sort.Strings(gate.calls)
+			for i, id := range gate.calls {
+				if id != fmt.Sprintf("i%d", i) {
+					t.Fatalf("migrated %v, want every instance once", gate.calls)
+				}
+			}
+		})
+	}
+}
+
+// Concurrent dispatch keeps the per-instance outcomes: every failure is
+// reported, and an unhealthy source still recreates each failed handoff.
+func TestArbiter_Tick_ConcurrentOutcomes(t *testing.T) {
+	t.Parallel()
+	errA, errB := errors.New("handoff a failed"), errors.New("handoff b failed")
+	fail := MigrationDispatcherFunc(func(_ context.Context, id string) error {
+		switch id {
+		case "i0":
+			return errA
+		case "i1":
+			return errB
+		}
+		return nil
+	})
+	_, _, _, err := NewArbiter(fail, &noopDispatcher{}).Tick(context.Background(),
+		[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleDraining}},
+		map[string][]state.RecoveryInstance{"n1": runningInstances(4)})
+	if !errors.Is(err, errA) || !errors.Is(err, errB) {
+		t.Fatalf("Tick error = %v, want both handoff failures", err)
+	}
+
+	recreate := &noopDispatcher{}
+	liveMig, recreated, _, err := NewArbiter(fail, recreate).Tick(context.Background(),
+		[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleUnavailable}},
+		map[string][]state.RecoveryInstance{"n1": runningInstances(4)})
+	if err != nil || liveMig != 2 || recreated != 2 {
+		t.Fatalf("unavailable source: (%d migrated, %d recreated, %v), want (2, 2, nil)", liveMig, recreated, err)
+	}
+	sort.Strings(recreate.recreateCalls)
+	if fmt.Sprint(recreate.recreateCalls) != "[i0 i1]" {
+		t.Fatalf("recreated %v, want [i0 i1]", recreate.recreateCalls)
 	}
 }

@@ -70,6 +70,75 @@ func pgJobsSeed(t *testing.T, s *state.PgStore, ctx context.Context, name string
 	return job, run, fanned
 }
 
+func TestPg_Jobs_RecurringScheduleRoundTripAndClaim(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "pg-jobs-recurring@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := s.JobCreateScheduledIfUnderQuota(ctx, state.Job{
+		AccountID:      acct.ID,
+		Name:           "nightly-export",
+		Kind:           "recurring",
+		ImageRef:       "ghcr.io/example/exporter:v1",
+		Command:        []string{"/app/export"},
+		RAMMB:          256,
+		TaskTimeoutS:   60,
+		MaxParallelism: 1,
+		RetryMax:       2,
+		CronSchedule:   "0 3 * * *",
+		CronTimezone:   "Europe/Istanbul",
+	}, api.JobMaxPerAccount[api.PlanHobby.PlanIndex()])
+	if err != nil {
+		t.Fatalf("JobCreateScheduledIfUnderQuota: %v", err)
+	}
+	if job.Kind != "recurring" || job.CronSchedule != "0 3 * * *" || job.CronTimezone != "Europe/Istanbul" {
+		t.Fatalf("created scheduled job = %+v", job)
+	}
+	listed, err := s.JobListScheduled(ctx)
+	if err != nil || len(listed) != 1 || listed[0].ID != job.ID {
+		t.Fatalf("JobListScheduled = %+v, err %v", listed, err)
+	}
+
+	firedAt := job.CreatedAt.Add(time.Minute).UTC()
+	run, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("JobRunCreateScheduled = created %t, err %v", created, err)
+	}
+	if run.TriggerKind != "scheduled" || run.Tasks != 1 {
+		t.Fatalf("scheduled run = %+v", run)
+	}
+	if _, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, nil, firedAt.Add(time.Second)); err != nil || created {
+		t.Fatalf("duplicate JobRunCreateScheduled = created %t, err %v", created, err)
+	}
+	updated, err := s.JobGetByID(ctx, job.ID)
+	if err != nil || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(firedAt) {
+		t.Fatalf("JobGetByID after schedule fire = %+v, err %v", updated, err)
+	}
+
+	newSchedule := "30 3 * * *"
+	newTimezone := "UTC"
+	updated, err = s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, &newSchedule, &newTimezone)
+	if err != nil {
+		t.Fatalf("JobUpdateWithSchedule: %v", err)
+	}
+	if updated.Kind != "recurring" || updated.CronSchedule != newSchedule || updated.CronTimezone != newTimezone || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(updated.UpdatedAt) {
+		t.Fatalf("updated recurring job = %+v", updated)
+	}
+	if _, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, &firedAt, firedAt.Add(time.Hour)); err != nil || created {
+		t.Fatalf("stale scheduled candidate = created %t, err %v", created, err)
+	}
+
+	empty := ""
+	updated, err = s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, &empty, nil)
+	if err != nil {
+		t.Fatalf("JobUpdateWithSchedule(unschedule): %v", err)
+	}
+	if updated.Kind != "batch" || updated.CronSchedule != "" {
+		t.Fatalf("unscheduled job = kind %q schedule %q", updated.Kind, updated.CronSchedule)
+	}
+}
+
 // pgJobsCreateJobTaskInstance inserts a real `instances` row
 // carrying kind='job_task' + job_id=:jobID so the FK from
 // job_tasks.instance_id resolves. CreateInstanceWithMode doesn't

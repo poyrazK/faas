@@ -113,6 +113,120 @@ func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testi
 	}
 }
 
+func TestHandlerAppliesDailyLimitToAuthenticatedCustomerBinding(t *testing.T) {
+	var providerCalls int
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer provider.Close()
+	integration, err := NewIntegration("integration-1", provider.URL, "unused-token", []string{"app-1", "app-2"}, 100, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = ProviderAuthManaged
+	integration.CredentialSource = CredentialSourceCustomerSealed
+	integration.OwnerKind = IntegrationOwnerCustomer
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1"}
+	integration.CustomerAppRoutes = map[string]RoutePolicy{
+		"app-1": {AllowedMethods: []string{http.MethodGet}, AllowedPathPrefixes: []string{"/v1"}},
+		"app-2": {AllowedMethods: []string{http.MethodGet}, AllowedPathPrefixes: []string{"/v1"}},
+	}
+	appOneLimit, appTwoLimit := int64(1), int64(1)
+	integration.BindingDailyRequestLimits = map[string]*int64{"app-1": &appOneLimit, "app-2": &appTwoLimit}
+	resolver, err := NewStaticResolver([]Integration{integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(resolver, NewMemoryBackend(), provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, jwks := testWorkloadSigner(t, "https://identity.gregale.dev")
+	handler.IdentityVerifier, err = NewWorkloadIdentityVerifier(jwks, "https://identity.gregale.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.CredentialResolver = &changingCredential{value: "Bearer provider-secret"}
+	call := func(appID string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, Prefix+integration.ID+"/v1/items", nil)
+		req.Header.Set(WorkloadIdentityHeader, testWorkloadToken(t, signer, time.Now(), appID, integration.ID))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	if response := call("app-1"); response.Code != http.StatusNoContent {
+		t.Fatalf("first app one request status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if response := call("app-2"); response.Code != http.StatusNoContent {
+		t.Fatalf("app two request was not isolated from app one budget: status=%d body=%s", response.Code, response.Body.String())
+	}
+	blocked := call("app-1")
+	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("X-Gregale-Outbound-Rejection") != ReasonDailyLimit {
+		t.Fatalf("over-budget app one request = status %d reason %q", blocked.Code, blocked.Header().Get("X-Gregale-Outbound-Rejection"))
+	}
+	if providerCalls != 2 {
+		t.Fatalf("provider calls = %d, want 2 admitted calls", providerCalls)
+	}
+}
+
+func TestHandlerAppliesDailyLimitToExplicitOperatorBinding(t *testing.T) {
+	var providerCalls int
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer provider.Close()
+	integration, err := NewIntegration("integration-operator-bound", provider.URL, "unused-token", []string{"app-1"}, 100, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = ProviderAuthManaged
+	integration.CredentialSource = CredentialSourceOperatorEnv
+	integration.OwnerKind = IntegrationOwnerOperator
+	integration.OperatorAppIDs = map[string]struct{}{"app-1": {}}
+	integration.BindingAppIDs = map[string]struct{}{"app-1": {}}
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1"}
+	limit := int64(1)
+	integration.BindingDailyRequestLimits = map[string]*int64{"app-1": &limit}
+	resolver, err := NewStaticResolver([]Integration{integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(resolver, NewMemoryBackend(), provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, jwks := testWorkloadSigner(t, "https://identity.gregale.dev")
+	handler.IdentityVerifier, err = NewWorkloadIdentityVerifier(jwks, "https://identity.gregale.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.SetManagedAuthorizations(map[string]string{integration.ID: "Bearer provider-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	call := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, Prefix+integration.ID+"/v1/items", nil)
+		req.Header.Set(WorkloadIdentityHeader, testWorkloadToken(t, signer, time.Now(), "app-1", integration.ID))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	if response := call(); response.Code != http.StatusNoContent {
+		t.Fatalf("first explicitly-bound request status = %d body=%s", response.Code, response.Body.String())
+	}
+	blocked := call()
+	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("X-Gregale-Outbound-Rejection") != ReasonDailyLimit {
+		t.Fatalf("over-budget explicitly-bound request = status %d reason %q", blocked.Code, blocked.Header().Get("X-Gregale-Outbound-Rejection"))
+	}
+	if providerCalls != 1 {
+		t.Fatalf("provider calls = %d, want one admitted call", providerCalls)
+	}
+}
+
 func TestManagedAuthorizationRejectsUnsafeValuesWithoutReplacingConfiguration(t *testing.T) {
 	handler, err := NewHandler(&StaticResolver{}, NewMemoryBackend(), nil)
 	if err != nil {

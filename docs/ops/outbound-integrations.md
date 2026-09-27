@@ -183,6 +183,17 @@ Operator-provisioned integrations can set the same field in their
 integrations. The rate/burst/concurrency/timeout policy remains independently
 configurable and is not inferred from the daily request cap.
 
+An app binding can also have its own daily request cap, independent of the
+integration-wide cap. Set or clear it with
+`PUT /v1/apps/{slug}/outbound-bindings/{id}/budget`, for example
+`{"daily_request_limit":500}`; use `null` to clear it. Read that app's count,
+effective limit, UTC usage date, and reset time from
+`GET /v1/apps/{slug}/outbound-bindings/{id}/usage`. The binding list also
+includes `daily_request_limit`. Each admitted request consumes both the
+integration-wide budget, when configured, and the specific app binding's
+budget; rejected requests consume neither. The binding limit is bounded by the
+account plan, and both counters reset at UTC midnight.
+
 Delete a customer-owned integration with
 `DELETE /v1/outbound/integrations/{id}`. This permanently removes its sealed
 credential, app bindings, and admission state. This endpoint cannot delete

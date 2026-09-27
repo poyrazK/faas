@@ -130,7 +130,7 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	observedSnapshot := s.collectObservedRoutes(r.Context(), app.ID, app.Slug)
+	observedSnapshot := s.collectObservedRoutes(r.Context(), app.AccountID, app.ID, app.Slug)
 	observed := observedSnapshot.rows()
 	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
@@ -159,7 +159,7 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	}
 
 	source := "preview"
-	if observedSnapshot.Source == api.AppRoutesSourceUnavailable {
+	if observedSnapshot.Source == api.AppRoutesSourceUnavailable && !observedSnapshot.InventoryAvailable {
 		source = "degraded: routes_unavailable"
 	} else if observedSnapshot.Source == api.AppRoutesSourcePartial {
 		source = openapidiff.SourceDegradedRoutesPartial
@@ -168,10 +168,12 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	}
 	resp := api.AppOpenAPIPolicyPreviewResponse{
 		AppID: app.ID, Source: source, ObservedAvailable: observedSnapshot.available(),
-		ObservedSource:     observedSnapshot.Source,
-		CollectorsExpected: observedSnapshot.CollectorsExpected,
-		CollectorsHealthy:  observedSnapshot.CollectorsHealthy,
-		Routes:             outRoutes,
+		ObservedSource:             observedSnapshot.Source,
+		ObservedInventoryAvailable: observedSnapshot.InventoryAvailable,
+		ObservedCapHit:             observedSnapshot.CapHit,
+		CollectorsExpected:         observedSnapshot.CollectorsExpected,
+		CollectorsHealthy:          observedSnapshot.CollectorsHealthy,
+		Routes:                     outRoutes,
 	}
 	if spec != nil {
 		resp.OpenAPIVersion = spec.OpenAPIVersion()
@@ -478,7 +480,7 @@ func (s *server) loadAutoGenInputs(w http.ResponseWriter, r *http.Request, app s
 			"failed to read imported doc", docErr.Error()))
 		return nil, nil, nil, [32]byte{}, [32]byte{}, [32]byte{}, observedRoutesSnapshot{}, false
 	}
-	observation = s.collectObservedRoutes(r.Context(), app.ID, app.Slug)
+	observation = s.collectObservedRoutes(r.Context(), app.AccountID, app.ID, app.Slug)
 	observed = observation.rows()
 	var rulesErr error
 	rules, rulesErr = s.store.ListEdgeRulesForApp(r.Context(), app.ID)
@@ -576,6 +578,9 @@ func autoOpenAPISource(generated string, observation observedRoutesSnapshot, has
 	}
 	switch observation.Source {
 	case api.AppRoutesSourceUnavailable:
+		if observation.InventoryAvailable {
+			return generated
+		}
 		return openapidiff.SourceDegradedRoutes
 	case api.AppRoutesSourcePartial:
 		return openapidiff.SourceDegradedRoutesPartial
@@ -624,6 +629,9 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 		out["x-faas-observed-routes"] = map[string]any{
 			"source":              observation.Source,
 			"available":           observation.available(),
+			"inventory_available": observation.InventoryAvailable,
+			"inventory_cap_hit":   observation.InventoryCapHit,
+			"cap_hit":             observation.CapHit,
 			"collectors_expected": observation.CollectorsExpected,
 			"collectors_healthy":  observation.CollectorsHealthy,
 		}

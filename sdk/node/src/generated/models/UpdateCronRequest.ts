@@ -17,5 +17,13 @@ export type UpdateCronRequest = {
    * Enable or disable overlap skipping for scheduled fires.
    */
   skip_if_running?: boolean | null;
+  /**
+   * Replace the retry allowance for an existing deployment-command cron.
+   */
+  retry_max?: number | null;
+  /**
+   * Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt.
+   */
+  retry_backoff_seconds?: number | null;
 };
 

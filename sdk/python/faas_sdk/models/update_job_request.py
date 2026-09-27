@@ -28,6 +28,10 @@ class UpdateJobRequest:
     max_parallelism: int | Unset = UNSET
     retry_max: int | Unset = UNSET
     status: UpdateJobRequestStatus | Unset = UNSET
+    schedule: str | Unset = UNSET
+    """Replace the cron expression; an empty string removes the schedule."""
+    timezone: str | Unset = UNSET
+    """Replace the schedule IANA timezone."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +57,10 @@ class UpdateJobRequest:
         if not isinstance(self.status, Unset):
             status = self.status
 
+        schedule = self.schedule
+
+        timezone = self.timezone
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -72,6 +80,10 @@ class UpdateJobRequest:
             field_dict["retry_max"] = retry_max
         if status is not UNSET:
             field_dict["status"] = status
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
 
         return field_dict
 
@@ -106,6 +118,10 @@ class UpdateJobRequest:
         else:
             status = check_update_job_request_status(_status)
 
+        schedule = d.pop("schedule", UNSET)
+
+        timezone = d.pop("timezone", UNSET)
+
         update_job_request = cls(
             image_ref=image_ref,
             command=command,
@@ -115,6 +131,8 @@ class UpdateJobRequest:
             max_parallelism=max_parallelism,
             retry_max=retry_max,
             status=status,
+            schedule=schedule,
+            timezone=timezone,
         )
 
         update_job_request.additional_properties = d

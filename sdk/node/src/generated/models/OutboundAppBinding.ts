@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundIntegrationOffer } from './OutboundIntegrationOffer.js';
 /**
- * An app's customer-owned attachment to a managed integration.
+ * An app's attachment to a managed integration.
  */
 export type OutboundAppBinding = {
   integration: OutboundIntegrationOffer;
@@ -17,6 +17,10 @@ export type OutboundAppBinding = {
    * App-specific path prefixes, bounded by the integration ceiling.
    */
   allowed_path_prefixes: Array<string>;
+  /**
+   * Optional per-binding daily admitted-request limit.
+   */
+  daily_request_limit: number | null;
   created_at: string;
 };
 

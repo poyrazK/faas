@@ -9,6 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
 from ...models.problem import Problem
 from ...models.receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from ...models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from ...types import Response
 
 
@@ -38,9 +39,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> InboundWebhookReceiptResponse | Problem | None:
+) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
     if response.status_code == 202:
-        response_202 = InboundWebhookReceiptResponse.from_dict(response.json())
+
+        def _parse_response_202(data: object) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_202_type_0 = InboundWebhookReceiptResponse.from_dict(data)
+
+                return response_202_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_202_type_1 = WorkflowCallbackWebhookReceiptResponse.from_dict(data)
+
+            return response_202_type_1
+
+        response_202 = _parse_response_202(response.json())
 
         return response_202
 
@@ -72,7 +89,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[InboundWebhookReceiptResponse | Problem]:
+) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,14 +104,15 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
     stripe_signature: str,
-) -> Response[InboundWebhookReceiptResponse | Problem]:
+) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
     """Verify and durably accept a provider webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. A 202 is returned only after
-    the deterministic invocation receipt commits. Provider retries return
-    the same receipt with duplicate=true.
+    body is verified against Stripe-Signature. An exact workflow callback
+    binding completes its callback durably instead of enqueuing an app
+    invocation. Unmatched events keep the ordinary invocation path.
+    Terminal callbacks are acknowledged as ignored after verification.
 
     Args:
         token (str):
@@ -106,7 +124,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -128,14 +146,15 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
     stripe_signature: str,
-) -> InboundWebhookReceiptResponse | Problem | None:
+) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
     """Verify and durably accept a provider webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. A 202 is returned only after
-    the deterministic invocation receipt commits. Provider retries return
-    the same receipt with duplicate=true.
+    body is verified against Stripe-Signature. An exact workflow callback
+    binding completes its callback durably instead of enqueuing an app
+    invocation. Unmatched events keep the ordinary invocation path.
+    Terminal callbacks are acknowledged as ignored after verification.
 
     Args:
         token (str):
@@ -147,7 +166,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return sync_detailed(
@@ -164,14 +183,15 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
     stripe_signature: str,
-) -> Response[InboundWebhookReceiptResponse | Problem]:
+) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
     """Verify and durably accept a provider webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. A 202 is returned only after
-    the deterministic invocation receipt commits. Provider retries return
-    the same receipt with duplicate=true.
+    body is verified against Stripe-Signature. An exact workflow callback
+    binding completes its callback durably instead of enqueuing an app
+    invocation. Unmatched events keep the ordinary invocation path.
+    Terminal callbacks are acknowledged as ignored after verification.
 
     Args:
         token (str):
@@ -183,7 +203,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -203,14 +223,15 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
     stripe_signature: str,
-) -> InboundWebhookReceiptResponse | Problem | None:
+) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
     """Verify and durably accept a provider webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. A 202 is returned only after
-    the deterministic invocation receipt commits. Provider retries return
-    the same receipt with duplicate=true.
+    body is verified against Stripe-Signature. An exact workflow callback
+    binding completes its callback durably instead of enqueuing an app
+    invocation. Unmatched events keep the ordinary invocation path.
+    Terminal callbacks are acknowledged as ignored after verification.
 
     Args:
         token (str):
@@ -222,7 +243,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return (

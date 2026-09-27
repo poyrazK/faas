@@ -2,12 +2,264 @@
 
 Use asynchronous invokes, jobs, webhooks, and scheduled triggers when work does not need to finish in the request path.
 
+## Durable workflow waits
+
+A declarative workflow can pause between handler invocations without keeping a
+VM alive. For example, this order flow charges a card, waits three fixed
+24-hour days, then checks delivery:
+
+```yaml
+workflows:
+  - name: order_followup
+    trigger:
+      type: manual
+    steps:
+      - name: charge
+        run: charge_card
+        input:
+          order_id: "{{input.order_id}}"
+        retry:
+          max_attempts: 3
+          backoff: exponential
+      - name: delivery_delay
+        wait_for_duration: 3d
+        depends_on: [charge]
+      - name: check_delivery
+        run: check_delivery
+        depends_on: [delivery_delay, charge]
+        input:
+          order_id: "{{input.order_id}}"
+          charge_id: "{{steps.charge.output.charge_id}}"
+      - name: send_email
+        run: send_email
+        depends_on: [check_delivery]
+        input:
+          order_id: "{{input.order_id}}"
+          delivery: "{{steps.check_delivery.output}}"
+```
+
+Each handler step can declare an `input` JSON template. `{{input}}` selects
+the complete workflow input and `{{input.path.to.value}}` selects a field;
+`{{steps.STEP.output}}` selects a dependency's full JSON result, with dotted
+fields or numeric array indexes available after `output`. Step-output
+references must name a direct `depends_on` step. A reference occupying a
+whole JSON value preserves its type (including objects, arrays, numbers, and
+booleans); a reference embedded in a longer string must resolve to a scalar.
+Missing paths fail the step before the handler is invoked. If `input` is
+omitted, the handler receives the full workflow input as before. Gregale stores
+the resolved input before dispatch, so retries reuse the same payload even if
+the scheduler restarts.
+
+Executable steps receive an `Idempotency-Key` of
+`workflow/<run-id>/<step-name>`, unchanged across automatic retries; the
+separate `X-Faas-Workflow-Attempt` header increments. Deduplicate external
+side effects on that key. Delivery is still at least once, not exactly once.
+
+### Recover from a failed step
+
+Use `on_failure` to run a compensating or notification handler after a step has
+exhausted its retries (or its input template cannot be resolved):
+
+```yaml
+- name: charge
+  run: charge_card
+  retry:
+    max_attempts: 3
+    backoff: exponential
+  on_failure: refund
+- name: refund
+  run: refund_order
+  depends_on: [charge]
+  input:
+    order_id: "{{input.order_id}}"
+    failure: "{{failure}}"
+```
+
+The handler is skipped when `charge` succeeds. Its default input, when `input`
+is omitted, is an envelope containing the original run input and failure
+context: `{"input": ..., "failure": ...}`. Templates can select
+`{{failure.step}}`, `{{failure.status}}`, `{{failure.attempt}}`, and
+`{{failure.message}}`; the whole `{{failure}}` reference preserves the object.
+Failure context is available only to the step named by `on_failure`.
+
+This is a recovery hook, not error suppression: once the handler finishes, the
+workflow run still ends failed or dead. The original error remains the run's
+primary error; a handler's own failure is recorded on that handler step. Each
+executable step can route to one distinct executable handler, and handlers
+cannot chain `on_failure` or have downstream workflow steps.
+
+Handler retries persist a `next_retry_at` deadline per step, so an unrelated
+event cannot run a retry before its configured backoff expires. When a workflow
+has parallel waits and retries, the scheduler wakes it for the earliest due
+step.
+
+Deploy the manifest, then start a run with:
+
+```bash
+gregale workflows run order_followup --app APP_SLUG --input '{"order_id":"ord_123"}'
+```
+
+Inspect the latest step summary with `gregale workflows steps RUN_ID`. To see
+each handler invocation or condition-check poll—including its outcome, HTTP
+status, start/finish times, error, and next scheduled attempt—use:
+
+```bash
+gregale workflows attempts RUN_ID STEP_NAME
+```
+
+The equivalent read-only API is
+`GET /v1/workflows/runs/{id}/steps/{step}/attempts`. Attempt history stores
+metadata, not request or response bodies; timer and callback waits do not
+create executor-attempt records.
+
+The timer
+starts only when its dependencies succeed. It is stored in the workflow
+ledger and resumed by the scheduler when due; no application instance is
+reserved for the wait. `wait_for_duration` accepts `1s` through `30d` on
+Hobby, `90d` on Pro, or `365d` on Scale. `wait_for_event` and
+`wait_for_callback` timeouts use the same per-plan horizon. A timer cannot be
+combined with `run`, `path`,
+`wait_for_event`, `timeout`, `on_timeout`, or `retry` in one step.
+
+For a one-time callback, declare a separate `wait_for_callback: true` step
+with a `timeout` and optionally an `on_timeout` handler:
+
+```yaml
+- name: await_delivery
+  wait_for_callback: true
+  timeout: 3d
+  on_timeout: delivery_timeout
+  depends_on: [charge]
+- name: delivery_timeout
+  run: notify_support
+```
+
+After starting the run, an account-authorized client calls
+`GET /v1/workflows/runs/{id}/callbacks` to get the stable callback ID for
+`await_delivery`. It completes the step with
+`POST /v1/workflows/runs/{id}/callbacks/{callback_id}` and a JSON body.
+Completion can arrive before the step activates. Repeating the same JSON
+returns a duplicate receipt; sending a different body conflicts. The timeout
+starts when the step first becomes runnable, not when the run was created.
+The workflow stays parked between callbacks; no application instance is
+reserved for the wait. The callback ID is not an authentication token:
+both requests need the owning account's API authorization.
+
+If an external system cannot push an event, use a bounded condition checker:
+
+```yaml
+- name: await_delivery
+  wait_for_condition:
+    run: check_delivery
+    interval: 30m
+    max_attempts: 100
+  timeout: 3d
+  on_timeout: notify_support
+  depends_on: [charge]
+```
+
+`check_delivery` receives the workflow input on its first call. It must return
+JSON with a boolean `done`, for example `{"done":false,"state":{"order_id":"ord_123"}}`.
+The entire false result is sent as input to the next check; `done:true` makes
+the result the step output and unlocks dependents. Gregale persists each result
+and the next check time, then releases compute between calls. A 5xx or transport
+error retries on the same schedule; malformed 2xx and 4xx responses fail the
+run. The interval is at least one minute, with at most 1,000 checks and a
+separate seven-day maximum interval and overall timeout, even on plans that
+allow longer parked waits. Attempt exhaustion follows `on_timeout` when
+present. Checker calls are at least once and get a per-check
+`Idempotency-Key` (`workflow/<run-id>/<step-name>/<attempt>`), so distinct
+polls remain distinct. A push event or
+callback remains preferable when the external system supports one.
+
+For an unsupported external provider, receive and verify its webhook in your own handler,
+then use that authenticated Gregale API to complete the callback. Do not give
+the provider your Gregale API key. There is no per-callback public URL.
+For repeatable or broadcast signals, continue using `wait_for_event` and
+`POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
+
+Stripe can instead complete a callback without waking your app. Create a
+[durable inbound Stripe webhook endpoint](inbound-webhooks.md) for the
+same app and configure its one-time-disclosed URL in Stripe. Then bind the
+known Stripe object to a callback:
+
+```http
+PUT /v1/workflows/runs/RUN_ID/callbacks/CALLBACK_ID/webhook-binding
+Authorization: Bearer GREGALE_API_KEY
+Content-Type: application/json
+
+{"endpoint_id":"ENDPOINT_ID","event_type":"payment_intent.succeeded","object_id":"pi_123"}
+```
+
+The existing endpoint verifies Stripe's signature over the raw body. Only an
+exact event-type and object-ID match consumes the callback; other events still
+enter the app's ordinary durable webhook inbox. A matching verified event
+completes the workflow callback directly and returns `202` after persistence.
+Provider retries are deduplicated, and a late event for a closed callback is
+acknowledged as ignored. Bind before the provider event arrives; an event
+received earlier follows the normal app-delivery path. Use the binding's
+`GET` and `DELETE` operations to inspect or revoke it. This first adapter
+supports Stripe only; other providers still need a verifying application
+handler.
+
+This is a declarative workflow, not a replayed single function: handlers are
+separate at-least-once invocations and must make external side effects
+idempotent. Gregale does not yet provide `ctx.sleep()` or year-long
+code-as-workflow executions. Its existing short-lived `ctx.waitUntil()`
+post-response tail is separate from durable `wait_for_condition` checks.
+
 ```bash
 gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale jobs run nightly --tasks 10
 gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale crons add --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
+gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
+
+Use a scheduled job when work should run to completion in an isolated job
+environment; use an HTTP app cron when the schedule should make a request to an
+app route. Use a command cron when a recurring task needs the app's deployment
+environment without an HTTP endpoint:
+
+```bash
+gregale crons add --app APP_ID --schedule "0 2 * * *" \
+  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
+gregale crons add --app APP_ID --schedule "0 4 * * 0" \
+  --command "bin/cleanup --older-than 30d" --shell
+gregale crons runs CRON_ID
+```
+
+Command crons create one deployment-attached app task for each scheduled
+occurrence and select the app's currently live deployment at fire time, so a
+later deployment automatically supplies the new command environment. The
+command runs with a 10-minute timeout and 1 MiB output limit by default; use
+`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
+repeatable and preserves argument boundaries. `--shell` instead treats the
+single `--command` value as a shell string and cannot be combined with `--arg`.
+Use `--skip-if-running` to skip a firing while an earlier command task remains
+active. By default command failures are not retried. Set `--retry-max` to allow
+up to five additional attempts after a command fails or times out; retries use
+exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
+at 24 hours). A cron run remains one logical history row while it waits for a
+retry, and its task receipt reports the attempt count and next retry time.
+Retries are at-least-once: a command may have produced side effects before it
+failed, so make retryable commands idempotent. A worker lease lost after
+dispatch is not automatically replayed because completion is uncertain.
+
+Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
+id; for a command cron, inspect its captured stdout/stderr, exit status, and
+retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
+`gregale crons run CRON_ID` to immediately run the cron's saved command on the
+current live deployment without moving its schedule cursor.
+If `--skip-if-running` is configured and another run is still active, the
+manual request fails rather than overlapping it.
+Cancel a queued or active command-cron run with
+`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
+request while the worker stops it. Disabling a cron only prevents future fires.
+`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
+command. Scheduled jobs create one task per occurrence and
+pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
@@ -19,6 +271,63 @@ after completion; the failure destination receives the same envelope when the
 invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
+
+Async edge rules can also set their own retry curve and maximum invocation
+age instead of inheriting the app retry curve and plan deadline:
+
+```json
+{
+  "retry_policy": {
+    "max_attempts": 4,
+    "base_seconds": 1,
+    "max_seconds": 30,
+    "jitter_seconds": 0.2
+  },
+  "max_age_seconds": 600,
+  "on_failure": "WEBHOOK_ID"
+}
+```
+
+`max_attempts` includes the initial attempt; the current plan caps the retry
+budget. `max_age_seconds` starts when the edge accepts the request and is
+clamped to the plan's maximum invocation deadline. Omit either setting (or
+use zero for maximum age) to keep the existing app/plan default. The CLI
+equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
+`--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
+`--async-max-age-seconds` on `gregale edge-rules create`.
+
+For deployed apps, the same async route can be declared in `gregale.yaml` and
+reconciled with the source deployment:
+
+```yaml
+async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    match_methods: [POST]
+    on_success: WEBHOOK_ID
+    on_failure: DLQ_WEBHOOK_ID
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+```
+
+`app` is the target app slug (or, in a project deploy, its workload name), and
+destinations are existing webhook IDs from
+`gregale webhooks list --app reports`. Route names are stable per app: later
+deploys update a matching manifest-owned route and remove stale manifest-owned
+routes. Unmanaged edge rules are never adopted or deleted; an exact route
+collision fails deployment with guidance to resolve it first. Omitting
+`async_routes` leaves managed routes unchanged, while `async_routes: []`
+clears them. In project deploys, only selected workloads are reconciled;
+omitted route declarations clear that workload's manifest-owned routes, while
+`--only` and `--exclude` workloads remain untouched. `--no-triggers` leaves
+existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
+and `DELETE` are also accepted. This declaration is YAML-only.
 
 ## Application inbox
 

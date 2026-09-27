@@ -5,9 +5,11 @@
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
+import type { OutboundBindingUsageResponse } from '../models/OutboundBindingUsageResponse.js';
 import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffer.js';
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
+import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
 import type { PutOutboundRequestPolicyRequest } from '../models/PutOutboundRequestPolicyRequest.js';
@@ -390,6 +392,84 @@ export class OutboundService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}',
+      path: {
+        'slug': slug,
+        'integration': integration,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set or clear an app binding's daily outbound request limit.
+   * Requires MFA and deploy-write scope. The configured limit cannot exceed the account plan ceiling. Send null to clear the app-specific limit.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundBindingDailyBudget({
+    slug,
+    integration,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the app's attached integration whose limit is being configured.
+     */
+    integration: string,
+    requestBody: PutOutboundBindingDailyRequestBudgetRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/outbound-bindings/{integration}/budget',
+      path: {
+        'slug': slug,
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an app binding's current UTC-day outbound request usage.
+   * Requires MFA and read-surface scope. Reports UTC-day admissions for this app-to-integration binding, including provider calls that later fail; the returned timestamp marks its reset.
+   * @returns OutboundBindingUsageResponse Current UTC-day request count and effective binding limit.
+   * @throws ApiError
+   */
+  public static getOutboundBindingUsage({
+    slug,
+    integration,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the app's attached integration whose usage is requested.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundBindingUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/outbound-bindings/{integration}/usage',
       path: {
         'slug': slug,
         'integration': integration,

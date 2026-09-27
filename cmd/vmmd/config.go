@@ -71,6 +71,10 @@ type Config struct {
 	TLSCertPath string `toml:"tls_cert_path"`
 	TLSKeyPath  string `toml:"tls_key_path"`
 	TLSCAPath   string `toml:"tls_ca_path"`
+	// ServiceProxyCAPath is the public trust anchor staged into app guests
+	// for opt-in HTTPS calls to <service>.internal. Empty disables guest
+	// staging and the :443 netns admission rule.
+	ServiceProxyCAPath string `toml:"service_proxy_ca_path"`
 
 	// ScheddClientTLS is the client mTLS material vmmd uses to dial
 	// schedd for the capacity publisher (ADR-052 / issue #95 slice 2).

@@ -32,7 +32,7 @@ export type ProjectScanRequest = {
    */
   environment?: string;
   /**
-   * Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair.
+   * Leave trigger and async-route declarations and existing project trigger/route state unchanged for this scan/apply pair.
    */
   no_triggers?: boolean;
 };

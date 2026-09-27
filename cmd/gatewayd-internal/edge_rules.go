@@ -1617,13 +1617,20 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 		if !rule.Enabled || rule.Kind != state.EdgeRuleKindAsync || rule.Action.Async == nil {
 			continue
 		}
+		if rule.Action.Async.RetryPolicy.Validate() != nil || rule.Action.Async.MaxAgeSeconds < 0 || rule.Action.Async.MaxAgeSeconds > api.MaxAsyncRouteAgeSeconds {
+			continue
+		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
 		out = append(out, gateway.EdgeRuleAsyncResolved{
 			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
-			Priority: rule.Priority, PathGlob: rule.MatchPath,
+			OnSuccessWebhook: rule.Action.Async.OnSuccess,
+			OnFailureWebhook: rule.Action.Async.OnFailure,
+			RetryPolicy:      rule.Action.Async.RetryPolicy,
+			MaxAgeSeconds:    rule.Action.Async.MaxAgeSeconds,
+			Priority:         rule.Priority, PathGlob: rule.MatchPath,
 			Methods:      buildMethodsMap(rule.MatchMethods),
 			MatchHeaders: buildMatchHeadersMap(rule.MatchHeaders),
 		})

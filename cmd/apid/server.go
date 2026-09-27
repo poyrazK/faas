@@ -1499,6 +1499,8 @@ func (s *server) handler() http.Handler {
 	// (a customer who shouldn't see a route set on app X
 	// cannot enumerate it through this endpoint).
 	mux.HandleFunc("GET /v1/apps/{slug}/routes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRoutes)))
+	mux.HandleFunc("GET /v1/apps/{slug}/audit/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAudit))))
+	mux.HandleFunc("GET /v1/apps/{slug}/discovered-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppDiscoveredRoutes))))
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender (Phase 1). Read-only, no MFA, primary caller is
 	// an API key with ScopesReadSurface. IDOR-safe via loadApp —
@@ -1935,6 +1937,11 @@ func (s *server) handler() http.Handler {
 	// Per-cron execution history (issue #791). Read surface, so
 	// ScopesReadSurface and no idempotency wrapper.
 	mux.HandleFunc("GET /v1/crons/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronRuns))))
+	// On-demand output and attempt details for one command-cron run.
+	mux.HandleFunc("GET /v1/crons/{id}/runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCronCommandRun))))
+	// Cancel one command-cron run. Deploy-write scope, optional idempotency
+	// replay, and the same account/MFA guards as the other cron mutations.
+	mux.HandleFunc("POST /v1/crons/{id}/runs/{run_id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelCronCommandRun)))))
 	// Manual fire-now (issue #791 PR-C / ADR-090). Deploy-write scope
 	// (no new cron:write constant per ADR-090 §Sub-decisions 1).
 	// idempotent is INNERMOST so the replay lookup happens AFTER
@@ -2002,6 +2009,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}/steps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowSteps))))
+	mux.HandleFunc("GET /v1/workflows/runs/{id}/steps/{step}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowStepAttempts))))
+	mux.HandleFunc("GET /v1/workflows/runs/{id}/callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowCallbacks))))
+	mux.HandleFunc("POST /v1/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.completeWorkflowCallback))))
+	mux.HandleFunc("PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putWorkflowCallbackWebhookBinding))))
+	mux.HandleFunc("GET /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowCallbackWebhookBinding))))
+	mux.HandleFunc("DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteWorkflowCallbackWebhookBinding))))
 	mux.HandleFunc("POST /v1/workflows/runs/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.injectWorkflowEvent)))))
 	mux.HandleFunc("POST /v1/workflows/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelWorkflowRun)))))
 	mux.HandleFunc("PATCH /v1/triggers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateTrigger))))
@@ -2035,6 +2048,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createProjectEnvironment)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectReleaseSets))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/active", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getActiveProjectReleaseSet))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseSet))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishProjectReleaseSet)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentState))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
@@ -2227,6 +2243,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/outbound-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundAppBindings))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundAppBinding))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateOutboundBindingPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/outbound-bindings/{integration}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundBindingUsage))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundBindingDailyBudget))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundAppBinding))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/credential", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundCredential))))
 	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundCredential))))
@@ -3271,6 +3289,15 @@ func (s *server) handler() http.Handler {
 	// tenant data, reads only public repositories, and is rate limited per
 	// client IP (api.PreflightRateLimitPerHour).
 	mux.HandleFunc("GET /v1/preflight", s.servePreflight)
+	// Public by design: guest workloads need the platform's public caller
+	// assertion keys in order to verify X-Faas-Caller-Assertion. The document
+	// contains no tenant metadata and is independently capped per source IP.
+	mux.Handle("GET /v1/service-caller-keys", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   60,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))

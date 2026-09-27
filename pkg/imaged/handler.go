@@ -1797,12 +1797,16 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	return h.handoffSnapshotPrime(ctx, app, dep)
 }
 
-// handoffSnapshotPrime admits the unique release task when the dark-launch
-// gate is enabled, then either waits for its durable terminal notification or
-// emits the existing schedd handoff. Deployments without release intent keep
-// the historical zero-query fast path while the feature remains disabled.
+// handoffSnapshotPrime admits the unique release task when the gate is enabled,
+// then either waits for its durable terminal notification or emits the existing
+// schedd handoff. Release intent fails closed when the gate is disabled so a
+// deployment cannot silently skip its declared command. Deployments without
+// release intent keep the historical zero-query fast path.
 func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep state.Deployment) error {
-	if h.releasePhaseEnabled && len(dep.ReleaseCommand) > 0 {
+	if len(dep.ReleaseCommand) > 0 {
+		if !h.releasePhaseEnabled {
+			return h.failReleasePhaseUnavailable(ctx, dep)
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if err != nil {
 			return err
@@ -1813,6 +1817,17 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		}
 	}
 	return h.notifySnapshotPrime(ctx, app.ID, dep.ID)
+}
+
+func (h *Handler) failReleasePhaseUnavailable(ctx context.Context, dep state.Deployment) error {
+	detail := "deployment declares a release command, but release-phase execution is disabled; enable FAAS_RELEASE_PHASE_ENABLED=1 on imaged together with FAAS_APP_TASK_DISPATCH=1 on schedd, or remove the release declaration"
+	failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleasePhaseUnavailable, detail)
+	if err != nil {
+		return fmt.Errorf("imaged: fail deployment with unavailable release phase: %w", err)
+	}
+	h.log.Warn("imaged: release command cannot run; failing candidate", "deployment_id", dep.ID)
+	h.notifyDeploymentState(ctx, failed.AppID, failed.ID, state.DeployFailed)
+	return nil
 }
 
 func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep state.Deployment) (state.AppTask, error) {
@@ -2139,6 +2154,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
+		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
 	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
 		// The image config may advertise a single non-8080 TCP port. The
@@ -2710,6 +2729,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
+		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
 	// Source builds arrive with a builderd-produced local OCI archive in
 	// dep.RootfsPath. Keep the original source tarball for the customer

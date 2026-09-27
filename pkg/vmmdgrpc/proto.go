@@ -595,6 +595,7 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	out := make([]fcvm.WorkloadSpec, 0, len(pbs))
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
+		sealedSecrets := sealedFromProto(p.GetSealedSecrets())
 		startupProbe := sidecarProbeFromProto(p.GetStartupProbe())
 		if startupProbe == nil {
 			if test := p.GetStartupProbeTest(); len(test) > 0 {
@@ -623,6 +624,7 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			LivenessProbe:  sidecarProbeFromProto(p.GetLivenessProbe()),
 			ReadinessProbe: sidecarProbeFromProto(p.GetReadinessProbe()),
 			SealedEnv:      sealedEnv,
+			SealedSecrets:  sealedSecrets,
 			DependsOn:      workloadDependenciesFromProto(p.GetDependsOn()),
 		})
 	}

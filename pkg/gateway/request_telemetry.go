@@ -95,10 +95,13 @@ type RequestTelemetryRow struct {
 	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
 	// Guest execution evidence is emitted by the platform-owned runtime
 	// runner. Values are closed/bounded and contain no customer payload.
-	GuestDurationMS int
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
+	GuestDurationMS             int
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	GuestCPUTimeMS              int
+	GuestPeakRSSMB              int
+	GuestResourceUsageAvailable bool
 	// Deployment provenance copied from the target identity. Empty values
 	// preserve compatibility with legacy targets that predate metadata.
 	NodeID              string
