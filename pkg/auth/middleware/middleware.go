@@ -962,7 +962,10 @@ func isBillingRecoveryRoute(method, path string) bool {
 	switch method + " " + path {
 	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "POST /v1/billing/retry",
-		"PATCH /v1/account/plan":
+		"PATCH /v1/account/plan",
+		// Completing MFA is what clears an mfa_pending session and
+		// stamps the step-up that retry and plan change require.
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
 		return true
 	}
 	return false
