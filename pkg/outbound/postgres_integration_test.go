@@ -312,6 +312,67 @@ func TestPostgresRetryBudgetCoordinatesGatewayInstances(t *testing.T) {
 	}
 }
 
+func TestPostgresProviderCooldownIsSharedAndNeverShortened(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-provider-cooldown-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-cooldown-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "provider-cooldown",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: api.DefaultOutboundRequestPolicy(),
+	})
+	if err != nil {
+		t.Fatalf("create integration: %v", err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+		t.Fatalf("bind integration: %v", err)
+	}
+	backendA, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendB, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: 100, Burst: 20, MaxInFlight: 20,
+		BindingAppID: app.ID, LeaseTTL: time.Minute,
+	}
+	decision, err := backendA.Admit(ctx, spec)
+	if err != nil || !decision.Granted {
+		t.Fatalf("admission = %+v, %v", decision, err)
+	}
+	policyRevision := int64(42)
+	if err := backendA.RecordProviderCooldown(ctx, offer.ID, policyRevision, 20*time.Second); err != nil {
+		t.Fatalf("record provider cooldown: %v", err)
+	}
+	if err := backendB.RecordProviderCooldown(ctx, offer.ID, policyRevision, time.Second); err != nil {
+		t.Fatalf("record shorter provider cooldown: %v", err)
+	}
+	gate, err := backendB.AllowProviderRequest(ctx, offer.ID, policyRevision)
+	if err != nil || gate.Allowed || gate.RetryAfter < 15*time.Second || gate.RetryAfter > 20*time.Second {
+		t.Fatalf("shared provider cooldown = %+v, %v; want a remaining duration near 20 seconds", gate, err)
+	}
+	updatedPolicy, err := backendB.AllowProviderRequest(ctx, offer.ID, policyRevision+1)
+	if err != nil || !updatedPolicy.Allowed {
+		t.Fatalf("provider gate after policy revision change = %+v, %v; want allowed", updatedPolicy, err)
+	}
+}
+
 func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()

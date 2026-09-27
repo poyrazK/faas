@@ -18,9 +18,10 @@ The daemon also exposes an operator-only Prometheus endpoint on
 `outbound_admissions_total`, `outbound_rejections_total`,
 `outbound_in_flight`, `outbound_upstream_requests_total`, and
 `outbound_upstream_latency_seconds`,
-`outbound_response_cache_requests_total`, and
-`outbound_circuit_breaker_events_total`, and
-`outbound_retry_budget_events_total`. Operator integrations use their
+`outbound_response_cache_requests_total`,
+`outbound_circuit_breaker_events_total`,
+`outbound_retry_budget_events_total`, and
+`outbound_provider_cooldown_events_total`. Operator integrations use their
 configuration-owned IDs; all customer-created integrations share the bounded
 `customer_managed` label. Outcomes and rejection reasons also use bounded
 vocabularies. The in-flight gauge is per gateway process; the Postgres-backed
@@ -286,8 +287,10 @@ By default, Gregale makes one upstream attempt. A configured `max_retries`
 (0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
 for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
 `504` responses. Other methods and requests with bodies are never retried.
-Exponential backoff starts at 100 ms; a provider `Retry-After` value is
-honored but capped at one second. Every attempt shares the original
+Exponential backoff starts at 100 ms. Automatic retries honor a valid provider
+`Retry-After` only when it fits within the one-second retry window; longer
+delays are never shortened into an early retry, and the current provider
+response is returned instead. Every attempt shares the original
 request-timeout deadline. Retries stay inside one admission lease and consume
 one daily-budget unit; `outbound_upstream_requests_total` and its latency
 histogram record each actual provider attempt. The gateway does not follow
@@ -309,6 +312,19 @@ leaves the existing per-request `max_retries` behavior unchanged. The
 `exhausted`, `state_error`, and `unavailable` events using the same integration
 label policy as the other outbound metrics. See
 [ADR-286](../adr/286-shared-outbound-retry-budget.md).
+When a provider returns `429` with a valid `Retry-After`, outboundd shares a
+per-integration cooldown through Postgres, capped at one hour. Fresh requests
+are rejected locally with `429` and
+`X-Gregale-Outbound-Rejection: provider_cooldown` until that deadline, so
+replicas do not continue sending calls while the provider has asked them to
+wait. The original provider `429` remains unchanged; a delay longer than the
+one-second retry window is never shortened into an early retry. Eligible cache
+hits still return during the cooldown. Updating the integration policy clears
+the old provider cooldown. Cooldown checks run after normal admission, so
+blocked uncached requests count against configured request budgets. The
+`outbound_provider_cooldown_events_total` metric reports bounded `recorded`,
+`blocked`, `state_error`, and `unavailable` events. See
+[ADR-287](../adr/287-shared-outbound-provider-cooldown.md).
 An optional `response_cache_ttl_seconds` (0–300; default 0) enables a
 process-local, bounded cache for bodyless `GET` responses with status 200.
 Range and conditional requests bypass it. Responses marked `private`,

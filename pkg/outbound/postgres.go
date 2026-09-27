@@ -409,6 +409,78 @@ func (b *PostgresBackend) ConsumeRetryToken(ctx context.Context, integrationID s
 	return allowed, nil
 }
 
+func (b *PostgresBackend) AllowProviderRequest(ctx context.Context, integrationID string, policyRevision int64) (ProviderCooldownDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return ProviderCooldownDecision{}, err
+	}
+	integrationUUID, err := uuid.Parse(integrationID)
+	if err != nil {
+		return ProviderCooldownDecision{}, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
+	}
+	for range 3 {
+		var now time.Time
+		var cooldownUntil pgtype.Timestamptz
+		var storedRevision int64
+		if err := b.pool.QueryRow(ctx, `
+			SELECT now(), provider_cooldown_until, provider_cooldown_policy_revision
+			  FROM outbound_admission_state
+			 WHERE integration_id = $1`, integrationUUID).Scan(&now, &cooldownUntil, &storedRevision); err != nil {
+			return ProviderCooldownDecision{}, err
+		}
+		if storedRevision == policyRevision {
+			if cooldownUntil.Valid && cooldownUntil.Time.After(now) {
+				return ProviderCooldownDecision{RetryAfter: cooldownUntil.Time.Sub(now)}, nil
+			}
+			return ProviderCooldownDecision{Allowed: true}, nil
+		}
+		// Policy revisions change rarely. Only lock/update the shared row when
+		// resetting stale cooldown state; ordinary cache misses remain readers.
+		err := b.pool.QueryRow(ctx, `
+			UPDATE outbound_admission_state
+			   SET provider_cooldown_until = NULL,
+			       provider_cooldown_policy_revision = $2
+			 WHERE integration_id = $1 AND provider_cooldown_policy_revision = $3
+			RETURNING now(), provider_cooldown_until`, integrationUUID, policyRevision, storedRevision).Scan(&now, &cooldownUntil)
+		if err == nil {
+			return ProviderCooldownDecision{Allowed: true}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return ProviderCooldownDecision{}, err
+		}
+	}
+	return ProviderCooldownDecision{}, fmt.Errorf("outbound provider cooldown policy changed repeatedly during admission")
+}
+
+func (b *PostgresBackend) RecordProviderCooldown(ctx context.Context, integrationID string, policyRevision int64, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 || delay > maxProviderCooldown {
+		return fmt.Errorf("%w: provider cooldown is outside the supported range", ErrInvalidIntegration)
+	}
+	integrationUUID, err := uuid.Parse(integrationID)
+	if err != nil {
+		return fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
+	}
+	result, err := b.pool.Exec(ctx, `
+		UPDATE outbound_admission_state
+		   SET provider_cooldown_until = CASE
+		       WHEN provider_cooldown_policy_revision = $2 THEN GREATEST(
+		           COALESCE(provider_cooldown_until, '-infinity'::timestamptz),
+		           now() + ($3::bigint * interval '1 microsecond'))
+		       ELSE now() + ($3::bigint * interval '1 microsecond')
+		   END,
+		       provider_cooldown_policy_revision = $2
+		 WHERE integration_id = $1`, integrationUUID, policyRevision, delay.Microseconds())
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("outbound admission state is missing")
+	}
+	return nil
+}
+
 func (b *PostgresBackend) AllowCircuit(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int) (CircuitBreakerDecision, error) {
 	if err := ctx.Err(); err != nil {
 		return CircuitBreakerDecision{}, err
@@ -585,3 +657,4 @@ func (b *PostgresBackend) Release(ctx context.Context, integrationID, leaseID st
 
 var _ Backend = (*PostgresBackend)(nil)
 var _ CircuitBreakerBackend = (*PostgresBackend)(nil)
+var _ ProviderCooldownBackend = (*PostgresBackend)(nil)
