@@ -18920,7 +18920,7 @@ func (m *MemStore) ListAppSecretRuntimeReloadTargets(_ context.Context, accountI
 				continue
 			}
 			if len(allowlist) > 0 {
-				if _, authorized := allowlist[secret.Key]; !authorized {
+				if _, authorized := allowlist[secret.Key]; !authorized && !sidecarReferencesSecret(deployment.Sidecars, secret.Key) {
 					continue
 				}
 			}
@@ -18971,6 +18971,22 @@ func hasSidecars(raw json.RawMessage) bool {
 	}
 	var sidecars []json.RawMessage
 	return json.Unmarshal(raw, &sidecars) != nil || len(sidecars) > 0
+}
+
+func sidecarReferencesSecret(raw json.RawMessage, secretKey string) bool {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return false
+	}
+	var sidecars api.Sidecars
+	if err := json.Unmarshal(raw, &sidecars); err != nil {
+		return false
+	}
+	for _, sidecar := range sidecars {
+		if sidecar.EnvSecrets[secretKey] == api.SecretRefPrefix+secretKey {
+			return true
+		}
+	}
+	return false
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------

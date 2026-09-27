@@ -86,6 +86,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		Type           api.SidecarType          `json:"type"`
 		Cmd            []string                 `json:"cmd,omitempty"`
 		Env            map[string]string        `json:"env,omitempty"`
+		EnvSecrets     map[string]string        `json:"env_secrets,omitempty"`
 		Port           int                      `json:"port,omitempty"`
 		PrimaryIngress bool                     `json:"primary_ingress,omitempty"`
 		RamMB          int                      `json:"ram_mb,omitempty"`
@@ -128,6 +129,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			Type:           s.Type,
 			Cmd:            s.Cmd,
 			Env:            envOut,
+			EnvSecrets:     s.EnvSecrets,
 			Port:           s.Port,
 			PrimaryIngress: s.PrimaryIngress,
 			RamMB:          s.RamMB,

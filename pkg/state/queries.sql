@@ -65,7 +65,16 @@ SELECT s.scope,
    AND i.app_id = sqlc.arg(app_id)::uuid
    AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
-   AND (coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb OR d.override_env_secrets ? s.key)
+   AND (
+       coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+       OR d.override_env_secrets ? s.key
+       OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+             CROSS JOIN LATERAL jsonb_each_text(coalesce(sidecar.value->'env_secrets', '{}'::jsonb)) AS secret_ref(env_key, ref)
+            WHERE secret_ref.ref = 'secret:' || s.key
+       )
+   )
 ORDER BY s.scope ASC, s.key ASC, i.id ASC;
 
 -- name: SetDeploymentSecretReloadSignal :execrows

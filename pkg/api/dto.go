@@ -6690,6 +6690,13 @@ type Sidecar struct {
 	// `Limits.EnvValueMaxBytes`. Values are sealed at rest via
 	// secretbox. Plaintext on the wire; sealed on the column.
 	Env map[string]string `json:"env,omitempty"`
+	// EnvSecrets is an explicit per-sidecar allowlist of app secrets.
+	// Each entry maps an environment key to the same-named app secret
+	// (`DB_URL`: `secret:DB_URL`). Values are resolved at wake time in the
+	// deployment's scope; sidecars never inherit the main workload's set.
+	// These secrets are restart-delivered only; sidecar live reload is not
+	// currently supported.
+	EnvSecrets map[string]string `json:"env_secrets,omitempty"`
 	// Port is the listen port. 0 means "absent / fall back to
 	// image default" (1..65535 enforced at the API layer). The
 	// host-side plumbing that propagates this value to netns +
@@ -6816,6 +6823,30 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar[%q].env[%q] value is %d bytes; max is %d.",
 					s.Name, k, len(v), limits.EnvValueMaxBytes)).
 				WithLimit(int64(limits.EnvValueMaxBytes), int64(len(v)))
+		}
+	}
+	for k, ref := range s.EnvSecrets {
+		if p := ValidateEnvKey(k); p != nil {
+			return p
+		}
+		if _, duplicate := s.Env[k]; duplicate {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env",
+				fmt.Sprintf("sidecar[%q] env and env_secrets both define %q.", s.Name, k))
+		}
+		if !strings.HasPrefix(ref, SecretRefPrefix) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference an app secret as %q%s.", s.Name, k, SecretRefPrefix, k))
+		}
+		secretKey := strings.TrimPrefix(ref, SecretRefPrefix)
+		if !SecretRefNameRe.MatchString(secretKey) || secretKey != k {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference the same app secret name (%q%s).", s.Name, k, SecretRefPrefix, k))
+		}
+		if limits.EnvValueMaxBytes > 0 && len(ref) > limits.EnvValueMaxBytes {
+			return ErrEnvVarValueTooLarge(limits, len(ref))
 		}
 	}
 	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {

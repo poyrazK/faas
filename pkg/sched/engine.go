@@ -3204,11 +3204,17 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load sealed env: %w", err)
 	}
-	sidecars, err := e.sidecarsForDeployment(ctx, dep)
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sidecars_invalid")
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load sidecars: %w", err)
+	}
+	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_secret_version_changed")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: sidecar secret versions changed during preparation: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
@@ -4973,13 +4979,16 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	// ships only the requested env_keys. A missing-required
 	// key fails loud (the legacy "stage everything" path is
 	// preserved when OverrideEnvSecrets is nil).
-	sealedEnv, err := e.loadSealedEnvFor(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep))
+	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
 	}
-	sidecars, err := e.sidecarsForDeployment(ctx, dep)
+	sidecars, sidecarCandidates, err := e.sidecarsForDeployment(ctx, dep, app.AccountID)
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
+	}
+	if _, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates); err != nil {
+		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
@@ -4999,7 +5008,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		AccountID:              acct.ID,
 		AppID:                  app.ID,
 		DeploymentID:           dep.ID,
-		SealedEnv:              sealedEnv,
+		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
@@ -5703,10 +5712,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
 		return fmt.Errorf("sched: prime: load sealed env: %w", err)
 	}
-	sidecars, err := e.sidecarsForDeployment(ctx, dep)
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sidecars_invalid")
 		return fmt.Errorf("sched: prime: load sidecars: %w", err)
+	}
+	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_secret_version_changed")
+		return fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)

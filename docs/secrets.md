@@ -12,6 +12,28 @@ gregale secrets list --app my-api
 gregale secrets unset --app my-api STRIPE_SECRET_KEY
 ```
 
+Grant one app secret to a single companion in the deployment's `companions`
+declaration (legacy field name: `sidecars`):
+
+```yaml
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:<digest>
+    type: sidecar
+    env_secrets:
+      DATABASE_URL: secret:DATABASE_URL
+```
+
+The companion gets only the app secrets it declares; it does not inherit the
+main workload's secret set. Each reference resolves in the deployment's scope and
+must name the same secret as its environment key. Missing grants fail the
+wake rather than silently creating an empty variable.
+
+This is a per-workload delivery allowlist, not a security boundary between
+hostile workloads in one VM. Workloads share the guest kernel and privileged
+code may inspect shared guest resources; use separate deployments when code
+must not be trusted with another workload's runtime state.
+
 Use stdin or an environment variable when setting a value in automation, and
 grant CI only `secrets:write` plus the scopes it needs to deploy. Secret names
 follow the same uppercase key contract as [environment variables](env.md).
@@ -63,11 +85,14 @@ its own clients or connection pools. Refresh is checked every 10 seconds; use
 replacement is preferred.
 
 This opt-in currently supports single-workload deployments only. A deployment
-with sidecars is rejected when the image declares the reload label, preserving
-the existing boundary that sidecars do not receive the main workload's
-secrets. Secret reload requests are resolved against the live deployment's
-scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
-their existing all-secrets-in-scope behavior). The application is responsible
+with sidecars is rejected when the image declares the reload label. Sidecars
+can separately receive explicitly granted app secrets through their own
+`env_secrets` maps; grants are never inherited from the main workload and are
+applied only at cold boot or restart. Sidecar in-process reload and app
+acknowledgements are not supported yet. Secret reload requests are resolved
+against the live deployment's scope and main-workload `env_secrets` allowlist
+(legacy deployments without an allowlist keep their existing
+all-secrets-in-scope behavior). The application is responsible
 for confirming to itself that it successfully reloaded. `secrets list` reports
 wake-time delivery and a complete roster of active runtimes currently
 authorized for each key by deployment scope and `env_secrets`. Each target

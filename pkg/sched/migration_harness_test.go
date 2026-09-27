@@ -32,6 +32,7 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -729,5 +730,48 @@ func TestBuildAppSpecForMigration_UsesInstanceDeployment(t *testing.T) {
 	}
 	if !strings.Contains(spec.LayerKey, original.ID) {
 		t.Fatalf("LayerKey = %q, want instance deployment %q", spec.LayerKey, original.ID)
+	}
+}
+
+func TestBuildAppSpecForMigration_ResolvesSidecarSecretGrants(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := seedApp(t, store, api.PlanHobby, 256, 3)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:migration-sidecar-secrets", Status: state.DeployLive,
+		Scope:              api.DefaultEnvScope,
+		OverrideEnvSecrets: json.RawMessage(`{"MAIN_TOKEN":"secret:MAIN_TOKEN"}`),
+		Sidecars:           json.RawMessage(`[{"name":"proxy","image":"r/x@sha256:01","type":"sidecar","env_secrets":{"DATABASE_URL":"secret:DATABASE_URL"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, "dying", "")
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+		DeploymentID: dep.ID, SidecarName: "proxy", StorageKey: "apps/app/proxy.ext4",
+	}); err != nil {
+		t.Fatalf("set sidecar layer: %v", err)
+	}
+	for key, value := range map[string]string{
+		"MAIN_TOKEN": "cipher-main", "DATABASE_URL": "cipher-sidecar", "UNGRANTED_TOKEN": "cipher-ungranted",
+	} {
+		if err := store.UpsertAppSecret(ctx, account.ID, app.ID, key, []byte(value)); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	spec, err := engine.BuildAppSpecForMigration(ctx, ins.ID)
+	if err != nil {
+		t.Fatalf("BuildAppSpecForMigration: %v", err)
+	}
+	if len(spec.SealedEnv) != 1 || spec.SealedEnv[0].Key != "MAIN_TOKEN" {
+		t.Fatalf("main sealed env = %#v, want only MAIN_TOKEN", spec.SealedEnv)
+	}
+	if len(spec.Sidecars) != 1 || len(spec.Sidecars[0].SealedSecrets) != 1 || spec.Sidecars[0].SealedSecrets[0].Key != "DATABASE_URL" || string(spec.Sidecars[0].SealedSecrets[0].Ciphertext) != "cipher-sidecar" {
+		t.Fatalf("sidecar secret delivery = %#v, want only granted DATABASE_URL", spec.Sidecars)
 	}
 }

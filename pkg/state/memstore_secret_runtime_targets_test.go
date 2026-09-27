@@ -11,11 +11,11 @@ import (
 
 func TestMemStoreAppSecretRuntimeReloadTargetsIncludesUnknownAndUnreported(t *testing.T) {
 	store, ctx, account, app := memValueHashFixture(t)
-	makeDeployment := func(scope string, override json.RawMessage) state.Deployment {
+	makeDeployment := func(scope string, override, sidecars json.RawMessage) state.Deployment {
 		t.Helper()
 		deployment, err := store.CreateDeployment(ctx, state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + scope,
-			Status: state.DeployLive, Scope: scope, OverrideEnvSecrets: override,
+			Status: state.DeployLive, Scope: scope, OverrideEnvSecrets: override, Sidecars: sidecars,
 		})
 		if err != nil {
 			t.Fatalf("create %s deployment: %v", scope, err)
@@ -37,7 +37,7 @@ func TestMemStoreAppSecretRuntimeReloadTargetsIncludesUnknownAndUnreported(t *te
 		}
 	}
 
-	prod := makeDeployment("prod", json.RawMessage(`{"DATABASE_URL":"vault://prod/db"}`))
+	prod := makeDeployment("prod", json.RawMessage(`{"DATABASE_URL":"vault://prod/db"}`), nil)
 	if err := store.SetDeploymentSecretReloadSignal(ctx, prod.ID, "SIGHUP"); err != nil {
 		t.Fatalf("enable prod reload: %v", err)
 	}
@@ -45,11 +45,20 @@ func TestMemStoreAppSecretRuntimeReloadTargetsIncludesUnknownAndUnreported(t *te
 	upsert("prod", "DATABASE_URL")
 	upsert("prod", "UNAUTHORIZED_TOKEN")
 
-	staging := makeDeployment("staging", nil)
+	staging := makeDeployment("staging", nil, nil)
 	stagingRuntime := makeRuntime(staging) // A pre-migration deployment is unknown, not disabled.
 	upsert("staging", "STAGING_TOKEN")
 
-	dev := makeDeployment("dev", nil)
+	sidecar := makeDeployment("sidecar", json.RawMessage(`{"MAIN_TOKEN":"secret:MAIN_TOKEN"}`), json.RawMessage(`[{"name":"worker","type":"sidecar","env_secrets":{"SIDECAR_TOKEN":"secret:SIDECAR_TOKEN"}}]`))
+	if err := store.SetDeploymentSecretReloadSignal(ctx, sidecar.ID, ""); err != nil {
+		t.Fatalf("disable sidecar reload: %v", err)
+	}
+	sidecarRuntime := makeRuntime(sidecar)
+	upsert("sidecar", "MAIN_TOKEN")
+	upsert("sidecar", "SIDECAR_TOKEN")
+	upsert("sidecar", "UNAUTHORIZED_SIDE_TOKEN")
+
+	dev := makeDeployment("dev", nil, nil)
 	if err := store.SetDeploymentSecretReloadSignal(ctx, dev.ID, ""); err != nil {
 		t.Fatalf("disable dev reload: %v", err)
 	}
@@ -67,25 +76,28 @@ func TestMemStoreAppSecretRuntimeReloadTargetsIncludesUnknownAndUnreported(t *te
 	if err != nil {
 		t.Fatalf("list active targets: %v", err)
 	}
-	if len(targets) != 3 {
-		t.Fatalf("targets = %+v, want authorized prod, staging, and dev targets but not prod allowlist exclusion", targets)
+	if len(targets) != 5 {
+		t.Fatalf("targets = %+v, want prod, legacy staging, sidecar main+grant, and dev targets", targets)
 	}
-	byInstance := make(map[string]state.AppSecretRuntimeReloadTarget, len(targets))
+	byRuntimeKey := make(map[string]state.AppSecretRuntimeReloadTarget, len(targets))
 	for _, target := range targets {
-		byInstance[target.InstanceID] = target
+		byRuntimeKey[target.InstanceID+"\x00"+target.Key] = target
 	}
-	if got := byInstance[prodRuntime.ID]; got.ReloadSupport != "enabled" || !got.Reported || got.Version != 1 {
+	if got := byRuntimeKey[prodRuntime.ID+"\x00DATABASE_URL"]; got.ReloadSupport != "enabled" || !got.Reported || got.Version != 1 {
 		t.Errorf("reported opt-in target = %+v, want enabled/reported/v1", got)
 	}
-	if got := byInstance[stagingRuntime.ID]; got.ReloadSupport != "unknown" || got.Reported {
+	if got := byRuntimeKey[stagingRuntime.ID+"\x00STAGING_TOKEN"]; got.ReloadSupport != "unknown" || got.Reported {
 		t.Errorf("legacy unreported target = %+v, want unknown/unreported", got)
 	}
-	if got := byInstance[devRuntime.ID]; got.ReloadSupport != "disabled" || got.Reported {
+	if got := byRuntimeKey[devRuntime.ID+"\x00DEV_TOKEN"]; got.ReloadSupport != "disabled" || got.Reported {
 		t.Errorf("explicit opt-out target = %+v, want disabled/unreported", got)
 	}
 	for _, target := range targets {
-		if target.Key == "UNAUTHORIZED_TOKEN" {
+		if target.Key == "UNAUTHORIZED_TOKEN" || target.Key == "UNAUTHORIZED_SIDE_TOKEN" {
 			t.Errorf("deployment override allowlist leaked an unauthorized target: %+v", target)
 		}
+	}
+	if got := byRuntimeKey[sidecarRuntime.ID+"\x00SIDECAR_TOKEN"]; got.ReloadSupport != "disabled" {
+		t.Errorf("sidecar secret target = %+v, want SIDECAR_TOKEN with reload disabled", got)
 	}
 }

@@ -13,21 +13,83 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func mergeSecretDeliveryCandidates(current, additional []state.AppSecretDeliveryCandidate) ([]state.AppSecretDeliveryCandidate, error) {
+	if len(additional) == 0 {
+		return current, nil
+	}
+	merged := append([]state.AppSecretDeliveryCandidate(nil), current...)
+	versions := make(map[string]int64, len(merged)+len(additional))
+	for _, candidate := range merged {
+		versions[candidate.Scope+"\x00"+candidate.Key] = candidate.Version
+	}
+	for _, candidate := range additional {
+		key := candidate.Scope + "\x00" + candidate.Key
+		if version, exists := versions[key]; exists {
+			if version != candidate.Version {
+				return nil, fmt.Errorf("secret %q in scope %q changed from delivery version %d to %d while preparing the wake", candidate.Key, candidate.Scope, version, candidate.Version)
+			}
+			continue
+		}
+		versions[key] = candidate.Version
+		merged = append(merged, candidate)
+	}
+	return merged, nil
+}
+
+func validatePersistedSidecarSecretRefs(sidecar api.Sidecar) error {
+	for envKey, ref := range sidecar.EnvSecrets {
+		if api.ValidateEnvKey(envKey) != nil {
+			return fmt.Errorf("sidecar %q has invalid env_secrets key %q", sidecar.Name, envKey)
+		}
+		if _, duplicate := sidecar.Env[envKey]; duplicate {
+			return fmt.Errorf("sidecar %q defines %q in both env and env_secrets", sidecar.Name, envKey)
+		}
+		if !strings.HasPrefix(ref, api.SecretRefPrefix) {
+			return fmt.Errorf("sidecar %q has invalid env_secrets reference for %q", sidecar.Name, envKey)
+		}
+		secretName := strings.TrimPrefix(ref, api.SecretRefPrefix)
+		if secretName != envKey || !api.SecretRefNameRe.MatchString(secretName) {
+			return fmt.Errorf("sidecar %q has invalid env_secrets reference for %q", sidecar.Name, envKey)
+		}
+	}
+	return nil
+}
+
 // sidecarsForDeployment resolves the persisted sidecar declarations and their
 // immutable layer handles into the workload specs carried by a wake. The
 // declaration order is intentional: it is the stable drive order used by
 // imaged, vmmd, and guest-init. The storage rows are keyed by name because
 // their SQL reader sorts by name, so they must never be used as the ordering
 // source.
-func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment) ([]fcvm.WorkloadSpec, error) {
+func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, []state.AppSecretDeliveryCandidate, error) {
 	if len(dep.Sidecars) == 0 || string(dep.Sidecars) == "null" || string(dep.Sidecars) == "[]" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	layers, err := e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list sidecar layers: %w", err)
+		return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
 	}
-	return sidecarSpecsFromDeployment(dep.Sidecars, layers)
+	specs, err := sidecarSpecsFromDeployment(dep.Sidecars, layers)
+	if err != nil {
+		return nil, nil, err
+	}
+	var declarations api.Sidecars
+	if err := json.Unmarshal(dep.Sidecars, &declarations); err != nil {
+		return nil, nil, fmt.Errorf("decode sidecar secret references: %w", err)
+	}
+	var candidates []state.AppSecretDeliveryCandidate
+	for i, declaration := range declarations {
+		if len(declaration.EnvSecrets) == 0 {
+			continue
+		}
+		loaded, err := e.loadSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets)
+		if err != nil {
+			return nil, nil, fmt.Errorf("sidecar %q secrets: %w", declaration.Name, err)
+		}
+		specs[i].SealedSecrets = loaded.Entries
+		candidates = append(candidates, loaded.Candidates...)
+	}
+	return specs, candidates, nil
 }
 
 func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSidecarLayer) ([]fcvm.WorkloadSpec, error) {
@@ -40,6 +102,11 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 	}
 	if len(sidecars) > api.SidecarCapMax {
 		return nil, fmt.Errorf("sidecar count %d exceeds cap %d", len(sidecars), api.SidecarCapMax)
+	}
+	for _, sidecar := range sidecars {
+		if err := validatePersistedSidecarSecretRefs(sidecar); err != nil {
+			return nil, err
+		}
 	}
 
 	byName := make(map[string]state.DeploymentSidecarLayer, len(layers))
