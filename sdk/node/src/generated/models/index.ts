@@ -562,6 +562,7 @@ export type { PlatformTenantCredentialMetadata } from './PlatformTenantCredentia
 export type { PlatformTenantCredentialResult } from './PlatformTenantCredentialResult.js';
 export type { PlatformTenantCredentialsResponse } from './PlatformTenantCredentialsResponse.js';
 export type { PlatformTenantDetailResponse } from './PlatformTenantDetailResponse.js';
+export type { PlatformTenantHostnameVerifiedWebhookPayload } from './PlatformTenantHostnameVerifiedWebhookPayload.js';
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';

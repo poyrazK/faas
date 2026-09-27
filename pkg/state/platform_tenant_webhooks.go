@@ -7,6 +7,7 @@ import (
 )
 
 const PlatformTenantStatementFinalizedEvent = "platform_tenant.statement.finalized"
+const PlatformTenantHostnameVerifiedEvent = "platform_tenant.hostname.verified"
 
 // PlatformTenantWebhookStore adds tenant-owned receivers to the shared
 // durable webhook ledger. The webhook remains account-owned for quota and
@@ -16,6 +17,23 @@ type PlatformTenantWebhookStore interface {
 	ListPlatformTenantWebhookDeliveries(context.Context, string, string, string, int, string) ([]AppWebhookDelivery, string, error)
 }
 
-func validPlatformTenantWebhookFilter(events []string) bool {
-	return len(events) == 1 && events[0] == PlatformTenantStatementFinalizedEvent
+// ValidPlatformTenantWebhookFilter accepts the closed platform-tenant
+// webhook vocabulary and rejects empty, duplicate, or unknown subscriptions.
+func ValidPlatformTenantWebhookFilter(events []string) bool {
+	if len(events) == 0 || len(events) > 2 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		switch event {
+		case PlatformTenantStatementFinalizedEvent, PlatformTenantHostnameVerifiedEvent:
+		default:
+			return false
+		}
+		if _, ok := seen[event]; ok {
+			return false
+		}
+		seen[event] = struct{}{}
+	}
+	return true
 }

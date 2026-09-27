@@ -211,12 +211,28 @@ type PlatformTenantStatementFinalizedWebhookPayload struct {
 	FinalizedAt      time.Time                             `json:"finalized_at"`
 }
 
+// PlatformTenantHostnameVerifiedWebhookPayload records the ownership check
+// transition for a hostname on a surface explicitly linked to a platform
+// tenant. Verification proves DNS control only; it does not imply that a TLS
+// certificate has been issued or that the hostname is routable.
+type PlatformTenantHostnameVerifiedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	SurfaceID        string    `json:"surface_id"`
+	SurfaceName      string    `json:"surface_name"`
+	AppID            string    `json:"app_id"`
+	HostnameID       string    `json:"hostname_id"`
+	Hostname         string    `json:"hostname"`
+	VerifiedAt       time.Time `json:"verified_at"`
+}
+
 type CreatePlatformTenantWebhookRequest struct {
-	TargetURL      string `json:"target_url"`
-	WebhookSecret  string `json:"webhook_secret"`
-	RetryPolicy    string `json:"retry_policy,omitempty"`
-	DeliveryFormat string `json:"delivery_format,omitempty"`
-	Enabled        *bool  `json:"enabled,omitempty"`
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter,omitempty"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
 }
 
 type UpdatePlatformTenantWebhookRequest struct {

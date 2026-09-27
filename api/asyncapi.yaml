@@ -2,16 +2,16 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.7.0
+  version: 1.8.0
   description: |
     Gregale delivers selected app lifecycle and billing events to app-owned
-    subscriptions and cross-app statement events to platform-tenant-owned
-    subscriptions, accepts tenant-scoped events for the
-    internal content-based router, accepts external events for durable workflow
-    runs, and exposes per-app FIFO queue operations. Outbound webhook messages
-    use CloudEvents 1.0 structured JSON over HTTP POST and are signed with the
-    webhook secret; ingress, workflow, and queue operations use the public API's
-    authenticated JSON endpoints.
+    subscriptions, and cross-app statement and hostname-verification events to
+    platform-tenant-owned subscriptions. It accepts tenant-scoped events for
+    the internal content-based router, accepts external events for durable
+    workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
+    messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
+    with the webhook secret; ingress, workflow, and queue operations use the
+    public API's authenticated JSON endpoints.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -98,6 +98,14 @@ channels:
     messages:
       platformTenantStatementFinalized:
         $ref: '#/components/messages/PlatformTenantStatementFinalized'
+  platformTenantHostnameVerified:
+    address: platform_tenant.hostname.verified
+    description: Emitted when DNS ownership is verified for a hostname on a surface linked to this platform tenant; this does not guarantee certificate issuance or routing.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantHostnameVerified:
+        $ref: '#/components/messages/PlatformTenantHostnameVerified'
   internalEventPublish:
     address: /v1/events:publish
     description: Publish one tenant-scoped event for asynchronous content-based fanout.
@@ -273,6 +281,17 @@ operations:
     summary: Deliver a platform_tenant.statement.finalized event to a tenant webhook.
     messages:
       - $ref: '#/channels/platformTenantStatementFinalized/messages/platformTenantStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantHostnameVerified:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantHostnameVerified'
+    summary: Deliver a platform_tenant.hostname.verified event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantHostnameVerified/messages/platformTenantHostnameVerified'
     bindings:
       http:
         method: POST
@@ -484,6 +503,18 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/PlatformTenantStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantHostnameVerified:
+      name: platform_tenant.hostname.verified
+      title: Platform tenant hostname verified
+      summary: DNS ownership has been verified for a hostname on a surface linked to this tenant; certificate issuance and routing are separate lifecycle steps.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantHostnameVerifiedEvent'
       bindings:
         http:
           headers:
@@ -840,6 +871,29 @@ components:
               enum: ['platform_tenant.statement.finalized']
             data:
               $ref: '#/components/schemas/PlatformTenantStatementFinalizedData'
+    PlatformTenantHostnameVerifiedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.hostname.verified']
+            data:
+              $ref: '#/components/schemas/PlatformTenantHostnameVerifiedData'
+    PlatformTenantHostnameVerifiedData:
+      type: object
+      description: DNS TXT ownership proof only. This event does not mean a certificate has been issued or that the hostname is routable; the challenge token is never included.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, hostname_id, hostname, verified_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        hostname_id: { type: string, format: uuid }
+        hostname: { type: string, minLength: 1 }
+        verified_at: { type: string, format: date-time }
+      additionalProperties: false
     PlatformTenantStatementFinalizedData:
       type: object
       required:
