@@ -11,7 +11,7 @@ func TestNormalizeServiceReliabilityPolicies(t *testing.T) {
 		t.Fatalf("normalized policies = %#v, err=%v", got, err)
 	}
 	for _, tc := range []struct {
-		name string
+		name  string
 		mapIn map[string]ServiceReliabilityPolicy
 	}{
 		{"undeclared", map[string]ServiceReliabilityPolicy{"database": {TimeoutMS: 100}}},
