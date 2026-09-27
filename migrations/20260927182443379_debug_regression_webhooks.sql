@@ -1,3 +1,5 @@
+-- filename: 20260927182443379_debug_regression_webhooks.sql
+
 -- +goose Up
 -- +goose StatementBegin
 -- Enqueue customer webhooks in the same transaction as a debugger
