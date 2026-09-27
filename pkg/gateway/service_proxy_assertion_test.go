@@ -2,12 +2,16 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
 
 func assertionProxy(t *testing.T, caller ServiceCaller, mint ServiceCallerMinter, seen *http.Header) *ServiceProxy {
@@ -67,6 +71,81 @@ func TestServiceProxyAttachesCallerAssertion(t *testing.T) {
 	// one and not the other would see two different stories about one call.
 	if got.CallerEnv != "preview" {
 		t.Errorf("mint input CallerEnv = %q, want preview", got.CallerEnv)
+	}
+}
+
+// The real VMMD forwarder strips platform-owned x-faas-* metadata by default.
+// The assertion minted by ServiceProxy is the one exception; a caller's
+// forged values must be replaced before that trusted context is set.
+func TestServiceProxyCallerAssertionCrossesVMMDHTTPBridge(t *testing.T) {
+	cli := &stubVmmdClient{resp: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK}}
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "i", NodeID: "n", Port: 8080}}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-target"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-caller", AccountID: "acct-1"}, nil
+		},
+		MintCallerAssertion: func(ServiceCallerMintInput) (string, error) { return "signed-token", nil },
+		Forward:             ForwardingReverseProxy(&stubLookup{cli: cli}, nil),
+		EndpointTTL:         time.Minute,
+		Now:                 func() time.Time { return time.Unix(100, 0) },
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	req.Header.Add(ServiceCallerAssertionHeader, "forged.first.token")
+	req.Header.Add(ServiceCallerAssertionHeader, "forged.second.token")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(cli.calls) != 1 {
+		t.Fatalf("VMMD received %d requests, want one", len(cli.calls))
+	}
+	var assertions []string
+	for _, header := range cli.calls[0].GetHeaders() {
+		if strings.EqualFold(header.GetName(), ServiceCallerAssertionHeader) {
+			assertions = append(assertions, header.GetValue())
+		}
+	}
+	if len(assertions) != 1 || assertions[0] != "signed-token" {
+		t.Fatalf("VMMD caller assertion headers = %q, want exactly [signed-token]", assertions)
+	}
+}
+
+func TestRawRequestHeadForwardsOnlyTrustedServiceCallerAssertion(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trusted bool
+		want    string
+	}{
+		{name: "untrusted header is stripped"},
+		{name: "trusted service assertion is forwarded", trusted: true, want: "signed-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://service.internal/", nil)
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set(ServiceCallerAssertionHeader, "signed-token")
+			if tc.trusted {
+				req = req.WithContext(withTrustedServiceCallerAssertion(req.Context()))
+			}
+
+			head, err := rawRequestHead(req)
+			if err != nil {
+				t.Fatalf("build request head: %v", err)
+			}
+			parsed, err := http.ReadRequest(bufio.NewReader(strings.NewReader(string(head))))
+			if err != nil {
+				t.Fatalf("parse request head: %v", err)
+			}
+			if got := parsed.Header.Get(ServiceCallerAssertionHeader); got != tc.want {
+				t.Errorf("forwarded assertion = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
