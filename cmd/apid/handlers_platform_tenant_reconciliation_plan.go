@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -80,12 +81,12 @@ func (s *server) applyPlatformTenantReconciliation(w http.ResponseWriter, r *htt
 	}
 	result, err := store.ApplyPlatformTenantReconciliation(r.Context(), in, req.ExpectedPlanHash)
 	if err != nil {
-		if err == state.ErrPlatformTenantPlanStale {
+		if errors.Is(err, state.ErrPlatformTenantPlanStale) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "platform_tenant_plan_stale", "Reconciliation plan is stale",
 				"tenant resources or policy changed after this plan was previewed; request a new plan before applying"))
 			return
 		}
-		if err == state.ErrInvalidArgument {
+		if errors.Is(err, state.ErrInvalidArgument) {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Invalid plan hash", "expected_plan_hash must be the 64-character hash returned by the plan endpoint"))
 			return
