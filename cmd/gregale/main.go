@@ -25,20 +25,25 @@ func topLevelUsage(showAdvanced bool) string {
 	var b strings.Builder
 	b.WriteString("gregale — deploy apps and functions that scale to zero.\n\n")
 	b.WriteString("Usage:\n  gregale <command> [flags]\n\n")
-
-	commands := customerCliCommands()
-	b.WriteString("Customer commands:\n")
-	writeGroupedCommands(&b, commands)
 	if showAdvanced {
+		b.WriteString("Customer commands:\n")
+		writeGroupedCommands(&b, customerCliCommands())
 		b.WriteString("\nAdvanced/operator compatibility:\n")
 		for _, command := range advancedCliCommands() {
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
+		b.WriteString("  help                   Show this help message\n")
 	} else {
-		b.WriteString("\nOperator commands live in gregalectl. Legacy aliases remain callable but are hidden from this list.\n")
-		b.WriteString("Run 'gregale help --all' to list advanced and compatibility commands.\n")
+		b.WriteString("Get started:\n")
+		for _, name := range []string{"login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+			command, _ := lookupCliCommand(name)
+			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+		}
+		b.WriteString("  help                   Show command help\n")
+		b.WriteString("\nExamples:\n")
+		b.WriteString("  gregale login\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
+		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
-	b.WriteString("  help                   Show this help message\n")
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
 	b.WriteString("Global flags:\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
@@ -98,6 +103,10 @@ func run(args []string) (status int) {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
 	}()
+	if invalid := invalidJSONFlagValue(args); invalid != "" {
+		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
+		return 1
+	}
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
@@ -107,40 +116,11 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
-	// Resolve help before dispatch at every command depth. Several positional
-	// leaves historically interpreted --help as an app, job, or key id and made
-	// an authenticated production request. The manifest is the safe local source
-	// of truth; leaf-specific parsers remain responsible for normal invocations.
-	if len(args) == 2 && hasHelpFlag(args[1:]) {
+	// Help is always local and comes from the same manifest as completion and
+	// the generated reference. This also handles flags preceding --help.
+	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
 		if command, ok := lookupCliCommand(args[0]); ok {
-			printLocalCommandHelp(osStdout, command)
-			return 0
-		}
-	}
-	// The deployments alias group has one extra command level. Resolve
-	// help only when the manifest confirms the exact verb path, so a
-	// positional value that happens to be `--help` cannot trigger a request.
-	if len(args) >= 3 && hasHelpFlag(args[2:]) {
-		if command, ok := lookupCliCommand(args[0]); ok {
-			if parent, found := findCliSubcommand(command.Subcommands, args[1]); found && len(parent.Subcommands) > 0 {
-				if len(args) == 3 {
-					printLocalSubcommandHelp(osStdout, command, parent)
-					return 0
-				}
-				if leaf, found := findCliSubcommand(parent.Subcommands, args[2]); found && hasHelpFlag(args[3:]) {
-					printLocalLeafHelp(osStdout, command, parent, leaf)
-					return 0
-				}
-			}
-		}
-	}
-	if len(args) >= 3 && hasHelpFlag(args[2:]) && shouldResolveNestedHelp(args[0], args[1]) {
-		if command, ok := lookupCliCommand(args[0]); ok {
-			for _, sub := range command.Subcommands {
-				if sub.Name != args[1] {
-					continue
-				}
-				printLocalSubcommandHelp(osStdout, command, sub)
+			if printManifestHelp(osStdout, command, args[1:]) {
 				return 0
 			}
 		}
@@ -157,8 +137,23 @@ func run(args []string) (status int) {
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
-		fmt.Print(topLevelUsage(len(args) > 1 && args[1] == "--all"))
-		return 0
+		if len(args) == 1 || (len(args) == 2 && (args[1] == "--all" || hasHelpFlag(args[1:]))) {
+			fmt.Print(topLevelUsage(len(args) == 2 && args[1] == "--all"))
+			return 0
+		}
+		if command, ok := lookupCliCommand(args[1]); ok {
+			if printManifestHelp(osStdout, command, args[2:]) {
+				return 0
+			}
+		}
+		message := "unknown help topic: " + strings.Join(args[1:], " ")
+		if len(args) == 2 {
+			if suggestion, ok := suggestCommand(args[1]); ok {
+				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
+			}
+		}
+		PrintUsage(os.Stderr, message, "cli")
+		return 1
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go.
@@ -584,23 +579,66 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
+		if suggestion, ok := suggestCommand(args[0]); ok {
+			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", args[0], suggestion))
+		}
 		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
 	}
 }
 
-func shouldResolveNestedHelp(command, subcommand string) bool {
-	unsafeLeaves := map[string]struct{}{
-		"dev setup":      {},
-		"queue tail":     {},
-		"jobs runs":      {},
-		"traffic status": {},
-		"orgs members":   {},
-		"cors rm":        {},
-		"keys rm":        {},
-		"keys rotate":    {},
+// printManifestHelp resolves verb paths without invoking a command parser or
+// making a network request. For --help, unrelated flags and positionals are
+// ignored so `deploy --plan --help` still shows deploy help.
+func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
+	var selected []cliSub
+	positionalCount := 0
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		var choices []cliSub
+		if len(selected) == 0 {
+			choices = command.Subcommands
+		} else {
+			choices = selected[len(selected)-1].Subcommands
+		}
+		if sub, ok := findCliSubcommand(choices, arg); ok {
+			selected = append(selected, sub)
+		} else if len(choices) > 0 {
+			if command.SubcommandsAfterPositionals && len(selected) == 0 && positionalCount < len(command.Positionals) {
+				positionalCount++
+				continue
+			}
+			return false
+		}
 	}
-	_, ok := unsafeLeaves[command+" "+subcommand]
-	return ok
+	switch len(selected) {
+	case 0:
+		printLocalCommandHelp(w, command)
+	case 1:
+		helpPath := command.Name + " " + selected[0].Name
+		if helpPath == "app scale" {
+			PrintUsage(w, appScaleUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts recover" {
+			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "deploys retry" {
+			PrintUsage(w, deploysRetryUsage, command.DocSlug)
+			return true
+		}
+		printLocalSubcommandHelp(w, command, selected[0])
+	case 2:
+		printLocalLeafHelp(w, command, selected[0], selected[1])
+	default:
+		return false
+	}
+	return true
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
@@ -610,7 +648,12 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// public help paths aligned with their actual dispatchers.
 	switch command.Name {
 	case "rollback":
-		PrintUsage(w, rollbackUsage, command.DocSlug)
+		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		if len(command.Examples) > 0 {
+			_, _ = fmt.Fprintln(w, "\nExamples:")
+			printCLIExamples(w, command.Examples)
+		}
+		_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 		return
 	case "rollouts":
 		PrintUsage(w, rolloutsUsage, command.DocSlug)
@@ -642,6 +685,14 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if command.Name == "deploy" {
+		_, _ = fmt.Fprintln(w, "\nSource defaults to committed HEAD when origin exists; otherwise it uses local files.")
+		_, _ = fmt.Fprintln(w, "Use --source=head to require a commit, --source=worktree to include local changes, or --path DIR for a subtree.")
+	}
+	if len(command.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, command.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
@@ -653,6 +704,9 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 			choices = append(choices, child.Name)
 		}
 		usage += " <" + strings.Join(choices, "|") + ">"
+	}
+	for _, positional := range sub.Positionals {
+		usage += " " + positional
 	}
 	if len(sub.Flags) > 0 {
 		usage += " [flags]"
@@ -670,6 +724,10 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(sub.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, sub.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
@@ -685,7 +743,17 @@ func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
+	if len(leaf.Examples) > 0 {
+		_, _ = fmt.Fprintln(w, "\nExamples:")
+		printCLIExamples(w, leaf.Examples)
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func printCLIExamples(w io.Writer, examples []string) {
+	for _, example := range examples {
+		_, _ = fmt.Fprintf(w, "  %s\n", example)
+	}
 }
 
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {

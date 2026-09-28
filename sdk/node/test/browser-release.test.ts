@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
+  GREGALE_RELEASE_COOKIE,
+  GREGALE_RELEASE_SUBPROTOCOL_PREFIX,
   GREGALE_REVISION_HEADER,
 } from '../src/browser.js';
 import { gregaleReleaseMetaTag } from '../src/release-context.js';
@@ -37,6 +39,44 @@ test('captures a release response and pins subsequent requests to managed origin
   assert.equal(calls[1]?.headers.get(GREGALE_RELEASE_HEADER), RELEASE_A);
   assert.equal(calls[0]?.headers.get('X-Request-Id'), 'first');
   assert.equal(firstHeaders.has(GREGALE_RELEASE_HEADER), false, 'the caller headers are not mutated');
+});
+
+test('seeds static browser clients from the gateway release-context cookie', async (t) => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  let cookie = `${GREGALE_RELEASE_COOKIE}=${RELEASE_A}`;
+  const writes: string[] = [];
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      get cookie() { return cookie; },
+      set cookie(value: string) {
+        writes.push(value);
+        if (value.startsWith(`${GREGALE_RELEASE_COOKIE}=`)) cookie = '';
+      },
+    },
+  });
+  t.after(() => {
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else delete (globalThis as unknown as Record<string, unknown>).document;
+  });
+
+  let sent = new Headers();
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    fetch: async (_input, init) => {
+      sent = new Headers(init?.headers);
+      return new Response(null, { status: 200 });
+    },
+  });
+
+  assert.equal(client.release, RELEASE_A);
+  await client.fetch(`${API_ORIGIN}/v1/checkout`);
+  assert.equal(sent.get(GREGALE_RELEASE_HEADER), RELEASE_A);
+
+  client.clearRelease();
+  assert.equal(client.release, undefined);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0] ?? '', /Max-Age=0/);
 });
 
 test('serializes unpinned startup requests until the first release is discovered', async () => {
@@ -130,6 +170,66 @@ test('does not combine a caller revision pin with the project release', async ()
   assert.equal(sent.get(GREGALE_REVISION_HEADER), 'deployment-specific-pin');
   assert.equal(sent.has(GREGALE_RELEASE_HEADER), false);
   assert.equal(callerHeaders.has(GREGALE_RELEASE_HEADER), false);
+});
+
+test('pins managed cross-origin WebSockets with a reserved subprotocol without mutating app protocols', () => {
+  const calls: Array<{ url: string | URL; protocols?: string | string[] }> = [];
+  const appProtocols = ['graphql-transport-ws', 'chat'];
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    initialRelease: RELEASE_A,
+    webSocketFactory: (url, protocols) => {
+      calls.push({ url, protocols });
+      return {} as WebSocket;
+    },
+  });
+
+  client.webSocket('wss://api.example.test/socket', appProtocols);
+
+  assert.equal(calls[0]?.url, 'wss://api.example.test/socket');
+  assert.deepEqual(calls[0]?.protocols, [
+    'graphql-transport-ws',
+    'chat',
+    `${GREGALE_RELEASE_SUBPROTOCOL_PREFIX}${RELEASE_A}`,
+  ]);
+  assert.deepEqual(appProtocols, ['graphql-transport-ws', 'chat']);
+});
+
+test('does not add release subprotocols to unmanaged WebSockets', () => {
+  const calls: Array<{ url: string | URL; protocols?: string | string[] }> = [];
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    initialRelease: RELEASE_A,
+    webSocketFactory: (url, protocols) => {
+      calls.push({ url, protocols });
+      return {} as WebSocket;
+    },
+  });
+
+  client.webSocket('wss://third-party.example.test/socket', 'graphql-transport-ws');
+
+  assert.equal(calls[0]?.url, 'wss://third-party.example.test/socket');
+  assert.equal(calls[0]?.protocols, 'graphql-transport-ws');
+});
+
+test('requires a known release and reserves its WebSocket subprotocol namespace', () => {
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    webSocketFactory: () => ({} as WebSocket),
+  });
+
+  assert.throws(
+    () => client.webSocket('wss://api.example.test/socket'),
+    /release is not known/,
+  );
+  assert.throws(
+    () => createGregaleBrowserFetch({
+      managedOrigins: [API_ORIGIN],
+      initialRelease: RELEASE_A,
+      webSocketFactory: () => ({} as WebSocket),
+    }).webSocket('wss://api.example.test/socket', `${GREGALE_RELEASE_SUBPROTOCOL_PREFIX}${RELEASE_B}`),
+    /reserved for Gregale release pinning/,
+  );
 });
 
 test('returns release-expired responses unchanged and keeps the pin until explicit reset', async () => {

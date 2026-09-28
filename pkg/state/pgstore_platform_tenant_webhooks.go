@@ -12,7 +12,7 @@ import (
 func (s *PgStore) CreatePlatformTenantWebhookIfUnderQuota(ctx context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
 	if in.AccountID == "" || in.PlatformTenantID == "" || in.AppID != "" ||
 		(in.Scope != "" && in.Scope != AppWebhookScopePlatformTenant) ||
-		!validPlatformTenantWebhookFilter(in.EventFilter) {
+		!ValidPlatformTenantWebhookFilter(in.EventFilter) {
 		return AppWebhook{}, ErrInvalidAppWebhookScope
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})

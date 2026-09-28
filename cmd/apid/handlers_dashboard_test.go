@@ -278,6 +278,21 @@ func TestDashboardHandler_OrgActivityFiltersAndPaginates(t *testing.T) {
 		"app.deployed", state.OrgActivityActorSystem, "system-only", "system")
 	appendDashboardActivity(t, store, orgID, base.Add(31*time.Minute),
 		"env.set", state.OrgActivityActorUser, "environment-only", "env")
+	if _, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{
+		OrgID: orgID, OccurredAt: base.Add(33 * time.Minute), Kind: "api_key.created",
+		ActorType: state.OrgActivityActorUser, ActorLabel: "Alice", ResourceType: "api_key",
+		ResourceID: "key-id", ResourceLabel: "ci-deploy", SourceType: "dashboard-test", SourceID: "api-key",
+	}); err != nil {
+		t.Fatalf("append api-key activity: %v", err)
+	}
+	if _, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{
+		OrgID: orgID, OccurredAt: base.Add(34 * time.Minute), Kind: "org.member.role_changed",
+		ActorType: state.OrgActivityActorUser, ActorLabel: "Alice", ResourceType: "member",
+		ResourceID: "member-id", ResourceLabel: "bob@example.com", SourceType: "dashboard-test",
+		SourceID: "member-role", Data: []byte(`{"new_role":"admin"}`),
+	}); err != nil {
+		t.Fatalf("append member activity: %v", err)
+	}
 	appendDashboardActivity(t, store, uuid.New(), base.Add(32*time.Minute),
 		"app.deployed", state.OrgActivityActorUser, "other-org-secret", "foreign")
 
@@ -326,6 +341,24 @@ func TestDashboardHandler_OrgActivityFiltersAndPaginates(t *testing.T) {
 	}
 	if body := second.Body.String(); !strings.Contains(body, "Alice deployed payments-00") || strings.Contains(body, "Alice deployed payments-01") {
 		t.Fatalf("second page did not contain only the remaining filtered activity\n%s", body)
+	}
+
+	keys := httptest.NewRecorder()
+	keyRequest := httptest.NewRequest(http.MethodGet, path+"?activity_kind_prefix=api_key.", nil)
+	keyRequest.AddCookie(cookie)
+	srv.ServeHTTP(keys, keyRequest)
+	if keys.Code != http.StatusOK || !strings.Contains(keys.Body.String(), "Alice created API key ci-deploy") ||
+		!strings.Contains(keys.Body.String(), `option value="api_key." selected>API keys</option>`) {
+		t.Fatalf("API-key activity filter = %d\n%s", keys.Code, keys.Body.String())
+	}
+
+	access := httptest.NewRecorder()
+	accessRequest := httptest.NewRequest(http.MethodGet, path+"?activity_kind_prefix=org.", nil)
+	accessRequest.AddCookie(cookie)
+	srv.ServeHTTP(access, accessRequest)
+	if access.Code != http.StatusOK || !strings.Contains(access.Body.String(), "Alice changed bob@example.com&#39;s role (admin)") ||
+		!strings.Contains(access.Body.String(), `option value="org." selected>Members and invitations</option>`) {
+		t.Fatalf("workspace-access activity filter = %d\n%s", access.Code, access.Body.String())
 	}
 }
 

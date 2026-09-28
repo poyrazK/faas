@@ -54,6 +54,51 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
+| 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
+| 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |
+| 335 | [Tenant-scoped self-service customer offboarding](335-platform-tenant-self-service-customer-offboarding.md) | accepted | Atomic, tenant-bound customer and active-key revocation with retry-safe responses |
+| 334 | [Owner-controlled downstream customer provisioning](334-platform-tenant-consumer-provisioning-policy.md) | accepted | Default-off customer creation policy and per-tenant active-customer ceiling, separate from the tenant-bound manage scope |
+| 333 | [Backoff-aware realtime callback replay monitoring](333-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
+| 332 | [Realtime callback replay scheduling index](332-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
+| 331 | [Realtime callback retry backoff](331-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
+| 330 | [Realtime callback dead-letter inspection and replay](330-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |
+| 329 | [Realtime callbacks without durable delivery](329-realtime-callbacks-without-durable-delivery.md) | accepted | Close sockets when direct HTTP message callbacks fail without an outbox |
+| 328 | [Realtime callback outbox admission failure handling](328-realtime-callback-outbox-admission-failures.md) | accepted | Stop socket reads and page when callback events cannot be durably admitted due to storage errors |
+| 327 | [Realtime callback outbox backpressure](327-realtime-callback-outbox-backpressure.md) | accepted | Retry admission while space frees; close overloaded sockets with 1013 and count rejected callbacks |
+| 326 | [Realtime callback outbox capacity warning](326-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
+| 325 | [Realtime callback replay recovery observability](325-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
+| 324 | [Managed realtime callback replay supervision](324-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
+| 323 | [Managed realtime callback backlog observability](323-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
+| 322 | [Bounded parallel managed realtime callback replay](322-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
+| 321 | [Live managed realtime callback credential rotation](321-live-realtime-callback-auth-rotation.md) | accepted | Rotate callback credentials on active realtime connections without reconnecting clients |
+| 320 | [Bounded managed realtime callback dead letters](320-bounded-realtime-callback-dead-letters.md) | accepted | Retain callback dead letters within a byte cap and expose durable recovery state |
+| 319 | [Persistent managed realtime callback outbox](319-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
+| 318 | [Managed realtime revocation and delivery outcomes](318-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 317 | [Tenant-scoped self-service consumer credentials](317-platform-tenant-self-service-credentials.md) | accepted | Tenant-bound inventory and hash-only key rotation under the owner's transactional delegation policy |
+| 301 | [Owner-controlled delegated platform-tenant credential policy](301-platform-tenant-credential-policy.md) | accepted | Explicit downstream key-scope allowlist and active-key ceiling per linked consumer; self-service remains off by default |
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
+| 316 | [Source-ref branch freshness before promotion](316-source-ref-branch-freshness-before-promotion.md) | accepted | Preserve branch intent and recheck GitHub's current head immediately before promotion |
+| 315 | [Actions-owned mapped environment deployments](315-actions-mapped-environment-deployments.md) | accepted | Generated Actions workflows route configured branches into their registered project environments |
+| 314 | [Actions-owned release-tag deployments](314-actions-release-tag-deployments.md) | accepted | Deploy only newly created SemVer release tags from the immutable event SHA |
+| 313 | [GitHub push head recheck before reconciliation](313-github-push-head-recheck.md) | accepted | Recheck branch freshness after fetch and scan, immediately before reconciling a push |
+| 312 | [PR preview freshness](312-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
+| 311 | [GitHub push freshness and promotion fence](311-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
+| 310 | [Git-driven deployment ownership and preview quotas](310-git-driven-deployment-ownership-and-preview-quotas.md) | accepted | One production push owner, terminal Action checks, and a bounded separate PR-preview allowance |
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
+| 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
+| 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
+| 337 | [Platform-tenant customer lifecycle webhooks](337-platform-tenant-customer-lifecycle-webhooks.md) | accepted | Transactional linked/offboarded events for app-local customer identities, with stable cross-app references and no credentials |
+| 297 | [Shared outbound provider cooldown](297-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
+| 296 | [Shared outbound retry budget](296-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
+| 295 | [Per-integration outbound circuit breaker](295-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
+| 294 | [Opt-in outbound HTTP response cache](294-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
+| 293 | [Tenant-scoped self-service customer creation](293-platform-tenant-self-service-customers.md) | accepted | Atomic creation on a linked active surface under the owner's default-off tenant cap |
+| 290 | [Tenant-scoped surface certificate lifecycle webhooks](290-platform-tenant-certificate-webhooks.md) | accepted | Transactional certificate-state events for surfaces explicitly linked to the tenant; expose status and expiry only, not secrets or raw provider errors |
+| 289 | [Tenant-scoped hostname verification webhooks](289-platform-tenant-hostname-webhooks.md) | accepted | Transactional hostname-verification events only for surfaces explicitly linked to the tenant; DNS ownership does not imply certificate or route readiness |
+| 288 | [Service dependency reliability controls and fleet signals](288-service-dependency-reliability.md) | accepted | Caller-bounded timeouts and retries, shared retry budgets, breakers, and trusted per-edge telemetry |
+| 291 | [Tenant-bound self-service activation snapshot](291-platform-tenant-self-activation.md) | accepted | Narrow activation:read scope and a redacted current-state snapshot for only the tenant represented by a downstream bearer |
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
@@ -301,6 +346,13 @@ Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
 concurrently). The log above already contains several such pairs (157, 158, 167,
 168). A renumber plus a CI uniqueness gate is worth its own PR.
+
+## Object-storage binding decisions
+
+- [ADR-284: safe object-storage binding rotation](284-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+- [ADR-285: atomic object-storage binding creation](285-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
+- [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
+- [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
 ## Snapshot restore optimization decisions
 

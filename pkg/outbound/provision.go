@@ -53,16 +53,22 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 	command, err := tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
-		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
+		     max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
+		     circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, enabled, provider_auth_mode,
 		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind,
 		     daily_request_limit)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'operator',$15)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'operator',$20)
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
 		    rate_per_second = EXCLUDED.rate_per_second, burst = EXCLUDED.burst,
 		    max_in_flight = EXCLUDED.max_in_flight,
 		    request_timeout_ms = EXCLUDED.request_timeout_ms,
+		    max_retries = EXCLUDED.max_retries,
+		    response_cache_ttl_seconds = EXCLUDED.response_cache_ttl_seconds,
+		    circuit_breaker_failure_threshold = EXCLUDED.circuit_breaker_failure_threshold,
+		    circuit_breaker_open_seconds = EXCLUDED.circuit_breaker_open_seconds,
+		    retry_budget_per_minute = EXCLUDED.retry_budget_per_minute,
 		    enabled = EXCLUDED.enabled, provider_auth_mode = EXCLUDED.provider_auth_mode,
 		    allowed_methods = EXCLUDED.allowed_methods,
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
@@ -73,7 +79,9 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		  AND outbound_integrations.owner_kind = 'operator'`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
-		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,
+		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.MaxRetries,
+		record.Policy.ResponseCacheTTLSeconds, record.Policy.CircuitBreakerFailureThreshold,
+		record.Policy.CircuitBreakerOpenSeconds, record.Policy.RetryBudgetPerMinute, record.Policy.Enabled,
 		providerAuthMode(record.Policy.ProviderAuthMode), nonNilStrings(record.Policy.AllowedMethods),
 		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource),
 		record.Policy.DailyRequestLimit)

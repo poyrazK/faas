@@ -132,7 +132,7 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
-	// SecretReloadSignal opts the main workload into live secret-file
+	// SecretReloadSignal opts this image's workload into live secret-file
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
@@ -202,6 +202,12 @@ type AppManifest struct {
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
 
+// ManagedReleaseContextCookieName stores the immutable project release
+// selected for a browser document navigation. Unlike the rollout cookie, the
+// value is intentionally readable by the page so browser SDKs can pin
+// cross-origin managed API calls to the graph that served the SPA.
+const ManagedReleaseContextCookieName = "__Host-gregale_release"
+
 const (
 	CrawlerPolicyWake   = "wake"
 	CrawlerPolicyCached = "cached"
@@ -233,7 +239,7 @@ func ValidateVersionAffinityCookieName(name string) error {
 	if name == "" {
 		return nil
 	}
-	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName {
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName || name == ManagedReleaseContextCookieName {
 		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than reserved platform cookies")
 	}
 	return nil

@@ -41,6 +41,7 @@ WHERE credit.id = inserted.credit_id AND credit.account_id = sqlc.arg(account_id
 SELECT s.scope,
        s.key,
        i.id::text AS instance_id,
+       ''::text AS workload_name,
        i.state AS runtime_state,
        CASE
          WHEN d.secret_reload_signal IS NULL THEN 'unknown'
@@ -61,21 +62,126 @@ SELECT s.scope,
   JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
   LEFT JOIN app_secret_runtime_reload_observations o
     ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = ''
  WHERE s.account_id = sqlc.arg(account_id)::uuid
    AND i.app_id = sqlc.arg(app_id)::uuid
    AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
+   AND (sqlc.arg(key)::text = '' OR s.key = sqlc.arg(key)::text)
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
-   AND (
-       coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
-       OR d.override_env_secrets ? s.key
-       OR EXISTS (
-           SELECT 1
-             FROM jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
-             CROSS JOIN LATERAL jsonb_each_text(coalesce(sidecar.value->'env_secrets', '{}'::jsonb)) AS secret_ref(env_key, ref)
-            WHERE secret_ref.ref = 'secret:' || s.key
-       )
+   AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+         AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
+        OR d.override_env_secrets ? s.key)
+UNION ALL
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       sidecar.value->>'name' AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN reload.signal IS NULL THEN 'unknown'
+         WHEN reload.signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+  LEFT JOIN deployment_sidecar_secret_reload_signals reload
+    ON reload.deployment_id = d.id AND reload.sidecar_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = sidecar.value->>'name'
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
+   AND (sqlc.arg(key)::text = '' OR s.key = sqlc.arg(key)::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND sidecar.value->>'type' = 'sidecar'
+   AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
+ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC;
+
+-- name: CreateAppSecretRevocation :one
+INSERT INTO app_secret_revocations (id, account_id, app_id, scope, key, created_at)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid,
+        sqlc.arg(scope)::text, sqlc.arg(key)::text, sqlc.arg(created_at)::timestamptz)
+RETURNING id::text, account_id::text, app_id::text, scope, key, created_at;
+
+-- name: GetCustomerAppSecretForDeletion :one
+SELECT EXISTS (
+           SELECT 1 FROM app_secrets
+            WHERE account_id = sqlc.arg(account_id)::uuid
+              AND app_id = sqlc.arg(app_id)::uuid
+              AND scope = sqlc.arg(scope)::text
+              AND key = sqlc.arg(key)::text
+       ) AS present,
+       EXISTS (
+           SELECT 1 FROM app_secrets
+            WHERE account_id = sqlc.arg(account_id)::uuid
+              AND app_id = sqlc.arg(app_id)::uuid
+              AND scope = sqlc.arg(scope)::text
+              AND key = sqlc.arg(key)::text
+              AND (managed_postgres_binding_id IS NOT NULL OR managed_object_storage_credential_id IS NOT NULL)
+       ) AS managed;
+
+-- name: CreateAppSecretRevocationTarget :exec
+INSERT INTO app_secret_revocation_targets
+    (revocation_id, instance_id, workload_name, runtime_state, reload_support)
+VALUES (sqlc.arg(revocation_id)::uuid, sqlc.arg(instance_id)::uuid,
+        sqlc.arg(workload_name)::text, sqlc.arg(runtime_state)::text,
+        sqlc.arg(reload_support)::text);
+
+-- name: GetAppSecretRevocation :one
+SELECT id::text, account_id::text, app_id::text, scope, key, created_at
+  FROM app_secret_revocations
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND id = sqlc.arg(id)::uuid;
+
+-- name: ListAppSecretRevocationTargets :many
+SELECT instance_id::text, workload_name, runtime_state, reload_support,
+       status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
+  FROM app_secret_revocation_targets
+ WHERE revocation_id = sqlc.arg(revocation_id)::uuid
+ ORDER BY instance_id, workload_name;
+
+-- name: RecordAppSecretRevocationAck :execrows
+UPDATE app_secret_revocation_targets t
+   SET status = sqlc.arg(status)::text,
+       ack_revision = sqlc.arg(ack_revision)::text,
+       ack_at = sqlc.arg(ack_at)::timestamptz,
+       error_code = nullif(sqlc.arg(error_code)::text, '')
+  FROM app_secret_revocations r
+ WHERE t.revocation_id = r.id
+   AND r.account_id = sqlc.arg(account_id)::uuid
+   AND r.app_id = sqlc.arg(app_id)::uuid
+   AND t.instance_id = sqlc.arg(instance_id)::uuid
+   AND t.workload_name = sqlc.arg(workload_name)::text
+   AND r.created_at <= sqlc.arg(ack_at)::timestamptz
+   AND EXISTS (SELECT 1 FROM instances i WHERE i.id = t.instance_id AND i.app_id = r.app_id)
+   AND NOT EXISTS (
+       SELECT 1 FROM app_secrets s
+        WHERE s.account_id = r.account_id AND s.app_id = r.app_id
+          AND s.scope = r.scope AND s.key = r.key
    )
-ORDER BY s.scope ASC, s.key ASC, i.id ASC;
+   AND t.status <> 'applied';
+
+-- name: DeleteCustomerAppSecret :execrows
+DELETE FROM app_secrets
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND scope = sqlc.arg(scope)::text
+   AND key = sqlc.arg(key)::text
+   AND managed_postgres_binding_id IS NULL
+   AND managed_object_storage_credential_id IS NULL;
 
 -- name: SetDeploymentSecretReloadSignal :execrows
 -- imaged persists the validated image opt-in on each newly built deployment;
@@ -361,18 +467,18 @@ update deployments set status = 'live' where id = $1;
 -- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at;
+returning domain, app_id, challenge_token, verified_at, environment_id;
 
 -- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1;
 
 -- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain;
 
 -- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain;
 
@@ -1982,19 +2088,30 @@ ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryDependencySpans :many
--- Bounded read path for the historical debugger dependency view. The
+-- Bounded read path for route-scoped dependency analytics. The
 -- account_id predicate is defense in depth for callers that accidentally
 -- pass an app id from another tenant; the app lookup remains the primary
--- IDOR boundary. The newest rows are preferred because spans_summary is
--- sampled evidence, not a complete request trace archive.
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+-- IDOR boundary. Evidence is newest-first within each route/deployment
+-- partition, then interleaved so one high-volume revision cannot crowd all
+-- prior deployments out of the bounded comparison window.
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5;
 
 -- name: RequestTelemetryCoverage :one
@@ -2336,6 +2453,82 @@ SELECT deployment_id,
 FROM per_deployment
 ORDER BY requests DESC, deployment_id ASC
 LIMIT $5;
+
+-- name: RequestTelemetryAnalyticsByRouteDeployment :many
+-- Per-route deployment split for the customer analytics window. Routes are
+-- bounded to the same top-N surface as route analytics, and each route keeps
+-- only its top deployments by request count; the remaining revisions are
+-- folded into __other__ so the response cardinality is bounded by
+-- route_limit * (deployment_limit + 1).
+WITH filtered AS (
+    SELECT route,
+           method,
+           deployment_id::text AS deployment_id,
+           commit_sha,
+           deployment_tag,
+           deployment_created_at,
+           count::bigint AS request_count,
+           guest_resource_usage_available,
+           guest_cpu_time_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+), per_route_deployment AS (
+    SELECT route,
+           method,
+           deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(request_count)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * request_count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM filtered
+    GROUP BY route, method, deployment_id
+), top_routes AS (
+    SELECT route, method
+    FROM per_route_deployment
+    GROUP BY route, method
+    ORDER BY SUM(requests) DESC, route ASC, method ASC
+    LIMIT sqlc.arg('route_limit')::int
+), ranked_deployments AS (
+    SELECT per_route_deployment.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY per_route_deployment.route, per_route_deployment.method
+               ORDER BY per_route_deployment.requests DESC, per_route_deployment.deployment_id ASC
+           ) AS deployment_rank
+    FROM per_route_deployment
+    JOIN top_routes USING (route, method)
+)
+SELECT route,
+       method,
+       CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END AS deployment_id,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(commit_sha), '') ELSE '' END AS commit_sha,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_tag), '') ELSE '' END AS deployment_tag,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_created_at), '') ELSE '' END AS deployment_created_at,
+       SUM(requests)::bigint AS requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_measured_requests), 0)::bigint END AS guest_cpu_measured_requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_avg_ms), 0)::int END AS guest_cpu_avg_ms
+FROM ranked_deployments
+GROUP BY route,
+         method,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END
+ORDER BY route ASC,
+         method ASC,
+         CASE WHEN CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END = '__other__' THEN 1 ELSE 0 END,
+         MAX(deployment_created_at) DESC,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END ASC;
 
 -- name: RequestTelemetryAnalyticsByDimension :many
 -- Top-N customer analytics grouped by one of the bounded dimensions. Rows
@@ -2762,27 +2955,33 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 -- Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 -- route) — the cron upserts on this triple so the table grows at most
 -- one row per (deployment, route) across all cron passes, not one row
--- per cron tick. Mirrors UpsertDoctorObservation's primary-key upsert
--- shape (migrations/00313). first_detected_at is set on INSERT only;
--- the ON CONFLICT clause does NOT touch it, so the column survives
--- subsequent upserts and the dashboard shows "regression detected 4h
--- ago" correctly. last_detected_at is refreshed to EXCLUDED on every
--- pass; the column backs the `since=<duration>` filter on the dashboard
--- and the GET /v1/apps/{slug}/debug/regressions endpoint.
+-- per cron tick. first_detected_at remains stable during one active
+-- lifecycle, then resets when a resolved regression is detected again
+-- (or a dismissal expires). The webhook trigger uses that timestamp as
+-- the detection transition's idempotency key. last_detected_at is
+-- refreshed on every pass and backs the dashboard's since filter.
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, last_detected_at
+    regression_factor, state, first_detected_at, last_detected_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now()
+    $7, 'active', now(), now()
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    first_detected_at = CASE
+        WHEN debug_regression_observations.state = 'resolved'
+          OR (debug_regression_observations.state = 'dismissed'
+              AND (debug_regression_observations.dismissed_until IS NULL
+                   OR debug_regression_observations.dismissed_until <= now()))
+        THEN EXCLUDED.last_detected_at
+        ELSE debug_regression_observations.first_detected_at
+    END,
     last_detected_at  = EXCLUDED.last_detected_at,
     state             = CASE
         WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
@@ -2842,9 +3041,15 @@ ORDER BY regression_factor DESC, last_detected_at DESC;
 
 -- name: ApplyRegressionAction :one
 -- Change only the debugger workflow state for one app-scoped observation.
--- The handler maps reopen to active before calling this query.
+-- The handler maps reopen to active before calling this query. Reopening a
+-- non-active observation starts a new detection lifecycle so the transition
+-- webhook gets its own stable id.
 UPDATE debug_regression_observations
 SET state = $4,
+    first_detected_at = CASE
+        WHEN $4 = 'active' AND state <> 'active' THEN now()
+        ELSE first_detected_at
+    END,
     last_detected_at = CASE WHEN $4 = 'active' THEN now() ELSE last_detected_at END,
     acknowledged_at = CASE WHEN $4 = 'acknowledged' THEN now() ELSE NULL END,
     dismissed_until = CASE WHEN $4 = 'dismissed' THEN $5::timestamptz ELSE NULL END,
@@ -3755,7 +3960,38 @@ WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
 
 -- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active';
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL;
+
+-- name: ObjectS3BindingLockApp :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+  AND b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
+FOR UPDATE OF a;
+
+-- name: ObjectS3BindingSecretCount :one
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2;
+
+-- name: ObjectS3BindingSecretInsert :one
+INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key;
+
+-- name: ObjectS3BindingStampRuntime :exec
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at;
+
+-- name: ObjectS3BindingStaleSnapshots :exec
+UPDATE snapshots SET stale=true
+WHERE deployment_id IN (SELECT id FROM deployments WHERE app_id=$1) AND stale=false;
+
+-- name: ObjectS3BindingRevokeLock :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE;
+
+-- name: ObjectS3BindingDeleteSecrets :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1;
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
@@ -3764,22 +4000,69 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active'
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
 ORDER BY created_at,id;
 
 -- name: ObjectS3CredentialRevoke :execrows
 UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active';
+WHERE (id=$1 OR rotation_parent_id=$1) AND account_id=$2 AND bucket_id=$3 AND status='active';
 
 -- name: ObjectS3CredentialGet :one
 SELECT * FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3;
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL;
 
--- name: ObjectS3CredentialRotate :one
+-- name: ObjectS3CredentialRotationParentForUpdate :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE;
+
+-- name: ObjectS3CredentialRotationPending :one
+SELECT rotation_wake_id::text FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id=$3 AND status='active';
+
+-- name: ObjectS3CredentialRotationStage :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
+RETURNING *;
+
+-- name: ObjectS3CredentialRotationReplace :one
 UPDATE object_storage_s3_credentials
 SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 RETURNING *;
+
+-- name: ObjectS3CredentialRotationFinalizeForApp :execrows
+UPDATE object_storage_s3_credentials AS previous
+SET status='revoked', revoked_at=now()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active';
+
+-- name: ObjectS3CredentialRotationStampStage :one
+UPDATE object_storage_s3_credentials AS previous
+SET rotation_stamped_at=clock_timestamp()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active'
+  AND previous.rotation_stamped_at IS NULL
+RETURNING previous.rotation_stamped_at;
+
+-- name: ObjectS3CredentialRotationStampApp :exec
+INSERT INTO app_runtime_config_changes (app_id, changed_at) VALUES ($1, $2)
+ON CONFLICT (app_id) DO UPDATE
+SET changed_at=GREATEST(app_runtime_config_changes.changed_at, excluded.changed_at);
+
+-- name: ObjectStorageManagedSecretRotate :execrows
+UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
+  delivery_version=delivery_version+1, delivery_status='pending',
+  last_delivery_attempt_at=NULL, last_delivery_error_code=NULL, updated_at=now()
+WHERE account_id=$1 AND app_id=$2 AND scope=$3
+  AND managed_object_storage_credential_id=$4 AND key=$5;
 
 -- name: ObjectS3CredentialResolve :one
 SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
@@ -4334,3 +4617,56 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
   AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
 ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;
+
+-- name: StampSafeReleaseWorkerLease :exec
+INSERT INTO safe_release_worker_lease (singleton, healthy_at, expires_at)
+VALUES (true, now(), now() + (sqlc.arg(ttl_seconds)::bigint * interval '1 second'))
+ON CONFLICT (singleton) DO UPDATE SET
+    healthy_at = EXCLUDED.healthy_at,
+    expires_at = EXCLUDED.expires_at;
+
+-- name: SafeReleaseWorkerLeaseReady :one
+SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
+              WHERE singleton = true AND expires_at > now()) AS ready;
+
+-- name: RecordRequestIDJournal :one
+-- The request-ID journal is independent from sampled request telemetry. Only
+-- insert when the app is still owned by the authenticated account. The
+-- caller-generated record UUID makes an RPC retry idempotent without
+-- collapsing two customer requests that happen to reuse a public ID.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT sqlc.arg(id)::uuid,
+       a.account_id,
+       a.id,
+       sqlc.arg(request_id)::text,
+       NULLIF(sqlc.arg(trace_id)::text, ''),
+       sqlc.arg(received_at)::timestamptz,
+       sqlc.arg(expires_at)::timestamptz
+  FROM apps a
+ WHERE a.id = sqlc.arg(app_id)::uuid
+   AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
+-- name: GetRequestIDJournalByAppAndIdentifier :one
+-- Exact app/account-scoped lookup, latest first when callers reuse an ID.
+-- expires_at is checked as well as received_at so plan downgrades do not
+-- extend the original request-time retention window.
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND request_id = sqlc.arg(request_id)::text
+   AND received_at >= sqlc.arg(received_from)::timestamptz
+   AND received_at < sqlc.arg(received_until)::timestamptz
+   AND expires_at > sqlc.arg(now_at)::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1;

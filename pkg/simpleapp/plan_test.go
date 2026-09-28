@@ -35,6 +35,31 @@ func TestResolvePreservesExplicitProfileAndHealth(t *testing.T) {
 	}
 }
 
+func TestResolveImageDefaultsToTCPListenerReadiness(t *testing.T) {
+	got, err := Resolve(Spec{Slug: "hello", Source: SourceImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HealthPath != "" {
+		t.Fatalf("HealthPath = %q; direct image should default to TCP listener readiness", got.HealthPath)
+	}
+	foundReadinessDefault := false
+	for _, applied := range got.DefaultsApplied {
+		if applied == "readiness=tcp-listener" {
+			foundReadinessDefault = true
+		}
+		if applied == "health_path=/healthz" {
+			t.Fatalf("image plan applied an HTTP health path: %v", got.DefaultsApplied)
+		}
+	}
+	if !foundReadinessDefault {
+		t.Fatalf("DefaultsApplied = %v; want readiness=tcp-listener", got.DefaultsApplied)
+	}
+	if req := got.CreateRequest(); req.HealthPath != "" {
+		t.Fatalf("create request health path = %q; want unset", req.HealthPath)
+	}
+}
+
 func TestResolveRejectsUnsafeInputs(t *testing.T) {
 	cases := []Spec{
 		{Slug: "x"},

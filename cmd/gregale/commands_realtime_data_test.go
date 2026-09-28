@@ -1,5 +1,7 @@
 package main
 
+// adr: 281
+
 import (
 	"bytes"
 	"encoding/base64"
@@ -57,6 +59,21 @@ func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "3 connection(s)") {
 		t.Fatalf("queued count missing: %s", out.String())
+	}
+}
+
+func TestCmdRealtimePublishWarnsOnPartialFleet(t *testing.T) {
+	resetJSONOut(t)
+	_ = authedFakeAPI(t, `{"queued":2,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
+	oldOut, oldErr := osStdout, osStderr
+	var out, errOut bytes.Buffer
+	osStdout, osStderr = &out, &errOut
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	if code := cmdRealtimePublish([]string{"demo", "endpoint-1", "room-a", "--data", "hello"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "partial") || !strings.Contains(errOut.String(), "duplicates") {
+		t.Fatalf("partial warning missing: %s", errOut.String())
 	}
 }
 

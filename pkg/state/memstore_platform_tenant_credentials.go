@@ -126,6 +126,33 @@ func (m *MemStore) planPlatformTenantCredentials(in ApplyPlatformTenantCredentia
 			return result, &PlatformTenantCredentialQuotaError{Scope: "app", Limit: in.AppLimit, Observed: count - 1}
 		}
 	}
+	if in.EnforceDelegationPolicy {
+		policy := m.platformTenantCredentialPolicies[in.TenantID]
+		creates, err := validatePlatformTenantCredentialPolicyCreates(policy, result)
+		if err != nil {
+			return result, err
+		}
+		if len(creates) > 0 {
+			now := time.Now().UTC()
+			counts := make(map[string]int, len(creates))
+			for _, key := range m.consumerKeys {
+				if _, needed := creates[key.ConsumerID]; needed && key.AccountID == in.AccountID && activePlatformTenantCredentialKey(key, now) {
+					counts[key.ConsumerID]++
+				}
+			}
+			for _, item := range result.Keys {
+				if item.Action == "revoke" && activePlatformTenantCredentialKey(item.Key, now) {
+					counts[item.Key.ConsumerID]--
+				}
+			}
+			for consumerID, added := range creates {
+				observed := counts[consumerID] + added
+				if observed > policy.MaxKeysPerConsumer {
+					return result, &PlatformTenantCredentialPolicyQuotaError{Limit: policy.MaxKeysPerConsumer, Observed: observed}
+				}
+			}
+		}
+	}
 	return result, nil
 }
 

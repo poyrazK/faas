@@ -58,6 +58,8 @@ const (
 
 	serviceProxyDefaultEndpointTTL = 5 * time.Second
 	serviceProxyErrorBodyLimit     = 64 * 1024
+	serviceProxyIdleRetention      = 10 * time.Minute
+	serviceProxySweepInterval      = time.Minute
 )
 
 var (
@@ -140,6 +142,8 @@ type ServiceCaller struct {
 	// CallScope is the target-owned method/path grant for this logical caller.
 	// Nil preserves the existing app-level authorization contract.
 	CallScope *api.ServiceCallScope
+	// Reliability is a caller-owned override for this declared dependency.
+	Reliability *api.ServiceReliabilityPolicy
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
@@ -298,6 +302,8 @@ type ServiceProxy struct {
 	mu        sync.Mutex
 	snapshots map[string]serviceProxySnapshot
 	next      map[string]uint64
+	nextSeen  map[string]time.Time
+	lastSweep time.Time
 }
 
 type serviceProxySnapshot struct {
@@ -389,6 +395,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget:           retryBudget,
 		snapshots:             make(map[string]serviceProxySnapshot),
 		next:                  make(map[string]uint64),
+		nextSeen:              make(map[string]time.Time),
 	}
 }
 
@@ -397,6 +404,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
 		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>], <name>.svc.gregale, or a bound <name>.internal")
@@ -407,7 +415,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// its inbound traceparent joins the original request instead of always
 	// starting a new service-call trace.
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service),
+	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service), //nolint:contextcheck // extracted W3C trace context inherits r.Context() through propagation.Extract.
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.dependency.kind", "service_proxy"),
 		attribute.String("http.request.method", r.Method),
@@ -450,12 +458,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if status >= http.StatusBadRequest {
 				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
 			}
-			if dependencyCallEligible && dependencyHealthCaller.DeploymentID != "" {
-				p.metrics.ObserveServiceDependencyCall(
+			if dependencyCallEligible {
+				failed := serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header())
+				if failed && status < http.StatusInternalServerError {
+					// Native gRPC can fail in its terminal trailer while the HTTP
+					// status remains 200. Keep the span status aligned with the
+					// final dependency outcome recorded in the edge metric.
+					dependencySpan.SetStatus(codes.Error, "service dependency failed")
+				}
+				p.metrics.ObserveServiceDependencyEdge(
 					dependencyHealthCaller.AppID,
-					dependencyHealthCaller.DeploymentID,
-					serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header()),
+					dependencyHealthTarget.AppID,
+					failed,
+					p.now().Sub(dependencyStarted),
+					traceIDFromContext(dependencyCtx),
 				)
+				if dependencyHealthCaller.DeploymentID != "" {
+					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
+				}
 			}
 		}
 		dependencySpan.End()
@@ -569,6 +589,18 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		callerInfo.DeploymentID = callerDeploymentID
 	}
 	dependencyHealthCaller = callerInfo
+	if callerInfo.AppID != "" {
+		// This identity is sourced from the tenant authorizer and stamped only
+		// after authorization, so trace search cannot trust a guest header.
+		dependencySpan.SetAttributes(attribute.String("gregale.service.caller_app_id", callerInfo.AppID))
+	}
+	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
+		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
+		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
+		defer cancel()
+		dependencyCtx = boundedCtx
+		r = r.WithContext(boundedCtx)
+	}
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
 	// route this platform-owned span to apid without a customer API key.
@@ -930,6 +962,7 @@ func serviceGuestProtocol(target ServiceTarget) string {
 
 func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
 	now := p.now()
+	p.pruneIdle(now)
 	p.mu.Lock()
 	if cached, ok := p.snapshots[appID]; ok && now.Before(cached.fetchedAt.Add(p.endpointTTL)) {
 		out := append([]ServiceEndpoint(nil), cached.endpoints...)
@@ -946,6 +979,40 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	p.snapshots[appID] = serviceProxySnapshot{fetchedAt: now, endpoints: append([]ServiceEndpoint(nil), endpoints...)}
 	p.mu.Unlock()
 	return endpoints, nil
+}
+
+// pruneIdle bounds per-app leases, round-robin cursors, and per-instance
+// breaker entries even when no explicit instance-destroy notification reaches
+// this gateway. A sweep runs at most once a minute on the request path.
+func (p *ServiceProxy) pruneIdle(now time.Time) {
+	p.mu.Lock()
+	if !p.lastSweep.IsZero() && now.Sub(p.lastSweep) < serviceProxySweepInterval {
+		p.mu.Unlock()
+		return
+	}
+	p.lastSweep = now
+	for appID, snapshot := range p.snapshots {
+		if now.Sub(snapshot.fetchedAt) >= serviceProxyIdleRetention {
+			delete(p.snapshots, appID)
+		}
+	}
+	for appID, used := range p.nextSeen {
+		if now.Sub(used) >= serviceProxyIdleRetention {
+			delete(p.nextSeen, appID)
+			delete(p.next, appID)
+		}
+	}
+	p.mu.Unlock()
+	for _, key := range p.breaker.PruneIdle(serviceProxyIdleRetention) {
+		appID, _, ok := strings.Cut(key, "\x00")
+		if ok {
+			if count := p.breaker.OpenCount(appID + "\x00"); count > 0 {
+				p.metrics.SetCircuitOpenTargets(appID, float64(count))
+			} else {
+				p.metrics.DeleteCircuitOpenTargets(appID)
+			}
+		}
+	}
 }
 
 // routableEndpoints resolves the endpoints the request can be forwarded to,
@@ -1129,7 +1196,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 			p.metrics.IncServicePreviewToProduction()
 		}
 	}
-	p.attachCallerAssertion(request, target, caller, callerEnv)
+	if p.attachCallerAssertion(request, target, caller, callerEnv) {
+		request = withTrustedServiceCallerAssertion(request)
+	}
 	return request
 }
 
@@ -1137,9 +1206,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 // failure is logged and dropped rather than failing the call: nothing verifies
 // the assertion yet, so refusing traffic over a signing problem would trade a
 // working mesh for a feature with no consumer.
-func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) {
+func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) bool {
 	if p.mintAssertion == nil || caller.AppID == "" {
-		return
+		return false
 	}
 	token, err := p.mintAssertion(ServiceCallerMintInput{
 		CallerAppID:      caller.AppID,
@@ -1151,9 +1220,15 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 	if err != nil {
 		p.log.Warn("gateway: service caller assertion mint failed; forwarding unsigned",
 			"caller", caller.AppID, "target", target.AppID, "err", err)
-		return
+		return false
+	}
+	if token == "" {
+		p.log.Warn("gateway: service caller assertion mint returned an empty token; forwarding unsigned",
+			"caller", caller.AppID, "target", target.AppID)
+		return false
 	}
 	request.Header.Set(ServiceCallerAssertionHeader, token)
+	return true
 }
 
 // forwardUpgrade carries an Upgrade request to the guest over the raw-bytes
@@ -1172,13 +1247,83 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
-	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(w, request)
+	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
+	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
+	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
+	probeWriter := &serviceProxyUpgradeProbeWriter{
+		ResponseWriter: w,
+		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
+	}
+	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
+	if signal.stale.Load() || probeWriter.handshake {
+		return
+	}
+	if probeWriter.status != 0 {
+		// A completed non-101 answer is application behavior, not a dead
+		// transport. It still settles a half-open probe.
+		p.healthy(target.AppID, endpoint.InstanceID)
+		return
+	}
+	// The caller left before an answer. Give up the probe without recording
+	// either a success or a failure.
+	p.breaker.Release(key)
 }
+
+// serviceProxyUpgradeProbeWriter settles a half-open breaker as soon as a
+// successful handshake is written. The raw session may then live for hours;
+// waiting for ServeHTTP to return would reject every other call meanwhile.
+type serviceProxyUpgradeProbeWriter struct {
+	http.ResponseWriter
+	onHandshake func()
+	status      int
+	handshake   bool
+}
+
+func (w *serviceProxyUpgradeProbeWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+		if status == http.StatusSwitchingProtocols {
+			w.handshake = true
+			w.onHandshake()
+		}
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
+	if override := caller.Reliability; override != nil {
+		if override.MaxAttempts > 0 {
+			policy.MaxAttempts = override.MaxAttempts
+			policy.Enabled = override.MaxAttempts >= 2
+		}
+		if override.MinRemainingMS > 0 {
+			policy.MinRemaining = time.Duration(override.MinRemainingMS) * time.Millisecond
+		}
+		if override.RetryBudgetPercent > 0 {
+			policy.BudgetPercent = override.RetryBudgetPercent
+		}
+		if override.AllowNonIdempotent {
+			policy.AllowNonIdempotent = true
+		}
+	}
 	retryable, skipReason := policy.retryable(request)
 	maxAttempts := 1
 	if policy.Enabled && retryable {
@@ -1193,7 +1338,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
-		p.retryBudget.ObserveOriginal(appID)
+		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
@@ -1249,13 +1394,19 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commitTrailers()
 			return
 		}
-		if budget, ok := reqbudget.FromContext(request.Context()); ok && budget.Remaining(p.now()) < policy.MinRemaining {
+		remaining := time.Duration(1<<63 - 1)
+		if budget, ok := reqbudget.FromContext(request.Context()); ok {
+			remaining = budget.Remaining(p.now())
+		} else if deadline, ok := request.Context().Deadline(); ok {
+			remaining = deadline.Sub(p.now())
+		}
+		if remaining < policy.MinRemaining {
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
-		if !p.retryBudget.AllowRetry(appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1323,6 +1474,7 @@ func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceE
 	p.mu.Lock()
 	start := p.next[appID]
 	p.next[appID]++
+	p.nextSeen[appID] = p.now()
 	p.mu.Unlock()
 	// Prefer a replica on this node before crossing the network. The caller
 	// is a workload on this box, so a local target keeps the whole exchange
@@ -1364,6 +1516,7 @@ func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start
 // geometrically instead of re-admitting the endpoint every endpointTTL.
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
+	p.publishOpenTargets(appID)
 	p.log.Warn("gateway: service proxy quarantined stale endpoint", "app", appID, "instance", instanceID)
 }
 
@@ -1373,6 +1526,15 @@ func (p *ServiceProxy) quarantine(appID, instanceID string) {
 // circuit no matter how much good traffic surrounded it.
 func (p *ServiceProxy) healthy(appID, instanceID string) {
 	p.breaker.Success(serviceProxyEndpointKey(appID, instanceID))
+	p.publishOpenTargets(appID)
+}
+
+func (p *ServiceProxy) publishOpenTargets(appID string) {
+	if p.metrics == nil {
+		return
+	}
+	count := p.breaker.OpenCount(appID + "\x00")
+	p.metrics.SetCircuitOpenTargets(appID, float64(count))
 }
 
 func serviceProxyEndpointKey(appID, instanceID string) string { return appID + "\x00" + instanceID }

@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	SecretsFileEnv               = "FAAS_SECRETS_FILE"
-	SecretsRevisionEnv           = "FAAS_SECRETS_REVISION_FILE"
-	SecretsReloadAckEnv          = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
-	secretReloadFilePath         = "/tmp/gregale-secret-reload/secrets.json"
-	secretReloadRevisionFilePath = "/tmp/gregale-secret-reload/revision"
+	SecretsFileEnv                  = "FAAS_SECRETS_FILE"
+	SecretsRevisionEnv              = "FAAS_SECRETS_REVISION_FILE"
+	SecretsReloadAckEnv             = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
+	secretReloadFilePath            = "/tmp/gregale-secret-reload/secrets.json"
+	secretReloadRevisionFilePath    = "/tmp/gregale-secret-reload/revision"
+	metadataSecretReloadAckEndpoint = "http://169.254.169.254/v1/metadata/secrets/reload-ack"
 )
 
 // MaxRestarts is the legacy/default supervisor crash-loop budget. New
@@ -115,6 +116,10 @@ func BuildEnvWithSecrets(base []string, m api.AppManifest, secrets, apiEnv map[s
 // opted-in workloads. The platform value replaces any image/customer value
 // so an application cannot be pointed at a different file by env precedence.
 func StampSecretsFileEnv(env []string, enabled bool) []string {
+	return StampSecretsFileEnvAtPaths(env, enabled, secretReloadFilePath, secretReloadRevisionFilePath, metadataSecretReloadAckEndpoint)
+}
+
+func StampSecretsFileEnvAtPaths(env []string, enabled bool, secretsPath, revisionPath, ackEndpoint string) []string {
 	if !enabled {
 		return env
 	}
@@ -126,9 +131,9 @@ func StampSecretsFileEnv(env []string, enabled bool) []string {
 		}
 	}
 	return append(out,
-		SecretsFileEnv+"="+secretReloadFilePath,
-		SecretsRevisionEnv+"="+secretReloadRevisionFilePath,
-		SecretsReloadAckEnv+"="+metadataSecretReloadAckEndpoint,
+		SecretsFileEnv+"="+secretsPath,
+		SecretsRevisionEnv+"="+revisionPath,
+		SecretsReloadAckEnv+"="+ackEndpoint,
 	)
 }
 

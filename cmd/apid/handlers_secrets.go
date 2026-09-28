@@ -27,6 +27,7 @@ import (
 	"filippo.io/age"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -234,7 +235,7 @@ func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accoun
 	for _, row := range rows {
 		key := secretObservationKey{Scope: row.Scope, Key: row.Key}
 		observation := api.SecretRuntimeReloadObservation{
-			InstanceID: row.InstanceID, RuntimeState: row.RuntimeState,
+			InstanceID: row.InstanceID, WorkloadName: row.WorkloadName, RuntimeState: row.RuntimeState,
 			ReloadSupport: row.ReloadSupport, Reported: row.Reported,
 			ErrorCode:             row.ErrorCode,
 			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
@@ -278,11 +279,17 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	safeAppSlug := logsanitize.Field(app.Slug)
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
+	safeScope := logsanitize.Field(scope)
+	safeScope = strings.ReplaceAll(safeScope, "\n", "")
+	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	var req api.PutAppSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -306,7 +313,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
-		s.log.Error("secret set: invalidate snapshots", "app", app.Slug, "err", err)
+		s.log.Error("secret set: invalidate snapshots", "app", safeAppSlug, "err", err)
 		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
 		})
@@ -317,9 +324,9 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// used defensively even though we never log req.Value directly — a
 	// future refactor that adds a "request echo" log line won't leak.
 	s.log.Info("secret set",
-		"app", app.Slug,
+		"app", safeAppSlug,
 		"key", logsanitize.Field(key),
-		"scope", scope,
+		"scope", safeScope,
 		"account", acct.ID,
 		"value_bytes", logsanitize.RedactValue(req.Value),
 	)
@@ -505,12 +512,16 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	if !ok {
 		return
 	}
+	safeAppSlug := logsanitize.Field(app.Slug)
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	if err := s.store.DeleteAppSecretInScope(r.Context(), acct.ID, app.ID, scope, key); err != nil {
+	revocation, err := s.store.DeleteAppSecretInScopeWithRevocation(r.Context(), acct.ID, app.ID, scope, key)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrSecretNotFound(key))
 			return
@@ -524,29 +535,87 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
-		s.log.Error("secret delete: invalidate snapshots", "app", app.Slug, "err", err)
+		s.log.Error("secret delete: invalidate snapshots", "app", safeAppSlug, "err", err)
 		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "delete",
 		})
 		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
 		return
 	}
+	s.recordSecretDeleteEvents(r.Context(), acct, app, scope, key, invalidated, revocation.ID)
+	if prefersSecretRevocationRepresentation(r.Header.Get("Prefer")) {
+		w.Header().Set("Preference-Applied", "return=representation")
+		writeJSON(w, http.StatusOK, secretRevocationResponse(revocation))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) recordSecretDeleteEvents(ctx context.Context, acct state.Account, app state.App, scope, key string, invalidated int, revocationID string) {
+	safeAppSlug := logsanitize.Field(app.Slug)
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
+	safeScope := logsanitize.Field(scope)
+	safeScope = strings.ReplaceAll(safeScope, "\n", "")
+	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	s.log.Info("secret deleted",
-		"app", app.Slug,
+		"app", safeAppSlug,
 		"key", logsanitize.Field(key),
-		"scope", scope,
+		"scope", safeScope,
 		"account", acct.ID,
 	)
 	// IAM-4 (ADR-035): record the secret delete. data.scope is the
 	// env-scope the row was deleted from (ADR-092 PR-B).
-	s.audit.Emit(r.Context(), "secret.deleted", &acct.ID, map[string]any{
-		"app_id":                app.ID,
-		"name":                  key,
-		"scope":                 scope,
-		"snapshots_invalidated": invalidated,
+	s.audit.Emit(ctx, "secret.deleted", &acct.ID, map[string]any{
+		"app_id": app.ID, "name": key, "scope": scope,
+		"snapshots_invalidated": invalidated, "revocation_id": revocationID,
 	})
-	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "delete", scope, key)
-	w.WriteHeader(http.StatusNoContent)
+	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "delete", scope, key)
+}
+
+func prefersSecretRevocationRepresentation(prefer string) bool {
+	for _, preference := range strings.Split(prefer, ",") {
+		if strings.TrimSpace(preference) == "return=representation" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *server) getSecretRevocation(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	id := r.PathValue("revocation_id")
+	revocation, err := s.store.GetAppSecretRevocation(r.Context(), acct.ID, app.ID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrSecretRevocationNotFound(id))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read secret revocation status"))
+		return
+	}
+	writeJSON(w, http.StatusOK, secretRevocationResponse(revocation))
+}
+
+func secretRevocationResponse(revocation state.AppSecretRevocation) api.AppSecretRevocationResponse {
+	status, acknowledged, pending := revocation.Progress()
+	out := api.AppSecretRevocationResponse{
+		ID: revocation.ID, Scope: revocation.Scope, Key: revocation.Key,
+		CreatedAt: revocation.CreatedAt.UTC().Format(time.RFC3339Nano), Status: status,
+		TargetCount: len(revocation.Targets), AcknowledgedCount: acknowledged, PendingCount: pending,
+		Targets: make([]api.SecretRevocationTarget, 0, len(revocation.Targets)),
+	}
+	for _, target := range revocation.Targets {
+		out.Targets = append(out.Targets, api.SecretRevocationTarget{
+			InstanceID: target.InstanceID, WorkloadName: target.WorkloadName, RuntimeState: target.RuntimeState,
+			ReloadSupport: target.ReloadSupport, Status: target.Status, AckRevision: target.AckRevision,
+			AckAt: formatOptionalSecretTime(target.AckAt), ErrorCode: target.ErrorCode,
+		})
+	}
+	return out
 }
 
 func (s *server) managedSecretConflictProblem(ctx stdctx, accountID, appID, scope, key string) *api.Problem {

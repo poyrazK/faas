@@ -56,6 +56,7 @@
     - {name: githubd_env, path: /etc/faas/secrets/githubd/githubd.env}
     - {name: githubd_app_pem, path: /etc/faas/secrets/githubd/app.pem}
     - {name: gatewayd_internal_env, path: /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env}
+    - {name: gatewayd_retry_budget_redis_url, path: /etc/faas/secrets/gatewayd-internal/retry-budget-redis-url}
     - {name: pg_basebackup_push_storage_user, path: /etc/faas/secrets/pg-basebackup-push/storage-box.user}
     - {name: pg_basebackup_push_storage_host, path: /etc/faas/secrets/pg-basebackup-push/storage-box.host}
   loop_control:

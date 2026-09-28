@@ -464,11 +464,33 @@ type AppSecret struct {
 	ManagedObjectStorageCredentialID pgtype.UUID
 }
 
+type AppSecretRevocation struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	Key       string
+	CreatedAt pgtype.Timestamptz
+}
+
+type AppSecretRevocationTarget struct {
+	RevocationID  pgtype.UUID
+	InstanceID    pgtype.UUID
+	WorkloadName  string
+	RuntimeState  string
+	ReloadSupport string
+	Status        string
+	AckRevision   pgtype.Text
+	AckAt         pgtype.Timestamptz
+	ErrorCode     pgtype.Text
+}
+
 type AppSecretRuntimeReloadObservation struct {
 	AppID                   pgtype.UUID
 	Scope                   string
 	Key                     string
 	InstanceID              pgtype.UUID
+	WorkloadName            string
 	SecretVersion           int64
 	Projection              string
 	Signal                  string
@@ -787,6 +809,7 @@ type CustomDomain struct {
 	CertExpiresAt    pgtype.Timestamptz
 	CertLastError    pgtype.Text
 	DnsLastCheckedAt pgtype.Timestamptz
+	EnvironmentID    pgtype.UUID
 }
 
 type DataUpstream struct {
@@ -1009,6 +1032,12 @@ type DeploymentSidecarLayer struct {
 	ContentDigest string
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type DeploymentSidecarSecretReloadSignal struct {
+	DeploymentID pgtype.UUID
+	SidecarName  string
+	Signal       string
 }
 
 type DomainDoctorObservation struct {
@@ -1655,21 +1684,24 @@ type ObjectStorageRequestMetric struct {
 }
 
 type ObjectStorageS3Credential struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	BucketID      pgtype.UUID
-	AccessKeyID   string
-	SecretSealed  []byte
-	Kid           string
-	Label         string
-	Permission    string
-	Status        string
-	CreatedAt     pgtype.Timestamptz
-	LastUsedAt    pgtype.Timestamptz
-	RevokedAt     pgtype.Timestamptz
-	ManagedAppID  pgtype.UUID
-	ManagedScope  pgtype.Text
-	ManagedPrefix pgtype.Text
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	BucketID          pgtype.UUID
+	AccessKeyID       string
+	SecretSealed      []byte
+	Kid               string
+	Label             string
+	Permission        string
+	Status            string
+	CreatedAt         pgtype.Timestamptz
+	LastUsedAt        pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	ManagedAppID      pgtype.UUID
+	ManagedScope      pgtype.Text
+	ManagedPrefix     pgtype.Text
+	RotationParentID  pgtype.UUID
+	RotationWakeID    pgtype.UUID
+	RotationStampedAt pgtype.Timestamptz
 }
 
 type ObjectStorageUsageHead struct {
@@ -1843,6 +1875,16 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectEnvironment struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+	Protected bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCleanupJob struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -1893,6 +1935,16 @@ type ReleaseBundle struct {
 	DaemonHashes []byte
 	CreatedAt    pgtype.Timestamptz
 	AppliedAt    pgtype.Timestamptz
+}
+
+type RequestIDJournal struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	RequestID  string
+	TraceID    pgtype.Text
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type RequestTelemetry struct {
@@ -2105,6 +2157,12 @@ type RuntimeSnapshot struct {
 	CreatedAt           pgtype.Timestamptz
 	PublishedAt         pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
+}
+
+type SafeReleaseWorkerLease struct {
+	Singleton bool
+	HealthyAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
 }
 
 type Session struct {

@@ -222,6 +222,23 @@ func TestHandlePushRequest_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHandlePushRequest_ActionsModeSkipsPushBeforeSourceFetch(t *testing.T) {
+	rig := newRig(t, nil)
+	project := rig.seedProject(t, "octo/api", "main")
+	policy := state.DefaultGitHubDeployPolicy(project.ID, rig.acct)
+	policy.ProductionTrigger = state.ProductionTriggerActions
+	if _, err := rig.mem.UpsertGitHubDeployPolicy(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+	svc := newServiceForRig(t, rig)
+	svc.Source = &stubSource{err: errors.New("source fetch must not run")}
+	body := []byte(`{"ref":"refs/heads/main","after":"cafebabe","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	result, err := svc.HandlePushRequest(context.Background(), body)
+	if !errors.Is(err, ErrIgnored) || !result.WasIgnored {
+		t.Fatalf("actions mode push = (%+v, %v), want ignored", result, err)
+	}
+}
+
 func TestHandlePushRequest_MappedBranchCarriesScope(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	project := rig.seedProject(t, "octo/api", "main")

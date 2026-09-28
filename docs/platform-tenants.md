@@ -38,9 +38,31 @@ Content-Type: application/json
 
 The response reports `create`, `link`, or `unchanged` for each resource, including hostnames. New hostnames return a TXT record name (`_faas-verify.<hostname>`) and challenge token to publish in DNS. A dry run checks ownership, quota, names, and conflicts without writes; a token for a planned hostname is withheld because it is not yet durable. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs and tokens with `unchanged` actions. A different name, revoked consumer, hostname already claimed by another surface, or resource owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed. Surface declarations require the tenant-surfaces feature flag and a plan that includes surfaces; this flow currently supports `per_host_san` certificates.
 
-DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. `GET /v1/account/platform-tenants/{id}/activation` reports whether routing is enabled, each hostname is verified, the certificate is issued and unexpired, and every linked surface is active. `ready` is true only when all these conditions hold for at least one surface and the platform tenant is active. Certificate and hostname errors remain visible for diagnosis. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `gregale platform-tenants activation --id <uuid>` for a snapshot or add `--wait --timeout 10m` to poll until ready. Use `--json` for machine-readable output.
+Platform owners can configure the domain boundary for downstream hostname self-service:
+
+```http
+PUT /v1/account/platform-tenants/{id}/hostname-policy
+Content-Type: application/json
+
+{"allowed_suffixes":["customers.example.com"],"max_hostnames":20}
+```
+
+The allowlist is disabled by default. A delegated hostname must equal an allowed suffix or be a subdomain of it, and must still pass DNS ownership verification and the normal account/plan quotas. The tenant-wide cap counts hostnames already attached across its linked surfaces; lowering the cap never removes existing hostnames, but prevents adding more until the count is below the new limit. Use `{"allowed_suffixes":[],"max_hostnames":0}` to disable delegation. This policy does not create or remove any surface or hostname. See [ADR-299](adr/299-platform-tenant-hostname-delegation.md).
+
+DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. `GET /v1/account/platform-tenants/{id}/activation` reports whether routing is enabled, each hostname is verified, the certificate is issued and unexpired, and every linked surface is active. `ready` is true only when the feature is enabled, the platform tenant is active, at least one linked surface exists, and every linked surface is ready. Certificate and hostname errors remain visible to the account owner for diagnosis. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `gregale platform-tenants activation --id <uuid>` for a snapshot or add `--wait --timeout 10m` to poll until ready. Use `--json` for machine-readable output.
 
 ## Issue and rotate customer credentials
+
+Before enabling downstream credential self-service, an account owner can set the maximum consumer-key scopes and active keys per linked consumer:
+
+```http
+PUT /v1/account/platform-tenants/{id}/credential-policy
+Content-Type: application/json
+
+{"allowed_scopes":["read","write"],"max_keys_per_consumer":5}
+```
+
+The policy is disabled by default. The only delegable key scopes are `read`, `write`, and `admin`; choose the narrowest set your integration needs. Set `allowed_scopes` to an empty array and the limit to zero to disable tenant-side management. A policy update does not change existing keys. Writes require the account's deploy-write scope and recent MFA, and changes are audited. See [ADR-301](adr/301-platform-tenant-credential-policy.md).
 
 After onboarding, use `POST /v1/account/platform-tenants/{id}/credentials/apply` to issue keys to linked consumers across apps. Generate each `ck_` credential locally with a cryptographically secure generator (or `api.PreparePlatformTenantCredential` in the Go client), save its plaintext in your secret store **before** calling Gregale, and submit only its eight-character prefix and hex SHA-256 digest. Gregale never receives or returns the plaintext in this flow. For example:
 
@@ -60,20 +82,59 @@ The older app-local key-create endpoint still returns plaintext once, but no lon
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day and app. Each bucket identifies either a linked `consumer_id` or a verified `surface_id`. Linking a consumer or surface later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
-## Let downstream customers inspect their own usage and statements
+## Let downstream customers manage hostnames and inspect their own activation, usage, and statements
 
-Platform owners can issue a separate read-only credential to one downstream tenant:
+Platform owners can issue a separate tenant-bound credential with only the capabilities the downstream integration needs:
 
 ```http
 POST /v1/account/platform-tenants/{id}/access-tokens
 Content-Type: application/json
 
-{"name":"customer billing portal","scopes":["platform_tenant:usage:read","platform_tenant:statements:read"]}
+{"name":"customer portal","scopes":["platform_tenant:activation:read","platform_tenant:usage:read","platform_tenant:statements:read","platform_tenant:hostnames:manage"]}
 ```
 
-The response contains an `fp_tenant_` bearer exactly once. Save it in the customer's secret manager; Gregale persists only its SHA-256 hash. The default lifetime is 90 days and the maximum is 365 days. Keep names unique among active tokens and issue no more than ten at a time; list metadata with `GET .../{id}/access-tokens` and revoke with `DELETE .../{id}/access-tokens/{token_id}`. Revocation is immediate. These special scopes cannot be added to ordinary account API keys.
+The response contains an `fp_tenant_` bearer exactly once. Save it in the customer's secret manager; Gregale persists only its SHA-256 hash. The default lifetime is 90 days and the maximum is 365 days. Grant only the scopes each integration needs. Keep names unique among active tokens and issue no more than ten at a time; list metadata with `GET .../{id}/access-tokens` and revoke with `DELETE .../{id}/access-tokens/{token_id}`. Revocation is immediate. These special scopes cannot be added to ordinary account API keys.
 
-The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. Tenant identity comes from the credential, not a caller-supplied tenant ID. There is no write, invoice-handoff, activity, or account-management access through this bearer. See [ADR-247](adr/247-platform-tenant-self-service.md).
+With `platform_tenant:activation:read`, the downstream service can call `GET /v1/platform-tenant-self/activation` to read the current readiness of its own linked surfaces, hostnames, and certificates. Tenant identity always comes from the credential, not a caller-supplied tenant ID. The redacted snapshot omits upstream app IDs, DNS challenge material, and raw DNS/certificate errors; the owner-only activation endpoint retains those diagnostics. `ready` follows the same all-linked-surfaces contract as the owner snapshot.
+
+With `platform_tenant:hostnames:manage`, the customer can add a hostname to one of the surfaces listed in that snapshot:
+
+```http
+POST /v1/platform-tenant-self/hostnames
+Content-Type: application/json
+
+{"surface_id":"<surface-id-from-activation>","hostname":"shop.customer.example.com"}
+```
+
+Only pre-linked surfaces are eligible. The hostname must match an owner-configured DNS suffix and both tenant-wide and per-surface plan limits apply. The response gives the `_faas-verify.<hostname>` TXT record and challenge token while it remains unverified; publish the token as its value. Repeating the same request safely returns the existing pending challenge, and a verified hostname response no longer includes the token. DNS verification and certificate issuance remain asynchronous. This scope cannot create surfaces, change policy, remove hostnames, or access another tenant's data. See [ADR-300](adr/300-platform-tenant-self-service-hostnames.md).
+
+The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. No other writes, invoice handoff, activity, or account management are exposed by these tenant-bound scopes. See [ADR-247](adr/247-platform-tenant-self-service.md) and [ADR-284](adr/284-platform-tenant-self-activation.md).
+
+## Let downstream customers rotate their own consumer keys
+
+An owner can separately grant `platform_tenant:credentials:read` for linked-consumer and key metadata, and `platform_tenant:credentials:manage` for key creation, rotation, and revocation. The owner must first enable the tenant's [credential delegation policy](adr/288-platform-tenant-credential-policy.md); it restricts key scopes and the active-key ceiling per consumer. The manage scope never overrides that policy, and revocation stays available after issuance is disabled.
+
+`GET /v1/platform-tenant-self/consumers` returns only consumer IDs, external references, names, and statuses for the bearer tenant. `GET /v1/platform-tenant-self/credentials?limit=100&offset=0` returns key metadata without hashes or plaintext. Use `POST /v1/platform-tenant-self/credentials/apply` with the same hash-only bundle format as the owner API. Generate each key locally, store its plaintext in your own secret manager before sending the prefix and SHA-256 hash, and use the returned metadata to confirm the result. The tenant ID comes from the bearer; IDs linked to another tenant are not accepted. See [ADR-317](adr/317-platform-tenant-self-service-credentials.md).
+
+## Let downstream tenants onboard customer identities
+
+Customer provisioning has its own owner-controlled gate, separate from key-scope delegation. Read or update `/v1/account/platform-tenants/{id}/consumer-provisioning-policy`; updates require recent MFA. The policy is disabled by default. Enabling it requires a per-tenant active-customer cap, and disabling it requires a zero cap. An owner may also mint the tenant-bound `platform_tenant:consumers:manage` capability; it cannot be used as an account-wide API key.
+
+With that capability, call `POST /v1/platform-tenant-self/consumers` with `surface_id`, `external_ref`, and `name`. The selected surface must already be active and linked to the bearer tenant; app and tenant IDs are never accepted. Creation and cap enforcement are atomic. An identical retry returns the existing identity, while an existing unlinked or conflicting identity is not adopted. The response omits app and account metadata. See [ADR-334](adr/334-platform-tenant-consumer-provisioning-policy.md) and [ADR-293](adr/293-platform-tenant-self-service-customers.md).
+
+To offboard customers, call `POST /v1/platform-tenant-self/consumers/revoke` with 1-100 unique `consumer_ids` from that tenant's customer listing. Gregale validates the entire batch before changing anything, then revokes each identity and its active keys atomically. A mixed-tenant, unlinked, or unknown ID returns the same not-found response without partial cleanup. Revocation remains available when new-customer provisioning is disabled or the tenant is suspended; a repeated request is safe and reports zero newly revoked keys. See [ADR-335](adr/335-platform-tenant-self-service-customer-offboarding.md).
+
+For customer onboarding across multiple apps, call `POST /v1/platform-tenant-self/consumers/apply` with one stable `external_ref`, a display `name`, and 1-100 unique `surface_ids` from this tenant's active activation inventory. Gregale derives app IDs from those linked surfaces, and a batch may include at most one surface per app. It creates one app-local customer identity per app in a single all-or-nothing operation; the owner-controlled policy and active-customer cap apply to the batch as a whole. Set `dry_run: true` to check policy, limits, and conflicts and preview `create`/`unchanged` actions without mutation or planned IDs. Exact retries are unchanged and remain valid if the owner later disables new provisioning. This endpoint does not issue keys; apply credentials separately after reviewing the plan. See [ADR-336](adr/336-platform-tenant-self-service-multi-app-onboarding.md).
+
+```http
+POST /v1/platform-tenant-self/consumers/apply
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"external_ref":"customer-42","name":"Customer 42","surface_ids":["<surface-a>","<surface-b>"],"dry_run":true}
+```
+
+After reviewing the per-surface preview, send the same request with `dry_run` omitted to commit the bundle. The apply rechecks current policy, cap, surface links, and identity conflicts; a changed condition fails without creating a partial set.
 
 ## Control customer requests across apps
 
@@ -143,7 +204,14 @@ Content-Type: application/json
 }
 ```
 
-The event filter is fixed to `platform_tenant.statement.finalized`, subject to your plan's shared account webhook quota. The target must pass Gregale's HTTPS and egress checks. Store your secret before submitting it; Gregale returns only a masked value. The default `json` format remains available, while `cloudevents` sends a CloudEvents 1.0 structured event whose `source` is `urn:gregale:platform-tenant:<uuid>` and whose `data` contains the full statement snapshot and stable `external_ref`. The delivery is enqueued in the same database transaction that finalizes the statement: one durable row is created per subscription and statement revision. Webhook delivery is retryable and at-least-once, so deduplicate using the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature` with the configured secret.
+Omitting `event_filter` preserves the existing `platform_tenant.statement.finalized` subscription. Select `platform_tenant.hostname.verified`, `platform_tenant.surface.certificate.changed`, `platform_tenant.surface.deployment.changed`, `platform_tenant.customer.linked`, and/or `platform_tenant.customer.offboarded` for lifecycle updates; one receiver may subscribe to all six supported events. The filter is immutable after creation, so create a replacement subscription to change it. Subscriptions use your plan's shared account webhook quota. The target must pass Gregale's HTTPS and egress checks. Store your secret before submitting it; Gregale returns only a masked value. The default `json` format remains available, while `cloudevents` sends a CloudEvents 1.0 structured event whose `source` is `urn:gregale:platform-tenant:<uuid>` and whose `data` contains the event payload and stable tenant `external_ref`.
+
+`platform_tenant.hostname.verified` is emitted only when a hostname on a surface explicitly linked to that platform tenant transitions from unverified to DNS-verified. It includes the tenant and surface IDs, surface name, app ID, hostname ID and name, stable `external_ref`, and verification timestamp. It never includes the DNS challenge token. This records proof of DNS control only; certificate issuance and hostname routing are separate lifecycle steps. Gregale enqueues the event in the same database transaction as the verification transition, once per subscription and hostname. Events are not backfilled for hostnames verified before subscription creation. Statement events likewise enqueue transactionally, once per subscription and statement revision. Webhook delivery is retryable and at-least-once, so deduplicate using the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature` with the configured secret.
+`platform_tenant.surface.certificate.changed` is emitted for each certificate-state transition on a surface explicitly linked to that platform tenant. The payload includes the tenant and surface identity, `cert_state`, recorded `cert_not_after` (nullable), and transition time. It excludes provider error text, certificates, and private keys; use the activation snapshot for current diagnostics. A delivery is inserted in the same database transaction as the state transition, once per subscription and transition. There is no backfill for transitions that happened before the receiver was created. This event reports certificate lifecycle only; it does not assert that the tenant is active or that every route is ready. Webhook delivery is retryable and at-least-once, so deduplicate using the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature` with the configured secret.
+
+`platform_tenant.surface.deployment.changed` is emitted when a deployment for an explicitly linked surface transitions to `live` or `failed`. The payload includes tenant and surface identity, the deployment revision, outcome, start time, and transition time; it omits app/deployment IDs, source metadata, logs, and raw errors. A failed latest attempt does not mean that an older deployment is not still serving. Events are enqueued transactionally, are not backfilled, and are delivered at-least-once; deduplicate using the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature` with the configured secret.
+
+`platform_tenant.customer.linked` is emitted when an active app-local customer identity is created for or linked to the platform tenant. `platform_tenant.customer.offboarded` is emitted only when a linked identity transitions from active to revoked. Multi-app customers produce one event per app-local consumer; join them with `customer_external_ref` while `consumer_id` and `app_id` identify the specific app identity. Both payloads include the platform tenant ID/reference, customer external reference/name/status, and transition time, but never credentials or hashes. Events are inserted with the identity transition, delivered at-least-once, and are not backfilled; deduplicate with the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature`.
 
 Use `GET /v1/account/platform-tenants/{id}/webhooks` to manage subscription IDs, `PATCH` or `DELETE /{webhook_id}` to update or remove one, and `POST /{webhook_id}/rotate-secret` to rotate its signing key. `GET /{webhook_id}/deliveries` lists durable delivery attempts newest first; retry a dead delivery with `POST /{webhook_id}/deliveries/{delivery_id}/retry`. New subscriptions do not backfill statements that were already finalized. See [ADR-245](adr/245-platform-tenant-statement-webhooks.md).
 

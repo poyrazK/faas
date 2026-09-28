@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -17,6 +21,20 @@ func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.Mem
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("account: %v", err)
+	}
+	ownerID := acct.ID
+	if _, err := store.CreateOrg(t.Context(), state.Org{
+		Slug: state.PersonalOrgSlug(ownerID), Name: "Personal", Personal: true,
+		PersonalOwnerAccountID: &ownerID, Plan: acct.Plan, Status: state.OrgStatusActive,
+	}); err != nil {
+		t.Fatalf("personal org: %v", err)
+	}
+	org, err := store.OrgByPersonalAccount(t.Context(), ownerID)
+	if err != nil {
+		t.Fatalf("load personal org: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, ownerID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatalf("add personal org owner: %v", err)
 	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "rollbackapp", Status: state.AppActive})
 	if err != nil {
@@ -103,6 +121,37 @@ func TestDashboardRollback_HappyPath(t *testing.T) {
 	}
 	if len(audits) != 1 || audits[0].Kind != state.DeployRolledBack {
 		t.Fatalf("rollback audit = %#v, want one deploy.rolled_back row", audits)
+	}
+	org, err := store.OrgByPersonalAccount(t.Context(), app.AccountID)
+	if err != nil {
+		t.Fatalf("personal org: %v", err)
+	}
+	orgID := uuid.MustParse(org.ID)
+	activity, err := store.ListOrgActivity(t.Context(), state.OrgActivityFilter{OrgID: orgID, Limit: 10})
+	if err != nil || len(activity) != 1 || activity[0].Kind != "deploy.rollback_requested" {
+		t.Fatalf("activity after request = (%#v, %v), want one rollback_requested event", activity, err)
+	}
+	var requestData map[string]any
+	if err := json.Unmarshal(activity[0].Data, &requestData); err != nil || requestData["phase"] != "readiness_requested" {
+		t.Fatalf("rollback request data = %s, %v; want readiness_requested", activity[0].Data, err)
+	}
+	if err := store.MarkDeploymentLive(t.Context(), prior.ID); err != nil {
+		t.Fatalf("complete rollback readiness: %v", err)
+	}
+	if _, err := drainOrgActivityOutboxOnce(context.Background(), store, nil); err != nil {
+		t.Fatalf("deliver rollback completion: %v", err)
+	}
+	activity, err = store.ListOrgActivity(t.Context(), state.OrgActivityFilter{OrgID: orgID, Limit: 10})
+	if err != nil || len(activity) != 2 || activity[0].Kind != "deploy.rolled_back" || activity[1].Kind != "deploy.rollback_requested" {
+		t.Fatalf("activity after completion = (%#v, %v), want completion after request", activity, err)
+	}
+	if activity[0].ActorLabel != activity[1].ActorLabel || activity[0].ActorAccountID == nil || activity[1].ActorAccountID == nil ||
+		*activity[0].ActorAccountID != *activity[1].ActorAccountID {
+		t.Fatalf("rollback completion actor = %+v, request actor = %+v", activity[0], activity[1])
+	}
+	var completionData map[string]any
+	if err := json.Unmarshal(activity[0].Data, &completionData); err != nil || completionData["phase"] != "completed" {
+		t.Fatalf("rollback completion data = %s, %v; want completed", activity[0].Data, err)
 	}
 }
 

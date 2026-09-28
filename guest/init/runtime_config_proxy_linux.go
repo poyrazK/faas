@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -18,10 +19,9 @@ import (
 )
 
 const (
-	metadataEnvPath                 = "/v1/metadata/env"
-	metadataEnvEndpoint             = "http://169.254.169.254" + metadataEnvPath
-	metadataSecretReloadAckPath     = "/v1/metadata/secrets/reload-ack"
-	metadataSecretReloadAckEndpoint = "http://169.254.169.254" + metadataSecretReloadAckPath
+	metadataEnvPath             = "/v1/metadata/env"
+	metadataEnvEndpoint         = "http://169.254.169.254" + metadataEnvPath
+	metadataSecretReloadAckPath = "/v1/metadata/secrets/reload-ack"
 	// Must mirror pkg/fcvm.VsockRuntimeConfigHostPort. guest-init keeps this
 	// literal local to preserve the one-way package dependency.
 	metadataEnvHostPort   = 1031
@@ -31,6 +31,7 @@ const (
 type runtimeConfigRequest struct {
 	Kind                    string `json:"kind,omitempty"`
 	Scope                   string `json:"scope"`
+	WorkloadName            string `json:"workload_name,omitempty"`
 	Revision                string `json:"revision,omitempty"`
 	Projection              string `json:"projection,omitempty"`
 	Signal                  string `json:"signal,omitempty"`
@@ -123,7 +124,22 @@ func metadataSecretReloadAckHandler(w http.ResponseWriter, r *http.Request) {
 		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := sendRuntimeSecretApplicationAck(request.Revision, request.Status); err != nil {
+	query, queryErr := url.ParseQuery(r.URL.RawQuery)
+	workloadValues, workloadProvided := query["workload"]
+	if queryErr != nil || len(query) > 1 || (len(query) > 0 && !workloadProvided) ||
+		(workloadProvided && (len(workloadValues) != 1 || workloadValues[0] == "")) {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	workloadName := ""
+	if workloadProvided {
+		workloadName = workloadValues[0]
+	}
+	if workloadName != "" && !validSidecarWorkloadName(workloadName) {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := sendRuntimeSecretApplicationAck(request.Revision, request.Status, workloadName); err != nil {
 		var remoteError *runtimeConfigResponseError
 		if errors.As(err, &remoteError) {
 			writeRuntimeConfigError(w, runtimeSecretAckHTTPStatus(remoteError.code), remoteError.code)
@@ -152,7 +168,7 @@ func runtimeSecretAckHTTPStatus(code string) int {
 	}
 }
 
-func sendRuntimeSecretApplicationAck(revision, status string) error {
+func sendRuntimeSecretApplicationAck(revision, status, workloadName string) error {
 	conn, err := dialRuntimeConfigHost()
 	if err != nil {
 		return err
@@ -164,7 +180,7 @@ func sendRuntimeSecretApplicationAck(revision, status string) error {
 		errorCode = "application_reload_failed"
 	}
 	body, err := json.Marshal(runtimeConfigRequest{
-		Kind: "secret_reload_ack", Revision: revision, ApplicationAck: status,
+		Kind: "secret_reload_ack", WorkloadName: workloadName, Revision: revision, ApplicationAck: status,
 		ApplicationAckErrorCode: errorCode,
 	})
 	if err != nil {

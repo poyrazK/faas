@@ -76,6 +76,7 @@ func TestManifestValidate(t *testing.T) {
 		{"version cookie platform reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "gregale_affinity"}, false},
 		{"managed cookie valid", AppManifest{Entrypoint: []string{"x"}, VersionAffinityManagedCookie: true}, true},
 		{"managed cookie name reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: ManagedVersionAffinityCookieName}, false},
+		{"managed release cookie name reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: ManagedReleaseContextCookieName}, false},
 		{"managed cookie conflicts with source", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "visitor_id", VersionAffinityManagedCookie: true}, false},
 		{"empty entrypoint", AppManifest{}, false},
 		{"empty argv0", AppManifest{Entrypoint: []string{""}}, false},

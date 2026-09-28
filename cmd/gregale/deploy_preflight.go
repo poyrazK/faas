@@ -52,12 +52,22 @@ func deployPreflightSource(
 			if sha != "" {
 				source += " at " + sha
 			}
+			if sourcePath == "" {
+				source += " (current directory)"
+			} else {
+				source += " (--path " + deployPreflightPathLabel(sourcePath) + ")"
+			}
 			if dirtyFiles > 0 {
 				localChanges = fmt.Sprintf("%d local %s included", dirtyFiles, pluralizeDeployChange(dirtyFiles))
 			}
 			return source, localChanges
 		}
 		source = "commit " + sha
+		if sourcePath == "" {
+			source += " (repository root)"
+		} else {
+			source += " (--path " + deployPreflightPathLabel(sourcePath) + ")"
+		}
 		if dirtyFiles > 0 {
 			localChanges = fmt.Sprintf("%d local %s excluded; use --worktree to include them", dirtyFiles, pluralizeDeployChange(dirtyFiles))
 		}
@@ -71,6 +81,14 @@ func deployPreflightSource(
 	default:
 		return "working tree", ""
 	}
+}
+
+func deployPreflightPathLabel(path string) string {
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) {
+		return filepath.Base(path)
+	}
+	return path
 }
 
 func shortDeploySHA(sha string) string {
@@ -189,7 +207,7 @@ func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) strin
 		return "health GET " + health
 	}
 	if health == "" {
-		return fmt.Sprintf(":%d", port)
+		return fmt.Sprintf(":%d · TCP listener readiness", port)
 	}
 	return fmt.Sprintf(":%d · health GET %s", port, health)
 }

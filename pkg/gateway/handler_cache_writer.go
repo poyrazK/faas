@@ -70,10 +70,10 @@ type cacheWriter struct {
 	tags      []string
 	badTags   bool
 	wroteBody bool
-	// managedVersionSetCookie is the exact per-request cookie the gateway
-	// added before installing the tee. Only this value may be omitted from
-	// the captured copy; origin cookies still veto storage.
-	managedVersionSetCookie string
+	// managedPlatformCookies are exact per-request cookies the gateway added
+	// before installing the tee. Only those values may be omitted from the
+	// captured copy; origin cookies still veto storage.
+	managedPlatformCookies map[string]struct{}
 
 	// ruleAction is the state-typed view of the rule, captured
 	// once at install time so Put on the cache has the
@@ -119,20 +119,27 @@ func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCa
 	}
 }
 
-// excludeManagedVersionCookie records the one platform-authored cookie that
-// was already present on the live response before the origin ran. Matching
-// its full value (including the random token and attributes), then removing
-// only one occurrence, prevents an origin Set-Cookie from becoming cacheable.
-func (c *cacheWriter) excludeManagedVersionCookie(value string) {
+// excludeManagedCookie records an exact platform-authored cookie already
+// present on the live response before the origin ran. Matching the full value
+// and removing only one occurrence prevents the edge cookie from making an
+// otherwise cacheable origin response uncacheable.
+func (c *cacheWriter) excludeManagedCookie(value string) {
 	if value == "" {
 		return
 	}
 	for _, existing := range c.Header().Values("Set-Cookie") {
 		if existing == value {
-			c.managedVersionSetCookie = value
+			if c.managedPlatformCookies == nil {
+				c.managedPlatformCookies = make(map[string]struct{})
+			}
+			c.managedPlatformCookies[value] = struct{}{}
 			return
 		}
 	}
+}
+
+func (c *cacheWriter) excludeManagedVersionCookie(value string) {
+	c.excludeManagedCookie(value)
 }
 
 // WriteHeader captures the status code + a defensive copy of
@@ -171,16 +178,17 @@ func (c *cacheWriter) WriteHeader(code int) {
 	// own Header() override (e.g. capWriter). The embedded
 	// ResponseWriter is the lowest-level writer in the
 	// chain — its Header() is the canonical live map.
-	excludedManagedCookie := false
+	excludedManagedCookies := make(map[string]bool, len(c.managedPlatformCookies))
 	for k, vs := range c.Header() {
 		if isPerRequestPlatformHeader(k) {
 			continue
 		}
 		for _, v := range vs {
-			if strings.EqualFold(k, "Set-Cookie") && !excludedManagedCookie &&
-				c.managedVersionSetCookie != "" && v == c.managedVersionSetCookie {
-				excludedManagedCookie = true
-				continue
+			if strings.EqualFold(k, "Set-Cookie") {
+				if _, managed := c.managedPlatformCookies[v]; managed && !excludedManagedCookies[v] {
+					excludedManagedCookies[v] = true
+					continue
+				}
 			}
 			c.header.Add(k, v)
 		}

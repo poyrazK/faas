@@ -23,9 +23,11 @@ const (
 // body field may be present. Header entries use Name:Value strings so repeated
 // header names retain their order and values.
 type ScenarioConfig struct {
-	Version int                   `json:"version"`
-	App     string                `json:"app"`
-	Request ScenarioRequestConfig `json:"request"`
+	Version     int                   `json:"version"`
+	Project     string                `json:"project,omitempty"`
+	Environment string                `json:"environment,omitempty"`
+	App         string                `json:"app"`
+	Request     ScenarioRequestConfig `json:"request"`
 }
 
 // ScenarioRequestConfig describes only request context used by the simulator;
@@ -95,6 +97,7 @@ func ParseScenarioConfig(data []byte) (Input, error) {
 		return Input{}, fmt.Errorf("request body must not exceed %d bytes", MaxTraceBodyBytes)
 	}
 	return NormalizeInput(Input{
+		Project: config.Project, Environment: config.Environment,
 		App: config.App, Host: u.Hostname(), Path: requestPath, Method: strings.TrimSpace(config.Request.Method),
 		ClientIP: config.Request.ClientIP, Country: config.Request.Country, Headers: headers,
 		Body: body, BodyProvided: bodyProvided,

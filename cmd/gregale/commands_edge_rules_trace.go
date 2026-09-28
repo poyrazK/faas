@@ -26,6 +26,8 @@ type edgeRuleTraceSimulation = edgeruletrace.Simulation
 func cmdEdgeRulesTrace(args []string) int {
 	fs := newFlagSet("edge-rules trace", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug")
+	project := fs.String("project", "", "project slug (required with --environment)")
+	environment := fs.String("environment", "", "simulate the workload's effective policy in this project environment")
 	rawURL := fs.String("url", "", "absolute HTTP(S) request URL")
 	scenarioFile := fs.String("config", "", "load a versioned trace scenario JSON file (or - for stdin)")
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
@@ -62,7 +64,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->])", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->])", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)
@@ -86,6 +88,7 @@ func cmdEdgeRulesTrace(args []string) int {
 			}
 		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
+			Project: *project, Environment: *environment,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,
@@ -106,7 +109,30 @@ func cmdEdgeRulesTrace(args []string) int {
 	input.AppMaintenanceMode = app.MaintenanceMode
 	input.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 	input.DeclaredRoutes = append([]api.DeclaredRoute(nil), app.DeclaredRoutes...)
-	if input.OnlyAllowDeclaredRoutes && len(input.DeclaredRoutes) == 0 {
+	var environmentWorkload *api.ProjectEnvironmentStateWorkloadResponse
+	if input.Environment != "" {
+		environmentState, stateErr := client.GetProjectEnvironmentState(context.Background(), input.Project, input.Environment)
+		if stateErr != nil {
+			return printErr("Environment lookup failed", stateErr)
+		}
+		if environmentState.ProjectSlug != input.Project || environmentState.Environment != input.Environment {
+			return printErr("Environment lookup failed", fmt.Errorf("server returned project %q environment %q for the requested selection", environmentState.ProjectSlug, environmentState.Environment))
+		}
+		for i := range environmentState.Workloads {
+			if environmentState.Workloads[i].WorkloadSlug == input.App {
+				environmentWorkload = &environmentState.Workloads[i]
+				break
+			}
+		}
+		if environmentWorkload == nil {
+			return printErr("Environment lookup failed", fmt.Errorf("app %q is not a workload in project %q", input.App, input.Project))
+		}
+		input, err = edgeruletrace.ApplyEnvironmentRoutePolicy(input, environmentWorkload.Routes)
+		if err != nil {
+			return printErr("Environment route policy unavailable", err)
+		}
+	}
+	if input.OnlyAllowDeclaredRoutes && len(input.DeclaredRoutes) == 0 && !input.DeclaredRoutesLoaded {
 		doc, docErr := client.GetAppOpenAPI(context.Background(), input.App, "manual_import")
 		if docErr == nil {
 			input.DeclaredRouteDocumentLoaded = true
@@ -132,6 +158,12 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	if environmentWorkload != nil {
+		rules, err = edgeruletrace.ApplyEnvironmentEdgePolicy(input, rules, environmentWorkload.Policies, environmentWorkload.Release.URL, environmentWorkload.Domains)
+		if err != nil {
+			return printErr("Environment edge policy unavailable", err)
+		}
+	}
 	if edgeruletrace.RequiresCorsPresetData(rules) {
 		presets, presetErr := client.ListCorsPresets(context.Background(), "")
 		if presetErr != nil {
@@ -151,7 +183,11 @@ func cmdEdgeRulesTrace(args []string) int {
 }
 
 func renderEdgeRuleTrace(result edgeruletrace.Result) {
-	_, _ = fmt.Fprintf(osStdout, "%s %s%s (app %s)\n", result.Method, result.Host, result.Path, result.App)
+	if result.Environment != "" {
+		_, _ = fmt.Fprintf(osStdout, "%s %s%s (app %s, project %s, environment %s)\n", result.Method, result.Host, result.Path, result.App, result.Project, result.Environment)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "%s %s%s (app %s)\n", result.Method, result.Host, result.Path, result.App)
+	}
 	if result.BodyProvided {
 		_, _ = fmt.Fprintf(osStdout, "request body: supplied (%d bytes; contents withheld)\n", result.BodyBytes)
 	}

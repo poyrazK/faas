@@ -28,7 +28,7 @@ func TestPgPRPreviewBatchRollsBackOnQuotaAndReusesExisting(t *testing.T) {
 		{AccountID: account.ID, Slug: "pr-42-batch-db", PreviewOfSlug: "batch-db", PreviewPrNumber: 42, PreviewPrState: state.PreviewPrStateOpen, Status: state.AppActive},
 		{AccountID: account.ID, Slug: "pr-42-batch-worker", PreviewOfSlug: "batch-worker", PreviewPrNumber: 42, PreviewPrState: state.PreviewPrStateOpen, Status: state.AppActive},
 	}
-	limits := api.Limits{DeployedApps: 5}
+	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
 	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("over-quota batch = %v, want quota error", err)
 	}
@@ -53,7 +53,7 @@ func TestPgPRPreviewBatchRollsBackOnQuotaAndReusesExisting(t *testing.T) {
 			t.Fatalf("partial sibling %q after retry: %v", app.Slug, err)
 		}
 	}
-	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 6})
+	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3})
 	if err != nil || len(created) != len(previews) || created[0].ID != root.ID {
 		t.Fatalf("idempotent batch = (%+v, %v)", created, err)
 	}

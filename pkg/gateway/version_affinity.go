@@ -43,6 +43,7 @@ type versionAffinityPicker interface {
 
 type versionAffinityDeploymentContextKey struct{}
 type managedVersionCookieProtectionContextKey struct{}
+type managedReleaseContextCookieProtectionContextKey struct{}
 
 func withManagedVersionCookieProtection(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), managedVersionCookieProtectionContextKey{}, true))
@@ -50,6 +51,14 @@ func withManagedVersionCookieProtection(r *http.Request) *http.Request {
 
 func managedVersionCookieProtected(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(managedVersionCookieProtectionContextKey{}) == true
+}
+
+func withManagedReleaseContextCookieProtection(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), managedReleaseContextCookieProtectionContextKey{}, true))
+}
+
+func managedReleaseContextCookieProtected(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(managedReleaseContextCookieProtectionContextKey{}) == true
 }
 
 // A __Host- prefix constrains a browser's cookie attributes, not which
@@ -62,6 +71,15 @@ func guestSetsManagedVersionCookie(ctx context.Context, name, value string) bool
 	}
 	cookieName, _, hasValue := strings.Cut(value, "=")
 	return hasValue && strings.TrimSpace(cookieName) == api.ManagedVersionAffinityCookieName
+}
+
+func guestSetsManagedReleaseContextCookie(ctx context.Context, name, value string) bool {
+	if !managedReleaseContextCookieProtected(ctx) ||
+		!strings.EqualFold(strings.TrimSpace(name), "Set-Cookie") {
+		return false
+	}
+	cookieName, _, hasValue := strings.Cut(value, "=")
+	return hasValue && strings.TrimSpace(cookieName) == api.ManagedReleaseContextCookieName
 }
 
 func withVersionAffinityDeployment(ctx context.Context, deploymentID string) context.Context {

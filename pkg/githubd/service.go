@@ -165,6 +165,8 @@ type Service struct {
 	Reconcile                        *reconcile.Service
 	Enqueuer                         BuildEnqueuer
 	ChangedFiles                     ChangedFilesClient
+	BranchHeads                      BranchHeadClient
+	PullRequests                     PullRequestCurrentClient
 	WriteCheck                       WriteCheck
 	WriteAppCheck                    WriteAppCheckFunc
 	WriteScopedAppCheck              WriteScopedAppCheckFunc
@@ -434,7 +436,6 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve GitHub deployment policy: %w", err)
 	}
-
 	// 3a. Takeover guard: the bind row's InstallID must match
 	// the install row's InstallationID. If they diverge, the
 	// binding points at a stale install (rotated webhook
@@ -452,6 +453,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			"install_installation_id", install.InstallationID,
 			"repo", ev.Repository.FullName)
 		return reconcile.Result{}, ErrNoBinding
+	}
+	if policy.ProductionTrigger == state.ProductionTriggerActions {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
 
 	// An explicit commit marker is a customer-controlled no-op. Resolve the
@@ -476,6 +480,15 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		return reconcile.Result{}, err
 	}
+	if !isTag {
+		current, headErr := s.pushBranchHeadIsCurrent(ctx, install.InstallationID, ev.Repository.FullName, branch, ev.After)
+		if headErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
+		}
+		if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+	}
 
 	// 4. Fetch the source tree. The fetcher unseals the install
 	// token internally (cmd/githubd/source_fetcher.go) and
@@ -499,6 +512,19 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	scan, err := s.Reconcile.Scan(tree.FS())
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+	}
+	// Fetch and scan can take long enough for the branch to advance after
+	// the pre-fetch check. Re-read the remote head immediately before applying
+	// the webhook so an event that became stale during that work is retried or
+	// ignored without changing project state.
+	if !isTag {
+		current, headErr := s.pushBranchHeadIsCurrent(ctx, install.InstallationID, ev.Repository.FullName, branch, ev.After)
+		if headErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: recheck push branch head: %w", headErr)
+		}
+		if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
 	}
 	// githubd is push-driven (no --exclude analog on the webhook
 	// path); pass nil so workloadDiff's exclude filter is a no-op.
@@ -697,6 +723,26 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		"files", len(changedFiles),
 		"pusher", ev.Pusher.Name)
 	return result, nil
+}
+
+// pushBranchHeadIsCurrent reports whether eventSHA still names the remote
+// branch head. A missing checker preserves the test and legacy service
+// behavior; production wires an unavailable checker when GitHub credentials
+// are not configured, so production push handling fails closed.
+func (s *Service) pushBranchHeadIsCurrent(ctx context.Context, installationID int64, repo, branch, eventSHA string) (bool, error) {
+	if s.BranchHeads == nil {
+		return true, nil
+	}
+	currentSHA, err := s.BranchHeads.BranchHead(ctx, installationID, repo, branch)
+	if err != nil {
+		return false, err
+	}
+	if strings.EqualFold(currentSHA, eventSHA) {
+		return true, nil
+	}
+	s.Log.Info("githubd: ignore superseded push", "repo", repo,
+		"branch", branch, "event_sha", eventSHA, "head_sha", currentSHA)
+	return false, nil
 }
 
 // scopeForPush resolves a branch to its deployment scope. The production
@@ -1339,6 +1385,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		result := reconcile.Result{WasIgnored: true}
 		return result, ErrIgnored
 	}
+	if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: verify current PR state: %w", currentErr)
+	} else if !current {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
 
 	// 5. Derive the preview slug + provision the preview apps row.
 	//    Idempotent on (account_id, slug) — a 2nd synchronize
@@ -1403,7 +1454,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		WorkloadName:     parentApp.WorkloadName,
 		WorkloadClass:    parentApp.WorkloadClass,
 		StartCommand:     parentApp.StartCommand,
-		Manifest:         parentApp.Manifest,
+		Manifest:         previewManifest(parentApp.Manifest),
 		AppProtocol:      parentApp.AppProtocol,
 		Status:           state.AppActive,
 		PreviewOfSlug:    parentApp.Slug,
@@ -1412,9 +1463,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		PreviewExpiresAt: &expiresAt,
 	}
 	previewApp = applyGitHubRootPolicy(previewApp, policy)
-	// ADR-094 D4: previews are apps and consume the account's real plan quota.
-	// Resolve the account server-side instead of using a synthetic high ceiling
-	// that lets webhook traffic bypass the customer-facing quota boundary.
+	// Resolve the account server-side so the separate, bounded PR-preview
+	// allowance comes from the plan table, including dependency previews.
 	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
@@ -1452,6 +1502,15 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			available[key] = struct{}{}
 		}
 	}
+	// Source fetching and scanning can take longer than a PR head update.
+	// Recheck before the first preview mutation or build reservation.
+	if sourceReady {
+		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
+		} else if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+	}
 	var created state.App
 	var siblingPreviews []state.App
 	if sourceReady {
@@ -1483,7 +1542,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
 				if werr := s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
 					ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
-					"Preview skipped: the full dependency set exceeds the deployed app limit. Close an app or upgrade your plan."); werr != nil {
+					"Preview skipped: the full dependency set exceeds the PR preview limit. Close a preview or upgrade your plan."); werr != nil {
 					s.Log.Warn("githubd: write quota preview check", "err", werr)
 				}
 				return reconcile.Result{WasIgnored: true}, ErrIgnored
@@ -1510,8 +1569,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 					if werr := s.writePreviewCheck(ctx, install.InstallationID,
 						ev.Repository.FullName, ev.PullRequest.HeadSHA,
 						githubdgrpc.CheckPhaseFailed, previewURL,
-						"Preview skipped: account has reached its deployed app limit. "+
-							"Close an existing app or upgrade your plan."); werr != nil {
+						"Preview skipped: account has reached its PR preview limit. "+
+							"Close an existing preview or upgrade your plan."); werr != nil {
 						s.Log.Warn("githubd: write quota preview check", "err", werr,
 							"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
 					}

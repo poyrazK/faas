@@ -146,8 +146,12 @@ companions:
 Each sidecar receives only app secrets listed in its own `env_secrets` map;
 it never inherits the main workload's secret set or another sidecar's grants.
 References resolve in the deployment's environment scope. They are delivered
-at cold boot and on a Gregale-managed restart after rotation; sidecar
-in-process reload and application acknowledgements are not supported yet.
+at cold boot and on a Gregale-managed restart after rotation. A long-running
+sidecar image can opt into in-process reload by declaring the
+`com.gregale.secret-reload-signal` OCI label (`SIGHUP`, `SIGUSR1`, or
+`SIGUSR2`). The sidecar then receives its own `FAAS_SECRETS_FILE` projection
+and acknowledgement endpoint; only keys in its `env_secrets` grant are
+refreshed. Init helpers and sidecars without the label remain restart-delivered.
 This is a per-workload delivery allowlist, not a hostile-workload isolation
 boundary: workloads share the guest kernel, so use separate deployments when
 one workload must not be trusted with another's runtime state.

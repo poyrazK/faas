@@ -14,15 +14,17 @@ T = TypeVar("T", bound="CustomDomainResponse")
 
 @_attrs_define
 class CustomDomainResponse:
-    """A custom domain binding: domain string, target app, verification status, and TLS provisioning state. Issue #961 /
-    Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show`
-    surface.
+    """A custom domain binding: domain string, target app, optional project environment, verification status, and TLS
+    provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale
+    domains set-default | verify | show` surface.
 
     """
 
     domain: str
     app_id: str
     verified: bool
+    environment: str | Unset = UNSET
+    """Project environment that owns the route; omitted for legacy application-wide domains."""
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
     txt_record: None | str | Unset = UNSET
@@ -53,6 +55,8 @@ class CustomDomainResponse:
         app_id = self.app_id
 
         verified = self.verified
+
+        environment = self.environment
 
         challenge_token: None | str | Unset
         if isinstance(self.challenge_token, Unset):
@@ -125,6 +129,8 @@ class CustomDomainResponse:
                 "verified": verified,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if challenge_token is not UNSET:
             field_dict["challenge_token"] = challenge_token
         if verified_at is not UNSET:
@@ -156,6 +162,8 @@ class CustomDomainResponse:
         app_id = d.pop("app_id")
 
         verified = d.pop("verified")
+
+        environment = d.pop("environment", UNSET)
 
         def _parse_challenge_token(data: object) -> None | str | Unset:
             if data is None:
@@ -269,6 +277,7 @@ class CustomDomainResponse:
             domain=domain,
             app_id=app_id,
             verified=verified,
+            environment=environment,
             challenge_token=challenge_token,
             verified_at=verified_at,
             txt_record=txt_record,

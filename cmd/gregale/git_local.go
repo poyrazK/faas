@@ -295,15 +295,26 @@ func zeroConfigSourceProvenance(prov *zeroConfigProvenance) (sourceURL, commitSH
 // remote still deploys via the cwd-auto-pack branch (the customer
 // may be packaging local code that has no upstream).
 func resolveZeroConfigProvenance(cwd string) (zeroConfigProvenance, bool, error) {
+	prov, err := resolveLocalGitProvenance(cwd, true)
+	return prov, err == nil, err
+}
+
+// resolveExplicitHeadProvenance permits a repository without origin. An
+// explicit --source=head promises committed bytes regardless of remotes.
+func resolveExplicitHeadProvenance(cwd string) (zeroConfigProvenance, error) {
+	return resolveLocalGitProvenance(cwd, false)
+}
+
+func resolveLocalGitProvenance(cwd string, requireOrigin bool) (zeroConfigProvenance, error) {
 	root, err := gitRootFromCwd(cwd)
 	if err != nil {
-		return zeroConfigProvenance{}, false, err
+		return zeroConfigProvenance{}, err
 	}
 	remote, err := gitRemoteOrigin(root)
-	if err != nil {
-		// ErrNoGitRemote is the "git repo without origin" path — caller
-		// falls through to cwd auto-pack (preserves existing behavior).
-		return zeroConfigProvenance{}, false, err
+	if err != nil && (requireOrigin || !errors.Is(err, ErrNoGitRemote)) {
+		// Auto mode falls through to cwd packing without origin. Explicit
+		// HEAD continues so it can archive a local-only repository.
+		return zeroConfigProvenance{}, err
 	}
 	owner, repo, _ := parseGitRemoteURL(remote)
 	// owner / repo stay "" on non-GitHub origin or parse failure.
@@ -311,7 +322,7 @@ func resolveZeroConfigProvenance(cwd string) (zeroConfigProvenance, bool, error)
 	// just means the deployment row doesn't carry source provenance.
 	sha, err := resolveHEAD(root)
 	if err != nil {
-		return zeroConfigProvenance{}, false, fmt.Errorf("resolve HEAD: %w", err)
+		return zeroConfigProvenance{}, fmt.Errorf("resolve HEAD: %w", err)
 	}
 	dirty, _ := isDirtyWorkdir(root) // best-effort; not a hard gate
 	name, _ := gitUserName(root)     // best-effort; "" if unset
@@ -322,7 +333,7 @@ func resolveZeroConfigProvenance(cwd string) (zeroConfigProvenance, bool, error)
 		SHA:        sha,
 		Dirty:      dirty,
 		DeployedBy: name,
-	}, true, nil
+	}, nil
 }
 
 // runGitCmd runs `git <args...>` with -C gitDir and returns combined

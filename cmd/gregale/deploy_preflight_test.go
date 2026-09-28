@@ -12,8 +12,8 @@ import (
 func TestDeployPreflightSourceMakesDirtyCommitSelectionExplicit(t *testing.T) {
 	prov := &zeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
 	source, changes := deployPreflightSource(prov, false, 3, "", "", "", "")
-	if source != "commit 1234567" {
-		t.Fatalf("source = %q, want commit 1234567", source)
+	if source != "commit 1234567 (repository root)" {
+		t.Fatalf("source = %q, want commit 1234567 (repository root)", source)
 	}
 	if changes != "3 local changes excluded; use --worktree to include them" {
 		t.Fatalf("local changes = %q", changes)
@@ -23,11 +23,29 @@ func TestDeployPreflightSourceMakesDirtyCommitSelectionExplicit(t *testing.T) {
 func TestDeployPreflightSourceNamesIncludedWorkingTreeChanges(t *testing.T) {
 	prov := &zeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
 	source, changes := deployPreflightSource(prov, true, 1, "", "", "", "")
-	if source != "working tree at 1234567" {
+	if source != "working tree at 1234567 (current directory)" {
 		t.Fatalf("source = %q", source)
 	}
 	if changes != "1 local change included" {
 		t.Fatalf("local changes = %q", changes)
+	}
+}
+
+func TestDeployPreflightSourceNamesSelectedRoot(t *testing.T) {
+	prov := &zeroConfigProvenance{SHA: "1234567890abcdef"}
+	for _, tc := range []struct {
+		worktree bool
+		path     string
+		want     string
+	}{
+		{false, "packages/api", "commit 1234567 (--path packages/api)"},
+		{true, "packages/api", "working tree at 1234567 (--path packages/api)"},
+		{false, "/private/source/api", "commit 1234567 (--path api)"},
+	} {
+		got, _ := deployPreflightSource(prov, tc.worktree, 0, "", "", "", tc.path)
+		if got != tc.want {
+			t.Errorf("source = %q, want %q", got, tc.want)
+		}
 	}
 }
 
@@ -71,6 +89,16 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("preflight missing %q in:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestDeployPreflightListenerShowsTCPReadinessForImage(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{Slug: "demo", Source: simpleapp.SourceImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := deployPreflightListener(nil, &plan), ":8080 · TCP listener readiness"; got != want {
+		t.Fatalf("listener = %q, want %q", got, want)
 	}
 }
 

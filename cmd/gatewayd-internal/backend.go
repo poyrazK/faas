@@ -134,6 +134,22 @@ func (r pgRouter) IsDynamicRouteHost(host string) bool {
 	return matched
 }
 
+func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	domain, err := r.store.DomainByName(ctx, host)
+	if errors.Is(err, state.ErrNotFound) {
+		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
+			domain, err = wildcardStore.WildcardDomainForHost(ctx, host)
+		}
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+}
+
 func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
 	lookup, ok := r.store.(interface {
 		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
@@ -169,12 +185,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if _, err := r.store.GetProjectEnvironmentEdgePolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, err
 	}
-	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
-	if errors.Is(err, state.ErrNotFound) {
-		return gateway.App{}, false, nil
-	}
-	if err != nil {
-		return gateway.App{}, false, err
+	deployment, found, err := r.environmentDeployment(ctx, app, environment)
+	if err != nil || !found {
+		return gateway.App{}, found, err
 	}
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
@@ -183,6 +196,42 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
 	return resolved, true, nil
+}
+
+func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
+		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
+		if err == nil {
+			for _, member := range release.Members {
+				if member.AppID != app.ID {
+					continue
+				}
+				deployment, loadErr := r.store.DeploymentByID(ctx, member.DeploymentID)
+				if errors.Is(loadErr, state.ErrNotFound) {
+					return state.Deployment{}, false, nil
+				}
+				if loadErr != nil {
+					return state.Deployment{}, false, loadErr
+				}
+				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive {
+					return state.Deployment{}, false, nil
+				}
+				return deployment, true, nil
+			}
+			return state.Deployment{}, false, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, false, err
+		}
+	}
+	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.Deployment{}, false, nil
+	}
+	if err != nil {
+		return state.Deployment{}, false, err
+	}
+	return deployment, true, nil
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
@@ -310,6 +359,15 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if !dom.Verified() {
 		return gateway.App{}, false, nil
 	}
+	if dom.EnvironmentID != "" {
+		app, found, err := r.environmentHost(ctx, dom.EnvironmentID, dom.AppID)
+		if err != nil || !found {
+			return app, found, err
+		}
+		app.CustomDomainRoute = true
+		app.DynamicRoute = true
+		return app, true, nil
+	}
 	app, err := r.store.AppByID(ctx, dom.AppID)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -320,7 +378,12 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
-	return r.toApp(ctx, app)
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.CustomDomainRoute = true
+	return resolved, true, nil
 }
 
 // resolveTenantSurface — pgRouter.ResolveHost's tenant-surface branch.

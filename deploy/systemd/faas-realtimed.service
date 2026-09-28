@@ -34,7 +34,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/run/faas
+ReadWritePaths=/run/faas /var/lib/faas/realtime-callbacks
 
 [Install]
 WantedBy=multi-user.target

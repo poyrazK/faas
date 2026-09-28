@@ -52,6 +52,14 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if !deleted.DeleteGraceUntil.Equal(graceUntil) {
 		t.Fatalf("DeleteGraceUntil = %v, want %v", deleted.DeleteGraceUntil, graceUntil)
 	}
+	// A deleted app leaves no runnable cron: the schedule is hidden from
+	// lookup and dispatch while the app sits in its restore window.
+	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CronByID while the app is deleted = %v, want ErrNotFound", err)
+	}
+	if enabled, err := m.ListEnabledCrons(ctx); err != nil || len(enabled) != 0 {
+		t.Fatalf("ListEnabledCrons while the app is deleted = %+v, %v; want none runnable", enabled, err)
+	}
 	if _, err := m.AppBySlug(ctx, app.Slug); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("AppBySlug deleted app = %v, want ErrNotFound", err)
 	}
@@ -75,8 +83,10 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); err != nil {
 		t.Fatalf("RestoreApp: %v", err)
 	}
-	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("CronByID after app restore = %v, want ErrNotFound; deleted app schedules must stay removed", err)
+	// Restoring the app brings its schedules back; deleting them outright
+	// made every restore silently lose the app's crons.
+	if back, err := m.CronByID(ctx, cron.ID); err != nil || back.SuspendedReason != "" {
+		t.Fatalf("CronByID after app restore = %+v, %v; want the schedule back and runnable", back, err)
 	}
 	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored app = %+v, %v", restored, err)

@@ -129,6 +129,40 @@ func TestGitHubInstallStatusIncludesHealthAndCSRF(t *testing.T) {
 	}
 }
 
+func TestGitHubInstallStatusIncludesProjectDeployBranches(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if err := store.UpsertGitHubInstall(ctx, state.GitHubInstall{
+		AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main",
+		SealedToken: []byte("sealed"), AuditGithubLogin: "alice",
+		TokenExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertGithubInstallBinding(ctx, state.GitHubBinding{
+		AppID: app.ID, AccountID: acct.ID, BindingID: "bind-shop-api",
+		InstallID: 42, RepoFullName: "acme/shop", ProductionBranch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	branchesStore, ok := any(store).(state.ProjectDeployBranchesStore)
+	if !ok {
+		t.Fatal("memory store does not support project deploy branches")
+	}
+	want := map[string]string{"staging": "staging", "qa": "default"}
+	if err := branchesStore.ReplaceProjectDeployBranches(ctx, acct.ID, project.ID, want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := srv.githubInstallStatus(ctx, acct.ID, app.ID, project.ID)
+	if err != nil {
+		t.Fatalf("githubInstallStatus: %v", err)
+	}
+	if len(got.DeployBranches) != len(want) || got.DeployBranches["staging"] != "staging" || got.DeployBranches["qa"] != "default" {
+		t.Fatalf("deploy branches = %#v, want %#v", got.DeployBranches, want)
+	}
+}
+
 func TestGitHubAutomationSurfaceRejectsSessionCookie(t *testing.T) {
 	gh := &githubConnectionFake{}
 	h, _, _, _, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "acme/api"}})

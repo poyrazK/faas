@@ -3,6 +3,8 @@ from typing import Literal
 CreateAppWebhookRequestEventFilterItem = Literal[
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "job.finished",
@@ -14,6 +16,8 @@ CreateAppWebhookRequestEventFilterItem = Literal[
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "job.finished",

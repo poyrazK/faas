@@ -71,6 +71,7 @@
           - hostvars[item].faas_box_role == 'control-plane'
           - hostvars[item].faas_compute_gateway_discovery == 'database'
           - hostvars[item].faas_apid_app_errors_listen is match('^tcp://0\\.0\\.0\\.0:9093$')
+          - hostvars[item].faas_githubd_listen_addr is match('^tcp://0\\.0\\.0\\.0:50053$')
         fail_msg: >-
           {{ item }} is in control_plane but its generated role or discovery
           mode or AppErrors listener is not production split-box compatible.
@@ -84,6 +85,7 @@
           - hostvars[item].faas_gateway_target_url is match('^tcp://[^:]+:8080$')
           - hostvars[item].faas_vmmd_schedd_target is match('^tcp://[^:]+:[0-9]+$')
           - hostvars[item].faas_gatewayd_app_errors_target is match('^tcp://apid\\.faas:9093$')
+          - hostvars[item].faas_githubd_target_url is match('^tcp://githubd\\.faas:50053$')
         fail_msg: >-
           {{ item }} is in compute_nodes but its generated routing or
           AppErrors targets are missing or not production transport URLs.

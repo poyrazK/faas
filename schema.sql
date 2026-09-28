@@ -2283,6 +2283,7 @@ CREATE TABLE public.custom_domains (
     cert_expires_at timestamp with time zone,
     cert_last_error text,
     dns_last_checked_at timestamp with time zone,
+    environment_id uuid,
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
@@ -2654,6 +2655,21 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
     CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
     CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_sidecar_secret_reload_signals (
+    deployment_id uuid NOT NULL,
+    sidecar_name text NOT NULL,
+    signal text NOT NULL,
+    CONSTRAINT deployment_sidecar_secret_reload_signals_pkey PRIMARY KEY (deployment_id, sidecar_name),
+    CONSTRAINT deployment_sidecar_secret_reload_signals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE,
+    CONSTRAINT deployment_sidecar_secret_reload_name_chk CHECK ((sidecar_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT deployment_sidecar_secret_reload_signal_chk CHECK ((signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))
 );
 
 
@@ -3062,6 +3078,7 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
     scope text NOT NULL,
     key text NOT NULL,
     instance_id uuid NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
     secret_version bigint NOT NULL,
     projection text NOT NULL,
     signal text NOT NULL,
@@ -3071,9 +3088,10 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
     application_ack_status text,
     application_ack_at timestamp with time zone,
     application_ack_error_code text,
-    CONSTRAINT app_secret_runtime_reload_observations_pkey PRIMARY KEY (app_id, scope, key, instance_id),
+    CONSTRAINT app_secret_runtime_reload_observations_pkey PRIMARY KEY (app_id, scope, key, instance_id, workload_name),
     CONSTRAINT app_secret_runtime_reload_observation_secret_fkey FOREIGN KEY (app_id, scope, key) REFERENCES public.app_secrets(app_id, scope, key) ON DELETE CASCADE,
     CONSTRAINT app_secret_runtime_reload_observation_instance_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_runtime_reload_observation_workload_name_chk CHECK (((workload_name = ''::text) OR (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT app_secret_runtime_reload_observation_version_chk CHECK ((secret_version >= 1)),
     CONSTRAINT app_secret_runtime_reload_observation_projection_chk CHECK ((projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text]))),
     CONSTRAINT app_secret_runtime_reload_observation_signal_chk CHECK ((signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text]))),
@@ -3085,6 +3103,52 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
             (application_ack_status = 'applied'::text AND application_ack_error_code IS NULL)
             OR (application_ack_status = 'failed'::text AND application_ack_error_code = 'application_reload_failed'::text)
         ))
+    )
+);
+
+
+--
+-- Name: app_secret_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_secret_revocations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    key text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_secret_revocations_pkey PRIMARY KEY (id),
+    CONSTRAINT app_secret_revocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_revocations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_revocations_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT app_secret_revocations_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
+);
+
+
+--
+-- Name: app_secret_revocation_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_secret_revocation_targets (
+    revocation_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    runtime_state text NOT NULL,
+    reload_support text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    ack_revision text,
+    ack_at timestamp with time zone,
+    error_code text,
+    CONSTRAINT app_secret_revocation_targets_pkey PRIMARY KEY (revocation_id, instance_id, workload_name),
+    CONSTRAINT app_secret_revocation_targets_revocation_id_fkey FOREIGN KEY (revocation_id) REFERENCES public.app_secret_revocations(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_revocation_targets_workload_name_chk CHECK (((workload_name = ''::text) OR (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))),
+    CONSTRAINT app_secret_revocation_targets_reload_support_chk CHECK ((reload_support = ANY (ARRAY['enabled'::text, 'disabled'::text, 'unknown'::text]))),
+    CONSTRAINT app_secret_revocation_targets_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'failed'::text]))),
+    CONSTRAINT app_secret_revocation_targets_ack_shape_chk CHECK (
+        (status = 'pending'::text AND ack_revision IS NULL AND ack_at IS NULL AND error_code IS NULL)
+        OR (status = 'applied'::text AND ack_revision IS NOT NULL AND ack_revision ~ '^[0-9a-f]{64}$'::text AND ack_at IS NOT NULL AND error_code IS NULL)
+        OR (status = 'failed'::text AND ack_revision IS NOT NULL AND ack_revision ~ '^[0-9a-f]{64}$'::text AND ack_at IS NOT NULL AND error_code = 'application_reload_failed'::text)
     )
 );
 
@@ -6099,6 +6163,12 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 
 CREATE INDEX app_secrets_account_app_scope_idx ON public.app_secrets USING btree (account_id, app_id, scope);
 
+--
+-- Name: app_secret_revocations_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_secret_revocations_app_idx ON public.app_secret_revocations USING btree (account_id, app_id, created_at DESC);
+
 
 --
 -- Name: app_secrets_account_idx; Type: INDEX; Schema: public; Owner: -
@@ -6633,6 +6703,8 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 --
 
 CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree (cert_expires_at) WHERE (cert_status = ANY (ARRAY['issued'::text, 'renewing'::text]));
+
+CREATE INDEX custom_domains_environment_app_idx ON public.custom_domains USING btree (environment_id, app_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -9847,6 +9919,9 @@ CREATE TABLE public.object_storage_s3_credentials (
     managed_app_id uuid,
     managed_scope text,
     managed_prefix text,
+    rotation_parent_id uuid,
+    rotation_wake_id uuid,
+    rotation_stamped_at timestamp with time zone,
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -9854,7 +9929,8 @@ CREATE TABLE public.object_storage_s3_credentials (
     CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
     CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
-    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL) OR (managed_app_id IS NOT NULL AND managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text AND managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text))
+    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL) OR (managed_app_id IS NOT NULL AND managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text AND managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text)),
+    CONSTRAINT object_storage_s3_credentials_rotation_shape_check CHECK (((rotation_parent_id IS NULL AND rotation_wake_id IS NULL AND rotation_stamped_at IS NULL) OR (rotation_parent_id IS NOT NULL AND rotation_wake_id IS NOT NULL AND managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL)))
 );
 
 CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
@@ -9865,8 +9941,12 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_rotation_parent_id_fkey FOREIGN KEY (rotation_parent_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
 CREATE INDEX object_storage_s3_credentials_bucket_active_idx ON public.object_storage_s3_credentials USING btree (account_id, bucket_id, created_at, id) WHERE (status = 'active'::text);
 CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.object_storage_s3_credentials USING btree (bucket_id, managed_app_id, managed_scope, managed_prefix) WHERE ((status = 'active'::text) AND (managed_app_id IS NOT NULL));
+CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.object_storage_s3_credentials USING btree (rotation_parent_id) WHERE ((rotation_parent_id IS NOT NULL) AND (status = 'active'::text));
 
 CREATE INDEX app_secrets_managed_object_storage_idx ON public.app_secrets USING btree (managed_object_storage_credential_id) WHERE (managed_object_storage_credential_id IS NOT NULL);
 CREATE INDEX app_secret_runtime_reload_observations_instance_idx ON public.app_secret_runtime_reload_observations USING btree (instance_id);
@@ -10501,6 +10581,31 @@ ALTER TABLE ONLY public.deployment_aliases
 
 CREATE INDEX deployment_aliases_deployment_idx ON public.deployment_aliases USING btree (deployment_id);
 
+-- Project environment registry (migration 20260915130000001).
+CREATE TABLE IF NOT EXISTS public.project_environments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    slug text NOT NULL,
+    protected boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
+);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_project_slug_uniq UNIQUE (project_id, slug);
+CREATE INDEX IF NOT EXISTS project_environments_account_project_idx
+    ON public.project_environments (account_id, project_id, slug);
+ALTER TABLE ONLY public.custom_domains
+    ADD CONSTRAINT custom_domains_environment_id_fkey
+    FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
 
 --
 
@@ -10535,3 +10640,35 @@ CREATE INDEX IF NOT EXISTS project_release_members_deployment_idx
 
 
 CREATE INDEX project_release_sets_history_idx ON project_release_sets (project_id, environment_slug, created_at DESC, id DESC);
+CREATE TABLE public.safe_release_worker_lease (
+    singleton boolean DEFAULT true NOT NULL,
+    healthy_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT safe_release_worker_lease_expiry CHECK ((expires_at > healthy_at)),
+    CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton),
+    CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
+);
+
+-- Exact public request-ID mappings are stored independently from sampled
+-- request_telemetry rows and expire on the request-time plan retention cap.
+CREATE TABLE IF NOT EXISTS request_id_journal (
+    id          uuid        PRIMARY KEY,
+    account_id  uuid        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id      uuid        NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    request_id  text        NOT NULL,
+    trace_id    text,
+    received_at timestamptz NOT NULL,
+    expires_at  timestamptz NOT NULL,
+    CONSTRAINT request_id_journal_request_id_size_chk
+        CHECK (octet_length(request_id) BETWEEN 1 AND 128),
+    CONSTRAINT request_id_journal_request_id_control_chk
+        CHECK (request_id !~ '[[:cntrl:]]'),
+    CONSTRAINT request_id_journal_trace_id_format_chk
+        CHECK (trace_id IS NULL OR trace_id ~ '^[0-9a-f]{32}$'),
+    CONSTRAINT request_id_journal_expiry_chk
+        CHECK (expires_at > received_at)
+);
+CREATE INDEX IF NOT EXISTS request_id_journal_app_request_received_idx
+    ON request_id_journal (app_id, request_id, received_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS request_id_journal_expires_idx
+    ON request_id_journal (expires_at);

@@ -303,6 +303,14 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 			},
 			wantJSON: `{"cmd":["exec node-exporter --web.listen=:9100"],"entrypoint":["/bin/sh","-c"],"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
 		},
+		{
+			name: "explicit secret key names",
+			in: workloadManifest{
+				Name: "metrics", Type: "sidecar", RamMB: 64, Port: 9100, Essential: true,
+				GrantedEnvNames: []string{"DATABASE_URL", "TOKEN"},
+			},
+			wantJSON: `{"essential":true,"name":"metrics","port":9100,"ram_mb":64,"secret_keys":["DATABASE_URL","TOKEN"],"type":"sidecar"}`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -340,16 +348,22 @@ func TestProjectedWorkloadManifestBytes_AccountsForCmdEntry(t *testing.T) {
 	withCmd.Cmd = []string{"/bin/sh", "-c", "echo hello world"}
 	withEntry := empty
 	withEntry.Entrypoint = []string{"/usr/local/bin/start.sh"}
+	withKeys := empty
+	withKeys.GrantedEnvNames = []string{"DATABASE_URL", "TOKEN"}
 
 	emptyP := projectedWorkloadManifestBytes(empty)
 	withCmdP := projectedWorkloadManifestBytes(withCmd)
 	withEntryP := projectedWorkloadManifestBytes(withEntry)
+	withKeysP := projectedWorkloadManifestBytes(withKeys)
 
 	if withCmdP <= emptyP {
 		t.Errorf("projection with cmd (%d) ≤ empty (%d); cmd contribution missing", withCmdP, emptyP)
 	}
 	if withEntryP <= emptyP {
 		t.Errorf("projection with entrypoint (%d) ≤ empty (%d); entrypoint contribution missing", withEntryP, emptyP)
+	}
+	if withKeysP <= emptyP {
+		t.Errorf("projection with secret key names (%d) ≤ empty (%d); secret-key contribution missing", withKeysP, emptyP)
 	}
 	// The escape multiplier is a tight ceiling — the projection is
 	// a SAFETY MARGIN, not a tight bound. A correct projection

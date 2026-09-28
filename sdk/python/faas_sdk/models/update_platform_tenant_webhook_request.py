@@ -21,7 +21,7 @@ T = TypeVar("T", bound="UpdatePlatformTenantWebhookRequest")
 
 @_attrs_define
 class UpdatePlatformTenantWebhookRequest:
-    """Update a tenant statement receiver. Rotate secrets with the dedicated action."""
+    """Update a tenant event receiver. Its event filter is immutable; create a replacement to change subscribed events."""
 
     target_url: str | Unset = UNSET
     retry_policy: UpdatePlatformTenantWebhookRequestRetryPolicy | Unset = UNSET

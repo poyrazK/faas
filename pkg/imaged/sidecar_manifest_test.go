@@ -19,11 +19,12 @@ func TestSidecarWorkloadManifest_ProjectsImageAndOverrides(t *testing.T) {
 		},
 		Port: 9090,
 	}, oci.ImageConfig{
-		Entrypoint: []string{"/bin/server"},
-		Cmd:        []string{"--default"},
-		Env:        map[string]string{"TOKEN": "image-value", "MODE": "prod"},
-		WorkingDir: "/srv",
-		User:       "1001",
+		Entrypoint:         []string{"/bin/server"},
+		Cmd:                []string{"--default"},
+		Env:                map[string]string{"TOKEN": "image-value", "MODE": "prod"},
+		WorkingDir:         "/srv",
+		User:               "1001",
+		SecretReloadSignal: "SIGHUP",
 		ExposedPorts: map[string]struct{}{
 			"9100/tcp": {},
 			"53/udp":   {},
@@ -43,6 +44,9 @@ func TestSidecarWorkloadManifest_ProjectsImageAndOverrides(t *testing.T) {
 	}
 	if got.Port != 9090 || got.WorkingDir != "/srv" || got.User != "1001" {
 		t.Fatalf("manifest metadata = %#v, want port/workdir/user preserved", got)
+	}
+	if got.SecretReloadSignal != "SIGHUP" {
+		t.Fatalf("secret_reload_signal = %q, want the sidecar image's SIGHUP opt-in", got.SecretReloadSignal)
 	}
 	if len(got.Ports) != 1 || got.Ports[0].Port != 9090 || got.Ports[0].Protocol != api.WorkloadPortTCP {
 		t.Fatalf("ports = %#v, want explicit TCP override", got.Ports)

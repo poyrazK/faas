@@ -234,6 +234,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 
 		ServiceBindingPolicy:      policy,
 		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
+		ServiceReliability:        w.ServiceReliability,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
 		AllowedServiceCallers:     w.AllowedServiceCallers,
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,

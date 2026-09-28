@@ -313,12 +313,98 @@ func TestPgRouter_CustomDomainVerifiedOnly(t *testing.T) {
 	if err := store.MarkDomainVerified(ctx, "shop.io"); err != nil {
 		t.Fatalf("MarkDomainVerified: %v", err)
 	}
+	if active, err := r.CachedCustomDomainRouteActive(ctx, "shop.io", app.ID); err != nil || !active {
+		t.Fatalf("verified application-wide custom domain cache active=%v err=%v", active, err)
+	}
 	got, ok, err := r.ResolveHost(ctx, "shop.io")
 	if err != nil || !ok {
 		t.Fatalf("verified custom domain ok=%v err=%v", ok, err)
 	}
 	if got.ID != app.ID || got.Plan != api.PlanScale {
 		t.Errorf("resolved = %+v", got)
+	}
+}
+
+func TestPgRouter_EnvironmentCustomDomainFollowsOnlyThatEnvironment(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "environment-domain@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "environment-domain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, ProjectID: project.ID, Slug: "environment-domain-api", Status: state.AppActive,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, "staging.example.test", app.ID, environment.ID, "token", 100, 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, "staging.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev"}
+	if active, err := router.CachedCustomDomainRouteActive(ctx, "staging.example.test", app.ID); err != nil || active {
+		t.Fatalf("environment-scoped domain cache active=%v err=%v, want false/nil", active, err)
+	}
+	production, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStaging, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{
+		AppID: app.ID, DeploymentID: firstStaging.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != firstStaging.ID || resolved.PinnedDeploymentScope != "staging" || !resolved.DynamicRoute {
+		t.Fatalf("environment custom domain = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if resolved.PinnedDeploymentID == production.ID {
+		t.Fatal("environment custom domain routed to production")
+	}
+	secondStaging, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != firstStaging.ID {
+		t.Fatalf("unpublished staging deployment changed route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{
+		AppID: app.ID, DeploymentID: secondStaging.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != secondStaging.ID {
+		t.Fatalf("promoted environment custom domain = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, firstStaging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, secondStaging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, "staging.example.test"); err != nil || ok {
+		t.Fatalf("deleted environment domain = ok=%v err=%v, want false/nil", ok, err)
 	}
 }
 

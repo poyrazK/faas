@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -441,10 +442,33 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if vmmTLS != nil {
 		log.Info("imaged: vmmd mTLS client configured", "target", vmmTarget)
 	}
+	githubdTLS, err := wire.LoadClientTLSConfigWithPrefix(
+		"githubd_",
+		envOr("FAAS_GITHUBD_TLS_CERT_PATH", ""),
+		envOr("FAAS_GITHUBD_TLS_KEY_PATH", ""),
+		envOr("FAAS_GITHUBD_TLS_CA_PATH", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("imaged: load githubd client TLS: %w", err)
+	}
+	githubdTarget := envOr("FAAS_GITHUBD_TARGET_URL", envOr("FAAS_GITHUBD_SOCKET", "/run/faas/githubd.sock"))
+	githubdClient, err := githubdgrpc.DialContext(ctx, githubdTarget, githubdTLS)
+	if err != nil {
+		return fmt.Errorf("imaged: dial githubd source-ref verifier: %w", err)
+	}
+	defer func() {
+		if closeErr := githubdClient.Close(); closeErr != nil {
+			log.Warn("imaged: close githubd client", "err", closeErr)
+		}
+	}()
+	if githubdTLS != nil {
+		log.Info("imaged: githubd mTLS client configured", "target", githubdTarget)
+	}
 
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
+		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).

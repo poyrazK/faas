@@ -30,6 +30,16 @@ func TestParseScenarioConfig(t *testing.T) {
 	}
 }
 
+func TestParseScenarioConfigSelectsProjectEnvironment(t *testing.T) {
+	input, err := edgeruletrace.ParseScenarioConfig([]byte(`{"version":1,"project":"shop","environment":"staging","app":"api","request":{"url":"https://staging-api.example.com/health"}}`))
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig: %v", err)
+	}
+	if input.Project != "shop" || input.Environment != "staging" || input.App != "api" {
+		t.Fatalf("environment selection = %#v", input)
+	}
+}
+
 func TestParseScenarioConfigSupportsBase64AndExplicitEmptyBody(t *testing.T) {
 	for _, config := range []string{
 		`{"version":1,"app":"demo","request":{"url":"https://example.com","body":""}}`,
@@ -73,6 +83,9 @@ func TestParseScenarioConfigRejectsInvalidConfigurations(t *testing.T) {
 		{"invalid base64", `{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"%%%"}}`, "valid standard base64"},
 		{"malformed headers", `{"version":1,"app":"demo","request":{"url":"https://example.com","headers":["Authorization secret-value"]}}`, "valid Name:Value pairs"},
 		{"oversized body", string(tooLargeBody), "request body must not exceed"},
+		{"project without environment", `{"version":1,"project":"shop","app":"demo","request":{"url":"https://example.com"}}`, "project and environment must be supplied together"},
+		{"environment without project", `{"version":1,"environment":"staging","app":"demo","request":{"url":"https://example.com"}}`, "project and environment must be supplied together"},
+		{"invalid environment", `{"version":1,"project":"shop","environment":"default","app":"demo","request":{"url":"https://example.com"}}`, "environment slug is invalid"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -404,6 +417,101 @@ func TestSimulateAppMaintenanceRequiresMetadataAndFollowsRouting(t *testing.T) {
 	}
 	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "route" || result.Simulation.TargetApp != "other-app" {
 		t.Fatalf("route should precede target-app maintenance metadata: %#v", result.Simulation)
+	}
+}
+
+func TestApplyEnvironmentRoutePolicyOwnsEmptyAllowlist(t *testing.T) {
+	input := edgeruletrace.Input{
+		Project: "shop", Environment: "staging", App: "demo", Host: "staging.example.com",
+		Path: "/previously-allowed", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		OnlyAllowDeclaredRoutes: true, DeclaredRouteDocumentLoaded: true,
+		DeclaredRouteOpenAPIDoc: []byte("openapi: 3.1.0\ninfo:\n  title: demo\n  version: v1\npaths:\n  /previously-allowed:\n    get:\n      responses: {}\n"),
+	}
+	got, err := edgeruletrace.ApplyEnvironmentRoutePolicy(input, api.ProjectEnvironmentRoutePolicyResponse{
+		Ownership: "environment", OnlyAllowDeclaredRoutes: true, DeclaredRoutes: []api.DeclaredRoute{},
+	})
+	if err != nil {
+		t.Fatalf("ApplyEnvironmentRoutePolicy: %v", err)
+	}
+	if !got.DeclaredRoutesLoaded || got.DeclaredRouteDocumentLoaded || got.DeclaredRouteOpenAPIDoc != nil {
+		t.Fatalf("environment route context = %#v", got)
+	}
+	result, err := edgeruletrace.Simulate(got, nil)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "undeclared_route" || result.Simulation.StatusCode != http.StatusNotFound {
+		t.Fatalf("empty environment allowlist fell through: %#v", result.Simulation)
+	}
+}
+
+func TestApplyEnvironmentEdgePolicyReplacesOnlyHeadersAndCORS(t *testing.T) {
+	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
+		Project: "shop", Environment: "staging", App: "demo", Host: "staging.example.com", Path: "/",
+		Method: http.MethodGet, AppMaintenanceLoaded: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeInput: %v", err)
+	}
+	rules := []api.EdgeRuleResponse{
+		{ID: "global-headers", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "*",
+			Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Environment","action":"set","value":"global"}]}}`)},
+		{ID: "global-cors", Enabled: true, Kind: "cors", MatchHost: "*", MatchPath: "*",
+			Action: json.RawMessage(`{"cors":{"allow_origins":["https://global.example.com"],"allow_methods":["GET"]}}`)},
+		{ID: "shared-respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "*", MatchHeaders: map[string]string{"x-environment": "staging"},
+			Action: json.RawMessage(`{"respond":{"status_code":202,"body":{"ok":true}}}`)},
+	}
+	policy := api.ProjectEnvironmentEdgePolicyResponse{
+		Ownership: "environment",
+		Rules: []api.ProjectEnvironmentEdgeRuleResponse{{
+			Kind: "headers", MatchPath: "*", Priority: 10, Enabled: true,
+			Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Environment","action":"set","value":"staging"}]}}`),
+		}},
+	}
+	effective, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, rules, policy, "https://staging.example.com", nil)
+	if err != nil {
+		t.Fatalf("ApplyEnvironmentEdgePolicy: %v", err)
+	}
+	if len(effective) != 2 || effective[0].ID != "shared-respond" || effective[1].ID != "environment/staging/demo/1" {
+		t.Fatalf("effective rules = %#v; global headers/CORS should be replaced", effective)
+	}
+	result, err := edgeruletrace.Simulate(input, effective)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Project != "shop" || result.Environment != "staging" || result.Simulation.Outcome != "fixed_response" || result.Simulation.StatusCode != http.StatusAccepted {
+		t.Fatalf("environment simulation = %#v", result)
+	}
+	if got := result.Simulation.RequestHeaders["x-environment"]; len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("effective request headers = %#v", result.Simulation.RequestHeaders)
+	}
+}
+
+func TestApplyEnvironmentEdgePolicyRequiresAHostOwnedBySelectedEnvironment(t *testing.T) {
+	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
+		Project: "shop", Environment: "staging", App: "demo", Host: "prod.example.com", Path: "/",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeInput: %v", err)
+	}
+	policy := api.ProjectEnvironmentEdgePolicyResponse{Ownership: "application"}
+	if _, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, nil, policy, "https://staging.example.com", nil); err == nil {
+		t.Fatal("mismatched environment host was accepted")
+	}
+	if _, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, nil, policy, "", []api.ProjectEnvironmentDomainResponse{{Domain: "prod.example.com", Verified: false}}); err == nil {
+		t.Fatal("unverified custom domain was accepted")
+	}
+	if _, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, nil, policy, "", []api.ProjectEnvironmentDomainResponse{{Domain: "prod.example.com", Verified: true}}); err != nil {
+		t.Fatalf("verified environment domain was rejected: %v", err)
+	}
+
+	input.Host = "api.example.com"
+	if _, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, nil, policy, "", []api.ProjectEnvironmentDomainResponse{{Domain: "*.example.com", Verified: true}}); err != nil {
+		t.Fatalf("verified wildcard environment domain was rejected: %v", err)
+	}
+	input.Host = "example.com"
+	if _, err := edgeruletrace.ApplyEnvironmentEdgePolicy(input, nil, policy, "", []api.ProjectEnvironmentDomainResponse{{Domain: "*.example.com", Verified: true}}); err == nil {
+		t.Fatal("wildcard environment domain unexpectedly covered its apex")
 	}
 }
 

@@ -23,9 +23,10 @@ type Config struct {
 	// is loopback-only, gatewayd-public reverse-proxies /webhooks/github).
 	HTTPAddr string `toml:"http_addr"`
 
-	// SocketPath is the unix-domain socket the gRPC server binds when
-	// ListenAddr is empty. Defaults to /run/faas/githubd.sock
-	// (ADR-015 dictates mode 0660 group `faas`).
+	// SocketPath is the local unix-domain gRPC socket. It is the primary
+	// listener when ListenAddr is empty and remains available alongside a
+	// TCP listener so same-box apid keeps its local transport. Defaults to
+	// /run/faas/githubd.sock (ADR-015 dictates mode 0660 group `faas`).
 	SocketPath string `toml:"socket_path"`
 
 	// ListenAddr is the location-transparent gRPC listen target
@@ -97,6 +98,7 @@ func LoadConfig(path string) (*Config, error) {
 			// empty TOML default. role.FromConfig falls back to
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_GITHUBD_ROLE")
+			c.applyEnvironment()
 			return c, nil
 		}
 		return nil, fmt.Errorf("githubd: read %q: %w", path, err)
@@ -111,6 +113,26 @@ func LoadConfig(path string) (*Config, error) {
 	// role gate at boot calls role.Require to refuse to start
 	// under the wrong box shape.
 	c.Role = role.FromConfig(string(c.Role), "FAAS_GITHUBD_ROLE")
+	c.applyEnvironment()
+	return c, nil
+}
+
+// applyEnvironment overlays deployment-owned listener settings. Single-box
+// development keeps the TOML defaults, while split-box Ansible sets the TCP
+// listener and mTLS leaves through the systemd drop-in.
+func (c *Config) applyEnvironment() {
+	if v := os.Getenv("FAAS_GITHUBD_LISTEN_ADDR"); v != "" {
+		c.ListenAddr = v
+	}
+	if v := os.Getenv("FAAS_GITHUBD_TLS_CERT_PATH"); v != "" {
+		c.TLSCertPath = v
+	}
+	if v := os.Getenv("FAAS_GITHUBD_TLS_KEY_PATH"); v != "" {
+		c.TLSKeyPath = v
+	}
+	if v := os.Getenv("FAAS_GITHUBD_TLS_CA_PATH"); v != "" {
+		c.TLSCAPath = v
+	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// NodeName so the systemd drop-in (deploy/ansible/roles/
 	// githubd_service/files/faas-githubd.service.d/
@@ -119,5 +141,4 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
-	return c, nil
 }

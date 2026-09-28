@@ -180,6 +180,7 @@ func TestAuditEvents_OrgMemberAddedOnAcceptEmitsEvent(t *testing.T) {
 	if data["email"] != e.acct.Email {
 		t.Errorf("data.email = %v, want %s", data["email"], e.acct.Email)
 	}
+	assertOrgActivityKinds(t, e.store, org.ID, "org.invitation.accepted", "org.member.added")
 }
 
 // TestAuditEvents_OrgInvitationAcceptedEmitsEvent (PR 7) — the
@@ -212,6 +213,7 @@ func TestAuditEvents_OrgInvitationAcceptedEmitsEvent(t *testing.T) {
 	if data["invitation"] == nil || data["invitation"] == "" {
 		t.Errorf("data.invitation = %v, want non-empty invitation id", data["invitation"])
 	}
+	assertOrgActivityKinds(t, e.store, org.ID, "org.invitation.accepted", "org.member.added")
 }
 
 // TestAuditEvents_OrgInvitationRevokedEmitsEvent (PR 7) drives
@@ -252,6 +254,30 @@ func TestAuditEvents_OrgInvitationRevokedEmitsEvent(t *testing.T) {
 	if _, exists := data["token_hash_prefix"]; exists {
 		t.Error("audit event exposes token_hash_prefix")
 	}
+	assertOrgActivityKinds(t, e.store, org.ID, "org.invitation.revoked")
+}
+
+func TestOwnershipTransferAppearsInOrgActivity(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	org := seedSharedOrgWithOwner(t, e, "timeline-owner-transfer", "Owner Transfer", api.PlanPro)
+	newOwner, err := e.store.CreateAccount(context.Background(), "new-owner@acme.test", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount new owner: %v", err)
+	}
+	if err := e.store.AddOrgMember(context.Background(), org.ID, newOwner.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatalf("AddOrgMember new owner: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership", api.TransferOwnershipRequest{
+		NewOwnerAccountID: newOwner.ID,
+	}, map[string]string{"X-Active-Org": org.Slug})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transfer ownership: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rows := assertOrgActivityKinds(t, e.store, org.ID, "org.ownership_transferred")
+	if len(rows) != 1 || rows[0].ActorLabel != "test" || rows[0].ResourceLabel != newOwner.Email ||
+		orgActivitySummary(rows[0]) != "test transferred ownership to "+newOwner.Email {
+		t.Fatalf("ownership transfer activity = %#v", rows)
+	}
 }
 
 // TestAuditEvents_OrgMemberRoleChangedEmitsDottedKind (PR 7) pins
@@ -283,6 +309,7 @@ func TestAuditEvents_OrgMemberRoleChangedEmitsDottedKind(t *testing.T) {
 	}
 	mustAuditEvent(t, findEventByKind(rows, "org.member.role_changed"),
 		"no org.member.role_changed (dotted) row; rows="+eventDump(rows))
+	assertOrgActivityKinds(t, e.store, org.ID, "org.member.role_changed")
 }
 
 // TestAuditEvents_OrgMemberRemovedEmitsDottedKind (PR 7) — same
@@ -312,6 +339,7 @@ func TestAuditEvents_OrgMemberRemovedEmitsDottedKind(t *testing.T) {
 	}
 	mustAuditEvent(t, findEventByKind(rows, "org.member.removed"),
 		"no org.member.removed (dotted) row; rows="+eventDump(rows))
+	assertOrgActivityKinds(t, e.store, org.ID, "org.member.removed")
 }
 
 // TestAcceptInvitation_AlreadyMemberSurfacesExistingRole (PR 7) —

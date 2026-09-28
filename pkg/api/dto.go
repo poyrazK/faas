@@ -183,6 +183,18 @@ type PrewarmIntentResponse struct {
 	LastError     string     `json:"last_error,omitempty"`
 }
 
+// ServiceReliabilityPolicy controls one declared outbound dependency.
+// Zero values retain platform defaults; MaxAttempts=1 disables replay.
+// The timeout covers post-authorization routing, wake, forwarding and replay.
+// An earlier caller deadline wins, and established Upgrade sessions detach.
+type ServiceReliabilityPolicy struct {
+	TimeoutMS          int  `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	MaxAttempts        int  `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	MinRemainingMS     int  `json:"min_remaining_ms,omitempty" yaml:"min_remaining_ms,omitempty"`
+	RetryBudgetPercent int  `json:"retry_budget_percent,omitempty" yaml:"retry_budget_percent,omitempty"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty" yaml:"allow_non_idempotent,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
@@ -198,6 +210,9 @@ type CreateAppRequest struct {
 	// ServiceBindingTargets declares outbound same-account services for a
 	// standalone app. The platform derives binding keys and internal URLs.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability configures timeout and retry behavior per declared
+	// outbound service. Omitted retains the platform defaults.
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy defaults to account for standalone apps; declared
 	// opts into gateway enforcement of ServiceBindingTargets.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
@@ -491,6 +506,9 @@ type UpdateAppRequest struct {
 	// ServiceBindingTargets replaces the standalone outbound target list.
 	// Omitted/null leaves it unchanged; [] clears every binding.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability is a full replacement. Omitted leaves it unchanged;
+	// null or {} clears all dependency-specific overrides.
+	ServiceReliability json.RawMessage `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
 	// leaves it unchanged; set account to restore legacy same-account access.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
@@ -1341,7 +1359,8 @@ type AppResponse struct {
 	// dependencies currently injected into this workload. They are a read-only
 	// discovery projection; authorization applies them only when
 	// ServiceBindingPolicy is "declared".
-	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
@@ -3279,6 +3298,7 @@ type AccountLimits struct {
 	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
+	PreviewApps                 int           `json:"preview_apps"`
 	DeploysPerHour              int           `json:"deploys_per_hour"`
 	DeveloperApps               int           `json:"developer_apps"`
 	IncludedGBHours             int64         `json:"included_gb_hours"`
@@ -3501,6 +3521,7 @@ type RotateOrgAPIKeyResponse struct {
 type CustomDomainResponse struct {
 	Domain         string   `json:"domain"`
 	AppID          string   `json:"app_id"`
+	Environment    string   `json:"environment,omitempty"`
 	ChallengeToken string   `json:"challenge_token,omitempty"`
 	Verified       bool     `json:"verified"`
 	VerifiedAt     string   `json:"verified_at,omitempty"`
@@ -3522,8 +3543,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for
@@ -6137,10 +6159,11 @@ type PlanWorkload struct {
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
 	// canonical URL contract. Omitted keeps the established transport.
-	ServiceBindingTransport   ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
-	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
-	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
-	AllowedServiceCallScopes  *ServiceCallerScopes      `json:"allowed_service_call_scopes,omitempty"`
+	ServiceBindingTransport   ServiceBindingTransport             `json:"service_binding_transport,omitempty"`
+	ServiceReliability        map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy           `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
@@ -6809,10 +6832,10 @@ type Sidecar struct {
 	Env map[string]string `json:"env,omitempty"`
 	// EnvSecrets is an explicit per-sidecar allowlist of app secrets.
 	// Each entry maps an environment key to the same-named app secret
-	// (`DB_URL`: `secret:DB_URL`). Values are resolved at wake time in the
+	// (`DB_URL`: `secret:DB_URL`). Values are resolved in the
 	// deployment's scope; sidecars never inherit the main workload's set.
-	// These secrets are restart-delivered only; sidecar live reload is not
-	// currently supported.
+	// Restart is the default delivery path. Long-running sidecars can also opt
+	// into runtime projection and signal delivery through image metadata.
 	EnvSecrets map[string]string `json:"env_secrets,omitempty"`
 	// Port is the listen port. 0 means "absent / fall back to
 	// image default" (1..65535 enforced at the API layer). The
@@ -9658,15 +9681,17 @@ type AppOpenAPIPolicyPreviewRule struct {
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
-	// older debugger clients. TraceID is the public x-faas-request-id customers
-	// should use for support and lookup when it is available.
-	ID                  string                       `json:"id"`
-	DeploymentID        string                       `json:"deployment_id"`
-	Route               string                       `json:"route"`
-	Method              string                       `json:"method"`
-	Status              int                          `json:"status"`
-	LatencyMS           int                          `json:"latency_ms"`
-	Count               int                          `json:"count"`
+	// older debugger clients. RequestID is the public x-faas-request-id;
+	// TraceID remains the separate W3C distributed-tracing identifier.
+	ID                  string                       `json:"id,omitempty"`
+	RequestID           string                       `json:"request_id,omitempty"`
+	EvidenceStatus      string                       `json:"evidence_status,omitempty"`
+	DeploymentID        string                       `json:"deployment_id,omitempty"`
+	Route               string                       `json:"route,omitempty"`
+	Method              string                       `json:"method,omitempty"`
+	Status              int                          `json:"status,omitempty"`
+	LatencyMS           int                          `json:"latency_ms,omitempty"`
+	Count               int                          `json:"count,omitempty"`
 	ColdBoot            bool                         `json:"cold_boot"`
 	TraceID             *string                      `json:"trace_id"`
 	ReceivedAt          string                       `json:"received_at"`
@@ -10242,6 +10267,15 @@ type RequestAnalyticsRoute struct {
 	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
 	DependencyRequests int64                        `json:"dependency_requests,omitempty"`
 	Dependencies       []RequestAnalyticsDependency `json:"dependencies,omitempty"`
+	// DeploymentObservations is a bounded top-five split of this route's
+	// requests and estimated compute value by immutable deployment. CPU
+	// comparisons are route-local, advisory, and only populated when the
+	// supported runtime supplied enough measurements.
+	DeploymentObservations []RequestAnalyticsRouteDeploymentObservation `json:"deployment_observations,omitempty"`
+	// OtherDeploymentRequests and its estimate fold revisions outside this
+	// route's top-five deployment list into one bounded bucket.
+	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
+	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
 	// RAM-hour value to the route by its share of observed requests. It is
 	// an estimate at the current compute overage rate, not an invoice line.
@@ -10249,18 +10283,64 @@ type RequestAnalyticsRoute struct {
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
 }
 
+// RequestAnalyticsRouteDeploymentObservation is one route's request-share
+// allocation and measured guest CPU for an immutable deployment. CPU changes
+// compare only the same route/method across unambiguously ordered revisions.
+type RequestAnalyticsRouteDeploymentObservation struct {
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
+}
+
 // RequestAnalyticsDependency is a route-scoped aggregate of classified,
 // retained dependency span evidence. Percentiles are weighted by the
-// collapsed request row count and should be read as sampled estimates.
+// collapsed request row count and should be read as sampled estimates;
+// deployment observations expose comparable per-revision samples.
 type RequestAnalyticsDependency struct {
-	Type           string `json:"type"`
-	Kind           string `json:"kind,omitempty"`
-	Name           string `json:"name"`
-	Samples        int64  `json:"samples"`
-	Calls          int64  `json:"calls"`
-	ErrorCalls     int64  `json:"error_calls"`
-	P95MS          int64  `json:"p95_ms"`
-	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
+	Type                   string                                            `json:"type"`
+	Kind                   string                                            `json:"kind,omitempty"`
+	Name                   string                                            `json:"name"`
+	Samples                int64                                             `json:"samples"`
+	Calls                  int64                                             `json:"calls"`
+	ErrorCalls             int64                                             `json:"error_calls"`
+	ErrorRatePct           float64                                           `json:"error_rate_pct"`
+	P50MS                  int64                                             `json:"p50_ms"`
+	P95MS                  int64                                             `json:"p95_ms"`
+	P99MS                  int64                                             `json:"p99_ms"`
+	ExclusiveP95MS         int64                                             `json:"exclusive_p95_ms"`
+	DeploymentObservations []RequestAnalyticsDependencyDeploymentObservation `json:"deployment_observations,omitempty"`
+}
+
+// RequestAnalyticsDependencyDeploymentObservation is one dependency's
+// sampled evidence for a route under a single immutable deployment. Regression
+// comparisons are advisory and are omitted when deployment ordering is
+// ambiguous or either side has fewer than the minimum retained span observations.
+type RequestAnalyticsDependencyDeploymentObservation struct {
+	DeploymentID        string   `json:"deployment_id"`
+	CommitSHA           string   `json:"commit_sha,omitempty"`
+	DeploymentTag       string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	Samples             int64    `json:"samples"`
+	Calls               int64    `json:"calls"`
+	ErrorCalls          int64    `json:"error_calls"`
+	ErrorRatePct        float64  `json:"error_rate_pct"`
+	P50MS               int64    `json:"p50_ms"`
+	P95MS               int64    `json:"p95_ms"`
+	P99MS               int64    `json:"p99_ms"`
+	ExclusiveP95MS      int64    `json:"exclusive_p95_ms"`
+	P95ChangePct        *float64 `json:"p95_change_pct,omitempty"`
+	ErrorRateChangePct  *float64 `json:"error_rate_change_pct,omitempty"`
+	ComparedTo          string   `json:"compared_to,omitempty"`
+	Regression          bool     `json:"regression"`
 }
 
 // RequestAnalyticsComputeCost describes the estimated compute value used by

@@ -87,13 +87,13 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewDenied
 			}
 		}
+		bindingTarget := target.Slug
+		if projectPreviewToPreview {
+			// Compose binds the logical workload name, not the generated
+			// pr-N slug. The environment check above makes this alias safe.
+			bindingTarget = target.PreviewOfSlug
+		}
 		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
-			bindingTarget := target.Slug
-			if projectPreviewToPreview {
-				// Compose binds the logical workload name, not the generated
-				// pr-N slug. The environment check above makes this alias safe.
-				bindingTarget = target.PreviewOfSlug
-			}
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
 				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) {
@@ -104,6 +104,13 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			if !declared {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
+		}
+		var reliability *api.ServiceReliabilityPolicy
+		if configured, ok := caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]; ok {
+			if configured.Validate() != nil {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
+			}
+			reliability = &configured
 		}
 		if target.Manifest.AllowedServiceCallers != nil {
 			logicalCaller := caller.Slug
@@ -145,6 +152,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			AccountID:     caller.AccountID,
 			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
 			CallScope:     callScope,
+			Reliability:   reliability,
 		}, nil
 	}
 }

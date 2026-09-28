@@ -9,6 +9,10 @@ from ..models.git_hub_deployment_policy_patch_preview_service_policy import (
     GitHubDeploymentPolicyPatchPreviewServicePolicy,
     check_git_hub_deployment_policy_patch_preview_service_policy,
 )
+from ..models.git_hub_deployment_policy_patch_production_trigger import (
+    GitHubDeploymentPolicyPatchProductionTrigger,
+    check_git_hub_deployment_policy_patch_production_trigger,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="GitHubDeploymentPolicyPatch")
@@ -23,6 +27,7 @@ class GitHubDeploymentPolicyPatch:
     preview_enabled: bool | Unset = UNSET
     preview_ttl_hours: int | Unset = UNSET
     preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset = UNSET
+    production_trigger: GitHubDeploymentPolicyPatchProductionTrigger | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         root_dir = self.root_dir
@@ -39,6 +44,10 @@ class GitHubDeploymentPolicyPatch:
         if not isinstance(self.preview_service_policy, Unset):
             preview_service_policy = self.preview_service_policy
 
+        production_trigger: str | Unset = UNSET
+        if not isinstance(self.production_trigger, Unset):
+            production_trigger = self.production_trigger
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -52,6 +61,8 @@ class GitHubDeploymentPolicyPatch:
             field_dict["preview_ttl_hours"] = preview_ttl_hours
         if preview_service_policy is not UNSET:
             field_dict["preview_service_policy"] = preview_service_policy
+        if production_trigger is not UNSET:
+            field_dict["production_trigger"] = production_trigger
 
         return field_dict
 
@@ -75,12 +86,20 @@ class GitHubDeploymentPolicyPatch:
                 _preview_service_policy
             )
 
+        _production_trigger = d.pop("production_trigger", UNSET)
+        production_trigger: GitHubDeploymentPolicyPatchProductionTrigger | Unset
+        if isinstance(_production_trigger, Unset):
+            production_trigger = UNSET
+        else:
+            production_trigger = check_git_hub_deployment_policy_patch_production_trigger(_production_trigger)
+
         git_hub_deployment_policy_patch = cls(
             root_dir=root_dir,
             ignored_paths=ignored_paths,
             preview_enabled=preview_enabled,
             preview_ttl_hours=preview_ttl_hours,
             preview_service_policy=preview_service_policy,
+            production_trigger=production_trigger,
         )
 
         return git_hub_deployment_policy_patch

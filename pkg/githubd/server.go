@@ -1,19 +1,22 @@
 // githubd server wiring (spec §14 M7.5, ADR-012, ADR-015).
 //
-// Two listeners run inside cmd/githubd:
+// Listeners run inside cmd/githubd:
 //
 //  1. gRPC server on a unix socket at /run/faas/githubd.sock,
 //     mode 0660, group `faas` (ADR-015). apid is the only caller
 //     in v1.0. The gRPC surface is the slice 1 githubdgrpc.Server;
 //     slices 7-8 swap Unimplemented for real handlers.
 //
-//  2. Plain HTTP webhook listener on 127.0.0.1:8083. Only
+//  2. In split-box mode, an optional mTLS TCP gRPC listener serves
+//     compute-side imaged while preserving the local unix socket.
+//
+//  3. Plain HTTP webhook listener on 127.0.0.1:8083. Only
 //     gatewayd-internal's edge-verifying proxy forwards here — never
 //     reachable from the public internet (§11 single-public-
 //     listener invariant). The handler is the bridge between
 //     HTTP POSTs and Service.HandlePushRequest.
 //
-// The two listeners share ctx cancellation and live in the same
+// All listeners share ctx cancellation and live in the same
 // goroutine fan-out used by every other daemon in the fleet.
 package githubd
 
@@ -28,7 +31,10 @@ import (
 	"strconv"
 	"time"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -57,8 +63,9 @@ type Server struct {
 	// POST /webhooks/github.
 	Ops *wire.OpsMetrics
 
-	// SocketPath is the unix socket path when ListenAddr is empty
-	// (default /run/faas/githubd.sock).
+	// SocketPath is the local unix socket path (default
+	// /run/faas/githubd.sock). It also remains active when ListenAddr selects
+	// the remote TCP listener.
 	SocketPath string
 
 	// ListenAddr is the location-transparent gRPC listen target
@@ -200,11 +207,37 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 	if err != nil {
 		return nil, nil, fmt.Errorf("githubd: listen %q: %w", listenTarget, err)
 	}
-	gsrv := grpc.NewServer(append(
-		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
-	)...)
+	listenInfo, err := wire.ParseTarget(listenTarget)
+	if err != nil {
+		_ = gLis.Close()
+		return nil, nil, fmt.Errorf("githubd: parse listen target %q: %w", listenTarget, err)
+	}
+	grpcOptions := append(wire.ServerCredsOrEmpty(serverTLS), wire.TraceServerOptions()...)
+	if listenInfo.Scheme == wire.SchemeTCP {
+		// The remote socket exists only for imaged's branch-head check.
+		// apid keeps its full local Unix API; a network client cannot mint
+		// installation tokens or invoke unrelated githubd methods.
+		grpcOptions = append(grpcOptions,
+			grpc.UnaryInterceptor(githubdRemoteUnaryInterceptor),
+			grpc.StreamInterceptor(githubdRemoteStreamInterceptor),
+		)
+	}
+	gsrv := grpc.NewServer(grpcOptions...)
 	s.GRPCServer.Register(gsrv)
+	var localGRPCServer *grpc.Server
+	var localGRPCListener net.Listener
+	if listenInfo.Scheme == wire.SchemeTCP {
+		// apid remains a same-box unix-socket client. Keep its original
+		// transport live while the new TCP listener serves compute-only
+		// imaged with mTLS credentials.
+		localGRPCListener, err = wire.Listen(ctx, "unix://"+socketPath, nil)
+		if err != nil {
+			_ = gLis.Close()
+			return nil, nil, fmt.Errorf("githubd: local unix listen %q: %w", socketPath, err)
+		}
+		localGRPCServer = grpc.NewServer(wire.TraceServerOptions()...)
+		s.GRPCServer.Register(localGRPCServer)
+	}
 
 	// HTTP loopback listener for /webhooks/github. ADR-122: the
 	// listener is built via the exported NewWebhookHTTPServer
@@ -222,18 +255,29 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 	hLis, err := net.Listen("tcp", httpAddr)
 	if err != nil {
 		_ = gLis.Close()
+		if localGRPCListener != nil {
+			_ = localGRPCListener.Close()
+		}
 		return nil, nil, fmt.Errorf("githubd: http listen %q: %w", httpAddr, err)
 	}
 
-	// Fan out both Serve calls. Errors flow through errc so the
+	// Fan out the listener Serve calls. Errors flow through errc so the
 	// caller's select can shut everything down on first failure.
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	go func() {
 		s.Log.Info("githubd gRPC listening", "target", listenTarget)
 		if err := gsrv.Serve(gLis); err != nil {
 			errc <- fmt.Errorf("githubd gRPC serve: %w", err)
 		}
 	}()
+	if localGRPCServer != nil {
+		go func() {
+			s.Log.Info("githubd local gRPC listening", "socket", socketPath)
+			if err := localGRPCServer.Serve(localGRPCListener); err != nil {
+				errc <- fmt.Errorf("githubd local gRPC serve: %w", err)
+			}
+		}()
+	}
 	go func() {
 		s.Log.Info("githubd HTTP listening", "addr", httpAddr)
 		if err := httpSrv.Serve(hLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -252,15 +296,39 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 		//nolint:contextcheck // shutdown ctx must outlive caller ctx (net/http contract).
 		_ = httpSrv.Shutdown(shutdownCtx)
 		gsrv.GracefulStop()
+		if localGRPCServer != nil {
+			localGRPCServer.GracefulStop()
+		}
 	}()
 
 	cleanup := func(ctx context.Context) error {
 		//nolint:contextcheck // see above.
 		_ = httpSrv.Shutdown(ctx)
 		gsrv.GracefulStop()
+		if localGRPCServer != nil {
+			localGRPCServer.GracefulStop()
+		}
 		return nil
 	}
 	return cleanup, errc, nil
+}
+
+func githubdRemoteUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if info.FullMethod != githubdpb.Githubd_GetBranchHead_FullMethodName {
+		return nil, status.Error(codes.PermissionDenied, "remote githubd listener only serves branch-head verification")
+	}
+	cn, err := wire.PeerCN(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "remote githubd client identity is unavailable")
+	}
+	if cn != "imaged.faas" {
+		return nil, status.Error(codes.PermissionDenied, "remote githubd listener requires imaged.faas")
+	}
+	return handler(ctx, req)
+}
+
+func githubdRemoteStreamInterceptor(_ any, _ grpc.ServerStream, _ *grpc.StreamServerInfo, _ grpc.StreamHandler) error {
+	return status.Error(codes.PermissionDenied, "remote githubd listener does not serve streaming methods")
 }
 
 // WebhookLoopbackHandler returns the http.Handler the HTTP listener

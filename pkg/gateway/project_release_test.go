@@ -61,6 +61,82 @@ func TestPublicProjectReleaseSelectsExactMember(t *testing.T) {
 	}
 }
 
+func TestStaticSPADocumentSeedsReleaseContextCookie(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	releaseID, deploymentID := uuid.NewString(), uuid.NewString()
+	backend.app.ProjectID = uuid.NewString()
+	backend.app.RevisionPinTTLSeconds = 3600
+	var guestCookie string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guestCookie = r.Header.Get("Cookie")
+		w.Header().Add("Set-Cookie", api.ManagedReleaseContextCookieName+"=guest-value; Path=/; Secure")
+		w.Header().Add("Set-Cookie", "session=guest; Path=/")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>SPA</title>"))
+	}))
+	t.Cleanup(upstream.Close)
+	backend.upstream = upstream.Listener.Addr().String()
+	backend.AddTarget(Target{NodeID: backend.upstream, InstanceID: "spa", DeploymentID: deploymentID})
+	h.backend = &releaseBackend{fakeBackend: backend, releaseID: releaseID, deploymentID: deploymentID}
+
+	request := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	request.Header.Set("Cookie", api.ManagedReleaseContextCookieName+"="+uuid.NewString()+"; session=keep")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get(api.ReleaseHeader) != releaseID {
+		t.Fatalf("document response = %d release %q body %q", response.Code, response.Header().Get(api.ReleaseHeader), response.Body.String())
+	}
+	var releaseCookie *http.Cookie
+	var releaseCookieCount, sessionCookieCount int
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == api.ManagedReleaseContextCookieName {
+			releaseCookieCount++
+			releaseCookie = cookie
+		} else if cookie.Name == "session" {
+			sessionCookieCount++
+		}
+	}
+	if releaseCookieCount != 1 || sessionCookieCount != 1 || releaseCookie == nil || releaseCookie.Value != releaseID || releaseCookie.Path != "/" ||
+		!releaseCookie.Secure || releaseCookie.HttpOnly || releaseCookie.SameSite != http.SameSiteLaxMode ||
+		releaseCookie.MaxAge != 0 {
+		t.Fatalf("release context cookie = %+v", releaseCookie)
+	}
+	if guestCookie != "session=keep" {
+		t.Fatalf("guest received platform release cookie or lost app cookie: %q", guestCookie)
+	}
+}
+
+func TestStaticSPADocumentClearsReleaseCookieWithoutActiveGraph(t *testing.T) {
+	h, backend, upstream := newTestHandler(t)
+	backend.app.ProjectID = uuid.NewString()
+	backend.app.RevisionPinTTLSeconds = 3600
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "current", DeploymentID: uuid.NewString()})
+	h.backend = &releaseBackend{fakeBackend: backend}
+
+	request := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	request.AddCookie(&http.Cookie{Name: api.ManagedReleaseContextCookieName, Value: uuid.NewString()})
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get(api.ReleaseHeader) != "" {
+		t.Fatalf("unpinned document response = %d release %q", response.Code, response.Header().Get(api.ReleaseHeader))
+	}
+	var cleared bool
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == api.ManagedReleaseContextCookieName && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("document without a graph did not clear the release cookie: %q", response.Header().Values("Set-Cookie"))
+	}
+}
+
 func TestPublicProjectReleaseClientSticksAcrossCutoverAndExpires(t *testing.T) {
 	h, backend, upstream := newTestHandler(t)
 	oldReleaseID, newReleaseID := uuid.NewString(), uuid.NewString()

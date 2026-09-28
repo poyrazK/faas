@@ -32,33 +32,33 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
-| [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
+| [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
-| [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
+| [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
+| [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
-| [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
+| [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
-| [`debug`](#debug) | Production debugger (ADR-127) |
+| [`debug`](#debug) | Inspect production requests and regressions |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
-| [`login`](#login) | Authenticate this machine (--token for CI) |
+| [`login`](#login) | Authenticate this machine |
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Query runtime logs and HTTP request events (slug defaults to linked context) |
+| [`logs`](#logs) | Query runtime logs and HTTP request events |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -368,6 +368,13 @@ List your apps
 |---|---|---|
 | `--quiet` | delete one app without prompting (short form: -q) |  |
 
+Examples:
+
+```sh
+gregale apps
+gregale apps --json
+```
+
 ### apps ls
 
 Alias for the default list action
@@ -378,7 +385,7 @@ Restore an app during its deletion grace window
 
 ### apps routes
 
-List admitted per-route labels for one app (ADR-093)
+List admitted per-route labels for one app
 
 ### apps tcp
 
@@ -386,7 +393,7 @@ Manage raw TCP listeners
 
 ### apps streaming-cap
 
-Per-app streaming classification probe (ADR-102 D6)
+Show app streaming classification
 
 ### apps -q
 
@@ -459,7 +466,7 @@ Inspect networking or manage private-network attachments
 
 ### app routes
 
-List admitted per-route labels for one app (ADR-093)
+List admitted per-route labels for one app
 
 ### app tcp
 
@@ -549,9 +556,23 @@ Connect a third-party service (github | repo OWNER/NAME)
 
 Connect a GitHub account for repo deploys
 
+Examples:
+
+```sh
+gregale connect github
+```
+
 ### connect repo
 
 Open the dashboard wizard to bind &lt;owner&gt;/&lt;name&gt; to a Gregale app
+
+`gregale connect repo <owner>/<name>`
+
+Examples:
+
+```sh
+gregale connect repo acme/my-api
+```
 
 
 ## github
@@ -564,17 +585,43 @@ Manage an app&#39;s GitHub installation and repository binding
 
 Show the GitHub connection health for &lt;slug&gt;
 
+`gregale github status <slug>`
+
+Examples:
+
+```sh
+gregale github status my-api
+```
+
 ### github sync
 
 Reconcile repository access with GitHub
+
+`gregale github sync <slug>`
+
+Examples:
+
+```sh
+gregale github sync my-api
+```
 
 ### github repos
 
 List repositories visible to the connected GitHub installation for &lt;slug&gt;
 
+`gregale github repos <slug>`
+
+Examples:
+
+```sh
+gregale github repos my-api
+```
+
 ### github bind
 
 Bind &lt;slug&gt; to a visible GitHub repository
+
+`gregale github bind <slug> [--installation-id <ID>] --repo <OWNER/NAME> [--branch <BRANCH>] [--deploy-branches <MAPPINGS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -583,15 +630,23 @@ Bind &lt;slug&gt; to a visible GitHub repository
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
+Examples:
+
+```sh
+gregale github bind my-api --repo acme/my-api --branch main
+```
+
 ### github setup
 
 Bind GitHub, configure previews, and write an Actions workflow
+
+`gregale github setup <slug> [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
 | `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
-| `--deploy-branches <MAPPINGS>` | comma-separated branch=scope mappings |  |
+| `--deploy-branches <MAPPINGS>` | comma-separated branch=environment mappings (default or registered environment) |  |
 | `--workflow <PATH>` | workflow path relative to repository root |  |
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
@@ -603,9 +658,18 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--dry-run` | show the workflow without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
+Examples:
+
+```sh
+gregale github setup my-api --repo acme/my-api --dry-run
+gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72
+```
+
 ### github disconnect
 
 Remove the app&#39;s GitHub repository binding
+
+`gregale github disconnect <slug> [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -976,6 +1040,13 @@ Preflight local source or OCI image metadata; runtime checks are skipped
 | `--strict` | exit 1 on warn (default: exit 0 on warn) |  |
 | `--json` | machine output (default: human prose) |  |
 
+Examples:
+
+```sh
+gregale doctor
+gregale doctor --strict
+```
+
 
 ## delayed-task
 
@@ -1042,6 +1113,13 @@ List deployments or manage stable named URLs for immutable revisions
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
 
+Examples:
+
+```sh
+gregale deployments --app my-api --limit 10
+gregale deployments --app my-api --wide
+```
+
 ### deployments alias
 
 Manage stable named URLs for immutable deployments
@@ -1092,23 +1170,49 @@ Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wa
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
 
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment wait v42 --app my-api
+```
+
 ### deployment summary
 
 Show the release diff and rollback target
+
+`gregale deployment summary <id|vN> --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
 
+Examples:
+
+```sh
+gregale deployment summary v42 --app my-api
+gregale deployment summary v42 --app my-api --json
+```
+
 ### deployment wait
 
 Wait until a deployment is live (or safe rollout completes)
 
+`gregale deployment wait <id|vN> [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug for a vN revision outside a linked project |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
+
+Examples:
+
+```sh
+gregale deployment wait 00000000000000000000000000000001
+gregale deployment wait 00000000000000000000000000000001 --rollout --progress
+```
 
 ### deployment set-min-instances
 
@@ -1125,13 +1229,48 @@ Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys show
 
 Print the closed 6-stage post-stream summary
 
+`gregale deploys show <id|vN> [--app <SLUG>] [--status] [--url]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--status` | include terminal status and timing |  |
+| `--url` | print only the deployment preview URL |  |
+
+Examples:
+
+```sh
+gregale deploys show 00000000000000000000000000000001
+gregale deploys show v42 --app my-api --status
+```
+
 ### deploys status
 
 Print stages, terminal status, and failure guidance
+
+`gregale deploys status <id|vN> [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+
+Examples:
+
+```sh
+gregale deploys status 00000000000000000000000000000001
+gregale deploys status v42 --app my-api --json
+```
 
 ### deploys cancel
 
@@ -1156,15 +1295,16 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 ## deploy
 
-Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
+Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | deploy from a container image reference |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
+| `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
 | `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
@@ -1179,6 +1319,10 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
 | `--profile <PROFILE>` | named app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--vcpu <N>` | assert the plan guest vCPU shape (omit to use the plan default) |  |
+| `--execution-mode <request|service|worker|job>` | app lifecycle mode |  |
+| `--restart-policy <no|on-failure|always|unless-stopped>` | app restart policy |  |
+| `--startup-deadline-s <SECONDS>` | maximum startup seconds (0 uses plan default) |  |
+| `--max-retries <N>` | maximum restart attempts (0 uses plan default) |  |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |
@@ -1189,9 +1333,9 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
 | `--pr-number <N>` | GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action. |  |
-| `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
-| `--show-affected` | render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124) |  |
-| `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
+| `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
+| `--show-affected` | show workloads that deploy, stay unchanged, or are removed |  |
+| `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
 | `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
@@ -1201,6 +1345,8 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
 | `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
 | `--no-traffic` | stage with 0% production traffic and print the preview URL |  |
+| `--rollback-on-5xx` | roll back after repeated first-wake 5xx responses |  |
+| `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
@@ -1218,6 +1364,14 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--doctor-strict` | run doctor before deploy and abort on errors |  |
 | `--no-doctor` | skip the automatic local doctor preflight |  |
 
+Examples:
+
+```sh
+gregale deploy --plan
+gregale deploy --source=head --name my-api
+gregale deploy --path packages/api --source=worktree
+```
+
 
 ## domains
 
@@ -1231,7 +1385,13 @@ List custom domain bindings
 
 ### domains add
 
-Bind a custom domain to an app
+Bind a custom domain to an app or project environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--domain <DOMAIN>` | domain to attach (required) | required |
+| `--app <SLUG>` | app slug to attach to (required) | required |
+| `--environment <SLUG>` | project environment to route this domain to |  |
 
 ### domains rm
 
@@ -1260,7 +1420,7 @@ Show durable TLS status for all domains
 
 ## dev
 
-Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)
+Sync local changes to a developer environment
 
 `gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
@@ -1274,6 +1434,13 @@ Sync the dirty working tree to a stable remote developer environment (name defau
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+
+Examples:
+
+```sh
+gregale dev --once
+gregale dev --path ./api --once
+```
 
 ### dev status
 
@@ -1320,7 +1487,7 @@ Compare two named environments in the linked project
 
 ## preview
 
-Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
+Manage preview environments for pull requests
 
 `gregale preview [<subcommand>]`
 
@@ -1341,6 +1508,13 @@ Create and deploy a pull-request preview from a GitHub ref
 | `--idempotency-key <KEY>` | stable retry key |  |
 | `--open` | open the preview URL after a successful create |  |
 
+Examples:
+
+```sh
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open
+gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait
+```
+
 ### preview list
 
 List pull-request and developer previews (defaults to the linked app)
@@ -1349,13 +1523,30 @@ List pull-request and developer previews (defaults to the linked app)
 |---|---|---|
 | `--app <slug>` | parent app slug |  |
 
+Examples:
+
+```sh
+gregale preview list --app my-api
+gregale preview list
+```
+
 ### preview show
 
 Inspect a preview and its latest deployment
 
+`gregale preview show <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview show pr-42-my-api
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
+
+`gregale preview wait <preview-slug> [--progress] [--open] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1363,9 +1554,23 @@ Wait for a preview deployment to become ready
 | `--open` | open the preview URL after it becomes ready |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
 
+Examples:
+
+```sh
+gregale preview wait pr-42-my-api --progress --open
+```
+
 ### preview destroy
 
-Tear down a preview app (POST /v1/preview/{slug}/destroy)
+Tear down a preview app
+
+`gregale preview destroy <preview-slug>`
+
+Examples:
+
+```sh
+gregale preview destroy pr-42-my-api
+```
 
 
 ## platform-tenants
@@ -1595,7 +1800,15 @@ Pull sealed-secret keys to a .env skeleton (values blank)
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+
+Examples:
+
+```sh
+gregale env pull --app my-api
+gregale env pull --app my-api --scope staging
+```
 
 ### env push
 
@@ -1603,17 +1816,37 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
+
+Examples:
+
+```sh
+printf 'LOG_LEVEL=info\n' | gregale env push --app my-api --from-stdin
+gregale env push --app my-api --restart
+```
 
 ### env diff
 
 Render the env-diff matrix (presence / value-equality across scopes)
 
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
+
+Examples:
+
+```sh
+gregale env diff --app my-api
+gregale env diff --app my-api --json
+```
+
 
 ## init
 
-Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])
+Scaffold a project from a built-in template
 
 `gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list]`
 
@@ -1626,6 +1859,13 @@ Scaffold a reference project from a built-in template (--template NAME --path DI
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment (requires --deploy) |  |
 | `--list` | list available templates |  |
 
+Examples:
+
+```sh
+gregale init --list
+gregale init --template hello-node --path ./my-api
+```
+
 
 ## inspect
 
@@ -1635,9 +1875,16 @@ Explain an app from its runtime, deployment, API, data, scaling, and release sig
 
 | Flag | Meaning | |
 |---|---|---|
-| `--upstreams` | List data upstreams captured for this app (ADR-098 §9.A) |  |
+| `--upstreams` | List data upstreams captured for this app |  |
 | `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
 | `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
+
+Examples:
+
+```sh
+gregale inspect my-api
+gregale inspect my-api --upstreams
+```
 
 
 ## invoke
@@ -1732,7 +1979,7 @@ Wait for one invocation to finish
 
 ## debug
 
-Production debugger (ADR-127)
+Inspect production requests and regressions
 
 `gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
@@ -1810,6 +2057,8 @@ List API keys
 
 Mint a new API key
 
+`gregale keys add <label>`
+
 ### keys rm
 
 Revoke an API key
@@ -1825,13 +2074,21 @@ Set the rotation grace window
 
 ## login
 
-Authenticate this machine (--token for CI)
+Authenticate this machine
 
-`gregale login [--token <TOKEN>]`
+`gregale login [--token <TOKEN>] [--token-stdin]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
+| `--token-stdin` | read a pre-minted token from stdin (CI) |  |
+
+Examples:
+
+```sh
+gregale login
+printf '%s' "$GREGALE_TOKEN" | gregale login --token-stdin
+```
 
 
 ## link
@@ -1882,7 +2139,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Query runtime logs and HTTP request events (slug defaults to linked context)
+Query runtime logs and HTTP request events
 
 `gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
@@ -1905,6 +2162,13 @@ Query runtime logs and HTTP request events (slug defaults to linked context)
 | `--archive` | read durable logs for one instance and UTC day |  |
 | `--instance <ID>` | instance id for --archive |  |
 | `--date <YYYY-MM-DD>` | UTC day for --archive |  |
+
+Examples:
+
+```sh
+gregale logs my-api --follow
+gregale logs my-api --since 1h --level error
+```
 
 
 ## metrics
@@ -2299,6 +2563,13 @@ Re-promote the previous deployment
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--json` | machine-readable output |  |
 
+Examples:
+
+```sh
+gregale rollback my-api
+gregale rollback my-api --to v41
+```
+
 
 ## projects
 
@@ -2316,7 +2587,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]
 
 #### projects environments list
 
@@ -2401,11 +2672,28 @@ Plan a promotion
 
 `gregale projects environments preview [flags]`
 
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--to <ENV>` | target environment | required |
+| `--sync-config` | include non-secret source config in the promotion preview |  |
+
 #### projects environments promote
 
 Promote workloads
 
 `gregale projects environments promote [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--to <ENV>` | target environment | required |
+| `--sync-config` | copy source non-secret environment configuration to the target |  |
+| `--yes` | confirm the promotion |  |
+| `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
+| `--wait` | wait for the promotion to reach a terminal status |  |
+| `--progress` | print promotion transitions while waiting (human output only) |  |
+| `--timeout <SECONDS>` | maximum seconds to wait for promotion completion |  |
 
 #### projects environments status
 
@@ -2454,10 +2742,10 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--production-branch <BRANCH>` | production branch for the project |  |
 | `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--environment <SLUG>` | registered project environment to scan |  |
-| `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
-| `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
+| `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
+| `--show-affected` | show workloads that deploy or stay unchanged |  |
 | `--explain` | show detector provenance and skipped/merged decisions |  |
-| `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
+| `--persist-exclude` | save --exclude slugs for future project deploys |  |
 
 
 ## secrets
@@ -2472,24 +2760,57 @@ List sealed secrets
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
+
+Examples:
+
+```sh
+gregale secrets list --app my-api
+gregale secrets list --app my-api --scope __all__
+```
 
 ### secrets set
 
 Set a sealed secret
 
+`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply updated secrets now |  |
+
+Examples:
+
+```sh
+gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
+gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+```
 
 ### secrets unset
 
 Remove a sealed secret
 
+`gregale secrets unset <KEY> --app <slug> [--scope <SCOPE>] [--wait-for-ack] [--timeout <DURATION>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
+| `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements |  |
+
+Examples:
+
+```sh
+gregale secrets unset --app my-api OLD_API_KEY
+gregale secrets unset --app my-api OLD_API_KEY --scope staging
+gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack
+```
 
 ### secrets list-all
 
@@ -2499,12 +2820,23 @@ List every secret across apps
 
 Rotate a secret and optionally wait for runtime application
 
+`gregale secrets rotate [<KEY=VALUE>] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>]`
+
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read one KEY=VALUE pair from stdin |  |
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
 | `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
+
+Examples:
+
+```sh
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m
+```
 
 
 ## slo

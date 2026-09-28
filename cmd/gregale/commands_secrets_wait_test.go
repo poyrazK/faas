@@ -163,3 +163,37 @@ func TestWaitForSecretApplicationAckTimesOutOnMissingAck(t *testing.T) {
 		t.Fatal("wait without acknowledgement unexpectedly succeeded")
 	}
 }
+
+func TestWaitForSecretRevocationAckReturnsOnlyAfterComplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/app/secret-revocations/revocation-1" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		writeJSONTest(w, api.AppSecretRevocationResponse{
+			ID: "revocation-1", Status: "complete", TargetCount: 2, AcknowledgedCount: 2,
+		})
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	progress, err := waitForSecretRevocationAck(ctx, client, "app", "revocation-1")
+	if err != nil || progress.AcknowledgedCount != 2 {
+		t.Fatalf("wait returned %+v, %v; want complete 2/2", progress, err)
+	}
+}
+
+func TestWaitForSecretRevocationAckFailsClosedForBlockedTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONTest(w, api.AppSecretRevocationResponse{
+			ID: "revocation-1", Status: "blocked", TargetCount: 1, PendingCount: 1,
+		})
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := waitForSecretRevocationAck(ctx, client, "app", "revocation-1"); err == nil {
+		t.Fatal("blocked revocation unexpectedly succeeded")
+	}
+}

@@ -48,6 +48,16 @@ func (c *Client) GetPlatformTenantRequestBudget(ctx context.Context, id string) 
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/request-budget", nil, &out)
 }
 
+func (c *Client) GetPlatformTenantHostnamePolicy(ctx context.Context, id string) (PlatformTenantHostnamePolicyResponse, error) {
+	var out PlatformTenantHostnamePolicyResponse
+	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/hostname-policy", nil, &out)
+}
+
+func (c *Client) SetPlatformTenantHostnamePolicy(ctx context.Context, id string, req SetPlatformTenantHostnamePolicyRequest) (PlatformTenantHostnamePolicyResponse, error) {
+	var out PlatformTenantHostnamePolicyResponse
+	return out, c.do(ctx, "PUT", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/hostname-policy", req, &out)
+}
+
 func (c *Client) SetPlatformTenantRequestBudget(ctx context.Context, id string, req SetPlatformTenantRequestBudgetRequest) (PlatformTenantRequestBudgetResponse, error) {
 	var out PlatformTenantRequestBudgetResponse
 	return out, c.do(ctx, "PUT", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/request-budget", req, &out)
@@ -112,6 +122,18 @@ func (c *Client) GetPlatformTenantSelfUsage(ctx context.Context, opts APIConsume
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetPlatformTenantSelfActivation reads the caller tenant's redacted,
+// cross-app activation snapshot using a tenant-bound activation:read token.
+func (c *Client) GetPlatformTenantSelfActivation(ctx context.Context) (PlatformTenantSelfActivationResponse, error) {
+	var out PlatformTenantSelfActivationResponse
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/activation", nil, &out)
+}
+
+func (c *Client) CreatePlatformTenantSelfHostname(ctx context.Context, req CreatePlatformTenantSelfHostnameRequest) (PlatformTenantSelfHostnameResponse, error) {
+	var out PlatformTenantSelfHostnameResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/hostnames", req, &out)
 }
 
 // ListPlatformTenantSelfStatements returns only finalized statements owned by

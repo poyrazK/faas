@@ -155,6 +155,11 @@ var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 // different sole 100% serving deployment while holding the live-row locks.
 var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
 
+// ErrTrafficChangeDuringCanary means an ordinary traffic-split update tried
+// to change traffic while the app has a live, in-flight managed canary. The
+// rollout state machine owns traffic until the canary completes or aborts.
+var ErrTrafficChangeDuringCanary = errors.New("state: traffic change blocked during active canary")
+
 // sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
 // dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
 func sameDeploymentID(a, b string) bool {
@@ -171,6 +176,10 @@ func sameDeploymentID(a, b string) bool {
 // is checked while the deployment row is locked, so this is the safe race
 // loser result for concurrent meterd workers.
 var ErrCanaryStepConflict = errors.New("state: canary step conflict")
+
+// ErrCanaryStageNotElapsed means the current stage has not remained at its
+// configured traffic share for the required duration.
+var ErrCanaryStageNotElapsed = errors.New("state: canary stage duration has not elapsed")
 
 // ErrCanaryStateInvalid is returned when an automatic canary advance reaches
 // a deployment that is not an active, live rollout or whose persisted ladder
@@ -267,14 +276,23 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
 
-// CanaryAdvanceParams is the state-owned portion of one automatic canary
-// transition. The API layer resolves the next preset stage and supplies the
-// audit envelope; the store atomically applies the expected-step CAS,
-// traffic rebalance, rollout completion, and audit insert.
+// CanaryAdvanceParams is the state-owned portion of one canary stage
+// transition. The API layer resolves the preset stage and supplies the audit
+// envelope; worker calls may also require the durable lease and stage dwell.
+// The store applies all requested gates with the expected-step CAS, traffic
+// rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
 	ExpectedStep   int
 	TrafficPercent int
-	Audit          DeploymentAudit
+	// RequireSafeReleaseLease gates an automated worker advance on the
+	// durable meterd lease and rechecks it inside the transaction.
+	RequireSafeReleaseLease bool
+	// RequireCanaryStageElapsed makes the store compare the persisted stage
+	// start against its duration using the store clock before any traffic write.
+	// Customer-requested manual advances leave this disabled.
+	RequireCanaryStageElapsed bool
+	CanaryStageDuration       time.Duration
+	Audit                     DeploymentAudit
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -338,6 +356,11 @@ func SetRecoverRolloutStuckAfter(d time.Duration) {
 // deployment_cancel_not_cancellable code (ADR-124).
 var ErrInvalidStateTransition = errors.New("state: invalid status transition")
 
+// ErrDeploymentSuperseded means an automatic Git-driven deployment lost the
+// per-app, per-scope revision race. Its row has been marked superseded and
+// must not be promoted by a delayed readiness notification.
+var ErrDeploymentSuperseded = errors.New("state: deployment superseded by a newer accepted revision")
+
 // ErrCancelLiveForbidden is returned by CancelDeploymentTx when the
 // caller attempts to cancel a DeployLive row. Cancel of a live
 // deployment would either park the app (kills INV 3 — must always
@@ -373,6 +396,7 @@ var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
 // api.ErrPlanLimitApps without re-running the count.
 // QuotaErrorKind names the cap that tripped. "apps" is the
 // Limits.DeployedApps cap; "developer_apps" is Limits.DeveloperApps;
+// "preview_apps" is Limits.PreviewApps;
 // "crons" is Limits.CronLimitPerAccount.
 // "apps" is the zero value so existing call sites that build a
 // QuotaError without a Kind keep behaving the same.
@@ -381,6 +405,7 @@ type QuotaErrorKind string
 const (
 	QuotaErrorKindApps          QuotaErrorKind = "apps"
 	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
+	QuotaErrorKindPreviewApps   QuotaErrorKind = "preview_apps"
 	QuotaErrorKindCrons         QuotaErrorKind = "crons"
 	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
@@ -403,7 +428,7 @@ const (
 )
 
 type QuotaError struct {
-	Kind       QuotaErrorKind // "apps" | "crons" | "memory" | "mirror" | "openapi_imports"
+	Kind       QuotaErrorKind // "apps" | "preview_apps" | "developer_apps" | "crons" | "memory" | "mirror" | "openapi_imports"
 	Limit      int            // caps at the time of the call
 	Observed   int            // count(*) observed inside the same critical section
 	NotAllowed bool           // true when the plan tier forbids the entity entirely (e.g. Free cron)
@@ -413,6 +438,8 @@ func (e *QuotaError) Error() string {
 	switch e.Kind {
 	case QuotaErrorKindDeveloperApps:
 		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+	case QuotaErrorKindPreviewApps:
+		return fmt.Sprintf("state: PR preview quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -2792,6 +2819,10 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
+	// MarkGitDrivenDeploymentLiveIfLatest applies the ordinary live cutover
+	// for GitHub and PR preview deployments only while no newer same-scope
+	// deployment intent exists. Explicit rollback uses MarkDeploymentLive.
+	MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
 	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On
@@ -3074,6 +3105,10 @@ type Store interface {
 	// updated_at so a re-imaged rebuild's new key replaces the
 	// prior build's key without orphaned-key drift.
 	SetDeploymentSidecarLayer(ctx context.Context, layer DeploymentSidecarLayer) (DeploymentSidecarLayer, error)
+	// SetDeploymentSidecarSecretReloadSignal persists the immutable OCI opt-in
+	// discovered while building the named sidecar image. Empty explicitly means
+	// that sidecar does not support in-process secret reload.
+	SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error
 	// ListDeploymentSidecarLayers returns the deployment's full
 	// sidecar set, ordered by sidecar_name ASC for deterministic
 	// iteration. Returns an empty slice when the deployment has
@@ -5572,6 +5607,12 @@ type Store interface {
 	// CodeSecretNotFound (not a 404) because the URL resource
 	// IS the secret name, by design.
 	DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error
+	// DeleteAppSecretInScopeWithRevocation atomically removes the secret and
+	// snapshots active authorized runtime targets into a durable revocation.
+	DeleteAppSecretInScopeWithRevocation(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error)
+	// GetAppSecretRevocation reads one value-free deletion record and its
+	// acknowledgement targets for the owning account/app.
+	GetAppSecretRevocation(ctx context.Context, accountID, appID, revocationID string) (AppSecretRevocation, error)
 	// ListAppSecretsInScope is the scope-aware sibling of
 	// ListAppSecrets (ADR-092 PR-A). Used by schedd's
 	// pkg/sched/engine.go::loadSealedEnvFor wake-time reader
