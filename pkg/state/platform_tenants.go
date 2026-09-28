@@ -93,6 +93,15 @@ type PlatformTenantOffboardingStore interface {
 	PlanPlatformTenantOffboarding(context.Context, string, string) (api.PlatformTenantOffboardingPlanResponse, error)
 }
 
+type PlatformTenantOffboardingApplyStore interface {
+	ApplyPlatformTenantOffboarding(context.Context, string, string, string) (api.PlatformTenantOffboardingApplyResponse, error)
+}
+
+type PlatformTenantOffboardingReceiptStore interface {
+	ListPlatformTenantOffboardingReceipts(context.Context, string, string, int, string) ([]api.PlatformTenantOffboardingReceiptSummary, string, error)
+	GetPlatformTenantOffboardingReceipt(context.Context, string, string, string) (api.PlatformTenantOffboardingReceiptResponse, error)
+}
+
 type PlatformTenantReconciliationParams struct {
 	TenantID string
 	ApplyPlatformTenantParams
@@ -171,6 +180,10 @@ var (
 	_ PlatformTenantReconciliationReceiptStore = (*MemStore)(nil)
 	_ PlatformTenantOffboardingStore           = (*PgStore)(nil)
 	_ PlatformTenantOffboardingStore           = (*MemStore)(nil)
+	_ PlatformTenantOffboardingApplyStore      = (*PgStore)(nil)
+	_ PlatformTenantOffboardingApplyStore      = (*MemStore)(nil)
+	_ PlatformTenantOffboardingReceiptStore    = (*PgStore)(nil)
+	_ PlatformTenantOffboardingReceiptStore    = (*MemStore)(nil)
 )
 
 func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {

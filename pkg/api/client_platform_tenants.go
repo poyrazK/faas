@@ -92,6 +92,34 @@ func (c *Client) PlanPlatformTenantOffboarding(ctx context.Context, tenantID str
 	return out, err
 }
 
+func (c *Client) ApplyPlatformTenantOffboarding(ctx context.Context, tenantID string, req ApplyPlatformTenantOffboardingRequest) (PlatformTenantOffboardingApplyResponse, error) {
+	var out PlatformTenantOffboardingApplyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/offboarding-plan/apply"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+func (c *Client) ListPlatformTenantOffboardingReceipts(ctx context.Context, tenantID string, opts ListPlatformTenantOffboardingReceiptsOptions) (PlatformTenantOffboardingReceiptListResponse, error) {
+	var out PlatformTenantOffboardingReceiptListResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/offboardings"
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("page_size", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("page_token", opts.PageToken)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) GetPlatformTenantOffboardingReceipt(ctx context.Context, tenantID, receiptID string) (PlatformTenantOffboardingReceiptResponse, error) {
+	var out PlatformTenantOffboardingReceiptResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/offboardings/" + url.PathEscape(receiptID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTenantDetailResponse, error) {
 	var out PlatformTenantDetailResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)

@@ -137,3 +137,46 @@ func TestPlanPlatformTenantOffboardingClient(t *testing.T) {
 		t.Fatalf("offboarding plan = %+v", plan)
 	}
 }
+
+func TestPlatformTenantOffboardingApplyAndReceiptClients(t *testing.T) {
+	tenantID := "11111111-1111-4111-8111-111111111111"
+	receiptID := "22222222-2222-4222-8222-222222222222"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/account/platform-tenants/"+tenantID+"/offboarding-plan/apply":
+			var req ApplyPlatformTenantOffboardingRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ExpectedPlanHash == "" {
+				t.Errorf("apply request = %+v, decode error = %v", req, err)
+			}
+			_, _ = w.Write([]byte(`{"tenant_id":"` + tenantID + `","receipt_id":"` + receiptID + `","plan_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","applied_at":"2026-09-28T10:00:00Z","applied":true,"actions":{"suspend_tenant":true,"revoke_consumer_keys":2}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/account/platform-tenants/"+tenantID+"/offboardings":
+			if r.URL.Query().Get("page_size") != "2" || r.URL.Query().Get("page_token") != "opaque-cursor" {
+				t.Errorf("receipt list query = %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"receipts":[{"receipt_id":"` + receiptID + `","plan_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","applied_at":"2026-09-28T10:00:00Z"}],"next_page_token":"next"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/account/platform-tenants/"+tenantID+"/offboardings/"+receiptID:
+			_, _ = w.Write([]byte(`{"tenant_id":"` + tenantID + `","receipt_id":"` + receiptID + `","plan_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","applied_at":"2026-09-28T10:00:00Z","actions":{"suspend_tenant":true}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, "test-token")
+
+	applied, err := client.ApplyPlatformTenantOffboarding(context.Background(), tenantID,
+		ApplyPlatformTenantOffboardingRequest{ExpectedPlanHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+	if err != nil || !applied.Applied || applied.ReceiptID != receiptID || applied.Actions.RevokeConsumerKeys != 2 {
+		t.Fatalf("apply response = %+v, %v", applied, err)
+	}
+	list, err := client.ListPlatformTenantOffboardingReceipts(context.Background(), tenantID,
+		ListPlatformTenantOffboardingReceiptsOptions{PageSize: 2, PageToken: "opaque-cursor"})
+	if err != nil || len(list.Receipts) != 1 || list.NextPageToken != "next" || list.Receipts[0].ReceiptID != receiptID {
+		t.Fatalf("receipt list = %+v, %v", list, err)
+	}
+	receipt, err := client.GetPlatformTenantOffboardingReceipt(context.Background(), tenantID, receiptID)
+	if err != nil || receipt.TenantID != tenantID || receipt.ReceiptID != receiptID || !receipt.Actions.SuspendTenant {
+		t.Fatalf("receipt = %+v, %v", receipt, err)
+	}
+}

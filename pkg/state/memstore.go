@@ -202,6 +202,7 @@ type MemStore struct {
 	apiConsumers                         map[string]APIConsumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
+	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
 	platformTenantAccessTokenByHash      map[string]string
 	platformTenantBudgets                map[string]platformTenantBudgetRow
@@ -1133,6 +1134,7 @@ func NewMemStore() *MemStore {
 		apiConsumers:                         map[string]APIConsumer{},
 		platformTenants:                      map[string]PlatformTenant{},
 		platformTenantReconciliationReceipts: map[string]api.PlatformTenantReconciliationReceiptResponse{},
+		platformTenantOffboardingReceipts:    map[string]api.PlatformTenantOffboardingReceiptResponse{},
 		platformTenantAccessTokens:           map[string]PlatformTenantAccessToken{},
 		platformTenantAccessTokenByHash:      map[string]string{},
 		platformTenantBudgets:                map[string]platformTenantBudgetRow{},

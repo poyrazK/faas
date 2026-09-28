@@ -337,6 +337,7 @@ var dtoExclude = map[string]bool{
 	"ListAppWebhookDeliveriesOptions":                 true,
 	"ListAppWebhookDeliveryAttemptsOptions":           true,
 	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
+	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,

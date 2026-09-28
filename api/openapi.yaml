@@ -4143,6 +4143,98 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenants/{id}/offboarding-plan/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenantOffboarding
+      summary: Apply a current, explicitly confirmed platform-tenant offboarding plan.
+      description: |
+        Recomputes the read-only plan while locking the tenant and affected
+        resources, then applies all actions and persists a secret-free receipt
+        in one transaction only when `expected_plan_hash` matches. The request
+        requires an `Idempotency-Key`. Unmanaged resources and usage, billing,
+        reconciliation history, and webhook subscriptions are preserved. A
+        stale plan returns 409 and makes no changes.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing tenant UUID whose confirmed offboarding is being applied.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+          description: Stable retry key for this offboarding operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantOffboardingRequest' }
+      responses:
+        '200':
+          description: Applied actions and durable receipt identifier.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantOffboardingApplyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/offboardings:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantOffboardingReceipts
+      summary: List durable platform-tenant offboarding receipts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing platform tenant UUID.
+          schema: { type: string, format: uuid }
+        - name: page_size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of immutable offboarding receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantOffboardingReceiptListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/offboardings/{receipt_id}:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantOffboardingReceipt
+      summary: Read one durable platform-tenant offboarding receipt.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing platform tenant UUID.
+          schema: { type: string, format: uuid }
+        - name: receipt_id
+          in: path
+          required: true
+          description: Offboarding receipt UUID returned by the apply operation.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Exact secret-free offboarding outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantOffboardingReceiptResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/reconciliation-plan/apply:
     post:
       tags: [platform-tenants]
@@ -24682,6 +24774,52 @@ components:
         preserve_billing_statements: { type: boolean }
         preserve_reconciliation_history: { type: boolean }
         preserve_webhook_subscriptions: { type: boolean }
+
+    ApplyPlatformTenantOffboardingRequest:
+      type: object
+      required: [expected_plan_hash]
+      properties:
+        expected_plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    PlatformTenantOffboardingApplyResponse:
+      description: Confirmed offboarding actions and durable receipt created in the same transaction.
+      type: object
+      required: [tenant_id, receipt_id, plan_hash, applied_at, applied, actions]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        receipt_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
+        applied: { type: boolean }
+        actions: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanActions' }
+
+    PlatformTenantOffboardingReceiptSummary:
+      type: object
+      required: [receipt_id, plan_hash, applied_at]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
+
+    PlatformTenantOffboardingReceiptListResponse:
+      type: object
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantOffboardingReceiptSummary' }
+        next_page_token: { type: string }
+
+    PlatformTenantOffboardingReceiptResponse:
+      description: Immutable secret-free result of one successful confirmed offboarding.
+      type: object
+      required: [tenant_id, receipt_id, plan_hash, applied_at, actions]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        receipt_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
+        actions: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanActions' }
 
     ApplyPlatformTenantReconciliationRequest:
       description: Desired bundle and plan digest returned by the read-only reconciliation-plan endpoint.

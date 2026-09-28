@@ -171,6 +171,43 @@ type PlatformTenantOffboardingPlanActions struct {
 	PreserveWebhookSubscriptions  bool `json:"preserve_webhook_subscriptions"`
 }
 
+type ApplyPlatformTenantOffboardingRequest struct {
+	ExpectedPlanHash string `json:"expected_plan_hash"`
+}
+
+type PlatformTenantOffboardingApplyResponse struct {
+	TenantID  string                               `json:"tenant_id"`
+	ReceiptID string                               `json:"receipt_id"`
+	PlanHash  string                               `json:"plan_hash"`
+	AppliedAt time.Time                            `json:"applied_at"`
+	Applied   bool                                 `json:"applied"`
+	Actions   PlatformTenantOffboardingPlanActions `json:"actions"`
+}
+
+type PlatformTenantOffboardingReceiptSummary struct {
+	ReceiptID string    `json:"receipt_id"`
+	PlanHash  string    `json:"plan_hash"`
+	AppliedAt time.Time `json:"applied_at"`
+}
+
+type PlatformTenantOffboardingReceiptListResponse struct {
+	Receipts      []PlatformTenantOffboardingReceiptSummary `json:"receipts"`
+	NextPageToken string                                    `json:"next_page_token,omitempty"`
+}
+
+type ListPlatformTenantOffboardingReceiptsOptions struct {
+	PageSize  int
+	PageToken string
+}
+
+type PlatformTenantOffboardingReceiptResponse struct {
+	TenantID  string                               `json:"tenant_id"`
+	ReceiptID string                               `json:"receipt_id"`
+	PlanHash  string                               `json:"plan_hash"`
+	AppliedAt time.Time                            `json:"applied_at"`
+	Actions   PlatformTenantOffboardingPlanActions `json:"actions"`
+}
+
 type ApplyPlatformTenantConsumerRequest struct {
 	AppID       string `json:"app_id"`
 	ExternalRef string `json:"external_ref"`
