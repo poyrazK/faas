@@ -754,9 +754,10 @@ ADR-075 / issue #475 / migration 00138.
   producer-backed events `app.parked`, `app.woken`, and
   `usage_statement.finalized`. The delivery ledger retains its historical
   closed set so old delivery rows remain readable across upgrades. Producers call
-  `pkg/webhook.Emit` after their source mutation commits; it stores the raw
-  JSON payload in one durable row per enabled matching subscription, so the
-  existing retry endpoint can replay every event. OpenAPI carries a payload
+  `pkg/webhook.Emit` after source mutation for app park and wake. Usage statement
+  finalization writes its event and matching subscription snapshot in the same
+  transaction, then relays to one durable delivery row per subscription (ADR-340).
+  The existing retry endpoint can replay every event. OpenAPI carries a payload
   schema for each B5 event and for the finalized usage statement payload.
 - **CLI** — `gregale webhooks <list|add|update|rm|deliveries|retry>`
   (mirrors `gregale crons`). Closed-set drift on `--retry-policy`

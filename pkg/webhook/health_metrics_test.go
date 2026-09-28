@@ -38,6 +38,14 @@ func TestDeliveryHealthMetrics_FleetOnly(t *testing.T) {
 	if got := testutil.ToFloat64(m.pollSuccess); got != 0 {
 		t.Fatalf("poll success = %v, want 0", got)
 	}
+	m.setOutboxRelaySuccess(false)
+	if got := testutil.ToFloat64(m.outboxSuccess); got != 0 {
+		t.Fatalf("failed outbox relay = %v, want 0", got)
+	}
+	m.setOutboxRelaySuccess(true)
+	if got := testutil.ToFloat64(m.outboxSuccess); got != 1 {
+		t.Fatalf("recovered outbox relay = %v, want 1", got)
+	}
 	if got := testutil.ToFloat64(m.heldDueCount); got != 8 {
 		t.Fatalf("failed poll changed held count to %v", got)
 	}
@@ -49,7 +57,7 @@ func TestDeliveryHealthMetrics_FleetOnly(t *testing.T) {
 		t.Fatalf("cleared held age = %v, want 0", got)
 	}
 	families, err := reg.Gather()
-	if err != nil || len(families) != 11 {
+	if err != nil || len(families) != 12 {
 		t.Fatalf("fleet metrics = %d families, err=%v", len(families), err)
 	}
 	for _, family := range families {

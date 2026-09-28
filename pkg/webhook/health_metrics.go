@@ -15,6 +15,7 @@ type DeliveryHealthMetrics struct {
 	heldDueSeconds    prometheus.Gauge
 	deadTotal         prometheus.Counter
 	pollSuccess       prometheus.Gauge
+	outboxSuccess     prometheus.Gauge
 	retentionSuccess  prometheus.Gauge
 	retentionFailures prometheus.Counter
 	prunedTotal       prometheus.Counter
@@ -45,6 +46,10 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 			Name: prefix + "_webhook_delivery_health_poll_success",
 			Help: "One when the last outbound webhook queue health poll succeeded, zero on read failure.",
 		}),
+		outboxSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_event_outbox_relay_success",
+			Help: "One when the last transactional webhook event outbox relay succeeded, zero on failure.",
+		}),
 		retentionSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: prefix + "_webhook_delivery_retention_success",
 			Help: "One when the last outbound webhook retention pass and storage poll succeeded.",
@@ -70,7 +75,7 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 			Help: "One when all outbound webhook dispatch slots are reserved or running, zero otherwise.",
 		}),
 	}
-	reg.MustRegister(m.overdueSeconds, m.heldDueCount, m.heldDueSeconds, m.deadTotal, m.pollSuccess, m.retentionSuccess,
+	reg.MustRegister(m.overdueSeconds, m.heldDueCount, m.heldDueSeconds, m.deadTotal, m.pollSuccess, m.outboxSuccess, m.retentionSuccess,
 		m.retentionFailures, m.prunedTotal, m.storageBytes, m.inFlight, m.saturated)
 	return m
 }
@@ -95,6 +100,17 @@ func webhookDeliveryAgeSeconds(now time.Time, oldest *time.Time) float64 {
 func (m *DeliveryHealthMetrics) markPollFailed() {
 	if m != nil {
 		m.pollSuccess.Set(0)
+	}
+}
+
+func (m *DeliveryHealthMetrics) setOutboxRelaySuccess(ok bool) {
+	if m == nil {
+		return
+	}
+	if ok {
+		m.outboxSuccess.Set(1)
+	} else {
+		m.outboxSuccess.Set(0)
 	}
 }
 

@@ -196,6 +196,18 @@ groups:
           description: "Schedd's queue health poll is failing, so the overdue-age signal may be stale. Check database connectivity and schedd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
 
+      - alert: FaasWebhookEventOutboxRelayFailed
+        expr: schedd_webhook_event_outbox_relay_success == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Transactional webhook events are not reaching the delivery ledger"
+          description: "Schedd's latest event outbox relay failed. Finalized usage statement events remain durable but cannot be delivered until relay recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
       - alert: FaasWebhookDeliveryRetentionFailed
         expr: schedd_webhook_delivery_retention_success == 0
         for: 5m

@@ -618,6 +618,7 @@ type MemStore struct {
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
+	appWebhookEventOutbox      map[string]appWebhookOutboxEvent
 	// apiConsumerUsageStatementHandoffs is keyed by statement ID. A statement
 	// can be handed off at most once, while the implementation also rejects
 	// reuse of an external invoice reference within an account.
@@ -1170,6 +1171,7 @@ func NewMemStore() *MemStore {
 		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
 		platformTenantRateCards:           map[string]PlatformTenantRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
+		appWebhookEventOutbox:             map[string]appWebhookOutboxEvent{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
 		platformTenantStatements:          map[string]PlatformTenantStatement{},
 		platformTenantStatementHandoffs:   map[string]PlatformTenantStatementHandoff{},

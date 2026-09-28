@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -93,6 +94,28 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 	now := time.Now().UTC()
 	statement.Status = APIConsumerUsageStatementFinalized
 	statement.FinalizedAt = &now
+	var recipients []string
+	for _, hook := range m.appWebhooks {
+		if hook.Scope == AppWebhookScopeApp && hook.AppID == appID && hook.AccountID == accountID && hook.Enabled &&
+			(len(hook.EventFilter) == 0 || slices.Contains(hook.EventFilter, string(AppWebhookEventUsageStatementFinalized))) {
+			recipients = append(recipients, hook.ID)
+		}
+	}
+	if len(recipients) > 0 {
+		payload, err := usageStatementFinalizedWebhookPayload(statement)
+		if err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+		sort.Strings(recipients)
+		if m.appWebhookEventOutbox == nil {
+			m.appWebhookEventOutbox = make(map[string]appWebhookOutboxEvent)
+		}
+		id := uuid.NewString()
+		m.appWebhookEventOutbox[id] = appWebhookOutboxEvent{
+			ID: id, AccountID: accountID, AppID: appID, Event: AppWebhookEventUsageStatementFinalized,
+			SourceID: statement.ID, Payload: payload, RecipientWebhookIDs: recipients, CreatedAt: now,
+		}
+	}
 	m.apiConsumerUsageStatements[statement.ID] = statement
 	return cloneAPIConsumerUsageStatement(statement), true, nil
 }

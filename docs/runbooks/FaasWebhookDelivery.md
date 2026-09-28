@@ -88,6 +88,25 @@ snapshot. Check database connectivity and the `webhook: delivery health poll`
 log. The claimable and held gauges retain their last values during a failed
 poll; treat them as stale until the success gauge returns to one.
 
+## Event outbox relay failure
+
+`FaasWebhookEventOutboxRelayFailed` means finalized usage statement events may
+remain in `app_webhook_event_outbox`. The statement and event commit together;
+the failed relay does not discard the event. Check schedd logs for
+`webhook: event outbox relay` and database availability. Once the relay succeeds,
+the outbox row is removed in the same transaction that creates delivery rows.
+
+```sql
+SELECT event, count(*) AS pending_events, min(created_at) AS oldest_event_at
+FROM app_webhook_event_outbox
+GROUP BY event;
+```
+
+The request handler also attempts immediate relay after finalization, so an
+empty outbox is normal. If the gauge is zero with no pending rows, inspect the
+relay error before assuming events were lost. Avoid manually inserting delivery
+rows; the unique event/subscription key and replay worker own fan-out.
+
 ## Retention and storage
 
 Schedd deletes up to 500 `succeeded` or `dead` deliveries per minute once
