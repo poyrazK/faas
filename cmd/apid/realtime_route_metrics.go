@@ -25,6 +25,7 @@ var (
 		managedRealtimeRouteSnapshotSourcePeriodic,
 		managedRealtimeRouteSnapshotSourceRevision,
 	}
+	managedRealtimeRouteTargetCacheOutcomes = []string{"hit", "miss", "disabled"}
 )
 
 const (
@@ -45,6 +46,7 @@ type managedRealtimeChannelRouteMetrics struct {
 	nodeSnapshots       *prometheus.CounterVec
 	revisionPolls       *prometheus.CounterVec
 	nodeSnapshotSources *prometheus.CounterVec
+	targetCacheLookups  *prometheus.CounterVec
 }
 
 func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix string) *managedRealtimeChannelRouteMetrics {
@@ -86,6 +88,10 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 			Name: prefix + "_realtime_channel_route_node_snapshot_sources_total",
 			Help: "Realtime channel route node snapshot attempts by bounded source and outcome.",
 		}, []string{"source", "outcome"}),
+		targetCacheLookups: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_realtime_channel_route_target_cache_lookups_total",
+			Help: "Realtime channel publish target cache lookups by bounded outcome.",
+		}, []string{"outcome"}),
 	}
 
 	metrics.publishDecisions = registerRealtimeRouteCounterVec(registry, metrics.publishDecisions)
@@ -96,6 +102,7 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 	metrics.nodeSnapshots = registerRealtimeRouteCounterVec(registry, metrics.nodeSnapshots)
 	metrics.revisionPolls = registerRealtimeRouteCounterVec(registry, metrics.revisionPolls)
 	metrics.nodeSnapshotSources = registerRealtimeRouteCounterVec(registry, metrics.nodeSnapshotSources)
+	metrics.targetCacheLookups = registerRealtimeRouteCounterVec(registry, metrics.targetCacheLookups)
 	for _, decision := range managedRealtimeRoutePublishDecisions {
 		metrics.publishDecisions.WithLabelValues(decision)
 		metrics.publishRecipients.WithLabelValues(decision)
@@ -114,6 +121,9 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 	}
 	for _, outcome := range managedRealtimeRouteRevisionPollOutcomes {
 		metrics.revisionPolls.WithLabelValues(outcome)
+	}
+	for _, outcome := range managedRealtimeRouteTargetCacheOutcomes {
+		metrics.targetCacheLookups.WithLabelValues(outcome)
 	}
 	return metrics
 }
@@ -197,5 +207,11 @@ func (m *managedRealtimeChannelRouteMetrics) revisionPoll(outcome string) {
 func (m *managedRealtimeChannelRouteMetrics) nodeSnapshotSource(source, outcome string) {
 	if m != nil {
 		m.nodeSnapshotSources.WithLabelValues(source, outcome).Inc()
+	}
+}
+
+func (m *managedRealtimeChannelRouteMetrics) targetCacheLookup(outcome string) {
+	if m != nil {
+		m.targetCacheLookups.WithLabelValues(outcome).Inc()
 	}
 }

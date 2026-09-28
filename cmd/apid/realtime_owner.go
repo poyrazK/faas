@@ -164,6 +164,8 @@ type leasedRealtimeOwner struct {
 	lastPartialPublishWarning time.Time
 	routeRevisionMu           sync.Mutex
 	routeRevisions            map[string]realtime.ChannelRouteRevision
+	publishTargetCache        *managedRealtimePublishTargetCache
+	publishTargetCacheOnce    sync.Once
 }
 
 func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -176,7 +178,8 @@ func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, 
 	return &leasedRealtimeOwner{
 		registry: registry, nodes: nodes, localNodeID: localNodeID,
 		local: local, log: log, leaseTTL: managedRealtimeOwnerLeaseTTL,
-		clientFor: defaultRealtimeNodeOperator,
+		clientFor:          defaultRealtimeNodeOperator,
+		publishTargetCache: newManagedRealtimePublishTargetCache(),
 	}
 }
 
@@ -347,6 +350,7 @@ func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connect
 				// this node's snapshot complete.
 				return fmt.Errorf("realtime: record channel route before subscribe: %w", err)
 			}
+			o.publishTargetCache.invalidate()
 		}
 		return op.Subscribe(ctx, endpointID, connectionID, channel)
 	})
@@ -393,6 +397,8 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 				logger = slog.Default()
 			}
 			logger.WarnContext(ctx, "failed to remove empty realtime channel route; retaining route hint", "node_id", lease.NodeID, "error", err)
+		} else {
+			o.publishTargetCache.invalidate()
 		}
 		return nil
 	})
@@ -401,7 +407,13 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID, channel string) ([]state.ComputeNode, bool, error) {
 	if o.channelRoutingEnabled && o.channelRoutes != nil {
 		if targetStore, ok := o.channelRoutes.(state.ManagedRealtimeChannelPublishTargetStore); ok {
-			view, err := targetStore.ListManagedRealtimeChannelPublishTargets(ctx, endpointID, channel)
+			cacheKey := managedRealtimePublishTargetCacheKey{endpointID: endpointID, channel: channel}
+			view, cacheOutcome, cacheEpoch := o.publishTargetCache.lookup(cacheKey)
+			o.channelRouteMetrics.targetCacheLookup(cacheOutcome)
+			var err error
+			if cacheOutcome != "hit" {
+				view, err = targetStore.ListManagedRealtimeChannelPublishTargets(ctx, endpointID, channel)
+			}
 			if err != nil {
 				// Keep the directory as an optimization: a failed read falls back
 				// to the same full-fleet publish used before route indexing.
@@ -413,6 +425,9 @@ func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID
 					o.channelRouteMetrics.publish("directory_error", len(nodes))
 				}
 				return nodes, false, nil
+			}
+			if cacheOutcome != "hit" {
+				o.publishTargetCache.store(cacheKey, cacheEpoch, view)
 			}
 			if !view.HasActiveNodes {
 				return nil, false, nil

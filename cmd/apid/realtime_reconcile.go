@@ -107,6 +107,8 @@ dispatch:
 	finalized, err := owner.channelRoutes.FinalizeManagedRealtimeChannelRouteRebuild(ctx)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("finalize realtime channel route rebuild: %w", err))
+	} else if finalized {
+		owner.publishTargetCache.invalidate()
 	}
 	joined := errors.Join(errs...)
 	return finalized, joined
@@ -323,6 +325,7 @@ func snapshotManagedRealtimeChannelRoutesWithRevision(ctx context.Context, owner
 	if replaceErr != nil {
 		return false, fmt.Errorf("node %s route snapshot: %w", node.ID, replaceErr)
 	}
+	owner.publishTargetCache.invalidate()
 	if observedRevision != nil {
 		if _, persisted := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotRevisionStore); !persisted {
 			owner.setRouteRevision(node.ID, *observedRevision)
@@ -398,6 +401,11 @@ func (s *server) runManagedRealtimeChannelRouteReconciler(ctx context.Context) {
 	if log == nil {
 		log = slog.Default()
 	}
+	if listener, ok := owner.channelRoutes.(state.ManagedRealtimeChannelRouteTargetCacheListener); ok {
+		owner.publishTargetCacheOnce.Do(func() {
+			go runManagedRealtimeChannelRouteTargetCacheListener(ctx, owner.publishTargetCache, listener, log)
+		})
+	}
 	runPass := func() {
 		coordinator, hasCoordinator := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotCoordinator)
 		if hasCoordinator {
@@ -432,6 +440,7 @@ func (s *server) runManagedRealtimeChannelRouteReconciler(ctx context.Context) {
 			}
 			return
 		}
+		owner.publishTargetCache.invalidate()
 		owner.channelRouteMetrics.rebuildCheck("started")
 		if err := s.reconcileManagedRealtimeChannelRoutes(ctx, owner); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("managed realtime channel route reconciliation pass failed", "err", err)

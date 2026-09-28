@@ -96,6 +96,20 @@ type ManagedRealtimeChannelRouteSnapshotRevisionStore interface {
 	ReplaceManagedRealtimeChannelRoutesWithRevision(context.Context, string, int64, []ManagedRealtimeChannelRoute, *ManagedRealtimeChannelRouteSnapshotRevision) error
 }
 
+// ManagedRealtimeChannelRouteTargetCacheEvent reports that the route-change
+// listener is ready or unavailable. Every event also requires cached targets
+// to be invalidated.
+type ManagedRealtimeChannelRouteTargetCacheEvent struct {
+	Listening bool
+	Err       error
+}
+
+// ManagedRealtimeChannelRouteTargetCacheListener streams route-directory
+// invalidations and listener readiness for a process-local publish cache.
+type ManagedRealtimeChannelRouteTargetCacheListener interface {
+	WatchManagedRealtimeChannelRouteTargetChanges(context.Context) <-chan ManagedRealtimeChannelRouteTargetCacheEvent
+}
+
 // ManagedRealtimeChannelRouteRemover removes one node-local route hint after
 // the realtime node confirms that its last local subscriber has left.
 type ManagedRealtimeChannelRouteRemover interface {
@@ -124,6 +138,7 @@ var (
 	_ ManagedRealtimeChannelRouteStore                 = (*MemStore)(nil)
 	_ ManagedRealtimeChannelRouteSnapshotRevisionStore = (*PgStore)(nil)
 	_ ManagedRealtimeChannelRouteSnapshotRevisionStore = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteTargetCacheListener   = (*PgStore)(nil)
 	_ ManagedRealtimeChannelRouteRemover               = (*PgStore)(nil)
 	_ ManagedRealtimeChannelRouteRemover               = (*MemStore)(nil)
 	_ ManagedRealtimeChannelPublishTargetStore         = (*PgStore)(nil)

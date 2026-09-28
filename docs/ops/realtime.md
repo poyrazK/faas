@@ -109,6 +109,13 @@ but cannot exclude a subscriber. The
 daemon-socket example below remains useful for node-local bootstrap and
 recovery tooling.
 
+When channel routing is enabled, each apid keeps a bounded cache of publish
+targets while its PostgreSQL route-change listener is connected. Committed
+route, snapshot, overflow, or active-node changes invalidate cached targets.
+The cache is cleared and disabled when the listener disconnects, then enabled
+with an empty cache after it reconnects. Cold lookups continue through the
+shared route directory.
+
 Apid exports bounded-cardinality route-directory metrics in its operations
 registry. `apid_realtime_channel_route_publish_decisions_total` counts
 routing decisions as `routing_disabled`, `route_store_unavailable`,
@@ -125,6 +132,8 @@ compared with fallback broadcasts. Rebuild health is reported by
 `refresh_required`, `unsupported`, `error`, `canceled`).
 `apid_realtime_channel_route_node_snapshot_sources_total` records snapshot
 attempts by source (`rebuild`, `periodic`, `revision`) and outcome. The
+`apid_realtime_channel_route_target_cache_lookups_total` counter reports
+target-cache `hit`, `miss`, and `disabled` lookups. The
 `apid_realtime_channel_route_reconcile_duration_seconds` histogram records the
 duration of passes that start. These metrics omit endpoint, channel, and node
 identifiers.
@@ -136,6 +145,7 @@ sum by (outcome) (rate(apid_realtime_channel_route_rebuild_checks_total[15m]))
 sum by (outcome) (rate(apid_realtime_channel_route_reconcile_passes_total[15m]))
 sum by (outcome) (rate(apid_realtime_channel_route_revision_polls_total[15m]))
 sum by (source, outcome) (rate(apid_realtime_channel_route_node_snapshot_sources_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_target_cache_lookups_total[5m]))
 histogram_quantile(0.95, sum by (le) (rate(apid_realtime_channel_route_reconcile_duration_seconds_bucket[15m])))
 ```
 
