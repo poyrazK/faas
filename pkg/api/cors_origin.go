@@ -24,16 +24,20 @@ func MatchEdgeRuleCORSOrigin(allowList []string, origin string) string {
 		if !ok || allowScheme != requestScheme {
 			continue
 		}
+		// A wildcard entry must echo the request's origin: the value is
+		// stamped into Access-Control-Allow-Origin, and browsers reject a
+		// pattern such as "https://*.example.com" there, so every
+		// subdomain/port-wildcard entry used to fail CORS outright.
 		if strings.HasPrefix(allowHost, "*.") {
 			suffix := allowHost[2:]
 			if strings.HasSuffix(requestHost, "."+suffix) && strings.Count(requestHost, ".") == strings.Count(suffix, ".")+1 {
-				return allowed
+				return origin
 			}
 		}
 		if strings.HasSuffix(allowHost, ":*") {
 			prefix := strings.TrimSuffix(allowHost, ":*")
-			if strings.HasPrefix(requestHost, prefix+":") {
-				return allowed
+			if port, found := strings.CutPrefix(requestHost, prefix+":"); found && port != "" && !strings.ContainsAny(port, ":/") {
+				return origin
 			}
 		}
 	}

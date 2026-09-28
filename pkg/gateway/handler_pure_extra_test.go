@@ -167,7 +167,7 @@ func TestMatchOrigin_StarWildcardEchoes(t *testing.T) {
 func TestMatchOrigin_SubdomainWildcard(t *testing.T) {
 	allow := []string{"https://*.example.com"}
 	// Match: single-label subdomain.
-	if got := matchOrigin(allow, "https://www.example.com"); got != "https://*.example.com" {
+	if got := matchOrigin(allow, "https://www.example.com"); got != "https://www.example.com" {
 		t.Errorf("www got %q", got)
 	}
 	// No match: no subdomain.
@@ -183,7 +183,7 @@ func TestMatchOrigin_SubdomainWildcard(t *testing.T) {
 func TestMatchOrigin_PortWildcard(t *testing.T) {
 	allow := []string{"https://app.example.com:*"}
 	// Match any port.
-	if got := matchOrigin(allow, "https://app.example.com:8443"); got != "https://app.example.com:*" {
+	if got := matchOrigin(allow, "https://app.example.com:8443"); got != "https://app.example.com:8443" {
 		t.Errorf("port match got %q", got)
 	}
 	// No match: different host.

@@ -3809,8 +3809,8 @@ func TestMatchOrigin_CaseInsensitiveSchemeAndHost(t *testing.T) {
 func TestMatchOrigin_SubdomainWildcardSingleLabel(t *testing.T) {
 	allow := []string{"https://*.example.com"}
 	// single-label subdomain matches.
-	if got := matchOrigin(allow, "https://app.example.com"); got != "https://*.example.com" {
-		t.Errorf("subdomain match: got %q want %q", got, "https://*.example.com")
+	if got := matchOrigin(allow, "https://app.example.com"); got != "https://app.example.com" {
+		t.Errorf("subdomain match: got %q want the request origin", got)
 	}
 	// two-label subdomain (chained) does NOT match - only one
 	// label of wildcard, no "**".
@@ -3838,8 +3838,8 @@ func TestMatchOrigin_PortWildcardMatchesAnyPort(t *testing.T) {
 		"https://localhost:8080",
 		"https://localhost:65535",
 	} {
-		if got := matchOrigin(allow, origin); got != "https://localhost:*" {
-			t.Errorf("port wildcard for %q: got %q want %q", origin, got, "https://localhost:*")
+		if got := matchOrigin(allow, origin); got != origin {
+			t.Errorf("port wildcard for %q: got %q want the request origin", origin, got)
 		}
 	}
 	// No port on the request: does not match the port-wildcard
@@ -3851,8 +3851,8 @@ func TestMatchOrigin_PortWildcardMatchesAnyPort(t *testing.T) {
 
 func TestMatchOrigin_HostPlusPortWildcard(t *testing.T) {
 	allow := []string{"https://api.example.com:*"}
-	if got := matchOrigin(allow, "https://api.example.com:443"); got != "https://api.example.com:*" {
-		t.Errorf("host+port wildcard: got %q want %q", got, "https://api.example.com:*")
+	if got := matchOrigin(allow, "https://api.example.com:443"); got != "https://api.example.com:443" {
+		t.Errorf("host+port wildcard: got %q want the request origin", got)
 	}
 	// Different host does not match even with port wildcard.
 	if got := matchOrigin(allow, "https://other.example.com:443"); got != "" {
@@ -4369,3 +4369,24 @@ func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
 }
 
 // adr: 040
+
+// Access-Control-Allow-Origin must name the request's origin: browsers
+// reject a pattern such as "https://*.example.com" in that header, so a
+// wildcard allowlist entry made every cross-origin call fail.
+func TestCORSDefaultWildcardEchoesRequestOrigin(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	enabled := true
+	b.app.CORSDefaultEnabled = &enabled
+	b.app.CORSDefaultOrigins = []string{"https://*.example.com", "https://localhost:*"}
+	h.WithEdgeRules(stubEdgeRuleMatcher{}, nil, nil)
+	for _, origin := range []string{"https://app.example.com", "https://localhost:5173"} {
+		req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("Access-Control-Allow-Origin for %s = %q, want the request origin", origin, got)
+		}
+	}
+}
