@@ -712,6 +712,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}":    "SubscribeManagedRealtimeConnection",
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}": "UnsubscribeManagedRealtimeConnection",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish":                            "PublishManagedRealtimeChannel",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages":                  "AppendManagedRealtimeRetainedMessage",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages":                   "ReadManagedRealtimeRetainedMessages",
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.

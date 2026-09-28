@@ -17612,6 +17612,67 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256 }
+        description: Endpoint-scoped channel.
+    post:
+      tags: [realtime]
+      operationId: appendManagedRealtimeRetainedMessage
+      summary: Append one ordered message to retained channel history.
+      description: Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. This storage preview does not deliver to WebSocket clients. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageRequest' }
+      responses:
+        '201':
+          description: Message committed to the channel log.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [realtime]
+      operationId: readManagedRealtimeRetainedMessages
+      summary: Read a page of retained channel history after a sequence.
+      description: Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Last processed sequence; zero starts at the first retained message.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of retained messages to return.
+      responses:
+        '200':
+          description: A consistent page of retained messages.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedHistoryResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
   /v1/apps/{slug}/log-drains:
     parameters:
@@ -41253,6 +41314,37 @@ components:
         partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
         nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
         nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
+
+    ManagedRealtimeRetainedMessageRequest:
+      type: object
+      description: Binary-safe payload to append to retained channel history.
+      required: [data_base64]
+      properties:
+        data_base64: { type: string, format: byte, maxLength: 5464, description: Standard base64 for at most 4096 decoded bytes. }
+        binary: { type: boolean, default: false }
+        idempotency_key: { type: string, maxLength: 128, description: Deduplicates identical writes while retained. }
+
+    ManagedRealtimeRetainedMessageResponse:
+      type: object
+      description: A committed message and its channel-scoped sequence.
+      required: [sequence, data_base64, binary, created_at]
+      properties:
+        sequence: { type: integer, format: int64, minimum: 1 }
+        data_base64: { type: string, format: byte }
+        binary: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    ManagedRealtimeRetainedHistoryResponse:
+      type: object
+      description: A consistent page of retained channel messages and retention bounds.
+      required: [messages, oldest_sequence, latest_sequence, has_more]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageResponse' }
+        oldest_sequence: { type: integer, format: int64, minimum: 1 }
+        latest_sequence: { type: integer, format: int64, minimum: 0 }
+        has_more: { type: boolean }
 
     AppLogDrainResponse:
       type: object

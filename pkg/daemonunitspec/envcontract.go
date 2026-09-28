@@ -409,6 +409,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_MAX_MESSAGE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_PONG_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_RETAINED_PREVIEW_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only preview of retained outbound history; off until channel authorization and reconnect delivery ship"},
 	{Name: "FAAS_REALTIME_ROLE", Owners: []string{"realtimed", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"apid", "gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_REALTIME_WRITE_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

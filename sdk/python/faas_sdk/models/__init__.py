@@ -955,6 +955,9 @@ from .managed_realtime_endpoint_response_callback_auth_token_masked import (
 )
 from .managed_realtime_message_request import ManagedRealtimeMessageRequest
 from .managed_realtime_publish_response import ManagedRealtimePublishResponse
+from .managed_realtime_retained_history_response import ManagedRealtimeRetainedHistoryResponse
+from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
+from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -2798,6 +2801,9 @@ __all__ = (
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
     "ManagedRealtimeMessageRequest",
     "ManagedRealtimePublishResponse",
+    "ManagedRealtimeRetainedHistoryResponse",
+    "ManagedRealtimeRetainedMessageRequest",
+    "ManagedRealtimeRetainedMessageResponse",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",

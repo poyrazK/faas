@@ -5693,6 +5693,26 @@ func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpoi
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
 }
 
+// AppendManagedRealtimeRetainedMessage commits a message to ordered channel
+// history. This storage API does not deliver the message to WebSocket clients.
+func (c *Client) AppendManagedRealtimeRetainedMessage(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeRetainedMessageRequest) (ManagedRealtimeRetainedMessageResponse, error) {
+	var out ManagedRealtimeRetainedMessageResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// ReadManagedRealtimeRetainedMessages reads a bounded page after a channel
+// sequence. An expired cursor returns a 410 history_unavailable APIError.
+func (c *Client) ReadManagedRealtimeRetainedMessages(ctx context.Context, slug, endpointID, channel string, after int64, limit int) (ManagedRealtimeRetainedHistoryResponse, error) {
+	var out ManagedRealtimeRetainedHistoryResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	query := url.Values{"after": {strconv.FormatInt(after, 10)}}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, http.MethodGet, path+"?"+query.Encode(), nil, &out)
+}
+
 // --- Customer runtime log drains (issue #1398 O4) -------------------------
 
 func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {

@@ -714,6 +714,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
+		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
@@ -1395,6 +1396,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
@@ -2801,6 +2803,11 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.TraceServerOptions()...,
 	)...)
 	registerAppErrorsReceiver(srv, store, ops, appErrorsEnabled)
+	// The private history reader shares this authenticated listener for
+	// compute-only realtimed nodes in split-box deployments.
+	if !isUnixSocketPath(target) {
+		registerRealtimeHistoryReceiver(srv, store)
+	}
 	// Split-box deployments reuse the same private mTLS listener for both
 	// gateway telemetry services. Single-box deployments use the dedicated
 	// request_telemetry.sock server below, preserving the separate DAC
@@ -2836,6 +2843,8 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled)
+	// Single-box realtimed reaches apid through this DAC-protected socket.
+	registerRealtimeHistoryReceiver(srv, store)
 	return srv, lis, nil
 }
 

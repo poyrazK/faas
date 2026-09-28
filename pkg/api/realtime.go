@@ -143,6 +143,28 @@ type ManagedRealtimePublishResponse struct {
 	NodesUnavailable int  `json:"nodes_unavailable"`
 }
 
+// ManagedRealtimeRetainedMessageRequest writes to the ordered outbound log.
+// Its idempotency key is effective while the matching message is retained.
+type ManagedRealtimeRetainedMessageRequest struct {
+	DataBase64     string `json:"data_base64"`
+	Binary         bool   `json:"binary,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ManagedRealtimeRetainedMessageResponse struct {
+	Sequence   int64  `json:"sequence"`
+	DataBase64 string `json:"data_base64"`
+	Binary     bool   `json:"binary"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type ManagedRealtimeRetainedHistoryResponse struct {
+	Messages       []ManagedRealtimeRetainedMessageResponse `json:"messages"`
+	OldestSequence int64                                    `json:"oldest_sequence"`
+	LatestSequence int64                                    `json:"latest_sequence"`
+	HasMore        bool                                     `json:"has_more"`
+}
+
 // ManagedRealtimeConnectionResponse is the safe control-plane projection of
 // a live socket. It intentionally excludes socket handles and credentials.
 type ManagedRealtimeConnectionResponse struct {

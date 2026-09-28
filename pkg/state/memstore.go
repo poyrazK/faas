@@ -361,6 +361,7 @@ type MemStore struct {
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
+	managedRealtimeHistory          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState
 	realtimeChannelRoutes           map[ManagedRealtimeChannelRoute]struct{}
 	realtimeChannelRouteCounts      map[string]int
 	realtimeChannelRouteOverflow    map[string]managedRealtimeChannelRouteOverflowState
@@ -1104,6 +1105,7 @@ func NewMemStore() *MemStore {
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
 		queueBindings:                   map[string]QueueBinding{},
 		managedRealtimeEndpoints:        map[string]ManagedRealtimeEndpoint{},
+		managedRealtimeHistory:          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState{},
 		realtimeChannelRoutes:           map[ManagedRealtimeChannelRoute]struct{}{},
 		realtimeChannelRouteCounts:      map[string]int{},
 		realtimeChannelRouteOverflow:    map[string]managedRealtimeChannelRouteOverflowState{},

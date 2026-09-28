@@ -132,6 +132,9 @@ type server struct {
 	// realtimeDrainWake nudges the durable drain worker after a new operation
 	// is committed; the ticker remains the restart/recovery backstop.
 	realtimeDrainWake chan struct{}
+	// Retained messages are a storage preview until channel grants and the
+	// versioned reconnect protocol are ready for customer traffic.
+	realtimeHistoryPreviewEnabled bool
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -713,6 +716,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
+	s.realtimeHistoryPreviewEnabled = enabled
 	return s
 }
 
@@ -2324,6 +2332,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannel))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appendManagedRealtimeRetainedMessage))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeRetainedMessages))))
 
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while

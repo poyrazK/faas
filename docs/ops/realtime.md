@@ -242,6 +242,26 @@ when some nodes did not accept it. `queued` counts in-memory output queues,
 not client acknowledgements; retrying a partial publish may duplicate a
 message on nodes that already accepted it.
 
+The retained-message management API is an early storage surface for resumable
+channels. It is disabled by default; set `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1`
+on apid to exercise it in a controlled environment. It has no finalized plan
+entitlement or storage pricing. `POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages`
+commits a payload and returns its channel sequence. `GET` on the same path
+with `after=<last sequence>` returns a page and the current retention bounds;
+an expired cursor returns `410 history_unavailable` so a caller can rebuild its
+state. Retained writes currently do **not** reach WebSocket clients. Do not use
+this API as a reconnect contract until the versioned subscription protocol,
+channel authorization, acknowledgements, and replay/live handoff are shipped.
+The storage window is capped at 1,024 messages of 4 KiB each per channel and
+32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
+only deduplicate while their messages remain retained.
+
+The private `RealtimeHistory.ReadChannelHistory` RPC lets a future realtimed
+subscriber fetch the same bounded page from apid. On a single box it shares
+`/run/faas/request_telemetry.sock`; split-box apid registers it on the private
+AppErrors mTLS listener. It is not exposed by the public gateway. Realtime
+clients cannot call it until the versioned protocol enforces channel grants.
+
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
 `no_subscribers`, `unavailable`, and `canceled`;
