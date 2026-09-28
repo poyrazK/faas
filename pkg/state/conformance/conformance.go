@@ -102,6 +102,7 @@ func Run(t *testing.T, open Open) {
 		{"deploy_token_authentication", testDeployTokenAuthentication},
 		{"api_key_rotation_grace", testAPIKeyRotationGrace},
 		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
+		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

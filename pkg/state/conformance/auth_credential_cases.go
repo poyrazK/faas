@@ -285,3 +285,42 @@ func testConsumerKeyLookupIsAppScoped(t *testing.T, fx *Fixture) {
 		t.Fatal("CreateConsumerKeyForConsumer minted a key for a revoked consumer")
 	}
 }
+
+// testAppSecretScopeAndClass pins secret isolation by account and scope,
+// and that the retention class survives an update that does not name one.
+// An ephemeral secret disables snapshot restore; silently turning it back
+// into a persistent one would let the next park capture it to disk.
+func testAppSecretScopeAndClass(t *testing.T, fx *Fixture) {
+	const key = "API_TOKEN"
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, "production", key, "kid-1", "hash-1",
+		state.SecretClassEphemeral, []byte("ciphertext-1")); err != nil {
+		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
+	}
+	got, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, "production", key)
+	if err != nil || got == nil || got.SecretClass != state.SecretClassEphemeral {
+		t.Fatalf("GetAppSecretInScope = %+v, %v; want the ephemeral secret", got, err)
+	}
+	if other, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, "staging", key); err == nil && other != nil {
+		t.Fatalf("secret leaked into another scope: %+v", other)
+	}
+	stranger, err := fx.Store.CreateAccount(fx.Ctx, "secret-stranger-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaked, err := fx.Store.GetAppSecretInScope(fx.Ctx, stranger.ID, fx.App.ID, "production", key); err == nil && leaked != nil {
+		t.Fatalf("secret readable by another account: %+v", leaked)
+	}
+	if err := fx.Store.UpsertAppSecretWithKidInScope(fx.Ctx, fx.Account.ID, fx.App.ID, "production", key, "kid-2", []byte("ciphertext-2")); err != nil {
+		t.Fatalf("UpsertAppSecretWithKidInScope: %v", err)
+	}
+	after, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, "production", key)
+	if err != nil || after == nil {
+		t.Fatalf("GetAppSecretInScope after update: %+v, %v", after, err)
+	}
+	if string(after.Ciphertext) != "ciphertext-2" {
+		t.Fatalf("ciphertext after update = %q", after.Ciphertext)
+	}
+	if after.SecretClass != state.SecretClassEphemeral {
+		t.Fatalf("secret class after a class-less update = %q, want it kept ephemeral", after.SecretClass)
+	}
+}

@@ -628,7 +628,6 @@ UpsertAppOpenAPIDocIfUnderQuota
 UpsertAppRegistryCredential
 UpsertAppSecret
 UpsertAppSecretWithKid
-UpsertAppSecretWithKidInScope
 UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
