@@ -93,9 +93,12 @@ the endpoint/channel subscriber index; during rolling upgrades it falls back
 to the per-connection inventory when an older realtime node lacks the compact
 snapshot endpoint. A new or unready node receives full-fleet fallback traffic
 until its snapshot succeeds. Explicit unsubscriptions remove a route hint as
-soon as the node confirms that its last local subscriber has left. Ready
-snapshots refresh every five minutes to remove hints left by disconnected
-sockets and nodes that cannot report subscriber state. Directory
+soon as the node confirms that its last local subscriber has left. Realtime
+nodes expose a lightweight process-scoped route revision; apid polls it on its
+30-second reconcile pass and refreshes a node snapshot when a channel loses
+its last local subscriber or the realtime process restarts. Ready snapshots
+still refresh every five minutes as a recovery path for older nodes and missed
+revisions. Directory
 read errors fall back to full broadcast. The route directory caps each
 endpoint at 10,000 rows by isolating the channels with the largest route sets;
 after node snapshots are ready, those channels use full broadcast while

@@ -80,6 +80,9 @@ func (o localRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, err
 func (o localRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.client.ChannelRoutes(ctx)
 }
+func (o localRealtimeNodeOperator) ChannelRouteRevision(ctx context.Context) (realtime.ChannelRouteRevision, error) {
+	return o.client.ChannelRouteRevision(ctx)
+}
 func (o localRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)
 }
@@ -127,6 +130,9 @@ func (o remoteRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, er
 func (o remoteRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.client.ChannelRoutes(ctx)
 }
+func (o remoteRealtimeNodeOperator) ChannelRouteRevision(ctx context.Context) (realtime.ChannelRouteRevision, error) {
+	return o.client.ChannelRouteRevision(ctx)
+}
 func (o remoteRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)
 }
@@ -156,6 +162,8 @@ type leasedRealtimeOwner struct {
 	leaseTTL                  time.Duration
 	publishWarnMu             sync.Mutex
 	lastPartialPublishWarning time.Time
+	routeRevisionMu           sync.Mutex
+	routeRevisions            map[string]realtime.ChannelRouteRevision
 }
 
 func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -180,6 +188,22 @@ func (o *leasedRealtimeOwner) nodeOperator(node state.ComputeNode) (realtimeNode
 		return nil, errManagedRealtimeOwnerUnavailable
 	}
 	return o.clientFor(node)
+}
+
+func (o *leasedRealtimeOwner) routeRevision(nodeID string) (realtime.ChannelRouteRevision, bool) {
+	o.routeRevisionMu.Lock()
+	defer o.routeRevisionMu.Unlock()
+	revision, ok := o.routeRevisions[nodeID]
+	return revision, ok
+}
+
+func (o *leasedRealtimeOwner) setRouteRevision(nodeID string, revision realtime.ChannelRouteRevision) {
+	o.routeRevisionMu.Lock()
+	defer o.routeRevisionMu.Unlock()
+	if o.routeRevisions == nil {
+		o.routeRevisions = make(map[string]realtime.ChannelRouteRevision)
+	}
+	o.routeRevisions[nodeID] = revision
 }
 
 func (o *leasedRealtimeOwner) discover(ctx context.Context, endpointID, connectionID string) (state.ManagedRealtimeConnectionOwner, realtimeNodeOperator, error) {

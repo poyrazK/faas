@@ -181,6 +181,14 @@ func (c *Client) ChannelRoutes(ctx context.Context) ([]ChannelRoute, error) {
 	return response, err
 }
 
+// ChannelRouteRevision returns the realtime process instance and revision of
+// its local channel subscriber index.
+func (c *Client) ChannelRouteRevision(ctx context.Context) (ChannelRouteRevision, error) {
+	var response ChannelRouteRevision
+	err := c.do(ctx, http.MethodGet, "/internal/channel-route-revision", nil, &response)
+	return response, err
+}
+
 // Stats returns the local realtime counters.
 func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	var response Stats

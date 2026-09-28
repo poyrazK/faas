@@ -229,6 +229,14 @@ type ChannelRoute struct {
 	Channel    string `json:"channel"`
 }
 
+// ChannelRouteRevision identifies removals from one realtime process's local
+// subscriber index. A process instance change tells apid to refresh its full
+// route snapshot after a realtime restart.
+type ChannelRouteRevision struct {
+	InstanceID string `json:"instance_id"`
+	Revision   uint64 `json:"revision"`
+}
+
 // ConnectionInventory is a point-in-time fleet snapshot. NodesQueried counts
 // nodes that returned a snapshot; NodesUnavailable records active nodes that
 // could not be reached. A partial inventory is still useful to operators and
@@ -328,13 +336,17 @@ type Manager struct {
 
 	endpoints   sync.Map // map[string]*endpointState
 	endpointsMu sync.Mutex
-	// mu protects the connection and subscriber indexes. Subscription changes also take
-	// connection.mu after mu so Snapshot sees the same channel membership.
-	mu          sync.RWMutex
-	conns       map[string]*connection
-	subscribers map[channelKey]map[string]struct{}
-	reserved    atomic.Int64
-	closed      atomic.Bool
+	// mu protects connection indexes, subscribers, and route revision.
+	// Subscription changes also take connection.mu after mu so snapshots see
+	// consistent channel membership.
+	mu                   sync.RWMutex
+	conns                map[string]*connection
+	endpointConns        map[string]map[string]*connection
+	subscribers          map[channelKey]map[string]struct{}
+	channelRouteInstance string
+	channelRouteRevision uint64
+	reserved             atomic.Int64
+	closed               atomic.Bool
 
 	upgrader websocket.Upgrader
 
@@ -361,12 +373,14 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		cfg:         cfg,
-		hooks:       hooks,
-		ctx:         ctx,
-		cancel:      cancel,
-		conns:       make(map[string]*connection),
-		subscribers: make(map[channelKey]map[string]struct{}),
+		cfg:                  cfg,
+		hooks:                hooks,
+		ctx:                  ctx,
+		cancel:               cancel,
+		conns:                make(map[string]*connection),
+		endpointConns:        make(map[string]map[string]*connection),
+		subscribers:          make(map[channelKey]map[string]struct{}),
+		channelRouteInstance: uuid.NewString(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -893,6 +907,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 			delete(members, c.info.ID)
 			if len(members) == 0 {
 				delete(m.subscribers, key)
+				m.channelRouteRevision++
 			}
 		}
 		c.mu.Unlock()
@@ -1080,6 +1095,7 @@ func (m *Manager) UnsubscribeWithRouteState(connectionID, channel string) (bool,
 		delete(members, connectionID)
 		if len(members) == 0 {
 			delete(m.subscribers, key)
+			m.channelRouteRevision++
 		}
 	}
 	c.mu.Unlock()
@@ -1182,6 +1198,17 @@ func (m *Manager) ChannelRouteSnapshot() []ChannelRoute {
 		return routes[i].EndpointID < routes[j].EndpointID
 	})
 	return routes
+}
+
+// ChannelRouteRevision returns the local subscriber-index revision. The
+// revision changes when an endpoint/channel pair loses its last subscriber.
+func (m *Manager) ChannelRouteRevision() ChannelRouteRevision {
+	if m == nil {
+		return ChannelRouteRevision{}
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return ChannelRouteRevision{InstanceID: m.channelRouteInstance, Revision: m.channelRouteRevision}
 }
 
 // Stats returns bounded resource and delivery counters for this realtime

@@ -123,48 +123,130 @@ func reconcileDueManagedRealtimeChannelRoutes(ctx context.Context, owner *leased
 		outcome = realtimeRouteErrorOutcome(ctx, err)
 		return fmt.Errorf("list nodes needing realtime channel route snapshots: %w", err)
 	}
-	if len(missingNodeIDs) == 0 {
-		return nil
-	}
 	nodes, err := owner.nodes.ActiveComputeNodes(ctx)
 	if err != nil {
 		outcome = realtimeRouteErrorOutcome(ctx, err)
-		return fmt.Errorf("list active nodes for realtime channel route bootstrap: %w", err)
+		return fmt.Errorf("list active nodes for realtime channel route reconciliation: %w", err)
 	}
-	missing := make(map[string]struct{}, len(missingNodeIDs))
-	for _, nodeID := range missingNodeIDs {
-		missing[nodeID] = struct{}{}
-	}
-	needed := make([]state.ComputeNode, 0, len(missing))
-	for _, node := range nodes {
-		if _, ok := missing[node.ID]; ok {
-			needed = append(needed, node)
+	var reconcileErr error
+	incomplete := false
+	if len(missingNodeIDs) > 0 {
+		missing := make(map[string]struct{}, len(missingNodeIDs))
+		for _, nodeID := range missingNodeIDs {
+			missing[nodeID] = struct{}{}
 		}
+		needed := make([]state.ComputeNode, 0, len(missing))
+		for _, node := range nodes {
+			if _, ok := missing[node.ID]; ok {
+				needed = append(needed, node)
+			}
+		}
+		finalized, snapshotErr := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, needed)
+		if snapshotErr != nil {
+			reconcileErr = errors.Join(reconcileErr, snapshotErr)
+		}
+		incomplete = !finalized
 	}
-	finalized, err := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, needed)
-	if err != nil {
-		outcome = realtimeRouteErrorOutcome(ctx, err)
-	} else if ctx.Err() != nil {
+	if revisionErr := reconcileManagedRealtimeChannelRouteRevisions(ctx, owner, nodes); revisionErr != nil {
+		reconcileErr = errors.Join(reconcileErr, revisionErr)
+	}
+	if ctx.Err() != nil {
 		outcome = "canceled"
-	} else if !finalized {
+	} else if reconcileErr != nil {
+		outcome = "error"
+	} else if incomplete {
 		outcome = "incomplete"
 	}
-	return err
+	return reconcileErr
+}
+
+func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *leasedRealtimeOwner, nodes []state.ComputeNode) error {
+	results := make([]error, len(nodes))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(len(nodes), managedRealtimeChannelRouteSnapshotConcurrency) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				op, err := owner.nodeOperator(nodes[index])
+				if err != nil {
+					results[index] = err
+					continue
+				}
+				revision, err := nodeChannelRouteRevision(ctx, op)
+				if err != nil {
+					results[index] = fmt.Errorf("node %s channel route revision: %w", nodes[index].ID, err)
+					continue
+				}
+				if revision == nil {
+					continue
+				}
+				previous, ok := owner.routeRevision(nodes[index].ID)
+				if ok && previous == *revision {
+					continue
+				}
+				attempted, err := snapshotManagedRealtimeChannelRoutesWithRevision(ctx, owner, nodes[index], true, revision)
+				if (attempted || err != nil) && owner.channelRouteMetrics != nil {
+					outcome := "success"
+					if err != nil {
+						outcome = realtimeRouteErrorOutcome(ctx, err)
+					}
+					owner.channelRouteMetrics.nodeSnapshot(outcome)
+				}
+				if err != nil {
+					results[index] = err
+				}
+			}
+		}()
+	}
+dispatch:
+	for index := range nodes {
+		if ctx.Err() != nil {
+			break dispatch
+		}
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- index:
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	var errs []error
+	for _, err := range results {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if ctx.Err() != nil {
+		errs = append(errs, ctx.Err())
+	}
+	return errors.Join(errs...)
 }
 
 func snapshotManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedRealtimeOwner, node state.ComputeNode) (bool, error) {
+	return snapshotManagedRealtimeChannelRoutesWithRevision(ctx, owner, node, false, nil)
+}
+
+func snapshotManagedRealtimeChannelRoutesWithRevision(ctx context.Context, owner *leasedRealtimeOwner, node state.ComputeNode, force bool, observedRevision *realtime.ChannelRouteRevision) (bool, error) {
 	lock, err := owner.channelRoutes.AcquireManagedRealtimeChannelRouteLock(ctx, node.ID)
 	if err != nil {
 		return false, fmt.Errorf("node %s route lock: %w", node.ID, err)
 	}
 	defer lock.Release(ctx)
-	if coordinator, ok := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotCoordinator); ok {
-		fresh, err := coordinator.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, node.ID)
-		if err != nil {
-			return false, fmt.Errorf("node %s route snapshot readiness: %w", node.ID, err)
-		}
-		if fresh {
-			return false, nil
+	if !force {
+		if coordinator, ok := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotCoordinator); ok {
+			fresh, err := coordinator.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, node.ID)
+			if err != nil {
+				return false, fmt.Errorf("node %s route snapshot readiness: %w", node.ID, err)
+			}
+			if fresh {
+				return false, nil
+			}
 		}
 	}
 	generation, err := owner.channelRoutes.CurrentManagedRealtimeChannelRouteGeneration(ctx)
@@ -174,6 +256,9 @@ func snapshotManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedReal
 	op, err := owner.nodeOperator(node)
 	if err != nil {
 		return false, fmt.Errorf("node %s operator: %w", node.ID, err)
+	}
+	if observedRevision == nil {
+		observedRevision, _ = nodeChannelRouteRevision(ctx, op)
 	}
 	channelRoutes, err := nodeChannelRouteSnapshot(ctx, op)
 	if err != nil {
@@ -196,7 +281,31 @@ func snapshotManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedReal
 	if err := owner.channelRoutes.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, routes); err != nil {
 		return false, fmt.Errorf("node %s route snapshot: %w", node.ID, err)
 	}
+	if observedRevision != nil {
+		owner.setRouteRevision(node.ID, *observedRevision)
+	}
 	return true, nil
+}
+
+func nodeChannelRouteRevision(ctx context.Context, op realtimeNodeOperator) (*realtime.ChannelRouteRevision, error) {
+	reader, ok := op.(interface {
+		ChannelRouteRevision(context.Context) (realtime.ChannelRouteRevision, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	revision, err := reader.ChannelRouteRevision(ctx)
+	if err != nil {
+		var managementErr *realtime.ManagementError
+		if errors.As(err, &managementErr) && managementErr.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if revision.InstanceID == "" {
+		return nil, errors.New("realtime: channel route revision has no process instance")
+	}
+	return &revision, nil
 }
 
 func nodeChannelRouteSnapshot(ctx context.Context, op realtimeNodeOperator) ([]realtime.ChannelRoute, error) {
