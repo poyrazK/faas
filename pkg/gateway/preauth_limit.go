@@ -26,7 +26,6 @@ const preAuthEvictionScan = 32
 // A fixed number of shared counters per exact route bounds database growth
 // even when an attacker rotates source addresses. Collisions share a budget.
 const preAuthCentralShards = 1024
-const preAuthCentralScope = "preauth"
 
 var errPreAuthCentralUnavailable = errors.New("pre-auth central rate-limit backend unavailable")
 
@@ -384,17 +383,18 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 // the local fallback token. A central decision is authoritative; database
 // errors fall back to the already spent local bucket and are observable.
 func (h *Handler) allowCentralPreAuthRoute(ctx context.Context, app App, policyID, source string, rps, burst int, localAllowed bool) bool {
-	if h.preAuthCentral == nil {
-		h.observeCentralRateLimitDegraded(ctx, preAuthCentralScope, errPreAuthCentralUnavailable)
+	_, noop := h.preAuthCentral.(noopCentralBackend)
+	if h.preAuthCentral == nil || noop {
+		h.observeCentralRateLimitDegraded(ctx, rateLimitScopePreAuth, errPreAuthCentralUnavailable)
 		h.metrics.ObservePreAuthRateLimit(app.ID, "central_fallback")
 		return localAllowed
 	}
 	subjectID := dimensionalCentralSubjectID(policyID, "source_ip", source, preAuthCentralShards)
 	consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
 	defer cancel()
-	remaining, admitted, err := h.preAuthCentral.ConsumeToken(consultCtx, preAuthCentralScope, subjectID, string(app.Plan), float64(rps), float64(burst))
+	remaining, admitted, err := h.preAuthCentral.ConsumeToken(consultCtx, rateLimitScopePreAuth, subjectID, string(app.Plan), float64(rps), float64(burst))
 	if err != nil {
-		h.observeCentralRateLimitDegraded(ctx, preAuthCentralScope, err)
+		h.observeCentralRateLimitDegraded(ctx, rateLimitScopePreAuth, err)
 		h.metrics.ObservePreAuthRateLimit(app.ID, "central_fallback")
 		return localAllowed
 	}

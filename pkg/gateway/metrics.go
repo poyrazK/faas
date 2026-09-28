@@ -1283,7 +1283,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "plan"}),
 		preAuthRateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_pre_auth_rate_limit_total",
-			Help: "Pre-auth source limit decisions by app and outcome (would_block, blocked, or untrusted_source).",
+			Help: "Pre-auth source limit decisions by app and outcome, including shadow blocks and central fallback.",
 		}, []string{"app", "outcome"}),
 		preAuthPolicyShadow: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_pre_auth_policy_shadow_total",
@@ -1291,7 +1291,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
-			Help: "Central rate-limit consumes that failed and fell back to process-local counters, labelled by closed scope (app|account|rule|other).",
+			Help: "Central rate-limit consumes that failed and fell back to process-local counters, labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this

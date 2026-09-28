@@ -495,6 +495,7 @@ const (
 	rateLimitScopeAccount = "account"
 	rateLimitScopeRule    = "rule"
 	rateLimitScopeRoute   = "route"
+	rateLimitScopePreAuth = "preauth"
 )
 
 // centralRateLimitDegradedCooldown bounds outage logging and audit writes to
@@ -1464,7 +1465,8 @@ func (h *Handler) WithLimiter(l *Limiter) *Handler {
 // WithCentralBackend (ADR-104 amendment 5, issue #881 Phase 4 C3)
 // installs the production CentralBackend on every per-process
 // Limiter the Handler owns (per-app, per-account, per-rule,
-// per-consumer). nil is accepted — the call sites fall back to
+// per-consumer), and makes it available to opted-in pre-auth routes.
+// nil is accepted — the call sites fall back to
 // the noopCentralBackend default. Production wiring lives in
 // cmd/gatewayd-internal/run.go's centralBackendFromConfig helper
 // and is conditioned on cfg.RateLimit.Mode == "central".
@@ -1477,6 +1479,7 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	if central == nil {
 		return h
 	}
+	h.preAuthCentral = central
 	for _, limiter := range h.limiters() {
 		limiter.central = central
 		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
@@ -1503,7 +1506,7 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 		return
 	}
 	switch scope {
-	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule, "preauth":
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule, rateLimitScopePreAuth:
 	default:
 		scope = "other"
 	}

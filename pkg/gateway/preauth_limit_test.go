@@ -136,6 +136,33 @@ func TestPreAuthCentralRouteFallsBackLocallyOnError(t *testing.T) {
 	}
 }
 
+func TestPreAuthCentralRouteObserveRecordsSharedWouldBlock(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 10, Burst: 10,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1,
+			Coordination: api.PreAuthCoordinationCentral}},
+	}
+	h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+	h.WithPreAuthCentralBackend(&sharedPreAuthCentral{tokens: map[string]int{
+		rateLimitScopePreAuth + "/" + dimensionalCentralSubjectID("app-1\x00POST /login", "source_ip", "192.0.2.1", preAuthCentralShards) + "/" + string(b.app.Plan): 0,
+	}})
+	req := httptest.NewRequest("POST", "http://jane-api.apps.dom/login", nil)
+	req.Header.Set("X-Forwarded-For", "192.0.2.1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("observe mode rejected shared denial: %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "route_0", "would_block")); got != 1 {
+		t.Fatalf("route would_block = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "route_0", "result_2xx")); got != 1 {
+		t.Fatalf("route result_2xx = %v, want 1", got)
+	}
+}
+
 func (s *countingConsumerAuthStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (ConsumerAuthKey, error) {
 	s.lookups.Add(1)
 	return s.fakeConsumerAuthStore.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)
