@@ -593,6 +593,8 @@ export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetail
 export type { PlatformTenantHostnamePolicyResponse } from './models/PlatformTenantHostnamePolicyResponse.js';
 export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/PlatformTenantHostnameVerifiedWebhookPayload.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
+export type { PlatformTenantOffboardingPlanActions } from './models/PlatformTenantOffboardingPlanActions.js';
+export type { PlatformTenantOffboardingPlanResponse } from './models/PlatformTenantOffboardingPlanResponse.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';
 export type { PlatformTenantReconciliationAppliedWebhookPayload } from './models/PlatformTenantReconciliationAppliedWebhookPayload.js';

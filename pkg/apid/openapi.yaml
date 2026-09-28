@@ -24652,6 +24652,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
 
     PlatformTenantOffboardingPlanResponse:
+      description: Read-only preview of the status, confirmation digest, and planned offboarding actions for a platform tenant.
       type: object
       required: [tenant_id, status, plan_hash, actions]
       properties:
@@ -24661,6 +24662,7 @@ components:
         actions: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanActions' }
 
     PlatformTenantOffboardingPlanActions:
+      description: Counts and ownership-scoped changes that would be applied if the offboarding plan is confirmed.
       type: object
       required: [suspend_tenant, revoke_consumer_keys, revoke_access_tokens, detach_managed_consumers, retain_unmanaged_consumers, detach_managed_surfaces, retain_unmanaged_surfaces, remove_managed_hostnames, retain_unmanaged_hostnames, disable_credential_delegation, disable_customer_provisioning, disable_hostname_delegation, preserve_usage_history, preserve_billing_statements, preserve_reconciliation_history, preserve_webhook_subscriptions]
       properties:

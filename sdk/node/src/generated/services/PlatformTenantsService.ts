@@ -36,6 +36,7 @@ import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenant
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
+import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
@@ -179,6 +180,42 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Preview a safe platform-tenant offboarding operation.
+   * Returns the tenant status, a stable plan hash, and counts of the
+   * proposed access and ownership changes. The plan describes suspending
+   * the tenant, revoking linked consumer keys and tenant-bound access
+   * tokens, disabling delegated provisioning policies, detaching only
+   * platform-managed consumers and surfaces, and removing only
+   * platform-managed hostnames. Unmanaged resources are retained. Usage,
+   * billing statements, reconciliation receipts, and webhook subscriptions
+   * are preserved. This endpoint is read-only; it does not reserve or
+   * apply the plan.
+   *
+   * @returns PlatformTenantOffboardingPlanResponse Read-only summary of proposed offboarding actions and stable plan hash.
+   * @throws ApiError
+   */
+  public static planPlatformTenantOffboarding({
+    id,
+  }: {
+    /**
+     * Existing platform tenant UUID to preview for offboarding.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantOffboardingPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/offboarding-plan',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
