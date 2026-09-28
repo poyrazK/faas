@@ -33,6 +33,28 @@ func TestManagedVersionCookieStreamingResponseFiltersGuestOverride(t *testing.T)
 	}
 }
 
+func TestManagedReleaseContextCookieStreamingResponseFiltersGuestOverride(t *testing.T) {
+	const edgeCookie = api.ManagedReleaseContextCookieName + "=a91f2000-0000-4000-8000-000000000001; Path=/; Secure; SameSite=Lax"
+	const guestOverride = api.ManagedReleaseContextCookieName + "=b91f2000-0000-4000-8000-000000000002; Path=/; Secure"
+	r := withManagedReleaseContextCookieProtection(httptest.NewRequest(http.MethodGet, "http://app.test/", nil))
+	dst := make(http.Header)
+	dst.Add("Set-Cookie", edgeCookie)
+	forwardedResponseHeader(r.Context(), dst, "Set-Cookie", guestOverride)
+	forwardedResponseHeader(r.Context(), dst, "Set-Cookie", "session=guest; Path=/")
+	if got := dst.Values("Set-Cookie"); len(got) != 2 || got[0] != edgeCookie || got[1] != "session=guest; Path=/" {
+		t.Fatalf("forwarded cookies = %q", got)
+	}
+
+	resp := &http.Response{
+		Header:  http.Header{"Set-Cookie": {guestOverride, "session=guest; Path=/"}},
+		Request: r,
+	}
+	stripGuestManagedPlatformCookiesResponseHeader(resp)
+	if got := resp.Header.Values("Set-Cookie"); len(got) != 1 || got[0] != "session=guest; Path=/" {
+		t.Fatalf("legacy forwarded cookies = %q", got)
+	}
+}
+
 func TestManagedVersionCookieLegacyProxyFiltersGuestOverride(t *testing.T) {
 	const guestOverride = "__Host-gregale_version=ffeeddccbbaa99887766554433221100; Path=/; Secure"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

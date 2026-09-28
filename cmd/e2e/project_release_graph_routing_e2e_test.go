@@ -127,7 +127,7 @@ func releaseGraphServiceProxy(t *testing.T, f *normalPathFixture, accountID stri
 	})
 }
 
-func projectReleaseIngress(t *testing.T, f *normalPathFixture, host, releaseID string, wantStatus int, wantBody string) (http.Header, []byte) {
+func projectReleaseIngress(t *testing.T, f *normalPathFixture, host, releaseID string, wantStatus int, wantBody string, extraHeaders ...map[string]string) (http.Header, []byte) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	var headers http.Header
@@ -137,6 +137,11 @@ func projectReleaseIngress(t *testing.T, f *normalPathFixture, host, releaseID s
 		extra := map[string]string{}
 		if releaseID != "" {
 			extra[api.ReleaseHeader] = releaseID
+		}
+		for _, headers := range extraHeaders {
+			for name, value := range headers {
+				extra[name] = value
+			}
 		}
 		headers, body, status = doReqHeaders(t, f.h, host, http.MethodGet, "/checkout", nil, extra)
 		if status == wantStatus && (wantBody == "" || strings.Contains(string(body), wantBody)) {
@@ -148,6 +153,17 @@ func projectReleaseIngress(t *testing.T, f *normalPathFixture, host, releaseID s
 	t.Fatalf("ingress host=%q release=%q: status=%d headers=%v body=%q, want status=%d body containing %q (vmmd forwards=%d last request=%v)",
 		host, releaseID, status, headers, body, wantStatus, wantBody, f.vmmd.ForwardCount(), lastVMMDRequest)
 	return nil, nil
+}
+
+func projectReleaseCookie(t *testing.T, headers http.Header) string {
+	t.Helper()
+	for _, cookie := range (&http.Response{Header: headers}).Cookies() {
+		if cookie.Name == api.ManagedReleaseContextCookieName {
+			return cookie.Value
+		}
+	}
+	t.Fatalf("document response omitted %s cookie: %v", api.ManagedReleaseContextCookieName, headers.Values("Set-Cookie"))
+	return ""
 }
 
 func projectReleaseServiceCall(t *testing.T, proxy *gateway.ServiceProxy, callerAppID, callerHostIP, service, releaseID string) *httptest.ResponseRecorder {
@@ -199,14 +215,20 @@ func TestE2E_ProjectReleaseGraphPinsClientAndServiceCallsAcrossCutoverAndExpiry(
 			resolvedReleaseID, resolvedDeploymentID, err, graphA.ID, apiV1.ID)
 	}
 
-	initialHeaders, initialBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", "", http.StatusOK, "api-v1")
+	initialHeaders, initialBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", "", http.StatusOK, "api-v1", map[string]string{
+		"Accept":         "text/html",
+		"Sec-Fetch-Dest": "document",
+	})
 	if got := initialHeaders.Get(api.ReleaseHeader); got != graphA.ID {
 		t.Fatalf("initial bootstrap release = %q, want %q", got, graphA.ID)
 	}
 	if got := initialHeaders.Get(api.RevisionHeader); got != apiV1.ID {
 		t.Fatalf("initial bootstrap deployment = %q, want %q (body %q)", got, apiV1.ID, initialBody)
 	}
-	oldClientRelease := initialHeaders.Get(api.ReleaseHeader)
+	oldClientRelease := projectReleaseCookie(t, initialHeaders)
+	if oldClientRelease != initialHeaders.Get(api.ReleaseHeader) {
+		t.Fatalf("static SPA bootstrap cookie = %q, want selected release %q", oldClientRelease, initialHeaders.Get(api.ReleaseHeader))
+	}
 
 	proxy := releaseGraphServiceProxy(t, f, accountApp.AccountID, apiApp, billingApp,
 		gateway.ServiceEndpoint{InstanceID: billingInstanceV1.ID, NodeID: f.nodeID, DeploymentID: billingV1.ID, Port: 8080},
@@ -234,12 +256,18 @@ func TestE2E_ProjectReleaseGraphPinsClientAndServiceCallsAcrossCutoverAndExpiry(
 		gateway.ServiceEndpoint{InstanceID: billingInstanceV2.ID, NodeID: f.nodeID, DeploymentID: billingV2.ID, Port: 8080},
 	)
 
-	newHeaders, newBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", "", http.StatusOK, "api-v2")
+	newHeaders, newBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", "", http.StatusOK, "api-v2", map[string]string{
+		"Accept":         "text/html",
+		"Sec-Fetch-Dest": "document",
+	})
 	if got := newHeaders.Get(api.ReleaseHeader); got == "" || got == oldClientRelease {
 		t.Fatalf("new client bootstrap release = %q, want a new active graph (old body %q)", got, newBody)
 	}
 	if got := newHeaders.Get(api.RevisionHeader); got != apiV2.ID {
 		t.Fatalf("new client deployment = %q, want %q", got, apiV2.ID)
+	}
+	if got := projectReleaseCookie(t, newHeaders); got != newHeaders.Get(api.ReleaseHeader) {
+		t.Fatalf("new static SPA cookie = %q, want release %q", got, newHeaders.Get(api.ReleaseHeader))
 	}
 
 	oldHeaders, oldBody := projectReleaseIngress(t, f, apiApp.Slug+".apps.test.example", oldClientRelease, http.StatusOK, "api-v1")

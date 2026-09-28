@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
+  GREGALE_RELEASE_COOKIE,
   GREGALE_REVISION_HEADER,
 } from '../src/browser.js';
 import { gregaleReleaseMetaTag } from '../src/release-context.js';
@@ -37,6 +38,44 @@ test('captures a release response and pins subsequent requests to managed origin
   assert.equal(calls[1]?.headers.get(GREGALE_RELEASE_HEADER), RELEASE_A);
   assert.equal(calls[0]?.headers.get('X-Request-Id'), 'first');
   assert.equal(firstHeaders.has(GREGALE_RELEASE_HEADER), false, 'the caller headers are not mutated');
+});
+
+test('seeds static browser clients from the gateway release-context cookie', async (t) => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  let cookie = `${GREGALE_RELEASE_COOKIE}=${RELEASE_A}`;
+  const writes: string[] = [];
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      get cookie() { return cookie; },
+      set cookie(value: string) {
+        writes.push(value);
+        if (value.startsWith(`${GREGALE_RELEASE_COOKIE}=`)) cookie = '';
+      },
+    },
+  });
+  t.after(() => {
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else delete (globalThis as unknown as Record<string, unknown>).document;
+  });
+
+  let sent = new Headers();
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    fetch: async (_input, init) => {
+      sent = new Headers(init?.headers);
+      return new Response(null, { status: 200 });
+    },
+  });
+
+  assert.equal(client.release, RELEASE_A);
+  await client.fetch(`${API_ORIGIN}/v1/checkout`);
+  assert.equal(sent.get(GREGALE_RELEASE_HEADER), RELEASE_A);
+
+  client.clearRelease();
+  assert.equal(client.release, undefined);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0] ?? '', /Max-Age=0/);
 });
 
 test('serializes unpinned startup requests until the first release is discovered', async () => {

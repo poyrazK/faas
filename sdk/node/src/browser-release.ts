@@ -2,6 +2,7 @@
 
 export const GREGALE_REVISION_HEADER = 'X-Gregale-Revision';
 export const GREGALE_RELEASE_HEADER = 'X-Gregale-Release';
+export const GREGALE_RELEASE_COOKIE = '__Host-gregale_release';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,6 +33,29 @@ export interface GregaleBrowserFetchClient {
 function cleanRelease(value: string | null | undefined): string | undefined {
   const release = value?.trim();
   return release && UUID_PATTERN.test(release) ? release.toLowerCase() : undefined;
+}
+
+function readDocumentReleaseCookie(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  try {
+    const matches = document.cookie
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith(`${GREGALE_RELEASE_COOKIE}=`));
+    if (matches.length !== 1) return undefined;
+    return cleanRelease(matches[0]?.slice(GREGALE_RELEASE_COOKIE.length + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+function clearDocumentReleaseCookie(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    document.cookie = `${GREGALE_RELEASE_COOKIE}=; Path=/; Max-Age=0; Secure; SameSite=Lax`;
+  } catch {
+    // Cookie access may be unavailable in an opaque or privacy-restricted origin.
+  }
 }
 
 function normalizeOrigin(value: string | URL): string {
@@ -113,7 +137,9 @@ export function createGregaleBrowserFetch(options: GregaleBrowserFetchOptions = 
     throw new TypeError('a Fetch implementation is required');
   }
 
-  let currentRelease = options.initialRelease === undefined ? undefined : cleanRelease(options.initialRelease);
+  let currentRelease = options.initialRelease === undefined
+    ? readDocumentReleaseCookie()
+    : cleanRelease(options.initialRelease);
   if (options.initialRelease !== undefined && currentRelease === undefined) {
     throw new TypeError('initialRelease must be a Gregale release UUID');
   }
@@ -178,6 +204,7 @@ export function createGregaleBrowserFetch(options: GregaleBrowserFetchOptions = 
       releaseGeneration += 1;
       releaseDiscovery = undefined;
       currentRelease = undefined;
+      clearDocumentReleaseCookie();
     },
   };
 }

@@ -404,6 +404,18 @@ The default CORS policy exposes both pin response headers. If you configure a
 custom CORS rule, include `X-Gregale-Revision` and `X-Gregale-Release` in its
 exposed headers and permit them as request headers for browser clients.
 
+For a static SPA, the gateway sets a host-only `__Host-gregale_release` cookie
+on document navigation when revision pin retention is enabled and an active
+release graph was selected. The Node browser adapter reads it at initialization
+and adds the release header to configured managed origins, including
+cross-origin APIs. Gregale strips this platform cookie before forwarding the
+request to the app. If a CDN sits in front of the app, preserve the document
+response's `Set-Cookie` header with its body; the cached body and cookie must
+describe the same release. The cookie is a routing identifier, not a secret.
+It is a browser session cookie, while the graph's server-side TTL controls its
+routing eligibility. If the graph expires, requests fail with 410 and are not
+retried against the active graph.
+
 For a multi-workload project, publish a complete release set after all member
 deployments are ready. An incompatible new service deployment can be deployed
 with an explicit 0% traffic weight first; publishing the new graph activates

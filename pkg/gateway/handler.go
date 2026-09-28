@@ -6004,6 +6004,7 @@ haveApp:
 		return
 	}
 	managedVersionSetCookie := ""
+	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
 		stripManagedVersionAffinityCookie(r)
 		if managedVersionToken != "" {
@@ -6105,6 +6106,15 @@ haveApp:
 				}
 			}
 		}
+		if isBrowserDocumentNavigation(r) {
+			if projectReleaseID != "" && app.RevisionPinTTLSeconds > 0 {
+				managedReleaseContextSetCookie = setManagedReleaseContextCookie(w, projectReleaseID)
+			} else {
+				managedReleaseContextSetCookie = clearManagedReleaseContextCookie(w)
+			}
+		}
+		r = withManagedReleaseContextCookieProtection(r)
+		stripManagedReleaseContextCookie(r)
 		if values, present := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]; present {
 			if len(values) != 1 || len(values[0]) != 36 {
 				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -6173,6 +6183,7 @@ haveApp:
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
+		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
 		defer func() {
 			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
@@ -8703,7 +8714,7 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
-		stripGuestManagedVersionCookieResponseHeader(resp)
+		stripGuestManagedPlatformCookiesResponseHeader(resp)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the
