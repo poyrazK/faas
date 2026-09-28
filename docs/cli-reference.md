@@ -2795,7 +2795,7 @@ gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
 
 Remove a sealed secret
 
-`gregale secrets unset <KEY> --app <slug> [--scope <SCOPE>]`
+`gregale secrets unset <KEY> --app <slug> [--scope <SCOPE>] [--wait-for-ack] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2809,6 +2809,7 @@ Examples:
 ```sh
 gregale secrets unset --app my-api OLD_API_KEY
 gregale secrets unset --app my-api OLD_API_KEY --scope staging
+gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack
 ```
 
 ### secrets list-all
