@@ -2959,6 +2959,19 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 	return scanApps(rows)
 }
 
+// ListAppsByOrg returns non-deleted apps whose persisted organization exactly
+// matches orgID. The API verifies membership separately; this SQL predicate
+// keeps the inventory tenant-scoped even if a future caller is miswired.
+func (s *PgStore) ListAppsByOrg(ctx context.Context, orgID string) ([]App, error) {
+	sel := `select ` + appsSelectColumns + ` from apps where org_id = $1 and status <> 'deleted' order by created_at desc, id desc`
+	rows, err := s.pool.Query(ctx, sel, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanApps(rows)
+}
+
 func (s *PgStore) ListAllApps(ctx context.Context) ([]App, error) {
 	sel := `select ` + appsSelectColumns + ` from apps where status <> 'deleted' order by created_at desc`
 	rows, err := s.pool.Query(ctx, sel)

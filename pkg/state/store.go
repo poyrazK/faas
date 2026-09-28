@@ -6594,6 +6594,14 @@ type OrgActivityStore interface {
 	ListOrgActivity(context.Context, OrgActivityFilter) ([]OrgActivity, error)
 }
 
+// OrgAppLister is the narrow, org-scoped inventory capability used by
+// GET /v1/orgs/{slug}/apps. Implementations must filter on the app row's
+// persisted OrgID and omit deleted apps; membership is verified by the API
+// layer before this capability is called.
+type OrgAppLister interface {
+	ListAppsByOrg(context.Context, string) ([]App, error)
+}
+
 // CustomerEventFilter is the tenant-safe query contract for the customer audit
 // timeline. Subjectless events are included only when their app, deployment,
 // build, or instance metadata resolves to an app owned by AccountID.

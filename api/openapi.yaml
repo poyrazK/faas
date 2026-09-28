@@ -20503,7 +20503,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: Caller is not an active member with `org.view`.
+          description: Workspace app inventory requires the `org.view` action.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -20511,6 +20511,28 @@ paths:
   /v1/orgs/{slug}/apps:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgApps
+      summary: List apps attributed to this workspace.
+      description: |
+        Returns a newest-first inventory of non-deleted apps whose persisted
+        `org_id` matches this workspace. Any active member with `org.view`
+        may read the minimal summary; creator identity and app configuration
+        are intentionally omitted while app-specific routes remain
+        creator-scoped.
+      responses:
+        '200':
+          description: Safe summary of apps attributed to this workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAppListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller is not an active member with `org.view`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [orgs]
       operationId: createOrgApp
@@ -38894,6 +38916,30 @@ components:
         orgs:
           type: array
           items: { $ref: '#/components/schemas/OrgResponse' }
+
+    OrgAppSummary:
+      description: |
+        Deliberately small inventory projection for an organization app.
+        Does not expose creator identity, environment, secrets, or app
+        configuration while app-specific routes remain creator-scoped.
+      type: object
+      required: [id, slug, type, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        type: { type: string, enum: [app, function] }
+        runtime: { type: string, description: Runtime identifier for functions when configured. }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+
+    OrgAppListResponse:
+      description: Newest-first safe inventory of apps attributed to an organization.
+      type: object
+      required: [apps]
+      properties:
+        apps:
+          type: array
+          items: { $ref: '#/components/schemas/OrgAppSummary' }
 
     ActivityActorResponse:
       description: Captured identity responsible for an activity item.

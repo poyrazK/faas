@@ -4286,6 +4286,27 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	return out, nil
 }
 
+// ListAppsByOrg returns non-deleted apps whose persisted organization exactly
+// matches orgID. Account ownership is intentionally not used as a filter: a
+// workspace inventory includes apps created by any of its members.
+func (m *MemStore) ListAppsByOrg(_ context.Context, orgID string) ([]App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []App
+	for _, app := range m.apps {
+		if app.OrgID == orgID && app.Status != AppDeleted {
+			out = append(out, app)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func (m *MemStore) ListAllApps(_ context.Context) ([]App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

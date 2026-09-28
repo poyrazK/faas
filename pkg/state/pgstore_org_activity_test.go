@@ -7,8 +7,53 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPgStoreListAppsByOrgFiltersPersistedOrganization(t *testing.T) {
+	store, ctx := pgStore(t)
+	owner, err := store.CreateAccount(ctx, "org-app-owner-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount owner: %v", err)
+	}
+	otherOwner, err := store.CreateAccount(ctx, "org-app-other-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount other owner: %v", err)
+	}
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "org-app-" + uuid.NewString()[:8], Name: "Workspace", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatalf("CreateOrg: %v", err)
+	}
+	foreignOrg, err := store.CreateOrg(ctx, state.Org{Slug: "org-app-x-" + uuid.NewString()[:8], Name: "Foreign", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatalf("CreateOrg foreign: %v", err)
+	}
+	for _, app := range []state.App{
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "org-app-a-" + uuid.NewString()[:8], Type: state.AppTypeApp},
+		{AccountID: otherOwner.ID, OrgID: org.ID, Slug: "org-app-b-" + uuid.NewString()[:8], Type: state.AppTypeFunction},
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "org-app-deleted-" + uuid.NewString()[:8], Type: state.AppTypeApp, Status: state.AppDeleted},
+		{AccountID: owner.ID, OrgID: foreignOrg.ID, Slug: "org-app-foreign-" + uuid.NewString()[:8], Type: state.AppTypeApp},
+		{AccountID: owner.ID, Slug: "org-app-unattributed-" + uuid.NewString()[:8], Type: state.AppTypeApp},
+	} {
+		if _, err := store.CreateApp(ctx, app); err != nil {
+			t.Fatalf("CreateApp %q: %v", app.Slug, err)
+		}
+	}
+
+	apps, err := store.ListAppsByOrg(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListAppsByOrg: %v", err)
+	}
+	if len(apps) != 2 {
+		t.Fatalf("ListAppsByOrg returned %d apps, want 2: %+v", len(apps), apps)
+	}
+	for _, app := range apps {
+		if app.OrgID != org.ID || app.Status == state.AppDeleted {
+			t.Errorf("ListAppsByOrg returned out-of-scope/deleted app: %+v", app)
+		}
+	}
+}
 
 func TestPgStoreOrgActivityRoundTripAndDedupe(t *testing.T) {
 	store, ctx := pgStore(t)

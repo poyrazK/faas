@@ -209,6 +209,23 @@ type OrgListResponse struct {
 	Orgs []OrgResponse `json:"orgs"`
 }
 
+// OrgAppSummary is the deliberately small inventory projection returned to
+// workspace members. Creator identity and app configuration remain on the
+// creator-scoped app APIs until their authorization model is migrated.
+type OrgAppSummary struct {
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Type      string `json:"type"`
+	Runtime   string `json:"runtime,omitempty"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
+// OrgAppListResponse is the inventory envelope for GET /v1/orgs/{slug}/apps.
+type OrgAppListResponse struct {
+	Apps []OrgAppSummary `json:"apps"`
+}
+
 // ListOrgsResponse is the historic name; renamed to
 // OrgListResponse in PR 5 to match the spec schema. The alias
 // keeps existing call-sites working.

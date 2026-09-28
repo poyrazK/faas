@@ -5135,6 +5135,13 @@ func (c *Client) ListOrgActivity(ctx context.Context, slug, before, kindPrefix, 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListOrgApps returns the newest-first, safe app inventory attributed to an
+// organization. It does not grant access to creator-scoped app APIs.
+func (c *Client) ListOrgApps(ctx context.Context, slug string) (OrgAppListResponse, error) {
+	var out OrgAppListResponse
+	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/apps", nil, &out)
+}
+
 // PatchOrg applies a partial update to the org (name and/or plan).
 // Authz routing:
 //   - Name → org.manage_billing (owner + billing)

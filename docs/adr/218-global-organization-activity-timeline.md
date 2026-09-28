@@ -34,8 +34,13 @@
   quota/billing and app-API authorization identity; existing app-specific
   routes are not yet shared-member aware. Follow-up work must migrate those
   routes by permission class before shared-workspace app management is
-  complete. Authoritative resource `org_id` attribution is a prerequisite for
-  calling the shared-workspace history complete.
+  complete. The next slice adds `GET /v1/orgs/{slug}/apps` as a minimal,
+  org-filtered inventory visible to every active member with `org.view`. It
+  returns only app id, slug, type, runtime, status, and creation time; creator
+  identity and configuration remain hidden, and the endpoint does not grant
+  access to creator-scoped app routes. Authoritative resource `org_id`
+  attribution is a prerequisite for calling the shared-workspace history
+  complete.
 - **Delivery:** `(org_id, source_type, source_id)` is unique, so retries and
   webhook redelivery return the original row. The initial apid projection is a
   post-commit side effect: failure is logged and never changes a successfully

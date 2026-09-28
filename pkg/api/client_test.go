@@ -770,6 +770,25 @@ func TestListOrgActivity_EncodesFilters(t *testing.T) {
 	}
 }
 
+func TestListOrgApps_DecodesSafeInventory(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apps":[{"id":"11111111-1111-4111-8111-111111111111","slug":"payments","type":"app","status":"active","created_at":"2026-09-28T10:00:00Z"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	response, err := c.ListOrgApps(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("ListOrgApps: %v", err)
+	}
+	if gotPath != "/v1/orgs/acme/apps" || len(response.Apps) != 1 || response.Apps[0].Slug != "payments" {
+		t.Fatalf("path=%q response=%#v", gotPath, response)
+	}
+}
+
 func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
