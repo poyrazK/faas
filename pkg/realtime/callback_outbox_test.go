@@ -3,6 +3,8 @@ package realtime
 // adr: 284
 // adr: 296
 // adr: 297
+// adr: 298
+// adr: 299
 
 import (
 	"context"
@@ -157,6 +159,151 @@ func TestCallbackOutboxPreservesConnectionSequence(t *testing.T) {
 		if err := queue.Ack(event.ID); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCallbackOutboxSchedulerPromotesNextConnectionHead(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{
+		RetryInterval: time.Millisecond, MaxRetryInterval: time.Second, MaxAttempts: 4,
+	})
+	first := testCallbackEvent()
+	first.ID, first.Sequence = "evt_sched_first", 1
+	first.At = time.Now().Add(-time.Second)
+	second := first
+	second.ID, second.Sequence = "evt_sched_second", 2
+	second.At = first.At.Add(time.Nanosecond)
+	independent := first
+	independent.ID = "evt_sched_independent"
+	independent.ConnectionID = "connection-2"
+	independent.At = first.At.Add(time.Second)
+
+	if claimed, err := queue.EnqueueAndClaim(first); err != nil || !claimed {
+		t.Fatalf("enqueue first = (%v, %v), want claimed", claimed, err)
+	}
+	queue.Release(first.ID)
+	if claimed, err := queue.EnqueueAndClaim(second); err != nil || claimed {
+		t.Fatalf("enqueue second = (%v, %v), want queued behind first", claimed, err)
+	}
+	if claimed, err := queue.EnqueueAndClaim(independent); err != nil || !claimed {
+		t.Fatalf("enqueue independent = (%v, %v), want claimed", claimed, err)
+	}
+	queue.Release(independent.ID)
+
+	got, ok, err := queue.ClaimNext()
+	if err != nil || !ok || got.ID != first.ID {
+		t.Fatalf("ClaimNext before delay = (%s, %v, %v), want first event", got.ID, ok, err)
+	}
+	if err := queue.FailWithRetryAfter(first.ID, 35*time.Millisecond); err != nil {
+		t.Fatalf("FailWithRetryAfter first: %v", err)
+	}
+	if stats := queue.Stats(); stats.ReplayReady != 1 || stats.ReplayDelayed != 1 {
+		t.Fatalf("stats during backoff = %+v, want one ready and one delayed connection head", stats)
+	}
+	got, ok, err = queue.ClaimNext()
+	if err != nil || !ok || got.ID != independent.ID {
+		t.Fatalf("ClaimNext while first is delayed = (%s, %v, %v), want independent event", got.ID, ok, err)
+	}
+	if err := queue.Ack(got.ID); err != nil {
+		t.Fatalf("Ack independent: %v", err)
+	}
+	if stats := queue.Stats(); stats.ReplayReady != 0 || stats.ReplayDelayed != 1 {
+		t.Fatalf("stats with only delayed work = %+v, want no ready heads and one delayed head", stats)
+	}
+	if _, ok, err := queue.ClaimNext(); err != nil || ok {
+		t.Fatalf("ClaimNext before retry time = (%v, %v), want no event", ok, err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if stats := queue.Stats(); stats.ReplayReady != 1 || stats.ReplayDelayed != 0 {
+		t.Fatalf("stats after retry time = %+v, want the due head promoted to ready", stats)
+	}
+	got, ok, err = queue.ClaimNext()
+	if err != nil || !ok || got.ID != first.ID {
+		t.Fatalf("ClaimNext after retry time = (%s, %v, %v), want first event", got.ID, ok, err)
+	}
+	if err := queue.Ack(got.ID); err != nil {
+		t.Fatalf("Ack first: %v", err)
+	}
+	got, ok, err = queue.ClaimNext()
+	if err != nil || !ok || got.ID != second.ID {
+		t.Fatalf("ClaimNext after first ack = (%s, %v, %v), want second event", got.ID, ok, err)
+	}
+	if err := queue.Ack(got.ID); err != nil {
+		t.Fatalf("Ack second: %v", err)
+	}
+}
+
+func TestCallbackOutboxRestartRebuildsPerConnectionOrder(t *testing.T) {
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root})
+	first := testCallbackEvent()
+	first.ID, first.Sequence = "evt_z_first", 1
+	second := first
+	second.ID, second.Sequence = "evt_a_second", 2
+	for _, event := range []Event{first, second} {
+		claimed, err := queue.EnqueueAndClaim(event)
+		if err != nil {
+			t.Fatalf("EnqueueAndClaim(%s): %v", event.ID, err)
+		}
+		if claimed {
+			queue.Release(event.ID)
+		}
+	}
+
+	restarted := newTestCallbackOutbox(t, CallbackOutboxConfig{Root: root})
+	for _, want := range []string{first.ID, second.ID} {
+		got, ok, err := restarted.ClaimNext()
+		if err != nil || !ok || got.ID != want {
+			t.Fatalf("ClaimNext after restart = (%s, %v, %v), want %s", got.ID, ok, err, want)
+		}
+		if err := restarted.Ack(got.ID); err != nil {
+			t.Fatalf("Ack(%s): %v", got.ID, err)
+		}
+	}
+}
+
+func TestCallbackOutboxAckReleasesEarlierArrivingConnectionHead(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	later := testCallbackEvent()
+	later.ID, later.Sequence = "evt_late_inflight", 2
+	earlier := later
+	earlier.ID, earlier.Sequence = "evt_earlier_queued", 1
+	if claimed, err := queue.EnqueueAndClaim(later); err != nil || !claimed {
+		t.Fatalf("enqueue later event = (%v, %v), want claimed", claimed, err)
+	}
+	if claimed, err := queue.EnqueueAndClaim(earlier); err != nil || claimed {
+		t.Fatalf("enqueue earlier event = (%v, %v), want blocked by active delivery", claimed, err)
+	}
+	if err := queue.Ack(later.ID); err != nil {
+		t.Fatalf("Ack later event: %v", err)
+	}
+	got, ok, err := queue.ClaimNext()
+	if err != nil || !ok || got.ID != earlier.ID {
+		t.Fatalf("ClaimNext after active delivery = (%s, %v, %v), want earlier event", got.ID, ok, err)
+	}
+}
+
+func TestCallbackOutboxDeadLetterPromotesNextConnectionHead(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	first := testCallbackEvent()
+	first.ID, first.Sequence = "evt_deadletter_head", 1
+	second := first
+	second.ID, second.Sequence = "evt_after_deadletter", 2
+	if claimed, err := queue.EnqueueAndClaim(first); err != nil || !claimed {
+		t.Fatalf("enqueue first event = (%v, %v), want claimed", claimed, err)
+	}
+	queue.Release(first.ID)
+	if claimed, err := queue.EnqueueAndClaim(second); err != nil || claimed {
+		t.Fatalf("enqueue second event = (%v, %v), want queued behind first", claimed, err)
+	}
+	if _, ok, err := queue.ClaimNext(); err != nil || !ok {
+		t.Fatalf("ClaimNext first event = (%v, %v), want event", ok, err)
+	}
+	if err := queue.Fail(first.ID); err != nil {
+		t.Fatalf("Fail first event: %v", err)
+	}
+	got, ok, err := queue.ClaimNext()
+	if err != nil || !ok || got.ID != second.ID {
+		t.Fatalf("ClaimNext after dead-letter = (%s, %v, %v), want second event", got.ID, ok, err)
 	}
 }
 
@@ -578,6 +725,52 @@ func TestCallbackOutboxStatsTracksOldestPendingAgeAndReplayDeliveries(t *testing
 	if stats.Pending != 1 || stats.ReplayDeliveries != 1 ||
 		stats.OldestPendingAgeSeconds < 50 || stats.OldestPendingAgeSeconds > 80 {
 		t.Fatalf("stats after replay = %+v, want one pending near one minute and one replay delivery", stats)
+	}
+}
+
+func TestCallbackOutboxStatsTracksFailedReplayAttemptsAndBackoff(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{
+		RetryInterval: time.Hour, MaxRetryInterval: time.Hour,
+	})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	queue.Release(event.ID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	attempted := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- queue.Run(ctx, func(context.Context, Event) error {
+			close(attempted)
+			return errors.New("receiver unavailable")
+		})
+	}()
+	select {
+	case <-attempted:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("timed out waiting for failed callback attempt")
+	}
+	deadline := time.After(time.Second)
+	for {
+		stats := queue.Stats()
+		if stats.ReplayAttempts == 1 && stats.ReplayDeliveries == 0 &&
+			stats.ReplayReady == 0 && stats.ReplayDelayed == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatalf("stats after failed replay = %+v, want one failed attempt and one delayed head", stats)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
 	}
 }
 

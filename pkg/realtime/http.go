@@ -359,6 +359,7 @@ func parseCallbackRetryAfter(status int, value string, now time.Time) time.Durat
 	}
 	maximum := MaxCallbackOutboxMaxRetryInterval
 	value = strings.TrimSpace(value)
+	var parseErr *strconv.NumError
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
 		if seconds == 0 {
 			return 0
@@ -370,7 +371,7 @@ func parseCallbackRetryAfter(status int, value string, now time.Time) time.Durat
 			return maximum
 		}
 		return time.Duration(seconds) * time.Second
-	} else if parseErr, ok := err.(*strconv.NumError); ok && parseErr.Err == strconv.ErrRange {
+	} else if errors.As(err, &parseErr) && errors.Is(parseErr.Err, strconv.ErrRange) {
 		// A delta-seconds value outside int64 still represents a delay longer
 		// than the maximum we honor. Clamp it without narrowing an unsigned value.
 		if strings.HasPrefix(value, "-") {

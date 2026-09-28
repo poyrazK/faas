@@ -272,10 +272,14 @@ readable backups. Callback handlers should deduplicate by event ID because
 delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
 and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
 the pending count and bytes, retained dead-letter count and bytes, retention
-capacity, eviction count, and last eviction time. The
+capacity, eviction count, and last eviction time. It also exposes ready and
+delayed replay heads, replay attempts, and successful deliveries. The
 `realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
 loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
-restarts. The pending outbox capacity gauge and
+restarts. `FaasRealtimeCallbackReplayStalled` fires when ready replay work
+receives no attempts; delayed retries do not trigger it. See the
+[callback delivery runbook](../runbooks/FaasRealtimeCallbacks.md). The pending
+outbox capacity gauge and
 `FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
 the enqueue limit. `realtimed_callback_outbox_full_total` counts events that
 could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
@@ -290,6 +294,6 @@ The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
-`/internal/stats` includes callback-pending, callback-pending-bytes, and
-callback-dead-letter retention counters alongside the connection and delivery
-counters.
+`/internal/stats` includes callback-pending, callback replay ready/delayed and
+attempt/delivery counters, and callback-dead-letter retention counters
+alongside the connection and delivery counters.
