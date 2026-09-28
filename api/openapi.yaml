@@ -22985,6 +22985,23 @@ components:
       type: string
       enum: [http, https]
 
+    ServiceReliabilityPolicy:
+      description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."
+      type: object
+      properties:
+        timeout_ms: { type: integer, minimum: 0, maximum: 300000 }
+        max_attempts: { type: integer, minimum: 0, maximum: 3 }
+        min_remaining_ms: { type: integer, minimum: 0, maximum: 30000 }
+        retry_budget_percent: { type: integer, minimum: 0, maximum: 100 }
+        allow_non_idempotent: { type: boolean }
+
+    ServiceReliabilityPolicies:
+      description: "Map of declared target service names to caller-owned reliability policies. Only names in this app's service bindings may appear."
+      type: object
+      maxProperties: 100
+      additionalProperties:
+        $ref: '#/components/schemas/ServiceReliabilityPolicy'
+
     ServiceCallScope:
       description: "Target-owned HTTP request grant for one logical service caller. A path prefix matches itself and slash-delimited descendants; ambiguous request paths fail closed."
       type: object
@@ -23187,6 +23204,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AppServiceBinding'
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective internal-service authorization policy. Legacy apps without a stored value return `account`."
@@ -24373,6 +24392,9 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
+          description: "Optional timeout and retry overrides for service_binding_targets."
         service_binding_policy:
           type: string
           enum: [account, declared]
@@ -24825,6 +24847,11 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes."
+        service_reliability:
+          oneOf:
+            - $ref: '#/components/schemas/ServiceReliabilityPolicies'
+            - type: "null"
+          description: "Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears. Project-managed and preview apps reject this PATCH."
         service_binding_policy:
           type: [string, "null"]
           enum: [account, declared, null]
@@ -30529,6 +30556,9 @@ components:
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
+          description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
         service_binding_transport:
           $ref: '#/components/schemas/ServiceBindingTransport'
           description: "Canonical URL transport selected by Compose `x-gregale-service-transport`. Omitted preserves the established transport; new workloads default to `http`."

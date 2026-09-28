@@ -41,6 +41,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -71,6 +72,9 @@ class CreateAppRequest:
     """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
     derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
     canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
     """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""
@@ -209,6 +213,10 @@ class CreateAppRequest:
         service_binding_targets: list[str] | Unset = UNSET
         if not isinstance(self.service_binding_targets, Unset):
             service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
 
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
@@ -350,6 +358,8 @@ class CreateAppRequest:
             field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if service_binding_targets is not UNSET:
             field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_binding_transport is not UNSET:
@@ -441,6 +451,7 @@ class CreateAppRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -472,6 +483,13 @@ class CreateAppRequest:
             allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         service_binding_targets = cast(list[str], d.pop("service_binding_targets", UNSET))
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
 
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset
@@ -650,6 +668,7 @@ class CreateAppRequest:
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
             service_binding_policy=service_binding_policy,
             service_binding_transport=service_binding_transport,
             runtime=runtime,

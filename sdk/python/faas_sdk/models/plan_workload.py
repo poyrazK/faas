@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
 
 T = TypeVar("T", bound="PlanWorkload")
@@ -39,6 +40,9 @@ class PlanWorkload:
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
     """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
     `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
@@ -93,6 +97,10 @@ class PlanWorkload:
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
+
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
 
         service_binding_transport: str | Unset = UNSET
         if not isinstance(self.service_binding_transport, Unset):
@@ -152,6 +160,8 @@ class PlanWorkload:
             field_dict["depends_on"] = depends_on
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_transport is not UNSET:
             field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
@@ -183,6 +193,7 @@ class PlanWorkload:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -203,6 +214,13 @@ class PlanWorkload:
             service_binding_policy = UNSET
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
 
         _service_binding_transport = d.pop("service_binding_transport", UNSET)
         service_binding_transport: ServiceBindingTransport | Unset
@@ -271,6 +289,7 @@ class PlanWorkload:
             dockerfile=dockerfile,
             depends_on=depends_on,
             service_binding_policy=service_binding_policy,
+            service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
             allowed_service_callers=allowed_service_callers,

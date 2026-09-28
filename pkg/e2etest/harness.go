@@ -1028,6 +1028,16 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 // than manufacturing acknowledgements in a notifier fake. The process is
 // owned by Harness.Stop like the primary gateway.
 func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) string {
+	publicURL, _ := h.StartAdditionalGatewayWithControl(nodeName, extraEnv...)
+	return publicURL
+}
+
+// StartAdditionalGatewayWithControl runs a second named gatewayd-internal
+// against this harness's database and schedd, returning both listeners. The
+// control listener is useful for tests that exercise a gateway's private
+// service-proxy API or inspect its metrics. The process is owned by
+// Harness.Stop like the primary gateway.
+func (h *Harness) StartAdditionalGatewayWithControl(nodeName string, extraEnv ...string) (string, string) {
 	if h == nil || h.T == nil {
 		panic("e2etest: nil harness")
 	}
@@ -1069,7 +1079,7 @@ func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) st
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)
-	return "http://" + publicAddr
+	return "http://" + publicAddr, "http://" + controlAddr
 }
 
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is

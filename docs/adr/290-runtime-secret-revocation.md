@@ -1,4 +1,4 @@
-# ADR-289 · Runtime revocation of delivered secrets
+# ADR-290 · Runtime revocation of delivered secrets
 
 - **Status:** accepted
 - **Date:** 2026-09-27
