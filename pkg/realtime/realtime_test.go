@@ -390,12 +390,23 @@ func TestManagerUpdatesCallbackAuthForExistingConnections(t *testing.T) {
 		t.Fatal("connection was not registered")
 	}
 
-	hooks.mu.Lock()
-	if len(hooks.connect) != 1 || hooks.connect[0].CallbackAuthToken != "callback-old" {
+	deadline = time.Now().Add(time.Second)
+	var connectEvents []Event
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		connectEvents = append([]Event(nil), hooks.connect...)
 		hooks.mu.Unlock()
-		t.Fatalf("connect callback = %+v, want original token", hooks.connect)
+		if len(connectEvents) == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
-	hooks.mu.Unlock()
+	if len(connectEvents) != 1 {
+		t.Fatalf("connect callbacks = %d, want 1", len(connectEvents))
+	}
+	if connectEvents[0].CallbackAuthToken != "callback-old" {
+		t.Fatalf("connect callback token = %q, want original token", connectEvents[0].CallbackAuthToken)
+	}
 
 	endpoint.CallbackAuthToken = "callback-new"
 	if err := m.RegisterEndpoint(endpoint); err != nil {
