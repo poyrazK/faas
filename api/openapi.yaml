@@ -4196,9 +4196,11 @@ paths:
           schema: { type: string, format: uuid }
         - name: page_size
           in: query
+          description: Maximum number of receipt summaries to return, from 1 to 100.
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
         - name: page_token
           in: query
+          description: Opaque cursor returned by the preceding page.
           schema: { type: string }
       responses:
         '200':
@@ -4219,7 +4221,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Existing platform tenant UUID.
+          description: Platform tenant UUID that owns the requested receipt.
           schema: { type: string, format: uuid }
         - name: receipt_id
           in: path
@@ -24776,6 +24778,7 @@ components:
         preserve_webhook_subscriptions: { type: boolean }
 
     ApplyPlatformTenantOffboardingRequest:
+      description: Confirmation digest returned by the preview for the exact offboarding plan being applied.
       type: object
       required: [expected_plan_hash]
       properties:
@@ -24794,6 +24797,7 @@ components:
         actions: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanActions' }
 
     PlatformTenantOffboardingReceiptSummary:
+      description: Compact immutable entry in the tenant's offboarding receipt history.
       type: object
       required: [receipt_id, plan_hash, applied_at]
       properties:
@@ -24802,6 +24806,7 @@ components:
         applied_at: { type: string, format: date-time }
 
     PlatformTenantOffboardingReceiptListResponse:
+      description: One page of offboarding receipt summaries and an optional cursor for older entries.
       type: object
       required: [receipts]
       properties:
