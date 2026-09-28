@@ -182,9 +182,10 @@ func planPlatformTenantSurfaces(ctx context.Context, tx pgx.Tx, in ApplyPlatform
 			var id, ownerID, hostname, challenge string
 			var verifiedAt, lastCheckAt *time.Time
 			var lastError *string
-			err := tx.QueryRow(ctx, `select id, surface_id, hostname, challenge_token, verified_at, last_check_at, last_error
+			var managed bool
+			err := tx.QueryRow(ctx, `select id, surface_id, hostname, challenge_token, verified_at, last_check_at, last_error, platform_tenant_managed
 				from tenant_hostnames where hostname = $1 for update`, host.Hostname).
-				Scan(&id, &ownerID, &hostname, &challenge, &verifiedAt, &lastCheckAt, &lastError)
+				Scan(&id, &ownerID, &hostname, &challenge, &verifiedAt, &lastCheckAt, &lastError, &managed)
 			hostResult := ApplyPlatformTenantHostnameResult{Action: "create", Hostname: TenantHostname{
 				Hostname: host.Hostname, ChallengeToken: host.ChallengeToken,
 				PlatformTenantManaged: true}}
@@ -200,7 +201,8 @@ func planPlatformTenantSurfaces(ctx context.Context, tx pgx.Tx, in ApplyPlatform
 					return ErrConflict
 				}
 				hostResult.Action = "unchanged"
-				hostResult.Hostname = TenantHostname{ID: id, SurfaceID: ownerID, Hostname: hostname, ChallengeToken: challenge}
+				hostResult.Hostname = TenantHostname{ID: id, SurfaceID: ownerID, Hostname: hostname,
+					ChallengeToken: challenge, PlatformTenantManaged: managed}
 				if verifiedAt != nil {
 					hostResult.Hostname.VerifiedAt = *verifiedAt
 				}
