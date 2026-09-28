@@ -36,6 +36,7 @@ type githubInstallStatusResponse struct {
 	DefaultBranch                string                   `json:"default_branch,omitempty"`
 	RepoFullName                 string                   `json:"repo_full_name,omitempty"`
 	ProductionBranch             string                   `json:"production_branch,omitempty"`
+	DeployBranches               map[string]string        `json:"deploy_branches,omitempty"`
 	BindingID                    string                   `json:"binding_id,omitempty"`
 	LinkedAt                     *time.Time               `json:"linked_at,omitempty"`
 	LastReconciledAt             *time.Time               `json:"last_reconciled_at,omitempty"`
@@ -90,7 +91,7 @@ func (s *server) getGitHubInstallStatus(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection status"))
 		return
@@ -107,7 +108,7 @@ func (s *server) getGitHubConnection(w http.ResponseWriter, r *http.Request, acc
 	if !ok {
 		return
 	}
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection status"))
 		return
@@ -262,7 +263,7 @@ func (s *server) unbindGitHubApp(w http.ResponseWriter, r *http.Request) {
 		"repo_full_name": previous.RepoFullName,
 		"binding_id":     previous.BindingID,
 	})
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("GitHub disconnected but status could not be refreshed"))
 		return
@@ -320,7 +321,7 @@ func (s *server) syncGitHubApp(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("could not sync GitHub connection"))
 		return
 	}
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("GitHub sync completed but status could not be refreshed"))
 		return
@@ -355,7 +356,7 @@ func (s *server) syncGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrCapacity("could not sync GitHub connection"))
 		return
 	}
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("GitHub sync completed but status could not be refreshed"))
 		return
@@ -398,7 +399,7 @@ func (s *server) disconnectGitHubConnection(w http.ResponseWriter, r *http.Reque
 		"binding_id":     previous.BindingID,
 		"surface":        "api",
 	})
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("GitHub disconnected but status could not be refreshed"))
 		return
@@ -468,7 +469,7 @@ type githubInstallationSyncRecorder interface {
 	RecordGitHubInstallationSync(context.Context, int64, time.Time, string, int, int) error
 }
 
-func (s *server) githubInstallStatus(ctx context.Context, accountID, appID string) (githubInstallStatusResponse, error) {
+func (s *server) githubInstallStatus(ctx context.Context, accountID, appID, projectID string) (githubInstallStatusResponse, error) {
 	status := githubInstallStatusResponse{State: "not_installed", Health: "not_connected"}
 	install, installErr := s.store.GitHubInstallForAccount(ctx, accountID)
 	if installErr != nil && !errors.Is(installErr, state.ErrNotFound) {
@@ -511,6 +512,17 @@ func (s *server) githubInstallStatus(ctx context.Context, accountID, appID strin
 		if activityClient, ok := s.githubd.(githubdActivityClient); ok {
 			if activity, activityErr := activityClient.GetAppActivity(ctx, accountID, appID, githubActivityLimit); activityErr == nil {
 				status.Activity = projectGithubActivity(activity)
+			}
+		}
+	}
+	if projectID != "" {
+		if branchesStore, ok := s.store.(state.ProjectDeployBranchesStore); ok {
+			branches, err := branchesStore.ListProjectDeployBranches(ctx, projectID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return status, err
+			}
+			if err == nil {
+				status.DeployBranches = branches
 			}
 		}
 	}

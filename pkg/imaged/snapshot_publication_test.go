@@ -102,6 +102,15 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 }
 
 func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub)
+}
+
+func TestPreviewSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview)
+}
+
+func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "github-snapshot-fence@example.test", "pro")
@@ -119,7 +128,7 @@ func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
 		t.Fatal(err)
 	}
-	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub,
+	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
 		CommitSHA: strings.Repeat("a", 40)})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +136,7 @@ func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
 	if err := store.UpdateDeploymentStatus(ctx, older.ID, state.DeploySnapshotting, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub,
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
 		CommitSHA: strings.Repeat("b", 40)}); err != nil {
 		t.Fatal(err)
 	}

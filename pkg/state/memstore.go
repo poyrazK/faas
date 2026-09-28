@@ -7893,11 +7893,11 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	return m.markDeploymentLive(ctx, id, false)
 }
 
-func (m *MemStore) MarkGitHubDeploymentLiveIfLatest(ctx context.Context, id string) error {
+func (m *MemStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
 	return m.markDeploymentLive(ctx, id, true)
 }
 
-func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitHub bool) (err error) {
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -7920,8 +7920,8 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitHu
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
-	if fenceGitHub {
-		if d.Kind != DeploymentKindGitHub || d.Revision <= 0 {
+	if fenceGitDriven {
+		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
 			return ErrInvalidStateTransition
 		}
 		if d.Status == DeploySuperseded {

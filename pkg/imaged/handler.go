@@ -104,6 +104,9 @@ type Handler struct {
 	// It keeps the safety invariant in the handler rather than relying only on
 	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
 	hostingSmokeRequired bool
+	// githubSourceRefVerifier is queried immediately before a source-ref branch
+	// deployment switches traffic. Nil fails closed for branch-backed rows.
+	githubSourceRefVerifier GitHubSourceRefVerifier
 	// releasePhaseEnabled turns a pinned deployment release command into an
 	// internal app task after the immutable rootfs is published and before any
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
@@ -3260,8 +3263,24 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
 	var promoteErr error
-	if dep.Kind == state.DeploymentKindGitHub {
-		promoteErr = h.store.MarkGitHubDeploymentLiveIfLatest(ctx, dep.ID)
+	if dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
+		if stale || verifyErr != nil {
+			code := api.CodeSourceRefStale
+			detail := fmt.Sprintf("GitHub branch %q no longer points to deployment commit %s", dep.GitHubSourceRef, dep.CommitSHA)
+			if verifyErr != nil {
+				code = api.CodeSourceRefUnavailable
+				detail = "could not verify GitHub source branch before promotion: " + verifyErr.Error()
+			}
+			if _, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail); markErr != nil {
+				return fmt.Errorf("imaged: mark unverified GitHub source ref failed: %w", markErr)
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return nil
+		}
+	}
+	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
+		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}

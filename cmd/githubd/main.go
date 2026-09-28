@@ -288,6 +288,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// A missing GitHub App credential must stop push dispatch before source
 	// fetch; the branch-head check is a production freshness boundary.
 	webhookSvc.BranchHeads = githubd.NewUnavailableBranchHeads()
+	webhookSvc.PullRequests = githubd.NewUnavailableCurrentPullRequests()
 
 	// Slice 8 RealService (OAuth + Checks). Auth may be nil if
 	// the GitHub App credentials aren't provisioned — the daemon
@@ -324,6 +325,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			} else {
 				tokens := githubd.NewTokenCache(auth, 5*time.Minute)
 				webhookSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
+				webhookSvc.PullRequests = githubd.NewHTTPCurrentPullRequests(tokens, deps.httpClient())
 				source.WithTokenProvider(tokens)
 				checks, checksErr = githubd.NewChecksAPI(tokens, deps.httpClient(), storeAdapter)
 				if checksErr != nil {
@@ -366,6 +368,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				auditFn := newGithubdAuditFn(log)
 				realSvc = githubd.NewRealService(auth, tokens, checks, storeAdapter, installsAdapter, recipient, identity, auditFn).
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
+				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				if identities != nil {
 					realSvc.Identities = identities
 				}

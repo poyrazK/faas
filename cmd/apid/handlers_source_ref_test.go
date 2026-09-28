@@ -36,6 +36,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,9 @@ type sourceRefFake struct {
 	streamRepo     string
 	streamRef      string
 	streamMaxBytes int64
+	branchRepo     string
+	branchName     string
+	branchCalls    int
 
 	// Programmable responses.
 	mintToken     string
@@ -79,6 +83,9 @@ type sourceRefFake struct {
 	streamSHA        string
 	streamStatsErr   error
 	streamErr        error
+	branchSHA        string
+	branchFound      bool
+	branchErr        error
 	reposByInstall   map[int64][]Repo
 	repoErrByInstall map[int64]error
 	listRepoCalls    []int64
@@ -117,6 +124,15 @@ func (f *sourceRefFake) StreamSourceRef(_ context.Context, acctID string, instID
 			Err:               f.streamStatsErr,
 		},
 	}, nil
+}
+
+func (f *sourceRefFake) GetBranchHead(_ context.Context, _ string, _ int64, repo, branch string) (string, bool, error) {
+	f.mux.Lock()
+	defer f.mux.Unlock()
+	f.branchRepo = repo
+	f.branchName = branch
+	f.branchCalls++
+	return f.branchSHA, f.branchFound, f.branchErr
 }
 
 // Stub-out the rest of the GithubdClient surface — handleSourceRefDeploy
@@ -890,6 +906,8 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
 	const resolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
 	e.gh.streamSHA = resolvedSHA
+	e.gh.branchSHA = resolvedSHA
+	e.gh.branchFound = true
 
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello",
@@ -900,6 +918,9 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	}
 	if e.gh.streamRef != "release/2026-q3" {
 		t.Fatalf("stream ref = %q, want branch ref", e.gh.streamRef)
+	}
+	if e.gh.branchRepo != "onebox-faas/hello" || e.gh.branchName != "release/2026-q3" {
+		t.Fatalf("branch lookup = %s@%s, want requested repo and branch", e.gh.branchRepo, e.gh.branchName)
 	}
 	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if err != nil {
@@ -913,6 +934,98 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	}
 	if deps[0].SourceURL != "github://onebox-faas/hello@"+resolvedSHA {
 		t.Errorf("SourceURL = %q, want canonical SHA", deps[0].SourceURL)
+	}
+	if deps[0].GitHubSourceRef != "release/2026-q3" || deps[0].GitHubInstallationID != 7777 {
+		t.Errorf("branch provenance = (%q, %d), want (release/2026-q3, 7777)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
+	}
+}
+
+func TestSourceRef_UpperHexBranchStillRecordsMutableIntent(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	const resolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.streamSHA = resolvedSHA
+	e.gh.branchSHA = resolvedSHA
+	e.gh.branchFound = true
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello",
+		Ref:  "ABCDEF0",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 1 || e.gh.branchName != "ABCDEF0" {
+		t.Fatalf("branch lookup = %d calls for %q, want 1 call for uppercase branch", e.gh.branchCalls, e.gh.branchName)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "ABCDEF0" {
+		t.Fatalf("GitHubSourceRef = %q, want uppercase branch", deps[0].GitHubSourceRef)
+	}
+}
+
+func TestSourceRef_BranchLookupUnavailableFailsClosed(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.branchErr = errors.New("GitHub unavailable")
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "main",
+	})
+	if rec.Code != http.StatusServiceUnavailable || bodyCode(t, rec) != api.CodeSourceRefUnavailable {
+		t.Fatalf("status/code = %d/%q, want 503/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeSourceRefUnavailable, rec.Body)
+	}
+	if e.gh.streamCalls != 0 {
+		t.Fatalf("stream calls = %d, want source fetch to stop after failed branch lookup", e.gh.streamCalls)
+	}
+}
+
+func TestSourceRef_PinnedSHABypassesBranchLookup(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	commit := strings.Repeat("a", 40)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = commit
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: commit,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 0 {
+		t.Fatalf("branch lookup calls = %d, want 0 for pinned SHA", e.gh.branchCalls)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "" || deps[0].GitHubInstallationID != 0 {
+		t.Fatalf("pinned SHA has mutable metadata (%q, %d)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
+	}
+}
+
+func TestSourceRef_ExplicitTagSkipsBranchLookup(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = strings.Repeat("b", 40)
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "refs/tags/v1.2.3",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 0 {
+		t.Fatalf("branch lookup calls = %d, want 0 for an explicit tag", e.gh.branchCalls)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "" || deps[0].GitHubInstallationID != 0 {
+		t.Fatalf("explicit tag has mutable metadata (%q, %d)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
 	}
 }
 

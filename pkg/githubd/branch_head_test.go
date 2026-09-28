@@ -24,6 +24,25 @@ func (s stubBranchHeads) BranchHead(context.Context, int64, string, string) (str
 	return s.sha, s.err
 }
 
+type branchHeadReply struct {
+	sha string
+	err error
+}
+
+type sequenceBranchHeads struct {
+	replies []branchHeadReply
+	calls   int
+}
+
+func (s *sequenceBranchHeads) BranchHead(context.Context, int64, string, string) (string, error) {
+	if s.calls >= len(s.replies) {
+		return "", errors.New("unexpected branch head lookup")
+	}
+	reply := s.replies[s.calls]
+	s.calls++
+	return reply.sha, reply.err
+}
+
 func TestHTTPBranchHeads(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,5 +118,52 @@ func TestHandlePushRequestChecksCurrentBranchBeforeFetch(t *testing.T) {
 	svc.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
 		t.Fatalf("current head push: %v", err)
+	}
+}
+
+func TestHandlePushRequestRechecksBranchHeadAfterScan(t *testing.T) {
+	const eventSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const nextSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	body := []byte(`{"ref":"refs/heads/main","after":"` + eventSHA + `","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	for _, tc := range []struct {
+		name        string
+		second      branchHeadReply
+		wantErr     error
+		wantIgnored bool
+	}{
+		{name: "branch advanced during scan", second: branchHeadReply{sha: nextSHA}, wantErr: ErrIgnored, wantIgnored: true},
+		{name: "lookup unavailable after scan", second: branchHeadReply{err: ErrBranchHeadUnavailable}, wantErr: ErrBranchHeadUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scanCalls := 0
+			rig := newRig(t, func(fs.FS) (reposcan.Result, error) {
+				scanCalls++
+				return happyScan(), nil
+			})
+			project := rig.seedProject(t, "octo/api", "main")
+			svc := newServiceForRig(t, rig)
+			svc.BranchHeads = &sequenceBranchHeads{replies: []branchHeadReply{{sha: eventSHA}, tc.second}}
+
+			result, err := svc.HandlePushRequest(context.Background(), body)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("push error = %v, want %v", err, tc.wantErr)
+			}
+			if result.WasIgnored != tc.wantIgnored {
+				t.Fatalf("WasIgnored = %v, want %v", result.WasIgnored, tc.wantIgnored)
+			}
+			if scanCalls != 1 {
+				t.Fatalf("scan calls = %d, want 1 before the second head check", scanCalls)
+			}
+			if heads := svc.BranchHeads.(*sequenceBranchHeads); heads.calls != 2 {
+				t.Fatalf("branch head calls = %d, want 2", heads.calls)
+			}
+			apps, listErr := rig.mem.AppsForProject(context.Background(), rig.acct, project.ID)
+			if listErr != nil {
+				t.Fatalf("list project apps: %v", listErr)
+			}
+			if len(apps) != 0 {
+				t.Fatalf("project apps after stale/retryable delivery = %d, want 0", len(apps))
+			}
+		})
 	}
 }

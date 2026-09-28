@@ -44,4 +44,61 @@ if (verify_current_push_head) >/dev/null 2>&1; then
     exit 1
 fi
 
-echo 'deploy-action-head-check: OK'
+export GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3
+export INPUT_REF="$GITHUB_SHA"
+export GITHUB_EVENT_PATH="$tmp/event.json"
+cat > "$GITHUB_EVENT_PATH" <<'EOF'
+{"before":"0000000000000000000000000000000000000000","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created":true,"forced":false,"deleted":false}
+EOF
+: > "$GITHUB_OUTPUT"
+verify_release_tag_push
+if [ -s "$GITHUB_OUTPUT" ]; then
+    echo 'new SemVer tag was not accepted' >&2
+    exit 1
+fi
+
+for tag in v1.2.3-rc.1 v1.2.3+build.7; do
+    export GITHUB_REF="refs/tags/$tag"
+    verify_release_tag_push
+done
+
+for tag in v1.2 v01.2.3; do
+    export GITHUB_REF="refs/tags/$tag"
+    : > "$GITHUB_OUTPUT"
+    if verify_release_tag_push; then
+        echo "invalid SemVer release tag was accepted: $tag" >&2
+        exit 1
+    fi
+    grep -qx 'status=skipped' "$GITHUB_OUTPUT"
+done
+
+export GITHUB_REF=refs/tags/v1.2.3
+cat > "$GITHUB_EVENT_PATH" <<'EOF'
+{"before":"0123456789abcdef0123456789abcdef01234567","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created":false,"forced":true,"deleted":false}
+EOF
+: > "$GITHUB_OUTPUT"
+if verify_release_tag_push; then
+    echo 'moved release tag was accepted' >&2
+    exit 1
+fi
+grep -qx 'status=skipped' "$GITHUB_OUTPUT"
+
+cat > "$GITHUB_EVENT_PATH" <<'EOF'
+{"before":"0000000000000000000000000000000000000000","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created":true,"forced":false,"deleted":true}
+EOF
+: > "$GITHUB_OUTPUT"
+if verify_release_tag_push; then
+    echo 'deleted release tag was accepted' >&2
+    exit 1
+fi
+grep -qx 'status=skipped' "$GITHUB_OUTPUT"
+
+cat > "$GITHUB_EVENT_PATH" <<'EOF'
+{"before":"0000000000000000000000000000000000000000","after":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created":true,"forced":false,"deleted":false}
+EOF
+if (verify_release_tag_push) >/dev/null 2>&1; then
+    echo 'tag deployment accepted a SHA different from the push payload' >&2
+    exit 1
+fi
+
+echo 'deploy-action-ref-checks: OK'

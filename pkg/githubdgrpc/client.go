@@ -22,6 +22,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Client is apid's handle to githubd's gRPC surface (ADR-012). It is
@@ -518,6 +520,27 @@ func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installa
 	// terminates the reader.
 	go res.pump()
 	return &StreamSourceRefResult{Body: res, Stats: &res.stats}, nil
+}
+
+// GetBranchHead resolves a current branch head. found=false is reserved for
+// NOT_FOUND so callers can distinguish tags and commit IDs from branches.
+func (c *Client) GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (sha string, found bool, err error) {
+	resp, err := c.cli.GetBranchHead(ctx, &githubdpb.GetBranchHeadRequest{
+		AccountId:      accountID,
+		InstallationId: installationID,
+		RepoFullName:   repoFullName,
+		Branch:         branch,
+	})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", false, nil
+		}
+		return "", false, liftErr(err)
+	}
+	if resp == nil || resp.GetCommitSha() == "" {
+		return "", false, errors.New("githubdgrpc: empty branch-head response")
+	}
+	return resp.GetCommitSha(), true, nil
 }
 
 // streamSourceRefConn is the io.ReadCloser + terminal-stats bundle

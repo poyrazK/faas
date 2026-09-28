@@ -38,6 +38,9 @@ type streamSvc struct {
 	mintToken   string
 	mintExpires time.Time
 	mintErr     error
+	branchSHA   string
+	branchFound bool
+	branchErr   error
 }
 
 func (s *streamSvc) MintInstallationToken(accountID string, installationID int64) (string, time.Time, error) {
@@ -52,6 +55,10 @@ func (s *streamSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ s
 		return nil, "", false, 0, s.streamErr
 	}
 	return io.NopCloser(strings.NewReader(s.streamBody)), "", s.streamTrunc, s.streamTotal, nil
+}
+
+func (s *streamSvc) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
+	return s.branchSHA, s.branchFound, s.branchErr
 }
 
 // newStreamServer wires streamSvc into a bufconn listener and returns
@@ -241,6 +248,24 @@ func TestStreamSourceRef_HappyPath(t *testing.T) {
 	if got, want := len(got), len(payload); got != want {
 		t.Errorf("body bytes = %d, want %d", got, want)
 	}
+}
+
+func TestGetBranchHead(t *testing.T) {
+	const sha = "abcdef0123456789abcdef0123456789abcdef01"
+	t.Run("found", func(t *testing.T) {
+		_, client := newStreamServer(t, &streamSvc{branchSHA: sha, branchFound: true})
+		got, found, err := client.GetBranchHead(context.Background(), "acct", 77, "octo/api", "main")
+		if err != nil || !found || got != sha {
+			t.Fatalf("GetBranchHead = (%q, %v, %v), want (%q, true, nil)", got, found, err, sha)
+		}
+	})
+	t.Run("not a branch", func(t *testing.T) {
+		_, client := newStreamServer(t, &streamSvc{})
+		got, found, err := client.GetBranchHead(context.Background(), "acct", 77, "octo/api", "v1.2.3")
+		if err != nil || found || got != "" {
+			t.Fatalf("GetBranchHead = (%q, %v, %v), want (empty, false, nil)", got, found, err)
+		}
+	})
 }
 
 func TestStreamSourceRef_TruncatedFlag(t *testing.T) {

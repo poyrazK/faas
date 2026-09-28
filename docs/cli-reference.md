@@ -591,7 +591,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 |---|---|---|
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
 | `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
-| `--deploy-branches <MAPPINGS>` | comma-separated branch=scope mappings |  |
+| `--deploy-branches <MAPPINGS>` | comma-separated branch=environment mappings (default or registered environment) |  |
 | `--workflow <PATH>` | workflow path relative to repository root |  |
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
