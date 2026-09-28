@@ -1705,6 +1705,19 @@ Add an edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+| `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
+| `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
+| `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
+| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
+| `--validate-apply-while-streaming` | also validate streaming requests |  |
+| `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+
+Examples:
+
+```sh
+gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
+cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -
+```
 
 ### edge-rules get
 
@@ -1723,6 +1736,19 @@ Update one edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+| `--validate-schema <JSON|@FILE|->` | replacement schema; required when updating action fields (inline JSON, @file, or -; max 64 KiB) |  |
+| `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
+| `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
+| `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
+| `--validate-apply-while-streaming` | also validate streaming requests |  |
+| `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+
+Examples:
+
+```sh
+gregale edge-rules update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block
+gregale edge-rules update RULE_ID --kind validate --validate-mode observe
+```
 
 ### edge-rules rm
 

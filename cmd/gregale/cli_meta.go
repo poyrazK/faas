@@ -1215,7 +1215,10 @@ var cliCommands = []cliCommand{
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 			}},
-			{Name: subCreate, Short: "Add an edge rule", Flags: []cliFlag{
+			{Name: subCreate, Short: "Add an edge rule", Examples: []string{
+				"gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block",
+				"cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -",
+			}, Flags: []cliFlag{
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -1223,9 +1226,18 @@ var cliCommands = []cliCommand{
 				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
 				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
 				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "validate-schema", Short: "JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB)", Value: "JSON|@FILE|-"},
+				{Name: "validate-mode", Short: "invalid-request behavior (default block)", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
+				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
+				{Name: "validate-max-body-bytes", Short: "optional body cap in bytes (0 = plan default)", Value: "N"},
+				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
+				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 			}},
 			{Name: subGet, Short: "Show one edge rule"},
-			{Name: subUpdate, Short: "Update one edge rule", Flags: []cliFlag{
+			{Name: subUpdate, Short: "Update one edge rule", Examples: []string{
+				"gregale edge-rules update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block",
+				"gregale edge-rules update RULE_ID --kind validate --validate-mode observe",
+			}, Flags: []cliFlag{
 				{Name: "on-success-webhook", Short: "success webhook subscription", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -1233,6 +1245,12 @@ var cliCommands = []cliCommand{
 				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
 				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
 				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "validate-schema", Short: "replacement schema; required when updating action fields (inline JSON, @file, or -; max 64 KiB)", Value: "JSON|@FILE|-"},
+				{Name: "validate-mode", Short: "invalid-request behavior", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
+				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
+				{Name: "validate-max-body-bytes", Short: "body cap in bytes (0 = plan default)", Value: "N"},
+				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
+				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 			}},
 			{Name: subRm, Short: "Delete one edge rule"},
 		},
