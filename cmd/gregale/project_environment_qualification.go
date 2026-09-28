@@ -279,7 +279,7 @@ func runProjectEnvironmentQualificationProbe(ctx context.Context, client *http.C
 	if err != nil {
 		return projectEnvironmentQualificationProbeResult{Status: "failed", ErrorCode: "request_failed"}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, qualificationProbeBodyDrainBytes))
 	status := response.StatusCode
 	if status >= http.StatusOK && status < http.StatusMultipleChoices {
