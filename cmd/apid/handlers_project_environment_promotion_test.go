@@ -899,3 +899,69 @@ func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T)
 		t.Fatal("promotion identity did not change when the source release set changed")
 	}
 }
+
+// Spec §4.7: past_due blocks deploys. A promotion writes new live
+// deployments into the target environment, so it must be refused too.
+func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []string{"staging", "production"} {
+		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope,
+			SourceSHA256: "source-" + scope, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeploymentRootfs(ctx, d.ID, "/rootfs/"+scope, "apps/"+scope+".ext4", 42); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, d.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := store.ListDeploymentsForApp(ctx, app.ID, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
+	}
+	var preview api.ProjectEnvironmentPromotionPreviewResponse
+	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	if problem != nil {
+		t.Fatalf("issue promotion approval: %v", problem)
+	}
+	body, err := json.Marshal(api.PromoteProjectEnvironmentRequest{
+		FromEnvironment: "staging", PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pastDue := acct
+	pastDue.Status = state.AccountPastDue
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req.SetPathValue("environment", "production")
+	req.Header.Set("Idempotency-Key", "promotion-past-due")
+	srv.promoteProjectEnvironment(rec, req, pastDue)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("past_due promotion status=%d body=%s, want 402", rec.Code, rec.Body.String())
+	}
+	after, err := store.ListDeploymentsForApp(ctx, app.ID, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("past_due promotion created deployments: before=%d after=%d", len(before), len(after))
+	}
+}

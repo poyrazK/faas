@@ -497,6 +497,14 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
+	// Spec §4.7: past_due blocks deploys, and a promotion creates new
+	// live deployments in the target environment. Resuming a promotion
+	// admitted while the account was active (above) stays allowed so a
+	// half-applied release graph can still converge.
+	if !acct.MayDeploy() {
+		api.WriteProblem(w, api.ErrDeploysBlocked())
+		return
+	}
 	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig)
 	if problem != nil {
 		api.WriteProblem(w, problem)
