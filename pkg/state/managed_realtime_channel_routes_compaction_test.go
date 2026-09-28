@@ -12,7 +12,11 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()
 	const endpointID = "endpoint"
-	const nodeID = "node-1"
+	activeNodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil || len(activeNodes) == 0 {
+		t.Fatalf("ActiveComputeNodes = (%d, %v), want at least the seeded local node", len(activeNodes), err)
+	}
+	nodeID := activeNodes[0].ID
 
 	routes := make([]ManagedRealtimeChannelRoute, 0, managedRealtimeChannelRouteLimit+1)
 	for i := 0; i <= managedRealtimeChannelRouteLimit; i++ {
@@ -47,12 +51,18 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentManagedRealtimeChannelRouteGeneration: %v", err)
 	}
-	if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, nodeID, generation, []ManagedRealtimeChannelRoute{{
-		EndpointID: endpointID,
-		Channel:    "current",
-		NodeID:     nodeID,
-	}}); err != nil {
-		t.Fatalf("ReplaceManagedRealtimeChannelRoutes: %v", err)
+	for _, node := range activeNodes {
+		var nodeRoutes []ManagedRealtimeChannelRoute
+		if node.ID == nodeID {
+			nodeRoutes = []ManagedRealtimeChannelRoute{{
+				EndpointID: endpointID,
+				Channel:    "current",
+				NodeID:     node.ID,
+			}}
+		}
+		if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, nodeRoutes); err != nil {
+			t.Fatalf("ReplaceManagedRealtimeChannelRoutes(%s): %v", node.ID, err)
+		}
 	}
 	view, err = store.ListManagedRealtimeChannelRouteView(ctx, endpointID, "current")
 	if err != nil || !view.Disabled || len(view.NodeIDs) != 1 || view.NodeIDs[0] != nodeID || len(view.ReadyNodeIDs) != 1 {
