@@ -50,6 +50,11 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 					PolicyID: "failures_" + key, Kind: "failures", Method: route.Method, Path: route.Path,
 				})
 			}
+			if route.ObserveTargets {
+				resp.Policies = append(resp.Policies, api.PreAuthPolicyObservation{
+					PolicyID: "targets_" + key, Kind: "targets", Method: route.Method, Path: route.Path,
+				})
+			}
 		}
 	}
 	if len(resp.Policies) == 0 {
@@ -96,6 +101,16 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 			policy.Result5xx = count
 		case "result_unknown":
 			policy.ResultUnknown = count
+		case "target_failure":
+			policy.TargetFailures = count
+		case "target_threshold":
+			policy.TargetThreshold = count
+		case "target_missing":
+			policy.TargetMissing = count
+		case "target_invalid":
+			policy.TargetInvalid = count
+		case "target_fallback":
+			policy.TargetFallback = count
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

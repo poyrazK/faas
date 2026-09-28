@@ -7257,6 +7257,7 @@ haveApp:
 	// only live responses can populate the cache.
 	h.cacheHeadResponse(app.ID, rec)
 	h.recordPreAuthFailedResponse(r, rec.status)
+	h.recordPreAuthTargetResponse(r, rec, app)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
 	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush
@@ -8091,6 +8092,10 @@ type statusRecorder struct {
 	// recordEgress call (the per-flush deltas already account for
 	// everything on the streaming path).
 	streaming bool
+	// preAuthTarget is application response metadata, removed before the
+	// response is committed. It is never sent to the client or logged.
+	preAuthTarget      string
+	preAuthTargetCount int
 
 	// mirrorSourceCapture records the actual v1 response status and bounded
 	// body. It is concurrency-safe because detached v2 goroutines consume it
@@ -8150,11 +8155,26 @@ func (s *statusRecorder) WriteHeader(code int) {
 		// Blacklist (Host, Content-Length, Transfer-Encoding,
 		// Connection, x-faas-*) is enforced at apid-Validate-time
 		// so we trust the slice here.
+		// Read only the application's value. Edge header rules run afterward
+		// and cannot impersonate or overwrite the abuse target signal.
+		s.capturePreAuthTargetHeader()
 		for _, op := range s.headerOps {
 			applyHeaderOp(s.Header(), op)
 		}
+		s.Header().Del(preAuthTargetHeader)
 	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+const preAuthTargetHeader = "X-Gregale-Abuse-Target"
+
+func (s *statusRecorder) capturePreAuthTargetHeader() {
+	values := s.Header().Values(preAuthTargetHeader)
+	s.preAuthTargetCount = len(values)
+	if len(values) == 1 {
+		s.preAuthTarget = values[0]
+	}
+	s.Header().Del(preAuthTargetHeader)
 }
 
 // installHeaderOps (ADR-089 / issue #561 PR 4) arms the recorder
@@ -8186,6 +8206,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.status = http.StatusOK
 		s.wroteHeader = true
 		s.mirrorSourceCapture.writeHeader(http.StatusOK)
+		s.capturePreAuthTargetHeader()
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.

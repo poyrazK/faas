@@ -629,3 +629,25 @@ func TestPreAuthFailedResponseLimitValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestPreAuthTargetObservationValidation(t *testing.T) {
+	config := PreAuthRateLimitConfig{Mode: PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4,
+			Coordination: PreAuthCoordinationCentral, ObserveTargets: true,
+			FailedResponses: &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2}}}}
+	if err := config.Validate(PlanFree); err != nil {
+		t.Fatalf("valid target observation: %v", err)
+	}
+	for _, change := range []func(*PreAuthRouteLimit){
+		func(r *PreAuthRouteLimit) { r.Method = "GET" },
+		func(r *PreAuthRouteLimit) { r.Coordination = PreAuthCoordinationLocal },
+		func(r *PreAuthRouteLimit) { r.FailedResponses = nil },
+	} {
+		invalid := config
+		invalid.Routes = append([]PreAuthRouteLimit(nil), config.Routes...)
+		change(&invalid.Routes[0])
+		if err := invalid.Validate(PlanFree); err == nil {
+			t.Fatal("invalid target observation accepted")
+		}
+	}
+}

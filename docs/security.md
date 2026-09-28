@@ -108,16 +108,42 @@ The budget is local to each gateway replica, and a source shared by many
 legitimate users still shares it. Observe mode records would-block decisions
 while continuing to serve the route.
 
+To observe distributed failures against the same application login target,
+set `observe_targets: true` on a `POST` route with `failed_responses` and
+`coordination: "central"`. On each selected failed response, the application
+returns `X-Gregale-Abuse-Target` containing the 64-character lowercase hex
+HMAC-SHA256 of the normalized submitted login identifier, using an app-owned
+secret. Compute this for both existing and unknown users; conditioning the
+header on account existence can create a timing-based account-enumeration
+signal. Keep the HMAC key out of the request and response, and use the same
+key across application replicas. The gateway removes this reserved response
+header before it reaches the client. Gregale receives only an opaque digest;
+it does not persist, log, or expose that digest or the raw identifier.
+Responses without exactly one valid digest are counted as missing or invalid.
+Successes and gateway-generated denials do not enter target counters.
+
+The gateway maps each valid target to two independent sets of 2,048 bounded
+shared counters and spends one token per set on each selected failure. When
+both sets exceed the configured `failed_responses` budget, it increments the
+aggregate `target_threshold` observation. Collisions can produce false
+signals, especially at high login volume; this is an approximate detection
+signal, not an account-level quota. It never blocks or locks an account, even
+when the pre-auth policy mode is `enforce`. Each valid failure uses two central
+counter calls. If central coordination is unavailable, the signal uses
+replica-local counters and records `target_fallback`.
+
 Before switching to `enforce`, read
 `GET /v1/apps/{slug}/pre-auth-observations?range=1h` (available on every
-plan). It returns one app policy, each configured route policy, and each
-configured failure budget. `would_block` counts observe-mode requests that
+plan). It returns one app policy, each configured route policy, each
+configured failure budget, and each configured target observation.
+`would_block` counts observe-mode requests that
 crossed that policy's threshold; `result_2xx`, `result_3xx`, `result_4xx`,
 `result_5xx`, and `result_unknown` classify those same requests' final gateway
 responses. A `2xx` result is a possible false-positive signal, not proof of a
 legitimate user. An app and its route can both register one request as a
 would-block, so do not sum policy rows as unique requests. Route policy IDs
-use fixed slots (`route_0` through `route_15`, with matching `failures_` IDs),
+use fixed slots (`route_0` through `route_15`, with matching `failures_` and
+`targets_` IDs),
 so if routes are reordered or replaced during the requested time range, older
 counts can refer to a previous configuration. Use a window after the last
 policy edit. The response maps slots to the current configured paths; the Prometheus metric

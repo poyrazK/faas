@@ -1,11 +1,12 @@
 from typing import Literal
 
-PreAuthPolicyObservationKind = Literal["app", "failures", "route"]
+PreAuthPolicyObservationKind = Literal["app", "failures", "route", "targets"]
 
 PRE_AUTH_POLICY_OBSERVATION_KIND_VALUES: set[PreAuthPolicyObservationKind] = {
     "app",
     "failures",
     "route",
+    "targets",
 }
 
 

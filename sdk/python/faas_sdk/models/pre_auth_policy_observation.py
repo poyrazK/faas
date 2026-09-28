@@ -17,11 +17,11 @@ T = TypeVar("T", bound="PreAuthPolicyObservation")
 
 @_attrs_define
 class PreAuthPolicyObservation:
-    """Counts for one bounded app, route, or failed-response policy slot."""
+    """Counts for one bounded app, route, failed-response, or target-observation policy slot."""
 
     policy_id: str
-    """Bounded app, route_<index>, or failures_<index> policy identifier. Index is the route's current array
-    position."""
+    """Bounded app, route_<index>, failures_<index>, or targets_<index> policy identifier. Index is the route's
+    current array position."""
     kind: PreAuthPolicyObservationKind
     would_block: int
     result_2xx: int
@@ -33,6 +33,17 @@ class PreAuthPolicyObservation:
     """Configured public method; omitted for the app policy."""
     path: str | Unset = UNSET
     """Configured public path; omitted for the app policy."""
+    target_failures: int | Unset = UNSET
+    """Selected app failures carrying a valid target identifier."""
+    target_threshold: int | Unset = UNSET
+    """Failures for which both bounded target shards exceeded the configured failed-response budget. Approximate
+    signal; never blocks."""
+    target_missing: int | Unset = UNSET
+    """Selected app failures without a target header."""
+    target_invalid: int | Unset = UNSET
+    """Selected app failures with an invalid target header."""
+    target_fallback: int | Unset = UNSET
+    """Valid target failures observed with process-local fallback because central coordination was unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +67,16 @@ class PreAuthPolicyObservation:
 
         path = self.path
 
+        target_failures = self.target_failures
+
+        target_threshold = self.target_threshold
+
+        target_missing = self.target_missing
+
+        target_invalid = self.target_invalid
+
+        target_fallback = self.target_fallback
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +95,16 @@ class PreAuthPolicyObservation:
             field_dict["method"] = method
         if path is not UNSET:
             field_dict["path"] = path
+        if target_failures is not UNSET:
+            field_dict["target_failures"] = target_failures
+        if target_threshold is not UNSET:
+            field_dict["target_threshold"] = target_threshold
+        if target_missing is not UNSET:
+            field_dict["target_missing"] = target_missing
+        if target_invalid is not UNSET:
+            field_dict["target_invalid"] = target_invalid
+        if target_fallback is not UNSET:
+            field_dict["target_fallback"] = target_fallback
 
         return field_dict
 
@@ -100,6 +131,16 @@ class PreAuthPolicyObservation:
 
         path = d.pop("path", UNSET)
 
+        target_failures = d.pop("target_failures", UNSET)
+
+        target_threshold = d.pop("target_threshold", UNSET)
+
+        target_missing = d.pop("target_missing", UNSET)
+
+        target_invalid = d.pop("target_invalid", UNSET)
+
+        target_fallback = d.pop("target_fallback", UNSET)
+
         pre_auth_policy_observation = cls(
             policy_id=policy_id,
             kind=kind,
@@ -111,6 +152,11 @@ class PreAuthPolicyObservation:
             result_unknown=result_unknown,
             method=method,
             path=path,
+            target_failures=target_failures,
+            target_threshold=target_threshold,
+            target_missing=target_missing,
+            target_invalid=target_invalid,
+            target_fallback=target_fallback,
         )
 
         pre_auth_policy_observation.additional_properties = d

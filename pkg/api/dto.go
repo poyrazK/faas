@@ -5580,16 +5580,21 @@ type PreAuthObservationsResponse struct {
 }
 
 type PreAuthPolicyObservation struct {
-	PolicyID      string `json:"policy_id"`
-	Kind          string `json:"kind"` // app | route | failures
-	Method        string `json:"method,omitempty"`
-	Path          string `json:"path,omitempty"`
-	WouldBlock    int64  `json:"would_block"`
-	Result2xx     int64  `json:"result_2xx"`
-	Result3xx     int64  `json:"result_3xx"`
-	Result4xx     int64  `json:"result_4xx"`
-	Result5xx     int64  `json:"result_5xx"`
-	ResultUnknown int64  `json:"result_unknown"`
+	PolicyID        string `json:"policy_id"`
+	Kind            string `json:"kind"` // app | route | failures | targets
+	Method          string `json:"method,omitempty"`
+	Path            string `json:"path,omitempty"`
+	WouldBlock      int64  `json:"would_block"`
+	Result2xx       int64  `json:"result_2xx"`
+	Result3xx       int64  `json:"result_3xx"`
+	Result4xx       int64  `json:"result_4xx"`
+	Result5xx       int64  `json:"result_5xx"`
+	ResultUnknown   int64  `json:"result_unknown"`
+	TargetFailures  int64  `json:"target_failures,omitempty"`
+	TargetThreshold int64  `json:"target_threshold,omitempty"`
+	TargetMissing   int64  `json:"target_missing,omitempty"`
+	TargetInvalid   int64  `json:"target_invalid,omitempty"`
+	TargetFallback  int64  `json:"target_fallback,omitempty"`
 }
 
 // AppMetricsResponse is the per-app metrics payload returned by

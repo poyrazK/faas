@@ -544,6 +544,138 @@ func TestPreAuthFailedResponsesChargeConcurrentFailures(t *testing.T) {
 	}
 }
 
+func TestPreAuthTargetObservationCorrelatesAcrossSourcesAndReplicas(t *testing.T) {
+	shared := &sharedPreAuthCentral{}
+	var originStatus atomic.Int32
+	originStatus.Store(http.StatusUnauthorized)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(preAuthTargetHeader, strings.Repeat("a", 64))
+		w.WriteHeader(int(originStatus.Load()))
+	}))
+	t.Cleanup(upstream.Close)
+	newReplica := func() *Handler {
+		h, b, _ := newTestHandler(t)
+		b.upstream = upstream.Listener.Addr().String()
+		b.setLegacyHot()
+		b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+			Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 100, Burst: 100,
+			Routes: []api.PreAuthRouteLimit{{
+				Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+				Coordination: api.PreAuthCoordinationCentral, ObserveTargets: true,
+				FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2},
+			}},
+		}
+		h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+		h.WithPreAuthCentralBackend(shared)
+		return h
+	}
+	first, second := newReplica(), newReplica()
+	request := func(h *Handler, source string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get(preAuthTargetHeader); got != "" {
+			t.Fatalf("target header leaked to client: %q", got)
+		}
+		return rec
+	}
+	for i, step := range []struct {
+		h  *Handler
+		ip string
+	}{{first, "192.0.2.1"}, {second, "192.0.2.2"}, {second, "192.0.2.3"}} {
+		if rec := request(step.h, step.ip); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := testutil.ToFloat64(second.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "targets_0", "target_threshold")); got != 1 {
+		t.Fatalf("cross-replica target threshold = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(first.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "targets_0", "target_threshold")); got != 0 {
+		t.Fatalf("first replica threshold = %v, want 0", got)
+	}
+	originStatus.Store(http.StatusOK)
+	if rec := request(first, "192.0.2.4"); rec.Code != http.StatusOK {
+		t.Fatalf("success = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(first.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "targets_0", "target_failure")); got != 1 {
+		t.Fatalf("successful request spent target budget: count=%v", got)
+	}
+}
+
+func TestPreAuthTargetObservationMissingInvalidAndFallback(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	var target atomic.Value
+	target.Store("")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if value := target.Load().(string); value != "" {
+			w.Header().Set(preAuthTargetHeader, value)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(upstream.Close)
+	b.upstream = upstream.Listener.Addr().String()
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 100, Burst: 100,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+			Coordination: api.PreAuthCoordinationCentral, ObserveTargets: true,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2}}},
+	}
+	h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+	h.WithPreAuthCentralBackend(&sharedPreAuthCentral{err: fmt.Errorf("central unavailable")})
+	request := func(source string) {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get(preAuthTargetHeader) != "" {
+			t.Fatalf("response = %d headers=%v", rec.Code, rec.Header())
+		}
+	}
+	request("192.0.2.1")
+	target.Store(strings.Repeat("x", 257))
+	request("192.0.2.2")
+	target.Store(strings.Repeat("a", 64))
+	for i := 3; i <= 5; i++ {
+		request(fmt.Sprintf("192.0.2.%d", i))
+	}
+	for outcome, want := range map[string]float64{
+		"target_missing": 1, "target_invalid": 1, "target_failure": 3,
+		"target_fallback": 3, "target_threshold": 1,
+	} {
+		if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "targets_0", outcome)); got != want {
+			t.Errorf("%s = %v, want %v", outcome, got, want)
+		}
+	}
+}
+
+func TestPreAuthTargetHeaderCannotBeSetByEdgeRule(t *testing.T) {
+	w := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: w}
+	originDigest := strings.Repeat("a", 64)
+	rec.Header().Set(preAuthTargetHeader, originDigest)
+	rec.installHeaderOps([]EdgeRuleHeaderOp{{Name: preAuthTargetHeader, Value: strings.Repeat("b", 64), Action: "set"}})
+	rec.WriteHeader(http.StatusUnauthorized)
+	if rec.preAuthTarget != originDigest || rec.preAuthTargetCount != 1 {
+		t.Fatalf("captured target = %q count=%d", rec.preAuthTarget, rec.preAuthTargetCount)
+	}
+	if got := w.Header().Get(preAuthTargetHeader); got != "" {
+		t.Fatalf("target header leaked: %q", got)
+	}
+}
+
+func TestPreAuthTargetRequiresOpaqueDigest(t *testing.T) {
+	if !validPreAuthTarget(strings.Repeat("a", 64)) {
+		t.Fatal("valid HMAC digest rejected")
+	}
+	for _, target := range []string{"alice@example.com", strings.Repeat("A", 64), strings.Repeat("a", 63), strings.Repeat("g", 64)} {
+		if validPreAuthTarget(target) {
+			t.Fatalf("non-digest target accepted: %q", target)
+		}
+	}
+}
+
 func TestPreAuthFailedResponsesObserveConfiguredStatus(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

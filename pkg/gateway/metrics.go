@@ -1287,7 +1287,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		preAuthPolicyShadow: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_pre_auth_policy_shadow_total",
-			Help: "Observe-mode would-block decisions and final response classes by app and configured policy. Policy labels are bounded by one app policy plus 16 route and 16 failure policies; no source IP or path is a label.",
+			Help: "Observe-mode would-block decisions, final response classes, and optional target-failure signals by app and configured policy. Policy labels are bounded by one app policy plus 16 route, 16 failure, and 16 target policies; no source IP, path, or target is a label.",
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",

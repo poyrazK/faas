@@ -255,6 +255,7 @@ type PreAuthRouteLimit struct {
 	Burst             int                         `json:"burst"`
 	Coordination      string                      `json:"coordination,omitempty"` // local (default) | central
 	FailedResponses   *PreAuthFailedResponseLimit `json:"failed_responses,omitempty"`
+	ObserveTargets    bool                        `json:"observe_targets,omitempty"`
 }
 
 // PreAuthFailedResponseLimit counts only selected application 4xx responses.
@@ -342,6 +343,9 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 					}
 				}
 			}
+		}
+		if route.ObserveTargets && (route.Method != "POST" || route.FailedResponses == nil || route.Coordination != PreAuthCoordinationCentral) {
+			return fmt.Errorf("pre_auth_rate_limit.routes %s %s observe_targets requires POST, failed_responses, and central coordination", route.Method, route.Path)
 		}
 	}
 	return nil

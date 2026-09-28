@@ -26,6 +26,7 @@ const preAuthEvictionScan = 32
 // A fixed number of shared counters per exact route bounds database growth
 // even when an attacker rotates source addresses. Collisions share a budget.
 const preAuthCentralShards = 1024
+const preAuthTargetShards = 2048
 
 var errPreAuthCentralUnavailable = errors.New("pre-auth central rate-limit backend unavailable")
 
@@ -74,13 +75,15 @@ func (s *preAuthShadowContext) add(policy string) {
 }
 
 type preAuthFailureContext struct {
-	appID    string
-	policyID string
-	source   string
-	rps      float64
-	burst    int
-	statuses [4]int
-	statusN  int
+	appID          string
+	policyID       string
+	policyIndex    int
+	observeTargets bool
+	source         string
+	rps            float64
+	burst          int
+	statuses       [4]int
+	statusN        int
 }
 
 func (f preAuthFailureContext) tracks(status int) bool {
@@ -294,6 +297,7 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		failed := matched.FailedResponses
 		failure := preAuthFailureContext{
 			appID: app.ID, policyID: app.ID + "\x00" + matched.Method + " " + matched.Path + "\x00failures",
+			policyIndex: matchedIndex, observeTargets: matched.ObserveTargets,
 			source: source, rps: float64(min(failed.FailuresPerMinute, min(matched.RequestsPerSecond, rps)*60)) / 60,
 			burst: min(failed.Burst, min(matched.Burst, burst)), statusN: min(len(failed.Statuses), 4),
 		}
@@ -436,6 +440,89 @@ func (h *Handler) recordPreAuthFailedResponse(r *http.Request, status int) {
 	if h.metrics != nil {
 		h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_recorded")
 	}
+}
+
+// recordPreAuthTargetResponse correlates selected application failures across
+// source IPs. Two independently selected, bounded shards reduce accidental
+// collisions. The header value is never persisted, logged, or exposed as a
+// metric label; the signal cannot reject requests or lock an account.
+func (h *Handler) recordPreAuthTargetResponse(r *http.Request, rec *statusRecorder, app App) {
+	if h == nil || h.preAuthLimiter == nil || h.metrics == nil || r == nil || rec == nil {
+		return
+	}
+	failure, ok := r.Context().Value(preAuthFailureContextKey{}).(preAuthFailureContext)
+	if !ok || !failure.observeTargets || !failure.tracks(rec.status) {
+		return
+	}
+	policy := "targets_" + strconv.Itoa(failure.policyIndex)
+	if rec.preAuthTargetCount == 0 {
+		h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_missing")
+		return
+	}
+	target := rec.preAuthTarget
+	if rec.preAuthTargetCount != 1 || !validPreAuthTarget(target) {
+		h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_invalid")
+		return
+	}
+	h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_failure")
+	policyID := failure.policyID + "\x00targets"
+	localExceeded := true
+	var subjects [2]string
+	for i := range subjects {
+		dimension := "login_target_" + strconv.Itoa(i)
+		subjects[i] = dimensionalCentralSubjectID(policyID, dimension, target, preAuthTargetShards)
+		admitted, _ := h.preAuthLimiter.allowRate(policyID+"\x00"+dimension, subjects[i], failure.rps, failure.burst, true, false)
+		if admitted {
+			localExceeded = false
+		}
+	}
+	_, noop := h.preAuthCentral.(noopCentralBackend)
+	if h.preAuthCentral == nil || noop {
+		h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_fallback")
+		if localExceeded {
+			h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_threshold")
+		}
+		return
+	}
+	// Recording follows an application failure even if the client has already
+	// disconnected. Keep the database work bounded without letting a caller
+	// cancel its own abuse observation.
+	consultCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), centralConsultTimeout)
+	defer cancel()
+	centralExceeded := true
+	for _, subject := range subjects {
+		_, admitted, err := h.preAuthCentral.ConsumeToken(consultCtx, rateLimitScopePreAuth, subject, string(app.Plan), failure.rps, float64(failure.burst))
+		if err != nil {
+			h.observeCentralRateLimitDegraded(r.Context(), rateLimitScopePreAuth, err)
+			h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_fallback")
+			if localExceeded {
+				h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_threshold")
+			}
+			return
+		}
+		if admitted {
+			centralExceeded = false
+		}
+	}
+	if centralExceeded {
+		h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "target_threshold")
+	}
+}
+
+func validPreAuthTarget(target string) bool {
+	// The application sends a keyed digest of its normalized login value.
+	// Enforcing the digest format prevents accidental raw identifier leakage
+	// through the gateway's internal response path.
+	if len(target) != 64 {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		char := target[i]
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // ForgetPreAuthRateLimits clears process-local source buckets on SIGHUP.

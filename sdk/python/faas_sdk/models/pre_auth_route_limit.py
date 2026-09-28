@@ -41,6 +41,11 @@ class PreAuthRouteLimit:
     """Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
     omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and
     wake after this budget is exhausted."""
+    observe_targets: bool | Unset = False
+    """Observe repeated application login failures for the same app-declared target across source IPs. Requires
+    POST, failed_responses, and central coordination. The application supplies X-Gregale-Abuse-Target as lowercase
+    hex HMAC-SHA256 of the normalized submitted login identifier on selected failed responses; the gateway strips it
+    before sending the response. This signal never rejects requests."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +65,8 @@ class PreAuthRouteLimit:
         if not isinstance(self.failed_responses, Unset):
             failed_responses = self.failed_responses.to_dict()
 
+        observe_targets = self.observe_targets
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +81,8 @@ class PreAuthRouteLimit:
             field_dict["coordination"] = coordination
         if failed_responses is not UNSET:
             field_dict["failed_responses"] = failed_responses
+        if observe_targets is not UNSET:
+            field_dict["observe_targets"] = observe_targets
 
         return field_dict
 
@@ -104,6 +113,8 @@ class PreAuthRouteLimit:
         else:
             failed_responses = PreAuthFailedResponseLimit.from_dict(_failed_responses)
 
+        observe_targets = d.pop("observe_targets", UNSET)
+
         pre_auth_route_limit = cls(
             method=method,
             path=path,
@@ -111,6 +122,7 @@ class PreAuthRouteLimit:
             burst=burst,
             coordination=coordination,
             failed_responses=failed_responses,
+            observe_targets=observe_targets,
         )
 
         pre_auth_route_limit.additional_properties = d

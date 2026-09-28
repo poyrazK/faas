@@ -19,5 +19,9 @@ export type PreAuthRouteLimit = {
    */
   coordination?: 'local' | 'central';
   failed_responses?: PreAuthFailedResponseLimit;
+  /**
+   * Observe repeated application login failures for the same app-declared target across source IPs. Requires POST, failed_responses, and central coordination. The application supplies X-Gregale-Abuse-Target as lowercase hex HMAC-SHA256 of the normalized submitted login identifier on selected failed responses; the gateway strips it before sending the response. This signal never rejects requests.
+   */
+  observe_targets?: boolean;
 };
 
