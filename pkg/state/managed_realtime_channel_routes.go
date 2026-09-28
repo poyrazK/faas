@@ -86,11 +86,22 @@ type ManagedRealtimeChannelPublishTargetStore interface {
 	ListManagedRealtimeChannelPublishTargets(context.Context, string, string) (ManagedRealtimeChannelPublishTargetView, error)
 }
 
+// ManagedRealtimeChannelRouteSnapshotCoordinator coordinates route snapshot
+// reconciliation across apid instances and identifies active nodes that need
+// a snapshot for the current generation.
+type ManagedRealtimeChannelRouteSnapshotCoordinator interface {
+	TryAcquireManagedRealtimeChannelRouteReconcileLock(context.Context) (ManagedRealtimeChannelRouteLock, bool, error)
+	ListManagedRealtimeChannelRouteNodesNeedingSnapshot(context.Context) ([]string, error)
+	ManagedRealtimeChannelRouteNodeSnapshotCurrent(context.Context, string) (bool, error)
+}
+
 var (
-	_ ManagedRealtimeChannelRouteStore         = (*PgStore)(nil)
-	_ ManagedRealtimeChannelRouteStore         = (*MemStore)(nil)
-	_ ManagedRealtimeChannelPublishTargetStore = (*PgStore)(nil)
-	_ ManagedRealtimeChannelPublishTargetStore = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteStore               = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteStore               = (*MemStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore       = (*PgStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore       = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotCoordinator = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotCoordinator = (*MemStore)(nil)
 )
 
 type managedRealtimeChannelRouteOverflowState struct {
@@ -144,6 +155,20 @@ func (s *PgStore) AcquireManagedRealtimeChannelRouteLock(ctx context.Context, no
 	return managedRealtimeChannelRouteLockFunc(func(ctx context.Context) { release(ctx) }), nil
 }
 
+func (s *PgStore) TryAcquireManagedRealtimeChannelRouteReconcileLock(ctx context.Context) (ManagedRealtimeChannelRouteLock, bool, error) {
+	release, acquired, err := s.tryAcquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:      "managed realtime channel route reconciliation",
+		tryLock:   `select pg_try_advisory_lock(hashtextextended($1, 0))`,
+		unlock:    `select pg_advisory_unlock(hashtextextended($1, 0))`,
+		keyArg:    "managed-realtime-channel-route-reconcile",
+		retryWait: 50 * time.Millisecond,
+	})
+	if err != nil || !acquired {
+		return nil, acquired, err
+	}
+	return managedRealtimeChannelRouteLockFunc(func(ctx context.Context) { release(ctx) }), true, nil
+}
+
 func (s *PgStore) AddManagedRealtimeChannelRoutes(ctx context.Context, routes []ManagedRealtimeChannelRoute) error {
 	unique, err := uniqueManagedRealtimeChannelRoutes(routes)
 	if err != nil || len(unique) == 0 {
@@ -178,6 +203,48 @@ func (s *PgStore) CurrentManagedRealtimeChannelRouteGeneration(ctx context.Conte
 		return 0, fmt.Errorf("state: read realtime channel route generation: %w", err)
 	}
 	return generation, nil
+}
+
+func (s *PgStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		select nodes.id::text
+		  from compute_nodes nodes
+	 cross join managed_realtime_channel_route_generation generation
+	   left join managed_realtime_channel_route_node_state node_state
+	     on node_state.node_id = nodes.id
+		 where nodes.active = true
+		   and coalesce(node_state.snapshot_generation, -1) < generation.generation
+	 order by nodes.name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list realtime channel route nodes needing snapshots: %w", err)
+	}
+	defer rows.Close()
+	nodeIDs := make([]string, 0)
+	for rows.Next() {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
+			return nil, fmt.Errorf("state: scan realtime channel route node needing snapshot: %w", err)
+		}
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate realtime channel route nodes needing snapshots: %w", err)
+	}
+	return nodeIDs, nil
+}
+
+func (s *PgStore) ManagedRealtimeChannelRouteNodeSnapshotCurrent(ctx context.Context, nodeID string) (bool, error) {
+	var current bool
+	if err := s.pool.QueryRow(ctx, `
+		select coalesce(node_state.snapshot_generation, -1) >= generation.generation
+		  from managed_realtime_channel_route_generation generation
+		  left join managed_realtime_channel_route_node_state node_state on node_state.node_id = $1
+		 where generation.singleton = true
+	`, nodeID).Scan(&current); err != nil {
+		return false, fmt.Errorf("state: check realtime channel route node snapshot: %w", err)
+	}
+	return current, nil
 }
 
 func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
@@ -875,6 +942,29 @@ func (m *MemStore) AcquireManagedRealtimeChannelRouteLock(ctx context.Context, n
 	}
 }
 
+func (m *MemStore) TryAcquireManagedRealtimeChannelRouteReconcileLock(ctx context.Context) (ManagedRealtimeChannelRouteLock, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	const reconcileLockKey = "managed-realtime-channel-route-reconcile"
+	m.mu.Lock()
+	if m.realtimeChannelRouteLocks == nil {
+		m.realtimeChannelRouteLocks = make(map[string]chan struct{})
+	}
+	lock := m.realtimeChannelRouteLocks[reconcileLockKey]
+	if lock == nil {
+		lock = make(chan struct{}, 1)
+		m.realtimeChannelRouteLocks[reconcileLockKey] = lock
+	}
+	m.mu.Unlock()
+	select {
+	case lock <- struct{}{}:
+		return managedRealtimeChannelRouteLockFunc(func(context.Context) { <-lock }), true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
 func (m *MemStore) AddManagedRealtimeChannelRoutes(_ context.Context, routes []ManagedRealtimeChannelRoute) error {
 	unique, err := uniqueManagedRealtimeChannelRoutes(routes)
 	if err != nil {
@@ -897,6 +987,34 @@ func (m *MemStore) CurrentManagedRealtimeChannelRouteGeneration(_ context.Contex
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.realtimeChannelRouteGeneration, nil
+}
+
+func (m *MemStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nodes := make([]ComputeNode, 0)
+	for _, node := range m.computeNodes {
+		if !node.Active {
+			continue
+		}
+		snapshotGeneration, ok := m.realtimeChannelRouteSnapshots[node.ID]
+		if !ok || snapshotGeneration < m.realtimeChannelRouteGeneration {
+			nodes = append(nodes, node)
+		}
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	nodeIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		nodeIDs = append(nodeIDs, node.ID)
+	}
+	return nodeIDs, nil
+}
+
+func (m *MemStore) ManagedRealtimeChannelRouteNodeSnapshotCurrent(_ context.Context, nodeID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snapshotGeneration, ok := m.realtimeChannelRouteSnapshots[nodeID]
+	return ok && snapshotGeneration >= m.realtimeChannelRouteGeneration, nil
 }
 
 func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
