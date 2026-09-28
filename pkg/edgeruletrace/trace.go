@@ -25,10 +25,12 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Retry-rule traces report effective attempts, backoff, request-budget floor, aggregate replay budget, and the deterministic method/idempotency-key guard; they do not predict a replay because the operator gate, transport failure, body replayability, remaining budget, healthy sibling, and live aggregate budget are runtime state. Ingress/auth policy, target-app rules after routing, circuit-breaker state, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate, limit, and async-route eligibility; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Retry-rule traces report effective attempts, backoff, request-budget floor, aggregate replay budget, and the deterministic method/idempotency-key guard; they do not predict a replay because the operator gate, transport failure, body replayability, remaining budget, healthy sibling, and live aggregate budget are runtime state. Ingress/auth policy, target-app rules after routing, circuit-breaker state, async enqueue state, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const circuitBreakerScope = "Circuit-breaker rule traces report effective per-instance thresholds and open/backoff durations, but do not consult the operator feature gate or live per-instance breaker counters/state; target selection and half-open probe outcomes are not predicted."
+
+const asyncRouteScope = "Async-route traces show effective retry/deadline policy, plan and workload gates, and supplied-body size/JSON eligibility without outputting body contents or idempotency-key values. Authentication, rate-limit admission, durable enqueue/version resolution, idempotency conflicts, queue capacity, dispatch, and callbacks are runtime-only; a candidate does not imply HTTP 202 or duplicate handling."
 
 const redactedHeaderValue = "[REDACTED]"
 
@@ -103,6 +105,20 @@ type Input struct {
 	ThrottlePlanLimitsLoaded bool
 	ThrottlePlanMaxRPS       int
 	ThrottlePlanMaxBurst     int
+	// AsyncPlanLimitsLoaded distinguishes a known plan gate and async caps
+	// from a caller that could not resolve the account's current plan.
+	AsyncPlanLimitsLoaded   bool
+	AsyncPlan               api.Plan
+	AsyncInvokeAllowed      bool
+	AsyncMaxPayloadBytes    int
+	AsyncMaxQueueAttempts   int
+	AsyncMaxDeadlineSeconds int
+	// AsyncWorkloadContextLoaded marks the app workload mode needed to know
+	// whether it accepts HTTP-style request invocations.
+	AsyncWorkloadContextLoaded     bool
+	AsyncRequestInvocationsEnabled bool
+	AsyncAppRetryPolicyLoaded      bool
+	AsyncAppRetryPolicy            *api.RetryPolicyDTO
 }
 
 type Result struct {
@@ -164,6 +180,7 @@ type SimulationStep struct {
 	ThrottlePolicy       *ThrottlePolicyPreview       `json:"throttle_policy,omitempty"`
 	RetryPolicy          *RetryPolicyPreview          `json:"retry_policy,omitempty"`
 	CircuitBreakerPolicy *CircuitBreakerPolicyPreview `json:"circuit_breaker_policy,omitempty"`
+	AsyncPolicy          *AsyncPolicyPreview          `json:"async_policy,omitempty"`
 	Reason               string                       `json:"reason"`
 }
 
@@ -202,6 +219,7 @@ type ActionPreview struct {
 	ThrottlePolicy       *ThrottlePolicyPreview       `json:"throttle_policy,omitempty"`
 	RetryPolicy          *RetryPolicyPreview          `json:"retry_policy,omitempty"`
 	CircuitBreakerPolicy *CircuitBreakerPolicyPreview `json:"circuit_breaker_policy,omitempty"`
+	AsyncPolicy          *AsyncPolicyPreview          `json:"async_policy,omitempty"`
 }
 
 // CachePolicyPreview contains the deterministic request-side cache policy
@@ -277,6 +295,34 @@ type CircuitBreakerPolicyPreview struct {
 	WindowSeconds    int     `json:"window_seconds"`
 	OpenSeconds      int     `json:"open_seconds"`
 	MaxOpenSeconds   int     `json:"max_open_seconds"`
+}
+
+// AsyncPolicyPreview describes the configured durable-route policy and the
+// request facts available to the simulator. A candidate still requires live
+// auth/rate-limit gates and a successful durable enqueue before it can return
+// 202.
+type AsyncPolicyPreview struct {
+	OnSuccessConfigured     bool    `json:"on_success_configured"`
+	OnFailureConfigured     bool    `json:"on_failure_configured"`
+	PlanGate                string  `json:"plan_gate"`
+	WorkloadGate            string  `json:"workload_gate"`
+	PayloadStatus           string  `json:"payload_status"`
+	MaxPayloadBytes         int     `json:"max_payload_bytes,omitempty"`
+	ConfiguredMaxAgeSeconds int     `json:"configured_max_age_seconds"`
+	EffectiveMaxAgeSeconds  int     `json:"effective_max_age_seconds,omitempty"`
+	PlanMaxAgeSeconds       int     `json:"plan_max_age_seconds,omitempty"`
+	MaxAgeSource            string  `json:"max_age_source"`
+	RetryPolicySource       string  `json:"retry_policy_source"`
+	ConfiguredMaxAttempts   int     `json:"configured_max_attempts,omitempty"`
+	EffectiveMaxAttempts    int     `json:"effective_max_attempts,omitempty"`
+	MaxReplays              int     `json:"max_replays,omitempty"`
+	PlanMaxAttempts         int     `json:"plan_max_attempts,omitempty"`
+	MaxAttemptsStatus       string  `json:"max_attempts_status"`
+	RetryBaseSeconds        float64 `json:"retry_base_seconds,omitempty"`
+	RetryMaxSeconds         float64 `json:"retry_max_seconds,omitempty"`
+	RetryJitterSeconds      float64 `json:"retry_jitter_seconds,omitempty"`
+	IdempotencyKeyPresent   bool    `json:"idempotency_key_present"`
+	RequestGate             string  `json:"request_gate"`
 }
 
 // NormalizeInput validates user-supplied request context and canonicalizes
@@ -496,7 +542,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
 		ClientIP: input.ClientIP, Country: input.Country,
 		BodyProvided: input.BodyProvided, BodyBytes: len(input.Body),
-		Headers: headerSnapshot(input.Headers), Scope: Scope + " " + circuitBreakerScope,
+		Headers: headerSnapshot(input.Headers), Scope: Scope + " " + circuitBreakerScope + " " + asyncRouteScope,
 		Rules: make([]RuleRow, 0, len(sorted)),
 	}
 	firstByKind := make(map[string]int)
@@ -584,7 +630,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "cache", "budget", "circuit_breaker", "retry"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -723,6 +769,24 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				circuitBreakerPolicy := *preview.CircuitBreakerPolicy
 				step.CircuitBreakerPolicy = &circuitBreakerPolicy
 			}
+			if preview.AsyncPolicy != nil {
+				asyncPolicy := *preview.AsyncPolicy
+				step.AsyncPolicy = &asyncPolicy
+			}
+		}
+		if phase == "async" && step.AsyncPolicy != nil && outcome != "unavailable" {
+			step.PathAfter = requestPath
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath = requestPath
+			simulation.RequestHeaders = headerSnapshot(workingHeaders)
+			simulation.StoppedAt = phase
+			simulation.Status, simulation.Outcome = "incomplete", "needs_async_runtime_context"
+			simulation.Reason = reason
+			switch step.AsyncPolicy.RequestGate {
+			case "plan_gated", "workload_unsupported", "payload_too_large", "invalid_json":
+				simulation.Reason = "if earlier authentication and live rate-limit gates let the request reach async routing, " + reason + "; those preceding runtime gates are not simulated"
+			}
+			return simulation
 		}
 
 		switch phase {
@@ -899,6 +963,11 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			simulation.Steps = append(simulation.Steps, step)
 			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 			return simulation
+		case "async":
+			// Invalid legacy actions are omitted by gateway compilation, so
+			// they do not intercept the request.
+			step.PathAfter = requestPath
+			simulation.Steps = append(simulation.Steps, step)
 		case "validate":
 			switch outcome {
 			case "validated", "validation_failed_observe", "validation_failed_warn":
@@ -1212,6 +1281,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewLimitRule(rule, input)
 	case "cache":
 		return previewCacheRule(rule, input)
+	case "async":
+		return previewAsyncRule(rule, input)
 	case "throttle":
 		return previewThrottleRule(rule, input)
 	case "budget":
@@ -1222,6 +1293,175 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewCircuitBreakerRule(rule)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
+	}
+}
+
+func previewAsyncRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleAsyncAction](rule.Action, "async")
+	if !ok || action.Validate() != nil {
+		return "unavailable", "async action is missing or invalid; gateway compilation would drop it", nil
+	}
+	policy := &AsyncPolicyPreview{
+		OnSuccessConfigured:     action.OnSuccess != "",
+		OnFailureConfigured:     action.OnFailure != "",
+		ConfiguredMaxAgeSeconds: action.MaxAgeSeconds,
+		PlanGate:                "unavailable",
+		WorkloadGate:            "unavailable",
+		PayloadStatus:           "body_context_unavailable",
+		MaxAgeSource:            "plan_cap_unavailable",
+		RetryPolicySource:       "unavailable",
+		MaxAttemptsStatus:       "unavailable",
+		IdempotencyKeyPresent:   input.Headers.Get("Idempotency-Key") != "",
+	}
+	if input.AsyncPlanLimitsLoaded {
+		policy.MaxPayloadBytes = input.AsyncMaxPayloadBytes
+		policy.PlanMaxAttempts = input.AsyncMaxQueueAttempts
+		policy.PlanMaxAgeSeconds = input.AsyncMaxDeadlineSeconds
+		if input.AsyncInvokeAllowed {
+			policy.PlanGate = "allowed"
+		} else {
+			policy.PlanGate = "blocked"
+		}
+		resolveAsyncAge(policy, action.MaxAgeSeconds)
+	}
+	if input.AsyncWorkloadContextLoaded {
+		if input.AsyncRequestInvocationsEnabled {
+			policy.WorkloadGate = "allowed"
+		} else {
+			policy.WorkloadGate = "blocked"
+		}
+	}
+	if input.BodyProvided {
+		switch {
+		case input.AsyncPlanLimitsLoaded && len(input.Body) > input.AsyncMaxPayloadBytes:
+			policy.PayloadStatus = "payload_too_large"
+		case len(input.Body) == 0:
+			policy.PayloadStatus = "empty_defaults_to_object"
+		case json.Valid(input.Body):
+			policy.PayloadStatus = "valid_json"
+		default:
+			policy.PayloadStatus = "invalid_json"
+		}
+	}
+	resolveAsyncRetry(policy, action.RetryPolicy, input)
+	policy.RequestGate = asyncRequestGate(policy, input)
+	outcome, reason := asyncPolicyOutcome(policy)
+	return outcome, reason, &ActionPreview{Type: "async", AsyncPolicy: policy}
+}
+
+func resolveAsyncAge(policy *AsyncPolicyPreview, requested int) {
+	if policy.PlanMaxAgeSeconds <= 0 {
+		policy.MaxAgeSource = "no_deadline"
+		return
+	}
+	switch {
+	case requested <= 0:
+		policy.EffectiveMaxAgeSeconds = policy.PlanMaxAgeSeconds
+		policy.MaxAgeSource = "plan_default"
+	case requested > policy.PlanMaxAgeSeconds:
+		policy.EffectiveMaxAgeSeconds = policy.PlanMaxAgeSeconds
+		policy.MaxAgeSource = "plan_clamp"
+	default:
+		policy.EffectiveMaxAgeSeconds = requested
+		policy.MaxAgeSource = "rule"
+	}
+}
+
+func resolveAsyncRetry(preview *AsyncPolicyPreview, rulePolicy *api.RetryPolicyDTO, input Input) {
+	policy := rulePolicy
+	switch {
+	case rulePolicy != nil:
+		preview.RetryPolicySource = "rule"
+	case input.AsyncAppRetryPolicyLoaded && input.AsyncAppRetryPolicy != nil:
+		policy = input.AsyncAppRetryPolicy
+		preview.RetryPolicySource = "app"
+	case input.AsyncAppRetryPolicyLoaded:
+		preview.RetryPolicySource = "plan_default"
+	default:
+		preview.RetryPolicySource = "unavailable"
+	}
+	if policy != nil {
+		preview.ConfiguredMaxAttempts = policy.MaxAttempts
+		preview.RetryBaseSeconds = policy.BaseSeconds
+		preview.RetryMaxSeconds = policy.MaxSeconds
+		preview.RetryJitterSeconds = policy.JitterSeconds
+	}
+	if preview.RetryPolicySource == "unavailable" || !input.AsyncPlanLimitsLoaded {
+		preview.MaxAttemptsStatus = "plan_or_app_context_unavailable"
+		return
+	}
+	preview.EffectiveMaxAttempts = api.EffectiveRetryMaxAttempts(preview.ConfiguredMaxAttempts, input.AsyncMaxQueueAttempts)
+	preview.MaxReplays = preview.EffectiveMaxAttempts - 1
+	preview.MaxAttemptsStatus = "effective"
+}
+
+func asyncRequestGate(policy *AsyncPolicyPreview, input Input) string {
+	switch {
+	case !input.AsyncPlanLimitsLoaded:
+		return "needs_plan_context"
+	case !input.AsyncInvokeAllowed:
+		return "plan_gated"
+	case !input.AsyncWorkloadContextLoaded:
+		return "needs_workload_context"
+	case !input.AsyncRequestInvocationsEnabled:
+		return "workload_unsupported"
+	case !input.BodyProvided:
+		return "needs_request_body_context"
+	case policy.PayloadStatus == "payload_too_large":
+		return "payload_too_large"
+	case policy.PayloadStatus == "invalid_json":
+		return "invalid_json"
+	default:
+		return "enqueue_candidate"
+	}
+}
+
+func asyncPolicyOutcome(policy *AsyncPolicyPreview) (string, string) {
+	reason := fmt.Sprintf("async policy: retry source=%s with %s attempts, deadline source=%s, payload status=%s, and Idempotency-Key present=%t; %s", policy.RetryPolicySource, asyncAttemptsText(policy), policy.MaxAgeSource, policy.PayloadStatus, policy.IdempotencyKeyPresent, asyncGateReason(policy.RequestGate))
+	if policy.OnSuccessConfigured || policy.OnFailureConfigured {
+		reason += fmt.Sprintf("; terminal callback configured: success=%t failure=%t", policy.OnSuccessConfigured, policy.OnFailureConfigured)
+	}
+	switch policy.RequestGate {
+	case "plan_gated":
+		return "async_blocked_plan", reason
+	case "workload_unsupported":
+		return "async_blocked_workload", reason
+	case "payload_too_large":
+		return "async_payload_too_large", reason
+	case "invalid_json":
+		return "async_invalid_json", reason
+	case "enqueue_candidate":
+		return "async_enqueue_candidate", reason + "; durable enqueue and its HTTP response are not predicted"
+	default:
+		return "needs_async_context", reason
+	}
+}
+
+func asyncAttemptsText(policy *AsyncPolicyPreview) string {
+	if policy.MaxAttemptsStatus != "effective" {
+		return "unresolved"
+	}
+	return strconv.Itoa(policy.EffectiveMaxAttempts)
+}
+
+func asyncGateReason(gate string) string {
+	switch gate {
+	case "plan_gated":
+		return "the account plan disables async invocations"
+	case "workload_unsupported":
+		return "this worker/job workload has no request invocation listener"
+	case "payload_too_large":
+		return "the supplied body exceeds the plan's async payload limit"
+	case "invalid_json":
+		return "async routes require a valid JSON request body"
+	case "enqueue_candidate":
+		return "request and known policy gates allow evaluation to reach the durable enqueue"
+	case "needs_plan_context":
+		return "the account plan limits were not loaded"
+	case "needs_workload_context":
+		return "the app workload mode was not loaded"
+	default:
+		return "request-body context was not supplied"
 	}
 }
 

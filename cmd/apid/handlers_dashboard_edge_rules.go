@@ -91,6 +91,10 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext.RequestBudgetMS = effectiveLimits.RequestBudgetMS
 			traceContext.RequestBudgetMaxMS = effectiveLimits.RequestBudgetMaxMS
 			traceContext.RequestTimeoutS = app.Manifest.RequestTimeoutS
+			traceContext.AsyncWorkloadContextLoaded = true
+			traceContext.AsyncRequestInvocationsEnabled = app.AcceptsRequestInvocations()
+			traceContext.AsyncAppRetryPolicyLoaded = true
+			traceContext.AsyncAppRetryPolicy = retryPolicyDTOFromJSON(app.RetryPolicyJSON)
 			traceContext.AppThrottleContextLoaded = effectiveLimits.AppRequestRateRPS > 0 && effectiveLimits.AppRequestBurst > 0
 			traceContext.AppRequestRateRPS = effectiveLimits.AppRequestRateRPS
 			traceContext.AppRequestRateBurst = effectiveLimits.AppRequestBurst
@@ -99,6 +103,12 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 				traceContext.ThrottlePlanLimitsLoaded = planLimits.RateLimitRPS > 0 && planLimits.RateLimitBurst > 0
 				traceContext.ThrottlePlanMaxRPS = planLimits.RateLimitRPS
 				traceContext.ThrottlePlanMaxBurst = planLimits.RateLimitBurst
+				traceContext.AsyncPlanLimitsLoaded = true
+				traceContext.AsyncPlan = acct.Plan
+				traceContext.AsyncInvokeAllowed = planLimits.AsyncInvokeAllowed
+				traceContext.AsyncMaxPayloadBytes = planLimits.MaxSourceBytesPerInvocation
+				traceContext.AsyncMaxQueueAttempts = planLimits.MaxQueueAttempts
+				traceContext.AsyncMaxDeadlineSeconds = planLimits.MaxAsyncInvocationDeadlineSeconds
 			}
 			traceContext.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 			traceContext.DeclaredRoutes = make([]api.DeclaredRoute, 0, len(app.DeclaredRoutes))
