@@ -40,10 +40,17 @@ func (s *PgStore) CreateDeployToken(ctx context.Context, accountID, appID string
 	}
 	row := s.pool.QueryRow(ctx,
 		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6)
+		 select $1::uuid, a.id, $3, $4, $5, $6
+		   from apps a
+		  where a.id = $2::uuid and a.account_id = $1::uuid
 		 returning `+deployTokenSelectCols,
 		accountID, appID, hash, label, scopes, expiresAt.UTC())
 	t, err := scanDeployToken(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The app does not exist or belongs to another account; the
+		// token would authenticate as one account bound to another's app.
+		return DeployToken{}, ErrNotFound
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

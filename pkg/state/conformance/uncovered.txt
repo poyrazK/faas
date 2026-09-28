@@ -68,7 +68,6 @@ CompleteGdprRequest
 ComputeNodeByID
 ComputeNodeByName
 ConsumeCliAuthCode
-ConsumeMFADisableRequest
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
 ConsumerKeyByAppAndPrefix
@@ -254,7 +253,6 @@ InsertWorkflowEvent
 InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
-IssueMFADisableRequest
 JobConcurrentByAccount
 JobCountByAccount
 JobGetByID

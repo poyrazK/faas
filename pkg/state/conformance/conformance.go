@@ -98,6 +98,8 @@ func Run(t *testing.T, open Open) {
 		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},
 		{"session_revocation_is_account_scoped", testSessionRevocationIsAccountScoped},
 		{"delete_api_key_is_account_scoped", testDeleteAPIKeyIsAccountScoped},
+		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
+		{"deploy_token_authentication", testDeployTokenAuthentication},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

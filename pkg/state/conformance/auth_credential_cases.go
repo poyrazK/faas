@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func randomTokenHash(t *testing.T) []byte {
@@ -142,5 +143,58 @@ func testDeleteAPIKeyIsAccountScoped(t *testing.T, fx *Fixture) {
 	}
 	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, hash); err == nil {
 		t.Fatal("AuthenticateKey succeeded after the key was deleted")
+	}
+}
+
+// testMFADisableRequestSingleUse pins the emailed "disable MFA" link: it
+// works once, and issuing a newer request invalidates the older link.
+func testMFADisableRequestSingleUse(t *testing.T, fx *Fixture) {
+	first, second := randomTokenHash(t), randomTokenHash(t)
+	if err := fx.Store.IssueMFADisableRequest(fx.Ctx, first, fx.Account.ID, time.Now()); err != nil {
+		t.Fatalf("IssueMFADisableRequest: %v", err)
+	}
+	if err := fx.Store.IssueMFADisableRequest(fx.Ctx, second, fx.Account.ID, time.Now()); err != nil {
+		t.Fatalf("IssueMFADisableRequest(second): %v", err)
+	}
+	if got, err := fx.Store.ConsumeMFADisableRequest(fx.Ctx, first); err == nil || got != "" {
+		t.Fatalf("ConsumeMFADisableRequest(superseded) = %q, %v; want an error", got, err)
+	}
+	if got, err := fx.Store.ConsumeMFADisableRequest(fx.Ctx, second); err != nil || got != fx.Account.ID {
+		t.Fatalf("ConsumeMFADisableRequest = %q, %v; want the account", got, err)
+	}
+	if got, err := fx.Store.ConsumeMFADisableRequest(fx.Ctx, second); err == nil || got != "" {
+		t.Fatalf("second ConsumeMFADisableRequest = %q, %v; want an error", got, err)
+	}
+}
+
+// testDeployTokenAuthentication pins the per-app deploy token: it
+// authenticates as a deploy:write principal bound to its app, and stops
+// authenticating once revoked.
+func testDeployTokenAuthentication(t *testing.T, fx *Fixture) {
+	tokens, ok := fx.Store.(state.DeployTokenStore)
+	if !ok {
+		t.Skip("store has no deploy tokens")
+	}
+	hash := randomTokenHash(t)
+	token, err := tokens.CreateDeployToken(fx.Ctx, fx.Account.ID, fx.App.ID, hash, "ci", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateDeployToken: %v", err)
+	}
+	acct, key, err := tokens.AuthenticateDeployToken(fx.Ctx, hash)
+	if err != nil || acct.ID != fx.Account.ID || len(key.Scopes) != 1 || key.Scopes[0] != api.ScopeDeployWrite {
+		t.Fatalf("AuthenticateDeployToken = %s, %+v, %v; want the account with deploy:write", acct.ID, key, err)
+	}
+	if _, err := tokens.RevokeDeployToken(fx.Ctx, fx.Account.ID, fx.App.ID, token.ID); err != nil {
+		t.Fatalf("RevokeDeployToken: %v", err)
+	}
+	if _, _, err := tokens.AuthenticateDeployToken(fx.Ctx, hash); err == nil {
+		t.Fatal("AuthenticateDeployToken succeeded after revocation")
+	}
+	other, err := fx.Store.CreateAccount(fx.Ctx, "deploy-token-other-"+uuid.NewString()[:8]+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tokens.CreateDeployToken(fx.Ctx, other.ID, fx.App.ID, randomTokenHash(t), "cross", nil, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("CreateDeployToken for another account's app succeeded")
 	}
 }
