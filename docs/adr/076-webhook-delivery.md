@@ -74,6 +74,14 @@ both the CLI (`--retry-policy default|aggressive|none`) and the
 apid handler (`api.AllowedAppWebhookRetryPolicies`). A typo
 surfaces as 400 `app_webhook_invalid` BEFORE the row is created.
 
+On a retryable `429` or `503`, a valid receiver `Retry-After` value
+(delay in seconds or HTTP date) can postpone the next attempt beyond
+the preset backoff. The later deadline wins. Receiver delays are capped
+at 24 hours; invalid or past values fall back to the preset schedule.
+This does not add attempts or override `retry_policy=none`. The chosen
+next attempt time is recorded in delivery attempt history. Raw response
+headers are not retained or logged.
+
 ### 3.4 Plan-tier gate: `WebhookPerApp` + `WebhookPerAccount`
 
 Plan gating follows the cron / alert-rule precedent: a closed

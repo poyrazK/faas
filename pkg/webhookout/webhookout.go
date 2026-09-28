@@ -266,10 +266,14 @@ type Event struct {
 // "why did the customer's endpoint reject this?" debug dump. The
 // prefix is intentionally bounded, but may still contain reflected
 // customer secrets. Callers must not log it or copy it into errors.
+// RetryAfter is the receiver's bounded Retry-After value on a 429 or 503.
+// It is untrusted input for the durable webhook scheduler to parse; callers
+// must not log or persist the raw value.
 type Result struct {
 	StatusCode int
 	Attempts   int
 	BodyPrefix []byte
+	RetryAfter string
 	Err        error
 }
 
@@ -511,6 +515,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		StatusCode: lastResult.StatusCode,
 		Attempts:   lastResult.Attempts,
 		BodyPrefix: lastResult.BodyPrefix,
+		RetryAfter: lastResult.RetryAfter,
 		Err:        fmt.Errorf("%w: %w", ErrAttemptsExhausted, lastResult.Err),
 	}
 }
@@ -649,6 +654,15 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{StatusCode: 0, Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// The durable scheduler only needs this field for receiver backpressure.
+	// Keep a strict size bound before carrying untrusted header data across
+	// the package boundary; normal HTTP dates are under 40 bytes.
+	retryAfter := ""
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		if value := resp.Header.Get("Retry-After"); len(value) <= 128 {
+			retryAfter = value
+		}
+	}
 
 	// Read up to MaxBodyBytes+1 — the extra byte is the "body too
 	// large" probe. io.LimitReader ensures we don't block on the
@@ -679,6 +693,7 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: read response: %w", readErr),
 		}
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
@@ -687,12 +702,14 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	case resp.StatusCode >= 500:
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	default:

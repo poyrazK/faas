@@ -63,6 +63,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,6 +84,9 @@ const (
 	DefaultCap         = 32
 	DefaultMaxInFlight = 64
 	DefaultPerAttempt  = 10 * time.Second
+	// Receiver-requested delays are honored up to one day. This prevents
+	// an endpoint from leaving a retry pending indefinitely.
+	maxReceiverRetryAfter = 24 * time.Hour
 	// DefaultDrainTimeout is the budget for in-flight goroutines to
 	// finish on ctx.Done(). Matches the cmd/schedd/main.go 10s
 	// shutdown pattern; the HTTP graceful stop timeout is 5s and the
@@ -174,6 +179,46 @@ func ComputeBackoff(schedule []time.Duration, attempt int) (time.Duration, error
 	// Map u in [0, 2^32) into [-0.25, +0.25].
 	offset := (float64(u)/float64(1<<32) - 0.5) * 0.5
 	return time.Duration(float64(base) * (1.0 + offset)), nil
+}
+
+// receiverRetryAfterAt parses the two HTTP Retry-After forms into a retry
+// deadline. Invalid or past values leave the policy backoff in control. A
+// valid value beyond one day is capped so a receiver cannot indefinitely
+// stall a durable delivery. The raw header is never stored or logged.
+func receiverRetryAfterAt(header string, now time.Time) (time.Time, bool) {
+	if len(header) > 128 {
+		return time.Time{}, false
+	}
+	value := strings.TrimSpace(header)
+	if value == "" {
+		return time.Time{}, false
+	}
+	maxAt := now.Add(maxReceiverRetryAfter)
+	allDigits := true
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			return time.Time{}, false
+		}
+		if err != nil || seconds > uint64(maxReceiverRetryAfter/time.Second) {
+			return maxAt, true
+		}
+		return now.Add(time.Duration(seconds) * time.Second), true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil || !at.After(now) {
+		return time.Time{}, false
+	}
+	if at.After(maxAt) {
+		return maxAt, true
+	}
+	return at, true
 }
 
 // scheduleFor returns the backoff schedule for a retry policy. The
@@ -582,11 +627,20 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		}
 		return
 	}
-	// Mark 'failed' with the next attempt scheduled at now + delay.
+	// A receiver may ask us to slow down on 429/503. Keep the policy
+	// backoff as the minimum, so a short or invalid header cannot make
+	// retries more aggressive. The parsed deadline is capped at 24h.
+	nextAttemptAt := now.Add(delay)
+	if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable {
+		if receiverAt, ok := receiverRetryAfterAt(res.RetryAfter, now); ok && receiverAt.After(nextAttemptAt) {
+			nextAttemptAt = receiverAt
+		}
+	}
+	// Mark 'failed' with the chosen next attempt deadline.
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
 	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), now.Add(delay), meta); d.markRecorded(row, err) {
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), nextAttemptAt, meta); d.markRecorded(row, err) {
 		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
 	}
 }

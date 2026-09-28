@@ -153,6 +153,104 @@ func TestComputeBackoff_Exhausted(t *testing.T) {
 	}
 }
 
+func TestReceiverRetryAfterAt(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		header string
+		want   time.Time
+		valid  bool
+	}{
+		{"seconds", "120", now.Add(2 * time.Minute), true},
+		{"http date", now.Add(90 * time.Minute).Format(http.TimeFormat), now.Add(90 * time.Minute), true},
+		{"long seconds capped", "999999999999999999999", now.Add(maxReceiverRetryAfter), true},
+		{"future date capped", now.Add(48 * time.Hour).Format(http.TimeFormat), now.Add(maxReceiverRetryAfter), true},
+		{"past date", now.Add(-time.Minute).Format(http.TimeFormat), time.Time{}, false},
+		{"malformed", "tomorrow", time.Time{}, false},
+		{"negative", "-10", time.Time{}, false},
+		{"fractional", "1.5", time.Time{}, false},
+		{"oversized", string(make([]byte, 129)), time.Time{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, valid := receiverRetryAfterAt(tc.header, now)
+			if valid != tc.valid || !got.Equal(tc.want) {
+				t.Fatalf("receiverRetryAfterAt(%q) = %v, %v; want %v, %v", tc.header, got, valid, tc.want, tc.valid)
+			}
+		})
+	}
+}
+
+func TestDispatcher_ReceiverRetryAfterSchedulesAttemptHistory(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name       string
+		status     int
+		header     string
+		wantDelay  time.Duration
+		useBackoff bool
+	}{
+		{"429 seconds", http.StatusTooManyRequests, "120", 2 * time.Minute, false},
+		{"503 date", http.StatusServiceUnavailable, now.Add(90 * time.Minute).Format(http.TimeFormat), 90 * time.Minute, false},
+		{"429 short header", http.StatusTooManyRequests, "1", 0, true},
+		{"503 invalid header", http.StatusServiceUnavailable, "later", 0, true},
+		{"500 ignores header", http.StatusInternalServerError, "120", 0, true},
+		{"429 long header capped", http.StatusTooManyRequests, "999999999999999999999", maxReceiverRetryAfter, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := state.NewMemStore()
+			loader, sealed := identityForSealedBlob(t)
+			appID, acctID := "app-retry-after", "acct-retry-after"
+			if _, err := m.CreateApp(context.Background(), state.App{ID: appID, AccountID: acctID, Slug: "retry-after-app", Status: "ready"}); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", tc.header)
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(srv.Close)
+			hook := newTestAppWebhook(t, m, appID, acctID, srv.URL, state.AppWebhookRetryDefault)
+			if _, err := m.UpdateAppWebhook(context.Background(), hook.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
+				t.Fatal(err)
+			}
+			delivery, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+				WebhookID: hook.ID, AppID: appID, AccountID: acctID,
+				Event: "app.cron.fired", Payload: json.RawMessage(`{}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := m.ClaimDueAppWebhookDeliveries(context.Background(), 1, time.Now().Add(time.Second))
+			if err != nil || len(claimed) != 1 {
+				t.Fatalf("claim = %+v, %v", claimed, err)
+			}
+			disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			disp.IdentityLoader = loader
+			disp.HTTPClient = srv.Client()
+			disp.Now = func() time.Time { return now }
+			disp.deliverOne(context.Background(), claimed[0])
+			got, err := m.AppWebhookDeliveryByID(context.Background(), delivery.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != state.AppWebhookDeliveryPending || got.Attempt != 1 || got.LastResponseCode != tc.status {
+				t.Fatalf("delivery = %+v, want pending after one %d response", got, tc.status)
+			}
+			delay := got.NextAttemptAt.Sub(now)
+			if tc.useBackoff {
+				if delay < 22*time.Second || delay > 38*time.Second {
+					t.Fatalf("next attempt delay = %v, want policy backoff near 30s", delay)
+				}
+			} else if delay != tc.wantDelay {
+				t.Fatalf("next attempt delay = %v, want %v", delay, tc.wantDelay)
+			}
+			attempts, _, err := m.ListAppWebhookDeliveryAttempts(context.Background(), delivery.ID, hook.ID, acctID, 10, "")
+			if err != nil || len(attempts) != 1 || attempts[0].NextAttemptAt == nil || !attempts[0].NextAttemptAt.Equal(got.NextAttemptAt) {
+				t.Fatalf("attempt history = %+v, err = %v; want chosen next attempt time", attempts, err)
+			}
+		})
+	}
+}
+
 // TestScheduleFor pins the retry-policy → schedule mapping.
 func TestScheduleFor(t *testing.T) {
 	d := &Dispatcher{}
