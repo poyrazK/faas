@@ -285,6 +285,7 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	if !ok {
 		return AppWebhook{}, ErrNotFound
 	}
+	urlChanged := p.TargetURL != nil && w.TargetURL != *p.TargetURL
 	if p.TargetURL != nil {
 		for otherID, other := range m.appWebhooks {
 			if otherID == id || other.TargetURL != *p.TargetURL || other.Scope != w.Scope {
@@ -330,6 +331,9 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	}
 	w.UpdatedAt = time.Now()
 	m.appWebhooks[id] = w
+	if urlChanged {
+		delete(m.appWebhookReceiverCooldowns, id)
+	}
 	return w, nil
 }
 
@@ -340,6 +344,7 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	delete(m.appWebhookReceiverCooldowns, id)
 	return nil
 }
 
@@ -406,7 +411,7 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	byAccount := make(map[string][]AppWebhookDelivery)
 	for _, d := range m.appWebhookDeliveries {
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
-			!d.NextAttemptAt.After(now) {
+			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) {
 			byAccount[d.AccountID] = append(byAccount[d.AccountID], d)
 		}
 	}
@@ -527,6 +532,13 @@ func (m *MemStore) completeAppWebhookDelivery(id string, currentAttempt int, cla
 		m.appWebhookDeliveryAttempts = make(map[string][]AppWebhookDeliveryAttempt)
 	}
 	m.appWebhookDeliveryAttempts[id] = append(m.appWebhookDeliveryAttempts[id], a)
+	if len(meta) > 0 && meta[0].ReceiverCooldownUntil != nil &&
+		m.appWebhooks[d.WebhookID].TargetURL == meta[0].ReceiverCooldownTargetURL {
+		until := *meta[0].ReceiverCooldownUntil
+		if until.After(m.appWebhookReceiverCooldowns[d.WebhookID]) {
+			m.appWebhookReceiverCooldowns[d.WebhookID] = until
+		}
+	}
 	return nil
 }
 
@@ -646,6 +658,9 @@ func (m *MemStore) AppWebhookDeliveryHealth(_ context.Context, webhookID, accoun
 		return AppWebhookDeliveryHealth{}, ErrNotFound
 	}
 	health := AppWebhookDeliveryHealth{WebhookID: webhookID}
+	if until := m.appWebhookReceiverCooldowns[webhookID]; until.After(now) {
+		health.ReceiverCooldownUntil = &until
+	}
 	windowStart := now.Add(-24 * time.Hour)
 	for _, d := range m.appWebhookDeliveries {
 		if d.WebhookID != webhookID || d.AccountID != accountID {
@@ -666,7 +681,7 @@ func (m *MemStore) AppWebhookDeliveryHealth(_ context.Context, webhookID, accoun
 				health.RecentSucceededCount++
 			}
 		}
-		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
+		if health.ReceiverCooldownUntil == nil && (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
 			(health.OldestOverdueAt == nil || d.NextAttemptAt.Before(*health.OldestOverdueAt)) {
 			at := d.NextAttemptAt
 			health.OldestOverdueAt = &at
@@ -681,6 +696,7 @@ func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(_ context.Context, now time
 	var oldest *time.Time
 	for _, d := range m.appWebhookDeliveries {
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
+			!m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
 			(oldest == nil || d.NextAttemptAt.Before(*oldest)) {
 			at := d.NextAttemptAt
 			oldest = &at

@@ -511,6 +511,113 @@ func TestPgStore_ClaimDueAppWebhookDeliveries_RotatesBeyondBatchSize(t *testing.
 	}
 }
 
+func TestPgStore_AppWebhookReceiverCooldownClaimAndHealth(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "receiver-cooldown")
+	paused, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 3; i++ {
+		d := pgSampleDelivery(paused.ID, app, acct)
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherDelivery := pgSampleDelivery(other.ID, app, acct)
+	otherDelivery.NextAttemptAt = now.Add(-time.Second)
+	otherDelivery, err = s.RecordAppWebhookDelivery(ctx, otherDelivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := s.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 || claims[0].WebhookID != paused.ID || claims[1].WebhookID != paused.ID {
+		t.Fatalf("first claims = %+v, %v; want two paused-subscription rows", claims, err)
+	}
+	longUntil, shortUntil := now.Add(5*time.Minute), now.Add(time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", longUntil, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &longUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 503, claims[1].Attempt, claims[1].NextAttemptAt,
+		"unavailable", shortUntil, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	staleUntil := now.Add(10 * time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"stale", staleUntil, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &staleUntil, ReceiverCooldownTargetURL: paused.TargetURL}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale cooldown extension = %v, want conflict", err)
+	}
+	health, err := s.AppWebhookDeliveryHealth(ctx, paused.ID, acct, now.Add(2*time.Minute))
+	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||
+		health.PendingCount != 3 || health.OldestOverdueAt != nil {
+		t.Fatalf("paused health = %+v, %v", health, err)
+	}
+	claims, err = s.ClaimDueAppWebhookDeliveries(ctx, 10, now.Add(2*time.Minute))
+	if err != nil || len(claims) != 1 || claims[0].ID != otherDelivery.ID {
+		t.Fatalf("claims during cooldown = %+v, %v; want other subscription only", claims, err)
+	}
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if oldest, err := s.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(2*time.Minute)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
+	}
+	claims, err = s.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil)
+	if err != nil || len(claims) != 3 {
+		t.Fatalf("claims at cooldown expiry = %+v, %v; want all three", claims, err)
+	}
+}
+
+func TestPgStore_AppWebhookReceiverCooldownRetarget(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "receiver-cooldown-retarget")
+	hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second)
+	for i := 0; i < 3; i++ {
+		d := pgSampleDelivery(hook.ID, app, acct)
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claims, err := s.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 {
+		t.Fatalf("claims = %+v, %v", claims, err)
+	}
+	until := now.Add(5 * time.Minute)
+	meta := state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	newURL := "https://example.com/new-receiver-" + uuid.NewString()
+	if _, err := s.UpdateAppWebhook(ctx, hook.ID, state.UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 429, claims[1].Attempt, claims[1].NextAttemptAt,
+		"old receiver", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	health, err := s.AppWebhookDeliveryHealth(ctx, hook.ID, acct, now)
+	if err != nil || health.ReceiverCooldownUntil != nil {
+		t.Fatalf("health after retarget = %+v, %v; want no cooldown", health, err)
+	}
+	claims, err = s.ClaimDueAppWebhookDeliveries(ctx, 10, now)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims for new receiver = %+v, %v; want remaining due row", claims, err)
+	}
+}
+
 func TestPgStore_AppWebhookDelivery_AttemptHistorySurvivesReplay(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app, _ := seedLiveDeploy(t, s, ctx, "attempt-history")

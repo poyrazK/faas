@@ -345,6 +345,7 @@ type MemStore struct {
 	appWebhookDeliveries            map[string]AppWebhookDelivery
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int
+	appWebhookReceiverCooldowns     map[string]time.Time
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
@@ -1068,6 +1069,7 @@ func NewMemStore() *MemStore {
 		appWebhookDeliveries:            map[string]AppWebhookDelivery{},
 		appWebhookDeliveryAttempts:      map[string][]AppWebhookDeliveryAttempt{},
 		appWebhookReplayGenerations:     map[string]int{},
+		appWebhookReceiverCooldowns:     map[string]time.Time{},
 		inboundWebhookEndpoints:         map[string]InboundWebhookEndpoint{},
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
 		queueBindings:                   map[string]QueueBinding{},

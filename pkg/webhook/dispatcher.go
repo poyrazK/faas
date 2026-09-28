@@ -594,6 +594,12 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 
 	now := d.Now()
 	meta := state.AppWebhookAttemptMetadata{StartedAt: startedAt, FinishedAt: now, ResponseCode: res.StatusCode}
+	if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable {
+		if until, ok := receiverRetryAfterAt(res.RetryAfter, now); ok && until.After(now) {
+			meta.ReceiverCooldownUntil = &until
+			meta.ReceiverCooldownTargetURL = hook.TargetURL
+		}
+	}
 	if res.Err == nil {
 		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now, meta); d.markRecorded(row, err) {
 			d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
@@ -631,10 +637,8 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// backoff as the minimum, so a short or invalid header cannot make
 	// retries more aggressive. The parsed deadline is capped at 24h.
 	nextAttemptAt := now.Add(delay)
-	if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable {
-		if receiverAt, ok := receiverRetryAfterAt(res.RetryAfter, now); ok && receiverAt.After(nextAttemptAt) {
-			nextAttemptAt = receiverAt
-		}
+	if meta.ReceiverCooldownUntil != nil && meta.ReceiverCooldownUntil.After(nextAttemptAt) {
+		nextAttemptAt = *meta.ReceiverCooldownUntil
 	}
 	// Mark 'failed' with the chosen next attempt deadline.
 	// The claim query's WHERE next_attempt_at <= now predicate picks

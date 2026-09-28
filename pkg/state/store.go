@@ -6063,6 +6063,7 @@ type Store interface {
 	// In a single transaction it:
 	//   1. Locks up to `limit` rows whose status IN
 	//      ('pending','in_flight') AND next_attempt_at <= `now`,
+	//      excluding subscriptions with an active receiver cooldown and
 	//      interleaving the oldest due rows across accounts.
 	//   2. Transitions the rows to 'in_flight' and sets
 	//      next_attempt_at to the claim deadline. Only expired
@@ -6080,7 +6081,8 @@ type Store interface {
 	// next_attempt_at=nextAttemptAt, attempt=currentAttempt+1,
 	// last_error=errMsg, last_response_code=responseCode. The
 	// dispatcher calls this on a retryable error (5xx/408/429/
-	// network) when the next attempt is within the budget.
+	// network) when the next attempt is within the budget. A cooldown
+	// deadline in metadata is applied to the subscription atomically.
 	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error
 	// MarkAppWebhookDeliveryDead stamps status='dead' with the
 	// supplied errMsg. The dispatcher calls this on:

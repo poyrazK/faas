@@ -449,6 +449,118 @@ func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	paused, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	var pausedRows []AppWebhookDelivery
+	for i := 0; i < 3; i++ {
+		d := memSampleDelivery(paused.ID, app.ID, acct.ID, uuid.NewString())
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		row, recordErr := m.RecordAppWebhookDelivery(ctx, d)
+		if recordErr != nil {
+			t.Fatal(recordErr)
+		}
+		pausedRows = append(pausedRows, row)
+	}
+	otherRow := memSampleDelivery(other.ID, app.ID, acct.ID, uuid.NewString())
+	otherRow.NextAttemptAt = now.Add(-time.Second)
+	otherRow, err = m.RecordAppWebhookDelivery(ctx, otherRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := m.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 || claims[0].ID != pausedRows[0].ID || claims[1].ID != pausedRows[1].ID {
+		t.Fatalf("first claims = %+v, %v", claims, err)
+	}
+	longUntil, shortUntil := now.Add(5*time.Minute), now.Add(time.Minute)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", longUntil, AppWebhookAttemptMetadata{ReceiverCooldownUntil: &longUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 503, claims[1].Attempt, claims[1].NextAttemptAt,
+		"unavailable", shortUntil, AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"stale", now.Add(10*time.Minute), AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion = %v, want conflict", err)
+	}
+	health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, now.Add(2*time.Minute))
+	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||
+		health.PendingCount != 3 || health.OldestOverdueAt != nil {
+		t.Fatalf("paused health = %+v, %v", health, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, now.Add(2*time.Minute))
+	if err != nil || len(claims) != 1 || claims[0].ID != otherRow.ID {
+		t.Fatalf("claims during cooldown = %+v, %v; want other subscription only", claims, err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(2*time.Minute)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil)
+	if err != nil || len(claims) != 3 {
+		t.Fatalf("claims at cooldown expiry = %+v, %v; want all three", claims, err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil); err != nil || health.ReceiverCooldownUntil != nil {
+		t.Fatalf("health at expiry = %+v, %v; want no active cooldown", health, err)
+	}
+}
+
+func TestMemStoreAppWebhookReceiverCooldownDoesNotFollowRetarget(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second)
+	for i := 0; i < 3; i++ {
+		d := memSampleDelivery(hook.ID, app.ID, acct.ID, uuid.NewString())
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claims, err := m.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 {
+		t.Fatalf("claims = %+v, %v", claims, err)
+	}
+	until := now.Add(5 * time.Minute)
+	meta := AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	newURL := "https://example.com/new-receiver"
+	if _, err := m.UpdateAppWebhook(ctx, hook.ID, UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	// The second in-flight response still belongs to the old URL. It must
+	// record its delivery outcome without pausing the new receiver.
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 429, claims[1].Attempt, claims[1].NextAttemptAt,
+		"old receiver", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, now)
+	if err != nil || health.ReceiverCooldownUntil != nil {
+		t.Fatalf("health after retarget = %+v, %v; want no cooldown", health, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, now)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims for new receiver = %+v, %v; want remaining due row", claims, err)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
 	// Two accounts, three deliveries each. Claims alternate accounts,

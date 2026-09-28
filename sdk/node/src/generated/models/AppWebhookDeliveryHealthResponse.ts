@@ -12,7 +12,11 @@ export type AppWebhookDeliveryHealthResponse = {
   in_flight_count: number;
   dead_count: number;
   /**
-   * Earliest due time among pending or expired in-flight deliveries.
+   * Active receiver Retry-After deadline; new claims for this subscription resume when it expires.
+   */
+  receiver_cooldown_until?: string;
+  /**
+   * Earliest due time among claimable pending or expired in-flight deliveries; omitted during an active receiver cooldown.
    */
   oldest_overdue_at?: string;
   /**
@@ -26,4 +30,3 @@ export type AppWebhookDeliveryHealthResponse = {
    */
   recent_success_rate?: number;
 };
-

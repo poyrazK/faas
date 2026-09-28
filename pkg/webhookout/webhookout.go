@@ -680,6 +680,7 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix[:MaxBodyBytes],
+			RetryAfter: retryAfter,
 			Err:        ErrBodyTooLarge,
 		}
 	}

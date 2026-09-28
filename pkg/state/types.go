@@ -3623,6 +3623,12 @@ type AppWebhookAttemptMetadata struct {
 	StartedAt    time.Time
 	FinishedAt   time.Time
 	ResponseCode int
+	// ReceiverCooldownUntil is the parsed, capped Retry-After deadline on
+	// a 429/503. Stores apply it only with a successful fenced completion.
+	ReceiverCooldownUntil *time.Time
+	// ReceiverCooldownTargetURL fences a response from an old target URL
+	// after the subscription has been retargeted.
+	ReceiverCooldownTargetURL string
 }
 
 // AppWebhookDeliveryAttempt is one immutable outcome in a delivery's history.
@@ -3644,13 +3650,14 @@ type AppWebhookDeliveryAttempt struct {
 // AppWebhookDeliveryHealth is a scoped snapshot of one webhook's queue.
 // Recent terminal counts use a rolling 24-hour window ending at the query time.
 type AppWebhookDeliveryHealth struct {
-	WebhookID            string
-	PendingCount         int64
-	InFlightCount        int64
-	DeadCount            int64
-	OldestOverdueAt      *time.Time
-	RecentSucceededCount int64
-	RecentDeadCount      int64
+	WebhookID             string
+	ReceiverCooldownUntil *time.Time
+	PendingCount          int64
+	InFlightCount         int64
+	DeadCount             int64
+	OldestOverdueAt       *time.Time
+	RecentSucceededCount  int64
+	RecentDeadCount       int64
 }
 
 // AppWebhookQuotaError is returned by CreateAppWebhookIfUnderQuota

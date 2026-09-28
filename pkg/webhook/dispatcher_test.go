@@ -188,13 +188,14 @@ func TestDispatcher_ReceiverRetryAfterSchedulesAttemptHistory(t *testing.T) {
 		header     string
 		wantDelay  time.Duration
 		useBackoff bool
+		cooldown   bool
 	}{
-		{"429 seconds", http.StatusTooManyRequests, "120", 2 * time.Minute, false},
-		{"503 date", http.StatusServiceUnavailable, now.Add(90 * time.Minute).Format(http.TimeFormat), 90 * time.Minute, false},
-		{"429 short header", http.StatusTooManyRequests, "1", 0, true},
-		{"503 invalid header", http.StatusServiceUnavailable, "later", 0, true},
-		{"500 ignores header", http.StatusInternalServerError, "120", 0, true},
-		{"429 long header capped", http.StatusTooManyRequests, "999999999999999999999", maxReceiverRetryAfter, false},
+		{"429 seconds", http.StatusTooManyRequests, "120", 2 * time.Minute, false, true},
+		{"503 date", http.StatusServiceUnavailable, now.Add(90 * time.Minute).Format(http.TimeFormat), 90 * time.Minute, false, true},
+		{"429 short header", http.StatusTooManyRequests, "1", 0, true, false},
+		{"503 invalid header", http.StatusServiceUnavailable, "later", 0, true, false},
+		{"500 ignores header", http.StatusInternalServerError, "120", 0, true, false},
+		{"429 long header capped", http.StatusTooManyRequests, "999999999999999999999", maxReceiverRetryAfter, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := state.NewMemStore()
@@ -223,6 +224,13 @@ func TestDispatcher_ReceiverRetryAfterSchedulesAttemptHistory(t *testing.T) {
 			if err != nil || len(claimed) != 1 {
 				t.Fatalf("claim = %+v, %v", claimed, err)
 			}
+			sibling, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+				WebhookID: hook.ID, AppID: appID, AccountID: acctID,
+				Event: "app.cron.fired", Payload: json.RawMessage(`{}`), NextAttemptAt: now.Add(-time.Minute),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			disp.IdentityLoader = loader
 			disp.HTTPClient = srv.Client()
@@ -246,6 +254,22 @@ func TestDispatcher_ReceiverRetryAfterSchedulesAttemptHistory(t *testing.T) {
 			attempts, _, err := m.ListAppWebhookDeliveryAttempts(context.Background(), delivery.ID, hook.ID, acctID, 10, "")
 			if err != nil || len(attempts) != 1 || attempts[0].NextAttemptAt == nil || !attempts[0].NextAttemptAt.Equal(got.NextAttemptAt) {
 				t.Fatalf("attempt history = %+v, err = %v; want chosen next attempt time", attempts, err)
+			}
+			probeAt := now.Add(30 * time.Second)
+			health, err := m.AppWebhookDeliveryHealth(context.Background(), hook.ID, acctID, probeAt)
+			if err != nil || (health.ReceiverCooldownUntil != nil) != tc.cooldown {
+				t.Fatalf("cooldown health = %+v, %v; want active=%v", health, err, tc.cooldown)
+			}
+			later, err := m.ClaimDueAppWebhookDeliveries(context.Background(), 2, probeAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.cooldown {
+				if len(later) != 0 {
+					t.Fatalf("claimed during receiver cooldown = %+v", later)
+				}
+			} else if len(later) == 0 || later[0].ID != sibling.ID {
+				t.Fatalf("claim without cooldown = %+v; want sibling %s", later, sibling.ID)
 			}
 		})
 	}

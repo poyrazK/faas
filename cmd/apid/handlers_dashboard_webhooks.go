@@ -156,6 +156,9 @@ func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger,
 				PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
 				RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
 			}
+			if health.ReceiverCooldownUntil != nil {
+				h.ReceiverCooldownUntil = dashboardJobsTime(*health.ReceiverCooldownUntil)
+			}
 			if health.OldestOverdueAt != nil {
 				age := int64(now.Sub(*health.OldestOverdueAt).Seconds())
 				if age < 0 {

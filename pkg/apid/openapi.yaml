@@ -39958,7 +39958,8 @@ components:
         pending_count: { type: integer, format: int64, minimum: 0 }
         in_flight_count: { type: integer, format: int64, minimum: 0 }
         dead_count: { type: integer, format: int64, minimum: 0 }
-        oldest_overdue_at: { type: string, format: date-time, description: Earliest due time among pending or expired in-flight deliveries. }
+        receiver_cooldown_until: { type: string, format: date-time, description: Active receiver Retry-After deadline; new claims for this subscription resume when it expires. }
+        oldest_overdue_at: { type: string, format: date-time, description: Earliest due time among claimable pending or expired in-flight deliveries; omitted during an active receiver cooldown. }
         oldest_overdue_seconds: { type: integer, format: int64, minimum: 0, description: Age of the oldest overdue delivery at snapshot_at. }
         recent_succeeded_count: { type: integer, format: int64, minimum: 0 }
         recent_dead_count: { type: integer, format: int64, minimum: 0 }

@@ -109,6 +109,29 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	if strings.Contains(history.Body.String(), "do-not-render") {
 		t.Error("attempt history page exposed delivery payload")
 	}
+	paused, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim cooldown delivery = %+v, %v", claimed, err)
+	}
+	until := time.Now().Add(2 * time.Minute)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), paused.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: webhook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	cooldownPage := httptest.NewRecorder()
+	cooldownReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	cooldownReq.AddCookie(cookie)
+	h.ServeHTTP(cooldownPage, cooldownReq)
+	if cooldownPage.Code != http.StatusOK || !strings.Contains(cooldownPage.Body.String(), "receiver cooldown until") {
+		t.Fatalf("dashboard cooldown = %d: %s", cooldownPage.Code, cooldownPage.Body)
+	}
 }
 
 func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {

@@ -733,6 +733,9 @@ func appWebhookDeliveryHealthResponse(health state.AppWebhookDeliveryHealth, now
 		PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
 		RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
 	}
+	if health.ReceiverCooldownUntil != nil {
+		out.ReceiverCooldownUntil = api.FormatAlertTime(*health.ReceiverCooldownUntil)
+	}
 	if health.OldestOverdueAt != nil {
 		out.OldestOverdueAt = api.FormatAlertTime(*health.OldestOverdueAt)
 		age := int64(now.Sub(*health.OldestOverdueAt).Seconds())

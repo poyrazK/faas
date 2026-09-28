@@ -24,8 +24,10 @@ class AppWebhookDeliveryHealthResponse:
     dead_count: int
     recent_succeeded_count: int
     recent_dead_count: int
+    receiver_cooldown_until: datetime.datetime | Unset = UNSET
+    """Active receiver Retry-After deadline; new claims for this subscription resume when it expires."""
     oldest_overdue_at: datetime.datetime | Unset = UNSET
-    """Earliest due time among pending or expired in-flight deliveries."""
+    """Earliest due time among claimable pending or expired in-flight deliveries; omitted during an active receiver cooldown."""
     oldest_overdue_seconds: int | Unset = UNSET
     """Age of the oldest overdue delivery at snapshot_at."""
     recent_success_rate: float | Unset = UNSET
@@ -46,6 +48,10 @@ class AppWebhookDeliveryHealthResponse:
         recent_succeeded_count = self.recent_succeeded_count
 
         recent_dead_count = self.recent_dead_count
+
+        receiver_cooldown_until: str | Unset = UNSET
+        if not isinstance(self.receiver_cooldown_until, Unset):
+            receiver_cooldown_until = self.receiver_cooldown_until.isoformat()
 
         oldest_overdue_at: str | Unset = UNSET
         if not isinstance(self.oldest_overdue_at, Unset):
@@ -68,6 +74,8 @@ class AppWebhookDeliveryHealthResponse:
                 "recent_dead_count": recent_dead_count,
             }
         )
+        if receiver_cooldown_until is not UNSET:
+            field_dict["receiver_cooldown_until"] = receiver_cooldown_until
         if oldest_overdue_at is not UNSET:
             field_dict["oldest_overdue_at"] = oldest_overdue_at
         if oldest_overdue_seconds is not UNSET:
@@ -94,6 +102,13 @@ class AppWebhookDeliveryHealthResponse:
 
         recent_dead_count = d.pop("recent_dead_count")
 
+        _receiver_cooldown_until = d.pop("receiver_cooldown_until", UNSET)
+        receiver_cooldown_until: datetime.datetime | Unset
+        if isinstance(_receiver_cooldown_until, Unset):
+            receiver_cooldown_until = UNSET
+        else:
+            receiver_cooldown_until = datetime.datetime.fromisoformat(_receiver_cooldown_until)
+
         _oldest_overdue_at = d.pop("oldest_overdue_at", UNSET)
         oldest_overdue_at: datetime.datetime | Unset
         if isinstance(_oldest_overdue_at, Unset):
@@ -113,6 +128,7 @@ class AppWebhookDeliveryHealthResponse:
             dead_count=dead_count,
             recent_succeeded_count=recent_succeeded_count,
             recent_dead_count=recent_dead_count,
+            receiver_cooldown_until=receiver_cooldown_until,
             oldest_overdue_at=oldest_overdue_at,
             oldest_overdue_seconds=oldest_overdue_seconds,
             recent_success_rate=recent_success_rate,

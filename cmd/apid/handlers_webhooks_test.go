@@ -138,6 +138,41 @@ func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 	}
 }
 
+func TestGetAppWebhookDeliveryHealth_ShowsReceiverCooldown(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cooldown-health-api")
+	hook := mustCreateWebhook(t, e, "cooldown-health-api", webhookReq())
+	now := time.Now().UTC()
+	delivery, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+		NextAttemptAt: now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	until := now.Add(2 * time.Minute)
+	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), delivery.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"rate limited", now.Add(time.Minute), state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodGet, "/v1/apps/cooldown-health-api/webhooks/"+hook.ID+"/health", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+	}
+	var health api.AppWebhookDeliveryHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health.ReceiverCooldownUntil == "" || health.PendingCount != 1 || health.OldestOverdueAt != "" {
+		t.Fatalf("health = %+v, want active cooldown and paused pending row", health)
+	}
+}
+
 // TestCreateAppWebhook_HappyPath pins the basic round-trip:
 //   - 201 on create
 //   - webhook_secret_sealed_masked == "***"

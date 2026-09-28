@@ -223,6 +223,7 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	row := s.pool.QueryRow(ctx, `
 		update app_webhooks set
 			target_url = $2,
+			receiver_cooldown_until = case when target_url is distinct from $2 then null else receiver_cooldown_until end,
 			event_filter = $3::text[],
 			retry_policy = $4,
 			delivery_format = $5,
@@ -323,6 +324,7 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //     dispatcher restart) → 'in_flight'.
 //  3. Returns the locked rows.
 //
+// An active receiver cooldown excludes the subscription from new claims.
 // Each claim batch interleaves the oldest due row from every selected account.
 // The leading account rotates every five-second tick so extra batch slots do
 // not always go to the lexicographically first account. The lateral read uses
@@ -342,9 +344,11 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	rotation := now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)
 	rows, err := tx.Query(ctx, `
 		with eligible_accounts as materialized (
-			select distinct account_id
-			  from app_webhook_deliveries
-			 where status in ('pending','in_flight') and next_attempt_at <= $1
+			select distinct d.account_id
+			  from app_webhook_deliveries d
+			  join app_webhooks w on w.id = d.webhook_id
+			 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
+			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 		), numbered_accounts as (
 			select account_id,
 			       row_number() over (order by account_id) - 1 as account_pos,
@@ -364,12 +368,14 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			       ) as slot
 			  from selected_accounts
 			 cross join lateral (
-				select id, next_attempt_at
-				  from app_webhook_deliveries
-				 where account_id = selected_accounts.account_id
-				   and status in ('pending','in_flight')
-				   and next_attempt_at <= $1
-				 order by next_attempt_at, id
+				select d.id, d.next_attempt_at
+				  from app_webhook_deliveries d
+				  join app_webhooks w on w.id = d.webhook_id
+				 where d.account_id = selected_accounts.account_id
+				   and d.status in ('pending','in_flight')
+				   and d.next_attempt_at <= $1
+				   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
+				 order by d.next_attempt_at, d.id
 				 limit ($2::integer * 4)
 			 ) due
 		)
@@ -378,7 +384,9 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 		       d.next_attempt_at, d.delivered_at, d.created_at, d.updated_at
 		  from candidates c
 		  join app_webhook_deliveries d on d.id = c.id
+		  join app_webhooks w on w.id = d.webhook_id
 		 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
+		   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 		 order by c.slot, c.turn, c.next_attempt_at, c.id
 		 limit $2
 		   for update of d skip locked
@@ -446,11 +454,18 @@ func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, cur
 	return s.completeAppWebhookDelivery(ctx, id, currentAttempt, claimUntil, "dead", responseCode, errMsg, time.Time{}, time.Time{}, meta)
 }
 
-// The UPDATE and INSERT are one SQL statement. A stale claim produces no
-// updated row and therefore cannot append a phantom attempt. A failed INSERT
-// rolls the UPDATE back as well.
+// The delivery UPDATE, attempt INSERT, and optional receiver cooldown UPDATE
+// are one SQL statement. A stale claim produces no updated row and therefore
+// cannot append an attempt or pause its subscription. A failed write rolls
+// the whole statement back.
 func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, outcome string, responseCode int, errMsg string, nextAttemptAt, deliveredAt time.Time, meta []AppWebhookAttemptMetadata) error {
 	started, finished, _ := appWebhookAttemptTimes(meta)
+	var receiverCooldownUntil any
+	var receiverCooldownTargetURL string
+	if len(meta) > 0 && meta[0].ReceiverCooldownUntil != nil {
+		receiverCooldownUntil = *meta[0].ReceiverCooldownUntil
+		receiverCooldownTargetURL = meta[0].ReceiverCooldownTargetURL
+	}
 	status := outcome
 	var attemptNextAt any
 	var deliveryNextAt any = time.Unix(0, 0).UTC()
@@ -472,7 +487,14 @@ func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, cur
 				updated_at = $9
 			where id = $1 and status = 'in_flight' and attempt = $3
 			  and next_attempt_at = $2
-			returning id, replay_generation
+			returning id, webhook_id, replay_generation
+		), receiver_cooldown as (
+			update app_webhooks w
+			   set receiver_cooldown_until = $13::timestamptz
+			  from updated u
+			 where w.id = u.webhook_id and $13::timestamptz is not null
+			   and w.target_url = $14
+			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until < $13::timestamptz)
 		)
 		insert into app_webhook_delivery_attempts
 			(delivery_id, replay_generation, attempt_number, outcome,
@@ -480,7 +502,7 @@ func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, cur
 		select id, replay_generation, $3 + 1, $10, $5, $6, $11, $9, $12
 		  from updated
 	`, id, claimUntil, currentAttempt, status, responseCode, errMsg,
-		deliveryNextAt, delivered, finished, outcome, started, attemptNextAt)
+		deliveryNextAt, delivered, finished, outcome, started, attemptNextAt, receiverCooldownUntil, receiverCooldownTargetURL)
 	if err != nil {
 		return fmt.Errorf("state: complete app webhook delivery: %w", err)
 	}
@@ -670,22 +692,24 @@ func (s *PgStore) ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID
 
 func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error) {
 	var health AppWebhookDeliveryHealth
-	var oldest pgtype.Timestamptz
+	var oldest, receiverCooldown pgtype.Timestamptz
 	err := s.pool.QueryRow(ctx, `
 		select w.id,
 		       count(d.id) filter (where d.status = 'pending'),
 		       count(d.id) filter (where d.status = 'in_flight'),
 		       count(d.id) filter (where d.status = 'dead'),
-		       min(d.next_attempt_at) filter (where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $3),
+		       min(d.next_attempt_at) filter (where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $3
+		           and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $3)),
 		       count(d.id) filter (where d.status = 'succeeded' and d.delivered_at >= $4),
-		       count(d.id) filter (where d.status = 'dead' and d.updated_at >= $4)
+		       count(d.id) filter (where d.status = 'dead' and d.updated_at >= $4),
+		       max(w.receiver_cooldown_until) filter (where w.receiver_cooldown_until > $3)
 		  from app_webhooks w
 		  left join app_webhook_deliveries d on d.webhook_id = w.id and d.account_id = w.account_id
 		 where w.id = $1 and w.account_id = $2
 		 group by w.id
 	`, webhookID, accountID, now, now.Add(-24*time.Hour)).Scan(
 		&health.WebhookID, &health.PendingCount, &health.InFlightCount, &health.DeadCount,
-		&oldest, &health.RecentSucceededCount, &health.RecentDeadCount)
+		&oldest, &health.RecentSucceededCount, &health.RecentDeadCount, &receiverCooldown)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppWebhookDeliveryHealth{}, ErrNotFound
 	}
@@ -696,15 +720,21 @@ func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accou
 		at := oldest.Time
 		health.OldestOverdueAt = &at
 	}
+	if receiverCooldown.Valid {
+		at := receiverCooldown.Time
+		health.ReceiverCooldownUntil = &at
+	}
 	return health, nil
 }
 
 func (s *PgStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
 	var oldest pgtype.Timestamptz
 	if err := s.pool.QueryRow(ctx, `
-		select min(next_attempt_at)
-		  from app_webhook_deliveries
-		 where status in ('pending', 'in_flight') and next_attempt_at <= $1
+		select min(d.next_attempt_at)
+		  from app_webhook_deliveries d
+		  join app_webhooks w on w.id = d.webhook_id
+		 where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $1
+		   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 	`, now).Scan(&oldest); err != nil {
 		return nil, fmt.Errorf("state: oldest overdue webhook delivery: %w", err)
 	}

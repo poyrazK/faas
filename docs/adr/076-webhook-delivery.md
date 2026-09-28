@@ -82,6 +82,17 @@ This does not add attempts or override `retry_policy=none`. The chosen
 next attempt time is recorded in delivery attempt history. Raw response
 headers are not retained or logged.
 
+The same receiver deadline also pauses new claims for that webhook
+subscription across schedd instances. A fenced attempt completion extends
+the subscription's persisted `receiver_cooldown_until` monotonically; an
+older or stale attempt cannot shorten it. Other subscriptions continue to
+drain, and attempts already claimed may finish. The deadline expires without
+a sweep. Health responses and the dashboard show an active cooldown while
+pending counts remain visible; intentionally paused rows do not count as
+overdue until the deadline passes.
+Changing a subscription's target URL clears its active cooldown; a late
+response from the old URL cannot pause the replacement target.
+
 ### 3.4 Plan-tier gate: `WebhookPerApp` + `WebhookPerAccount`
 
 Plan gating follows the cron / alert-rule precedent: a closed
@@ -238,7 +249,7 @@ Negative / costs:
 - **Extend `alert_deliveries` to carry outbound webhooks.** Rejected
   by §3.1: alert delivery is alert-shaped (`alert_rule_id`,
   `observed_value`, cool-down window); webhook delivery is
-  event-shaped (`event`, `payload`, no cool-down). A union type
+  event-shaped (`event`, `payload`, no alert-rule cool-down). A union type
   on the ledger would break the dispatcher's claim query.
 - **Token-bucket fairness (per-account state table).** Rejected:
   the bounded rotating claim provides per-batch fairness without
