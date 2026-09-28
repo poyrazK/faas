@@ -14962,7 +14962,8 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        deadline_at, retry_policy, result_retention_until,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
-       work_expires_at, work_sequence, work_policy_revision`
+       work_expires_at, work_sequence, work_policy_revision,
+       work_fairness_digest, work_fairness_limit`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15031,13 +15032,14 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 			 deadline_at, retry_policy, result_retention_until,
 			 on_success_destination_id, on_failure_destination_id,
 			 work_policy_name, work_key_digest, work_expires_at,
-			 work_sequence, work_policy_revision)
+			 work_sequence, work_policy_revision, work_fairness_digest,
+			 work_fairness_limit)
 		values
 			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
 			 coalesce(nullif($6,''),'pending'), $7, $8,
 			 $9, $10, $11, $12, $13,
 			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25)
+			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27)
 		returning `+invocationSelectCols,
 		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
@@ -15045,7 +15047,8 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 		deadlineAt, retryPolicy, retentionUntil,
 		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
 		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
-		nullableWorkSequence(inv.WorkPolicyRevision))
+		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
+		nullableWorkFairnessLimit(inv.WorkFairnessLimit))
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -15087,15 +15090,15 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
-		   and not exists (
+		   and (i.source <> 'queue' or i.queue_name = '' or i.work_policy_name is not null)
+		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
 		         where t.app_id = i.app_id
 		          and t.kind = 'queue'
 		          and t.enabled
 		          and t.source = i.source
-		   )
+		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from invocations older
 		       where older.app_id = i.app_id
@@ -15104,6 +15107,14 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		         and older.work_sequence < i.work_sequence
 		         and older.state in ('pending','dispatching')
 		   ))
+		   and (i.work_fairness_limit is null or (
+		       select count(*) from invocations active
+		       where active.app_id = i.app_id
+		         and active.work_policy_name = i.work_policy_name
+		         and active.work_fairness_digest = i.work_fairness_digest
+		         and active.state = 'dispatching'
+		         and active.lease_expires_at > $1
+		   ) < i.work_fairness_limit)
 		 order by i.due_at
 		 for update skip locked
 		 limit $2`, now.UTC(), limit)
@@ -15154,15 +15165,15 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
-		   and not exists (
+		   and (i.source <> 'queue' or i.queue_name = '' or i.work_policy_name is not null)
+		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
 		         where t.app_id = i.app_id
 		          and t.kind = 'queue'
 		          and t.enabled
 		          and t.source = i.source
-		   )
+		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from invocations older
 		       where older.app_id = i.app_id
@@ -15171,6 +15182,14 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		         and older.work_sequence < i.work_sequence
 		         and older.state in ('pending','dispatching')
 		   ))
+		   and (i.work_fairness_limit is null or (
+		       select count(*) from invocations active
+		       where active.app_id = i.app_id
+		         and active.work_policy_name = i.work_policy_name
+		         and active.work_fairness_digest = i.work_fairness_digest
+		         and active.state = 'dispatching'
+		         and active.lease_expires_at > $1
+		   ) < i.work_fairness_limit)
 		   and ($3::boolean or (i.due_at, i.id) > ($4::timestamptz, $5::uuid))
 		 order by i.due_at, i.id
 		 for update skip locked
@@ -16213,6 +16232,8 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workExpiresAt *time.Time
 	var workSequence *int64
 	var workPolicyRevision *int64
+	var workFairnessDigest []byte
+	var workFairnessLimit *int
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16221,6 +16242,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
+		&workFairnessDigest, &workFairnessLimit,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16230,6 +16252,10 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		inv.WorkPolicyName = *workPolicyName
 	}
 	inv.WorkKeyDigest = workKeyDigest
+	inv.WorkFairnessDigest = workFairnessDigest
+	if workFairnessLimit != nil {
+		inv.WorkFairnessLimit = *workFairnessLimit
+	}
 	inv.WorkExpiresAt = workExpiresAt
 	if workSequence != nil {
 		inv.WorkSequence = *workSequence
@@ -31812,9 +31838,13 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	var accountID, appID string
 	var workPolicyName *string
 	var workKeyDigest []byte
+	var workFairnessDigest []byte
+	var workFairnessLimit *int
 	if err := tx.QueryRow(ctx,
-		`select account_id, app_id, work_policy_name, work_key_digest
-		 from invocations where id = $1`, id).Scan(&accountID, &appID, &workPolicyName, &workKeyDigest); err != nil {
+		`select account_id, app_id, work_policy_name, work_key_digest,
+		 work_fairness_digest, work_fairness_limit from invocations where id = $1`, id).Scan(
+		&accountID, &appID, &workPolicyName, &workKeyDigest,
+		&workFairnessDigest, &workFairnessLimit); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invocation{}, ErrNotFound
 		}
@@ -31823,6 +31853,12 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	if workPolicyName != nil {
 		if err := lockKeyedClaimTx(ctx, tx, id, appID, *workPolicyName, workKeyDigest); err != nil {
 			return Invocation{}, err
+		}
+		if workFairnessLimit != nil {
+			if err := lockFairnessClaimTx(ctx, tx, appID, *workPolicyName,
+				workFairnessDigest, *workFairnessLimit); err != nil {
+				return Invocation{}, err
+			}
 		}
 	}
 	if _, _, err := s.upsertAccountAsyncQuotaTx(ctx, tx, accountID, maxInflight); err != nil {

@@ -106,7 +106,8 @@ func TestCmdInvoke_AsyncWorkPolicy(t *testing.T) {
 			t.Errorf("decode invocation: %v", err)
 			return
 		}
-		if req.Work == nil || req.Work.Policy != "document-index" || string(req.Work.Key) != `"d1"` {
+		if req.Work == nil || req.Work.Policy != "document-index" || string(req.Work.Key) != `"d1"` ||
+			string(req.Work.FairnessKey) != `"tenant-1"` {
 			t.Errorf("work = %+v", req.Work)
 		}
 		_ = json.NewEncoder(w).Encode(api.AsyncInvokeResponse{ID: "5a0d1c2e-0000-4000-8000-000000000002"})
@@ -114,7 +115,8 @@ func TestCmdInvoke_AsyncWorkPolicy(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if got := cmdInvoke([]string{"some-app", "--async", "--work-policy", "document-index", "--work-key", `"d1"`}); got != 0 || !called {
+	if got := cmdInvoke([]string{"some-app", "--async", "--work-policy", "document-index",
+		"--work-key", `"d1"`, "--work-fairness-key", `"tenant-1"`}); got != 0 || !called {
 		t.Fatalf("cmdInvoke = %d, called=%v", got, called)
 	}
 	if got := cmdInvoke([]string{"some-app", "--work-policy", "document-index", "--work-key", `"d1"`}); got != 1 {

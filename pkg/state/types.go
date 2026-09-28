@@ -3933,6 +3933,8 @@ type Invocation struct {
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
 	WorkPolicyRevision int64      `json:"work_policy_revision,omitempty"`
 	WorkKeyDigest      []byte     `json:"-"`
+	WorkFairnessDigest []byte     `json:"-"`
+	WorkFairnessLimit  int        `json:"-"`
 	WorkExpiresAt      *time.Time `json:"work_expires_at,omitempty"`
 	WorkSequence       int64      `json:"-"`
 	LastError          string     `json:"last_error,omitempty"`

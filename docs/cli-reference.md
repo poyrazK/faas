@@ -1239,6 +1239,7 @@ Schedule a deferred invocation
 | `--path <PATH>` | app path (default /) |  |
 | `--work-policy <NAME>` | named app work policy |  |
 | `--work-key <JSON>` | JSON scalar identifying related work |  |
+| `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
 | `--header <NAME:VALUE>` | request header (repeatable) |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--retry-base-seconds <N>` | base retry delay in seconds |  |
@@ -2090,7 +2091,7 @@ gregale inspect my-api --upstreams
 
 Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug defaults to linked context)
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>]`
+`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2100,6 +2101,7 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 | `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
 | `--work-policy <NAME>` | named app work policy for async invocation |  |
 | `--work-key <JSON>` | JSON scalar application key for async invocation |  |
+| `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
 
 
 ## run

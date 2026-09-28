@@ -209,17 +209,18 @@ type SendAppMessageResponse struct {
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.
 type EventSubscriptionResponse struct {
-	ID         string          `json:"id"`
-	AppID      string          `json:"app_id"`
-	Source     string          `json:"source"`
-	Type       string          `json:"type"`
-	Filter     json.RawMessage `json:"filter"`
-	WorkPolicy string          `json:"work_policy,omitempty"`
-	WorkKey    string          `json:"work_key,omitempty"`
-	WorkAction string          `json:"work_action,omitempty"`
-	Enabled    bool            `json:"enabled"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	ID              string          `json:"id"`
+	AppID           string          `json:"app_id"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Filter          json.RawMessage `json:"filter"`
+	WorkPolicy      string          `json:"work_policy,omitempty"`
+	WorkKey         string          `json:"work_key,omitempty"`
+	WorkFairnessKey string          `json:"work_fairness_key,omitempty"`
+	WorkAction      string          `json:"work_action,omitempty"`
+	Enabled         bool            `json:"enabled"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -5123,26 +5124,29 @@ type InvokeRequest struct {
 }
 
 type InvokeWork struct {
-	Policy string          `json:"policy"`
-	Key    json.RawMessage `json:"key"`
+	Policy      string          `json:"policy"`
+	Key         json.RawMessage `json:"key"`
+	FairnessKey json.RawMessage `json:"fairness_key,omitempty"`
 }
 
 type UpsertWorkPolicyRequest struct {
-	MaxRunningPerKey int    `json:"max_running_per_key"`
-	PendingUpdates   string `json:"pending_updates,omitempty"`
-	DebounceMS       int64  `json:"debounce_ms,omitempty"`
-	ExpiresAfterMS   int64  `json:"expires_after_ms,omitempty"`
+	MaxRunningPerKey         int    `json:"max_running_per_key"`
+	MaxRunningPerFairnessKey int    `json:"max_running_per_fairness_key,omitempty"`
+	PendingUpdates           string `json:"pending_updates,omitempty"`
+	DebounceMS               int64  `json:"debounce_ms,omitempty"`
+	ExpiresAfterMS           int64  `json:"expires_after_ms,omitempty"`
 }
 
 type WorkPolicyResponse struct {
-	Name             string    `json:"name"`
-	Revision         int64     `json:"revision"`
-	MaxRunningPerKey int       `json:"max_running_per_key"`
-	PendingUpdates   string    `json:"pending_updates"`
-	DebounceMS       int64     `json:"debounce_ms"`
-	ExpiresAfterMS   int64     `json:"expires_after_ms"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	Name                     string    `json:"name"`
+	Revision                 int64     `json:"revision"`
+	MaxRunningPerKey         int       `json:"max_running_per_key"`
+	MaxRunningPerFairnessKey int       `json:"max_running_per_fairness_key"`
+	PendingUpdates           string    `json:"pending_updates"`
+	DebounceMS               int64     `json:"debounce_ms"`
+	ExpiresAfterMS           int64     `json:"expires_after_ms"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 type WorkPolicyListResponse struct {

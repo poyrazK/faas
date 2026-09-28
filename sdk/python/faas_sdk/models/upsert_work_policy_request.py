@@ -23,12 +23,15 @@ class UpsertWorkPolicyRequest:
     """App work policy settings; durations use whole milliseconds."""
 
     max_running_per_key: UpsertWorkPolicyRequestMaxRunningPerKey
+    max_running_per_fairness_key: int | Unset = 0
     pending_updates: UpsertWorkPolicyRequestPendingUpdates | Unset = "all"
     debounce_ms: int | Unset = 0
     expires_after_ms: int | Unset = 0
 
     def to_dict(self) -> dict[str, Any]:
         max_running_per_key: int = self.max_running_per_key
+
+        max_running_per_fairness_key = self.max_running_per_fairness_key
 
         pending_updates: str | Unset = UNSET
         if not isinstance(self.pending_updates, Unset):
@@ -45,6 +48,8 @@ class UpsertWorkPolicyRequest:
                 "max_running_per_key": max_running_per_key,
             }
         )
+        if max_running_per_fairness_key is not UNSET:
+            field_dict["max_running_per_fairness_key"] = max_running_per_fairness_key
         if pending_updates is not UNSET:
             field_dict["pending_updates"] = pending_updates
         if debounce_ms is not UNSET:
@@ -59,6 +64,8 @@ class UpsertWorkPolicyRequest:
         d = dict(src_dict)
         max_running_per_key = check_upsert_work_policy_request_max_running_per_key(d.pop("max_running_per_key"))
 
+        max_running_per_fairness_key = d.pop("max_running_per_fairness_key", UNSET)
+
         _pending_updates = d.pop("pending_updates", UNSET)
         pending_updates: UpsertWorkPolicyRequestPendingUpdates | Unset
         if isinstance(_pending_updates, Unset):
@@ -72,6 +79,7 @@ class UpsertWorkPolicyRequest:
 
         upsert_work_policy_request = cls(
             max_running_per_key=max_running_per_key,
+            max_running_per_fairness_key=max_running_per_fairness_key,
             pending_updates=pending_updates,
             debounce_ms=debounce_ms,
             expires_after_ms=expires_after_ms,

@@ -347,11 +347,11 @@ func (d *Drain) Tick(ctx context.Context) {
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
 				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
+					if inv.WorkPolicyName == "" && d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
 						queueTriggerSkipped = true
 						continue
 					}
-					if inv.Source == state.InvocationQueue {
+					if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
 						queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
 						continue
 					}

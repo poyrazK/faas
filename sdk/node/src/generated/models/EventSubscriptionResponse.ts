@@ -29,6 +29,10 @@ export type EventSubscriptionResponse = {
    */
   work_key?: string;
   /**
+   * Optional dot selector for an application fairness group; defaults to work_key.
+   */
+  work_fairness_key?: string;
+  /**
    * Action taken on a matching event.
    */
   work_action?: 'invoke' | 'cancel_pending';

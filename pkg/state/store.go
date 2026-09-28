@@ -3946,7 +3946,7 @@ type Store interface {
 	EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error)
 	// EnqueueKeyedInvocation resolves idempotency and pending replacement
 	// under the same app-scoped lane lock used by keyed claims.
-	EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string) (Invocation, error)
+	EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error)
 	InvocationByID(ctx context.Context, id string) (Invocation, error)
 	// ListDueInvocations returns up to `limit` rows whose state='pending'
 	// and due_at <= now, ordered by due_at. The drain tick calls this with

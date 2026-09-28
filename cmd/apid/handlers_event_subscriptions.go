@@ -63,6 +63,7 @@ func (s *server) listEventSubscriptions(w http.ResponseWriter, r *http.Request, 
 		if binding, ok := bindings[subscription.ID]; ok {
 			response.WorkPolicy = binding.PolicyName
 			response.WorkKey = binding.KeySelector
+			response.WorkFairnessKey = binding.FairnessSelector
 			response.WorkAction = binding.Action
 		}
 		out.Subscriptions = append(out.Subscriptions, response)

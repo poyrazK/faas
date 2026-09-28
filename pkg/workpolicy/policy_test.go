@@ -13,6 +13,10 @@ func TestPolicyValidationAndDeadlines(t *testing.T) {
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	p.MaxRunningPerFairnessKey = 2
+	if err := p.Validate(); err != nil {
+		t.Fatalf("valid fairness cap: %v", err)
+	}
 	if got := p.AvailableAt(base, base); !got.Equal(base.Add(3 * time.Second)) {
 		t.Fatalf("debounced availability = %s", got)
 	}
@@ -25,7 +29,7 @@ func TestPolicyValidationAndDeadlines(t *testing.T) {
 	for _, mutate := range []func(*Policy){
 		func(v *Policy) { v.MaxRunningPerKey = 2 },
 		func(v *Policy) { v.ExpiresAfter = v.Debounce },
-		func(v *Policy) { v.MaxRunningPerFairnessKey = 2 },
+		func(v *Policy) { v.MaxRunningPerFairnessKey = 1001 },
 		func(v *Policy) { v.PendingUpdates = "replace_running" },
 	} {
 		invalid := p

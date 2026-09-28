@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
@@ -149,6 +150,27 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 				t.Fatalf("Nack: %v", err)
 			}
 			assertQueueLinkedStates(t, ctx, pool, failed.ID, failedRecordID, "dead_letter", "dead_letter", "dead_letter")
+			keyed, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{
+				AccountID: account.ID, AppID: app.ID, Source: tc.source, QueueName: queueName,
+				Payload: json.RawMessage(`{"job":"keyed"}`), DueAt: time.Now().Add(-time.Second),
+			}, workpolicy.Policy{Name: "policy-" + tc.slug, MaxRunningPerKey: 1}, "s:job-1")
+			if err != nil {
+				t.Fatalf("EnqueueKeyedInvocation: %v", err)
+			}
+			if result := poller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 0 {
+				t.Fatalf("poller claimed keyed row: %+v", result)
+			}
+			due, err := store.ListDueInvocationsAfter(ctx, time.Now(), state.InvocationDueCursor{}, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, row := range due {
+				found = found || row.ID == keyed.ID
+			}
+			if !found {
+				t.Fatal("keyed row with queue trigger was not offered to the keyed drain")
+			}
 		})
 	}
 }

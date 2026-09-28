@@ -39,6 +39,8 @@ class EventSubscriptionResponse:
     """Named app policy for keyed event deliveries, when configured."""
     work_key: str | Unset = UNSET
     """Dot selector into the CloudEvents envelope for the work key."""
+    work_fairness_key: str | Unset = UNSET
+    """Optional dot selector for an application fairness group; defaults to work_key."""
     work_action: EventSubscriptionResponseWorkAction | Unset = UNSET
     """Action taken on a matching event."""
 
@@ -63,6 +65,8 @@ class EventSubscriptionResponse:
 
         work_key = self.work_key
 
+        work_fairness_key = self.work_fairness_key
+
         work_action: str | Unset = UNSET
         if not isinstance(self.work_action, Unset):
             work_action = self.work_action
@@ -85,6 +89,8 @@ class EventSubscriptionResponse:
             field_dict["work_policy"] = work_policy
         if work_key is not UNSET:
             field_dict["work_key"] = work_key
+        if work_fairness_key is not UNSET:
+            field_dict["work_fairness_key"] = work_fairness_key
         if work_action is not UNSET:
             field_dict["work_action"] = work_action
 
@@ -115,6 +121,8 @@ class EventSubscriptionResponse:
 
         work_key = d.pop("work_key", UNSET)
 
+        work_fairness_key = d.pop("work_fairness_key", UNSET)
+
         _work_action = d.pop("work_action", UNSET)
         work_action: EventSubscriptionResponseWorkAction | Unset
         if isinstance(_work_action, Unset):
@@ -133,6 +141,7 @@ class EventSubscriptionResponse:
             updated_at=updated_at,
             work_policy=work_policy,
             work_key=work_key,
+            work_fairness_key=work_fairness_key,
             work_action=work_action,
         )
 

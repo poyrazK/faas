@@ -12239,7 +12239,7 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 		// Explicitly named queue rows belong to their first-class binding,
 		// even while that binding is disabled or waiting for a consumer
 		// projection. The legacy drain only owns empty-name queue rows.
-		if inv.Source == InvocationQueue && inv.QueueName != "" {
+		if inv.Source == InvocationQueue && inv.QueueName != "" && inv.WorkPolicyName == "" {
 			continue
 		}
 		if inv.DueAt.After(now) {
@@ -12259,18 +12259,23 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 			if blocked {
 				continue
 			}
-		}
-		ownedByTrigger := false
-		for _, trigger := range m.triggers {
-			if trigger.Enabled && trigger.Kind == "queue" && trigger.Source.Valid &&
-				trigger.AppID.String() == canonicalMemUUID(inv.AppID) &&
-				trigger.Source.String == string(inv.Source) {
-				ownedByTrigger = true
-				break
+			if m.fairnessClaimAllowedLocked(inv, now) != nil {
+				continue
 			}
 		}
-		if ownedByTrigger {
-			continue
+		if inv.WorkPolicyName == "" {
+			ownedByTrigger := false
+			for _, trigger := range m.triggers {
+				if trigger.Enabled && trigger.Kind == "queue" && trigger.Source.Valid &&
+					trigger.AppID.String() == canonicalMemUUID(inv.AppID) &&
+					trigger.Source.String == string(inv.Source) {
+					ownedByTrigger = true
+					break
+				}
+			}
+			if ownedByTrigger {
+				continue
+			}
 		}
 		out = append(out, inv)
 	}
@@ -24519,6 +24524,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	now := time.Now()
 	if err := m.keyedClaimAllowedLocked(inv, now); err != nil {
+		return Invocation{}, err
+	}
+	if err := m.fairnessClaimAllowedLocked(inv, now); err != nil {
 		return Invocation{}, err
 	}
 	leaseExpires := now.Add(time.Duration(leaseSeconds) * time.Second)

@@ -12,6 +12,7 @@ func TestManifestWorkPoliciesYAMLAndTOML(t *testing.T) {
 	yamlManifest, err := ParseBytes([]byte(`work_policies:
   - name: document-index
     max_running_per_key: 1
+    max_running_per_fairness_key: 2
     pending_updates: keep_latest
     debounce_ms: 3000
     expires_after_ms: 600000
@@ -20,16 +21,19 @@ event_triggers:
     type: document.edited
     work_policy: document-index
     work_key: data.document_id
+    work_fairness_key: data.tenant_id
 `))
 	if err != nil || yamlManifest.ValidateForPlan(api.PlanPro) != nil {
 		t.Fatalf("YAML = %+v, %v", yamlManifest, err)
 	}
-	if len(yamlManifest.WorkPolicies) != 1 || yamlManifest.WorkPolicies[0].ToPolicy().PendingUpdates != workpolicy.PendingKeepLatest {
+	if len(yamlManifest.WorkPolicies) != 1 || yamlManifest.WorkPolicies[0].ToPolicy().PendingUpdates != workpolicy.PendingKeepLatest ||
+		yamlManifest.WorkPolicies[0].ToPolicy().MaxRunningPerFairnessKey != 2 {
 		t.Fatalf("YAML policies = %+v", yamlManifest.WorkPolicies)
 	}
 	tomlManifest, err := ParseTOMLBytes([]byte(`[[work_policies]]
 name = "document-index"
 max_running_per_key = 1
+max_running_per_fairness_key = 2
 pending_updates = "keep_latest"
 debounce_ms = 3000
 expires_after_ms = 600000
@@ -39,6 +43,7 @@ source = "documents"
 type = "document.edited"
 work_policy = "document-index"
 work_key = "data.document_id"
+work_fairness_key = "data.tenant_id"
 `))
 	if err != nil {
 		t.Fatal(err)

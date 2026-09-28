@@ -11,5 +11,9 @@ export type InvokeWork = {
    * A bounded JSON string, number, or boolean. Equal typed values share one work lane.
    */
   key: any;
+  /**
+   * Optional scalar shared by multiple work keys, such as a tenant ID. Defaults to key when the policy has a fairness cap.
+   */
+  fairness_key?: any;
 };
 

@@ -1,6 +1,6 @@
 # ADR-340 · Application-keyed background work policies
 
-- **Status:** proposed
+- **Status:** accepted; invocation and event producers implemented, trigger adapters pending
 - **Date:** 2026-09-28
 - **Decision:** Define one named, app-scoped work policy for durable invocation
   producers. Producers resolve an application key at admission and persist the
@@ -36,7 +36,7 @@ The policy has these independent controls:
 | `pending_updates` | `all` retains every pending row; `keep_latest` supersedes only pending rows in the lane. |
 | `debounce` | A new accepted row becomes eligible after a quiet period measured from server admission time. |
 | `expires_after` | Pending work becomes `expired` if it has not begun by the deadline. Expiry differs from execution timeout, retry exhaustion, and result retention. |
-| `fairness_key` and its running cap | Optionally bound work for one application customer across many work keys; ready fairness groups are selected round-robin. |
+| `fairness_key` and its running cap | Optionally bound active claims for one application customer across many work keys. A saturated group is omitted from due-work scans. |
 
 For `pending_updates: all`, an older pending retry blocks later rows in the
 same lane until it succeeds, expires, or becomes terminal. This is FIFO by
@@ -69,9 +69,9 @@ only describes work present at the instant of the transaction.
 4. Terminal, retry, and expired-lease transitions release all reservations in
    the same transaction. Reconciliation repairs leaked reservations after a
    process crash. A retry remains the oldest nonterminal row in its lane.
-5. The scheduler selects ready lanes fairly before choosing a row. Sorting one
-   bounded due-at page in Go is insufficient: a large backlog can occupy the
-   whole page before other lanes are seen.
+5. The scheduler omits saturated fairness groups from due-work scans so a
+   large backlog does not keep pinning every due page. Full round-robin
+   selection among unsaturated groups is a later scheduler improvement.
 
 The claim token fences Gregale's ledger. It does not revoke a worker's access
 to an external database after ownership loss. External side effects still need
@@ -99,3 +99,20 @@ Acceptance must cover concurrent schedulers, duplicate event replay,
 replacement versus claim, retry ordering, lease expiry and stale completion,
 cancel-versus-claim, policy revision changes, bounded key cardinality, and a
 large single-key backlog that cannot starve another fairness group.
+
+## Queue and broker adapter boundary
+
+Policy-tagged delayed tasks use the invocation drain, including when a queue
+trigger is bound to delayed tasks. The queue poller excludes these rows, so it
+cannot bypass the keyed claim gate. These tasks are delivered individually.
+
+Queue-send messages and external broker records need a shared work-item claim
+ledger before policy fields can be exposed on those producers. Their current
+trigger path claims `trigger_records` and acknowledges broker handles outside
+the invocation transaction. The adapter must resolve keys at durable record
+admission, reserve lane and fairness slots across both ledgers, carry a claim
+generation through the gateway result, and release reservations on retry,
+terminal outcome, and lease recovery. A late broker acknowledgement must not
+finish a newer claim. Replacing a pending broker record also needs a durable
+terminal disposition before acknowledging its source handle. Adding selector
+fields to a trigger alone would not enforce these transitions.

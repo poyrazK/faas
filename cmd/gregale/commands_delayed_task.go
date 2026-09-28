@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // delayedTaskIDPattern mirrors the 32-hex UUID shape every other
@@ -101,6 +102,7 @@ func cmdDelayedTaskAdd(args []string) int {
 	path := fs.String("path", "/", "app path invoked when the task becomes due")
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
+	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key to reuse when retrying this create")
 	var headers multiFlag
 	fs.Var(&headers, "header", "request header as Name:Value (repeatable)")
@@ -115,7 +117,7 @@ func cmdDelayedTaskAdd(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (--scheduled-at <RFC3339>|--delay <duration>) [--payload <json|@file|->]", "delayed-task")
+		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (--scheduled-at <RFC3339>|--delay <duration>) [--payload <json|@file|->] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "delayed-task")
 		return 1
 	}
 	if !validateDelayedTaskAddFlags(app, scheduledAt, delay) {
@@ -129,11 +131,20 @@ func cmdDelayedTaskAdd(args []string) int {
 	if err != nil {
 		return printErr("Invalid delayed-task options", err)
 	}
-	if *workPolicy != "" || *workKey != "" {
-		if *workPolicy == "" || *workKey == "" || !json.Valid([]byte(*workKey)) {
+	if *workPolicy != "" || *workKey != "" || *workFairnessKey != "" {
+		if *workPolicy == "" || *workKey == "" {
 			return printErr("Invalid delayed-task work", fmt.Errorf("--work-policy and a JSON --work-key must be used together"))
 		}
+		if _, err := workpolicy.CanonicalScalar(json.RawMessage(*workKey)); err != nil {
+			return printErr("Invalid delayed-task work key", err)
+		}
 		req.Work = &api.InvokeWork{Policy: *workPolicy, Key: json.RawMessage(*workKey)}
+		if *workFairnessKey != "" {
+			if _, err := workpolicy.CanonicalScalar(json.RawMessage(*workFairnessKey)); err != nil {
+				return printErr("Invalid delayed-task fairness key", err)
+			}
+			req.Work.FairnessKey = json.RawMessage(*workFairnessKey)
+		}
 	}
 	if *scheduledAt != "" {
 		when, err := time.Parse(time.RFC3339, *scheduledAt)

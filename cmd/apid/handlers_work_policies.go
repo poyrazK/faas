@@ -14,11 +14,12 @@ import (
 func workPolicyResponse(record state.AppWorkPolicy) api.WorkPolicyResponse {
 	return api.WorkPolicyResponse{
 		Name: record.Policy.Name, Revision: record.Revision,
-		MaxRunningPerKey: record.Policy.MaxRunningPerKey,
-		PendingUpdates:   string(record.Policy.PendingUpdates),
-		DebounceMS:       record.Policy.Debounce.Milliseconds(),
-		ExpiresAfterMS:   record.Policy.ExpiresAfter.Milliseconds(),
-		CreatedAt:        record.CreatedAt, UpdatedAt: record.UpdatedAt,
+		MaxRunningPerKey:         record.Policy.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: record.Policy.MaxRunningPerFairnessKey,
+		PendingUpdates:           string(record.Policy.PendingUpdates),
+		DebounceMS:               record.Policy.Debounce.Milliseconds(),
+		ExpiresAfterMS:           record.Policy.ExpiresAfter.Milliseconds(),
+		CreatedAt:                record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
 }
 
@@ -32,10 +33,11 @@ func (s *server) upsertWorkPolicy(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	policy := workpolicy.Policy{Name: r.PathValue("name"),
-		MaxRunningPerKey: req.MaxRunningPerKey,
-		PendingUpdates:   workpolicy.PendingUpdates(req.PendingUpdates),
-		Debounce:         time.Duration(req.DebounceMS) * time.Millisecond,
-		ExpiresAfter:     time.Duration(req.ExpiresAfterMS) * time.Millisecond}
+		MaxRunningPerKey:         req.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: req.MaxRunningPerFairnessKey,
+		PendingUpdates:           workpolicy.PendingUpdates(req.PendingUpdates),
+		Debounce:                 time.Duration(req.DebounceMS) * time.Millisecond,
+		ExpiresAfter:             time.Duration(req.ExpiresAfterMS) * time.Millisecond}
 	if req.DebounceMS < 0 || req.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) ||
 		req.ExpiresAfterMS < 0 || req.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
 		api.WriteProblem(w, api.ErrValidation("work policy duration is out of range"))

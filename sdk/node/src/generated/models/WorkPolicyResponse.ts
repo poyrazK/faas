@@ -9,6 +9,7 @@ export type WorkPolicyResponse = {
   name: string;
   revision: number;
   max_running_per_key: 1;
+  max_running_per_fairness_key: number;
   pending_updates: 'all' | 'keep_latest';
   debounce_ms: number;
   expires_after_ms: number;

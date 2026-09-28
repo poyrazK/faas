@@ -19,6 +19,31 @@ func nullableWorkSequence(sequence int64) any {
 	return sequence
 }
 
+func nullableWorkFairnessLimit(limit int) any {
+	if limit == 0 {
+		return nil
+	}
+	return limit
+}
+
+func workFairnessDigest(policy workpolicy.Policy, canonicalKey string, fairnessKeys []string) ([]byte, error) {
+	if len(fairnessKeys) > 1 {
+		return nil, ErrInvalidArgument
+	}
+	if policy.MaxRunningPerFairnessKey == 0 {
+		return nil, nil
+	}
+	fairnessKey := canonicalKey
+	if len(fairnessKeys) == 1 {
+		fairnessKey = fairnessKeys[0]
+	}
+	digest, err := workpolicy.DigestKey(fairnessKey)
+	if err != nil {
+		return nil, err
+	}
+	return digest[:], nil
+}
+
 // ExpirePendingKeyedInvocations makes pending TTLs effective even when a
 // source due time is later than the expiry and no later row enters the lane.
 func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Time, limit int) (int, error) {
@@ -73,11 +98,15 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 // EnqueueKeyedInvocation admits one invocation into a named app lane. A
 // repeated producer ID returns its original row without replacing later work.
 // The selector is resolved by the producer; only its digest reaches storage.
-func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string) (Invocation, error) {
+func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
 	digest, err := workpolicy.DigestKey(canonicalKey)
+	if err != nil {
+		return Invocation{}, err
+	}
+	fairnessDigest, err := workFairnessDigest(policy, canonicalKey, fairnessKeys)
 	if err != nil {
 		return Invocation{}, err
 	}
@@ -94,6 +123,8 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	}
 	inv.WorkPolicyName = policy.Name
 	inv.WorkKeyDigest = digest[:]
+	inv.WorkFairnessDigest = fairnessDigest
+	inv.WorkFairnessLimit = policy.MaxRunningPerFairnessKey
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: keyed enqueue begin: %w", err)
@@ -208,11 +239,46 @@ func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName stri
 	return nil
 }
 
-func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string) (Invocation, error) {
+// lockFairnessClaimTx serializes claims for distinct work lanes that share
+// one application-defined fairness group. The cap is snapshotted on the
+// candidate row, while every active claim in the group counts against it.
+func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName string, digest []byte, limit int) error {
+	if limit == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `insert into invocation_work_fairness_lanes
+		(app_id, policy_name, fairness_digest) values ($1, $2, $3)
+		on conflict do nothing`, appID, policyName, digest); err != nil {
+		return fmt.Errorf("state: fairness lane insert: %w", err)
+	}
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from invocation_work_fairness_lanes
+		where app_id = $1 and policy_name = $2 and fairness_digest = $3
+		for update`, appID, policyName, digest).Scan(&locked); err != nil {
+		return fmt.Errorf("state: fairness lane lock: %w", err)
+	}
+	var running int
+	if err := tx.QueryRow(ctx, `select count(*) from invocations
+		where app_id = $1 and work_policy_name = $2 and work_fairness_digest = $3
+		and state = 'dispatching' and lease_expires_at > clock_timestamp()`,
+		appID, policyName, digest).Scan(&running); err != nil {
+		return fmt.Errorf("state: fairness running count: %w", err)
+	}
+	if running >= limit {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
 	digest, err := workpolicy.DigestKey(canonicalKey)
+	if err != nil {
+		return Invocation{}, err
+	}
+	fairnessDigest, err := workFairnessDigest(policy, canonicalKey, fairnessKeys)
 	if err != nil {
 		return Invocation{}, err
 	}
@@ -237,6 +303,8 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	now := time.Now().UTC()
 	inv.WorkPolicyName = policy.Name
 	inv.WorkKeyDigest = digest[:]
+	inv.WorkFairnessDigest = fairnessDigest
+	inv.WorkFairnessLimit = policy.MaxRunningPerFairnessKey
 	inv.WorkExpiresAt = policy.ExpiresAt(now)
 	inv.CreatedAt = now
 	inv.DueAt = policy.AvailableAt(now, inv.DueAt)
@@ -295,6 +363,24 @@ func (m *MemStore) keyedClaimAllowedLocked(inv Invocation, now time.Time) error 
 		}
 	}
 	if inv.DueAt.After(now) {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *MemStore) fairnessClaimAllowedLocked(inv Invocation, now time.Time) error {
+	if inv.WorkFairnessLimit == 0 {
+		return nil
+	}
+	running := 0
+	for _, old := range m.invocations {
+		if old.AppID == inv.AppID && old.WorkPolicyName == inv.WorkPolicyName &&
+			bytes.Equal(old.WorkFairnessDigest, inv.WorkFairnessDigest) &&
+			old.State == InvocationDispatching && old.LeaseExpiresAt != nil && old.LeaseExpiresAt.After(now) {
+			running++
+		}
+	}
+	if running >= inv.WorkFairnessLimit {
 		return ErrConflict
 	}
 	return nil

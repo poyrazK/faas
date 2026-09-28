@@ -51,7 +51,15 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 			return state.Invocation{}, api.ErrValidation("work key must be a bounded string, number, or boolean")
 		}
 		inv.WorkPolicyRevision = record.Revision
-		created, err = s.store.EnqueueKeyedInvocation(ctx, inv, record.Policy, key)
+		var fairnessKeys []string
+		if len(work[0].FairnessKey) > 0 {
+			fairnessKey, fairnessErr := workpolicy.CanonicalScalar(work[0].FairnessKey)
+			if fairnessErr != nil {
+				return state.Invocation{}, api.ErrValidation("work fairness_key must be a bounded string, number, or boolean")
+			}
+			fairnessKeys = append(fairnessKeys, fairnessKey)
+		}
+		created, err = s.store.EnqueueKeyedInvocation(ctx, inv, record.Policy, key, fairnessKeys...)
 	} else {
 		created, err = s.store.EnqueueInvocation(ctx, inv)
 	}

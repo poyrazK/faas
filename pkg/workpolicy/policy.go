@@ -25,9 +25,8 @@ const (
 	MaxExpiresAfter = 30 * 24 * time.Hour
 )
 
-// Policy is one named app-scoped configuration. The first delivery stage
-// admits one running invocation per work key; wider per-key concurrency needs
-// a durable slot ledger and is deliberately rejected until that path exists.
+// Policy is one named app-scoped configuration. A work lane admits one running
+// invocation per key; an optional fairness cap spans multiple work lanes.
 type Policy struct {
 	Name                     string
 	MaxRunningPerKey         int
@@ -37,7 +36,7 @@ type Policy struct {
 	MaxRunningPerFairnessKey int
 }
 
-// Validate rejects settings that the first policy claim implementation cannot
+// Validate rejects settings that the policy claim implementation cannot
 // enforce. Zero PendingUpdates selects the non-destructive default.
 func (p Policy) Validate() error {
 	if !policyNamePattern.MatchString(p.Name) {
@@ -61,8 +60,8 @@ func (p Policy) Validate() error {
 	if p.MaxRunningPerFairnessKey < 0 {
 		return fmt.Errorf("max_running_per_fairness_key cannot be negative")
 	}
-	if p.MaxRunningPerFairnessKey > 0 {
-		return fmt.Errorf("fairness-key concurrency is not yet available")
+	if p.MaxRunningPerFairnessKey > 1000 {
+		return fmt.Errorf("max_running_per_fairness_key must be at most 1000")
 	}
 	return nil
 }

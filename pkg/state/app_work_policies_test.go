@@ -81,11 +81,14 @@ func assertEventWorkBinding(t *testing.T, ctx context.Context, store eventWorkSt
 	if err != nil || old == nil || old.KeySelector != "data.order_id" {
 		t.Fatalf("previous binding = %+v, %v", old, err)
 	}
-	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, policy.Name, "data.customer_id", state.EventWorkCancelPending); err != nil {
+	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, policy.Name,
+		"data.customer_id", state.EventWorkBindingOptions{
+			Action: state.EventWorkCancelPending, FairnessSelector: "data.tenant_id"}); err != nil {
 		t.Fatal(err)
 	}
 	bindings, err = store.EventWorkBindingsByIDs(ctx, []string{sub.ID})
-	if err != nil || bindings[sub.ID].Action != state.EventWorkCancelPending {
+	if err != nil || bindings[sub.ID].Action != state.EventWorkCancelPending ||
+		bindings[sub.ID].FairnessSelector != "data.tenant_id" {
 		t.Fatalf("cancel action = %+v, %v", bindings, err)
 	}
 	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, "", ""); err != nil {
@@ -98,7 +101,9 @@ func assertEventWorkBinding(t *testing.T, ctx context.Context, store eventWorkSt
 
 func assertAppWorkPolicies(t *testing.T, ctx context.Context, store state.AppWorkPolicyStore, accountID, appID string) {
 	t.Helper()
-	policy := workpolicy.Policy{Name: "document-index", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingKeepLatest, Debounce: 3 * time.Second, ExpiresAfter: 10 * time.Minute}
+	policy := workpolicy.Policy{Name: "document-index", MaxRunningPerKey: 1,
+		MaxRunningPerFairnessKey: 2, PendingUpdates: workpolicy.PendingKeepLatest,
+		Debounce: 3 * time.Second, ExpiresAfter: 10 * time.Minute}
 	created, err := store.UpsertAppWorkPolicy(ctx, accountID, appID, policy)
 	if err != nil || created.Revision != 1 {
 		t.Fatalf("create policy = %+v, %v", created, err)

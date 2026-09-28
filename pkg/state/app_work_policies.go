@@ -35,7 +35,8 @@ func scanAppWorkPolicy(row pgx.Row) (AppWorkPolicy, error) {
 	var pending string
 	var debounceMS, expiresAfterMS int64
 	err := row.Scan(&record.AccountID, &record.AppID, &record.Policy.Name, &record.Revision,
-		&record.Policy.MaxRunningPerKey, &pending, &debounceMS, &expiresAfterMS,
+		&record.Policy.MaxRunningPerKey, &record.Policy.MaxRunningPerFairnessKey,
+		&pending, &debounceMS, &expiresAfterMS,
 		&record.CreatedAt, &record.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppWorkPolicy{}, ErrNotFound
@@ -50,7 +51,7 @@ func scanAppWorkPolicy(row pgx.Row) (AppWorkPolicy, error) {
 }
 
 const appWorkPolicyColumns = `account_id, app_id, name, revision,
-  max_running_per_key, pending_updates, debounce_ms, expires_after_ms,
+  max_running_per_key, max_running_per_fairness_key, pending_updates, debounce_ms, expires_after_ms,
   created_at, updated_at`
 
 func (s *PgStore) UpsertAppWorkPolicy(ctx context.Context, accountID, appID string, policy workpolicy.Policy) (AppWorkPolicy, error) {
@@ -88,28 +89,30 @@ func (s *PgStore) UpsertAppWorkPolicy(ctx context.Context, accountID, appID stri
 	}
 	record, err := scanAppWorkPolicy(tx.QueryRow(ctx, `
 		insert into app_work_policies as p
-		  (account_id, app_id, name, max_running_per_key, pending_updates,
+		  (account_id, app_id, name, max_running_per_key, max_running_per_fairness_key, pending_updates,
 		   debounce_ms, expires_after_ms)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		values ($1, $2, $3, $4, $5, $6, $7, $8)
 		on conflict (app_id, name) do update set
 		  revision = p.revision + case when
-		    (p.max_running_per_key, p.pending_updates, p.debounce_ms, p.expires_after_ms)
+		    (p.max_running_per_key, p.max_running_per_fairness_key, p.pending_updates, p.debounce_ms, p.expires_after_ms)
 		    is distinct from
-		    (excluded.max_running_per_key, excluded.pending_updates,
+		    (excluded.max_running_per_key, excluded.max_running_per_fairness_key, excluded.pending_updates,
 		     excluded.debounce_ms, excluded.expires_after_ms)
 		    then 1 else 0 end,
 		  updated_at = case when
-		    (p.max_running_per_key, p.pending_updates, p.debounce_ms, p.expires_after_ms)
+		    (p.max_running_per_key, p.max_running_per_fairness_key, p.pending_updates, p.debounce_ms, p.expires_after_ms)
 		    is distinct from
-		    (excluded.max_running_per_key, excluded.pending_updates,
+		    (excluded.max_running_per_key, excluded.max_running_per_fairness_key, excluded.pending_updates,
 		     excluded.debounce_ms, excluded.expires_after_ms)
 		    then now() else p.updated_at end,
 		  max_running_per_key = excluded.max_running_per_key,
+		  max_running_per_fairness_key = excluded.max_running_per_fairness_key,
 		  pending_updates = excluded.pending_updates,
 		  debounce_ms = excluded.debounce_ms,
 		  expires_after_ms = excluded.expires_after_ms
 		returning `+appWorkPolicyColumns,
-		accountID, appID, policy.Name, policy.MaxRunningPerKey, string(pending),
+		accountID, appID, policy.Name, policy.MaxRunningPerKey,
+		policy.MaxRunningPerFairnessKey, string(pending),
 		policy.Debounce.Milliseconds(), policy.ExpiresAfter.Milliseconds()))
 	if err != nil {
 		return AppWorkPolicy{}, err

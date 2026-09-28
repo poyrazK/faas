@@ -25,6 +25,7 @@ class WorkPolicyResponse:
     name: str
     revision: int
     max_running_per_key: WorkPolicyResponseMaxRunningPerKey
+    max_running_per_fairness_key: int
     pending_updates: WorkPolicyResponsePendingUpdates
     debounce_ms: int
     expires_after_ms: int
@@ -37,6 +38,8 @@ class WorkPolicyResponse:
         revision = self.revision
 
         max_running_per_key: int = self.max_running_per_key
+
+        max_running_per_fairness_key = self.max_running_per_fairness_key
 
         pending_updates: str = self.pending_updates
 
@@ -55,6 +58,7 @@ class WorkPolicyResponse:
                 "name": name,
                 "revision": revision,
                 "max_running_per_key": max_running_per_key,
+                "max_running_per_fairness_key": max_running_per_fairness_key,
                 "pending_updates": pending_updates,
                 "debounce_ms": debounce_ms,
                 "expires_after_ms": expires_after_ms,
@@ -74,6 +78,8 @@ class WorkPolicyResponse:
 
         max_running_per_key = check_work_policy_response_max_running_per_key(d.pop("max_running_per_key"))
 
+        max_running_per_fairness_key = d.pop("max_running_per_fairness_key")
+
         pending_updates = check_work_policy_response_pending_updates(d.pop("pending_updates"))
 
         debounce_ms = d.pop("debounce_ms")
@@ -88,6 +94,7 @@ class WorkPolicyResponse:
             name=name,
             revision=revision,
             max_running_per_key=max_running_per_key,
+            max_running_per_fairness_key=max_running_per_fairness_key,
             pending_updates=pending_updates,
             debounce_ms=debounce_ms,
             expires_after_ms=expires_after_ms,

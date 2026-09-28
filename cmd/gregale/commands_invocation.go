@@ -33,6 +33,7 @@ func cmdInvoke(args []string) int {
 	onFailure := fs.String("on-failure-webhook", "", "app webhook id for failed or dead-lettered callbacks")
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --async and --work-key)")
 	workKey := fs.String("work-key", "", "JSON string, number, or boolean application key")
+	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys, such as a tenant ID")
 	// Go's flag parser stops at the first positional token. Reorder the
 	// documented `<slug> [flags]` form before parsing so flags-first and
 	// positional-first invocations share the same validation path.
@@ -41,7 +42,7 @@ func cmdInvoke(args []string) int {
 		return 1
 	}
 	if len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
+		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -52,7 +53,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -73,7 +74,7 @@ func cmdInvoke(args []string) int {
 			OnFailure: *onFailure,
 		}
 	}
-	if *workPolicy != "" || *workKey != "" {
+	if *workPolicy != "" || *workKey != "" || *workFairnessKey != "" {
 		if !*async || *workPolicy == "" || *workKey == "" {
 			return printErr("Invalid work policy", errors.New("--work-policy and --work-key must be used together with --async"))
 		}
@@ -81,6 +82,12 @@ func cmdInvoke(args []string) int {
 			return printErr("Invalid work key", err)
 		}
 		req.Work = &api.InvokeWork{Policy: *workPolicy, Key: json.RawMessage(*workKey)}
+		if *workFairnessKey != "" {
+			if _, err := workpolicy.CanonicalScalar(json.RawMessage(*workFairnessKey)); err != nil {
+				return printErr("Invalid work fairness key", err)
+			}
+			req.Work.FairnessKey = json.RawMessage(*workFairnessKey)
+		}
 	}
 	client, err := authedClient()
 	if err != nil {

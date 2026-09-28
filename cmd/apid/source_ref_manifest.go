@@ -548,10 +548,13 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				previousAction = state.EventWorkInvoke
 			}
 			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
+				previous.FairnessSelector == declaration.WorkFairnessKey &&
 				previousAction == declaration.EffectiveWorkAction() {
 				continue
 			}
-			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy, declaration.WorkKey, declaration.EffectiveWorkAction())
+			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
+				declaration.WorkKey, state.EventWorkBindingOptions{
+					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey})
 			if bindingErr != nil {
 				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 					"Invalid manifest", "event work policy must exist on the target app")
@@ -562,7 +565,8 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			}
 			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
 				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
-				Action: declaration.EffectiveWorkAction()}
+				FairnessSelector: declaration.WorkFairnessKey,
+				Action:           declaration.EffectiveWorkAction()}
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -738,12 +742,14 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {
 			for i := len(staged.eventWorkChanges) - 1; i >= 0; i-- {
 				change := staged.eventWorkChanges[i]
-				policy, selector, action := "", "", state.EventWorkInvoke
+				policy, selector, action, fairness := "", "", state.EventWorkInvoke, ""
 				if change.previous != nil {
-					policy, selector, action = change.previous.PolicyName, change.previous.KeySelector, change.previous.Action
+					policy, selector, action, fairness = change.previous.PolicyName,
+						change.previous.KeySelector, change.previous.Action, change.previous.FairnessSelector
 				}
 				if _, err := bindings.SetEventWorkBinding(ctx, staged.appID,
-					change.subscriptionID, policy, selector, action); err != nil {
+					change.subscriptionID, policy, selector,
+					state.EventWorkBindingOptions{Action: action, FairnessSelector: fairness}); err != nil {
 					errs = append(errs, err)
 				}
 			}

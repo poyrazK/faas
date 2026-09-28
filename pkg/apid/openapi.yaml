@@ -29383,6 +29383,7 @@ components:
           description: Normalized JSON filter evaluated by the event matcher.
         work_policy: { type: string, description: "Named app policy for keyed event deliveries, when configured." }
         work_key: { type: string, description: "Dot selector into the CloudEvents envelope for the work key." }
+        work_fairness_key: { type: string, description: "Optional dot selector for an application fairness group; defaults to work_key." }
         work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
@@ -38879,6 +38880,7 @@ components:
       properties:
         policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         key: { description: "A bounded JSON string, number, or boolean. Equal typed values share one work lane." }
+        fairness_key: { description: "Optional scalar shared by multiple work keys, such as a tenant ID. Defaults to key when the policy has a fairness cap." }
 
     UpsertWorkPolicyRequest:
       description: App work policy settings; durations use whole milliseconds.
@@ -38887,6 +38889,7 @@ components:
       required: [max_running_per_key]
       properties:
         max_running_per_key: { type: integer, enum: [1] }
+        max_running_per_fairness_key: { type: integer, minimum: 0, maximum: 1000, default: 0 }
         pending_updates: { type: string, enum: [all, keep_latest], default: all }
         debounce_ms: { type: integer, minimum: 0, maximum: 86400000, default: 0 }
         expires_after_ms: { type: integer, minimum: 0, maximum: 2592000000, default: 0 }
@@ -38895,11 +38898,12 @@ components:
       description: Saved app policy and revision used for subsequent work admissions.
       type: object
       additionalProperties: false
-      required: [name, revision, max_running_per_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
+      required: [name, revision, max_running_per_key, max_running_per_fairness_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
       properties:
         name: { type: string }
         revision: { type: integer, minimum: 1 }
         max_running_per_key: { type: integer, enum: [1] }
+        max_running_per_fairness_key: { type: integer, minimum: 0, maximum: 1000 }
         pending_updates: { type: string, enum: [all, keep_latest] }
         debounce_ms: { type: integer }
         expires_after_ms: { type: integer }

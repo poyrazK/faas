@@ -100,13 +100,14 @@ const (
 // persistence. Filter is a JSON object encoded as a string so the same matcher
 // contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
-	App        string `yaml:"app,omitempty" toml:"app"`
-	Source     string `yaml:"source" toml:"source"`
-	Type       string `yaml:"type" toml:"type"`
-	Filter     string `yaml:"filter,omitempty" toml:"filter"`
-	WorkPolicy string `yaml:"work_policy,omitempty" toml:"work_policy"`
-	WorkKey    string `yaml:"work_key,omitempty" toml:"work_key"`
-	WorkAction string `yaml:"work_action,omitempty" toml:"work_action"`
+	App             string `yaml:"app,omitempty" toml:"app"`
+	Source          string `yaml:"source" toml:"source"`
+	Type            string `yaml:"type" toml:"type"`
+	Filter          string `yaml:"filter,omitempty" toml:"filter"`
+	WorkPolicy      string `yaml:"work_policy,omitempty" toml:"work_policy"`
+	WorkKey         string `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkFairnessKey string `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
+	WorkAction      string `yaml:"work_action,omitempty" toml:"work_action"`
 }
 
 func (t EventTrigger) EffectiveWorkAction() string {
@@ -119,12 +120,13 @@ func (t EventTrigger) EffectiveWorkAction() string {
 // WorkPolicy declares one named app policy shared by async invocations and
 // event subscriptions. Durations use whole milliseconds on the wire.
 type WorkPolicy struct {
-	App              string `yaml:"app,omitempty" toml:"app"`
-	Name             string `yaml:"name" toml:"name"`
-	MaxRunningPerKey int    `yaml:"max_running_per_key" toml:"max_running_per_key"`
-	PendingUpdates   string `yaml:"pending_updates,omitempty" toml:"pending_updates"`
-	DebounceMS       int64  `yaml:"debounce_ms,omitempty" toml:"debounce_ms"`
-	ExpiresAfterMS   int64  `yaml:"expires_after_ms,omitempty" toml:"expires_after_ms"`
+	App                      string `yaml:"app,omitempty" toml:"app"`
+	Name                     string `yaml:"name" toml:"name"`
+	MaxRunningPerKey         int    `yaml:"max_running_per_key" toml:"max_running_per_key"`
+	MaxRunningPerFairnessKey int    `yaml:"max_running_per_fairness_key,omitempty" toml:"max_running_per_fairness_key"`
+	PendingUpdates           string `yaml:"pending_updates,omitempty" toml:"pending_updates"`
+	DebounceMS               int64  `yaml:"debounce_ms,omitempty" toml:"debounce_ms"`
+	ExpiresAfterMS           int64  `yaml:"expires_after_ms,omitempty" toml:"expires_after_ms"`
 }
 
 func (p WorkPolicy) ToPolicy() workpolicy.Policy {
@@ -133,9 +135,10 @@ func (p WorkPolicy) ToPolicy() workpolicy.Policy {
 		pending = workpolicy.PendingAll
 	}
 	return workpolicy.Policy{Name: p.Name, MaxRunningPerKey: p.MaxRunningPerKey,
-		PendingUpdates: pending,
-		Debounce:       time.Duration(p.DebounceMS) * time.Millisecond,
-		ExpiresAfter:   time.Duration(p.ExpiresAfterMS) * time.Millisecond}
+		MaxRunningPerFairnessKey: p.MaxRunningPerFairnessKey,
+		PendingUpdates:           pending,
+		Debounce:                 time.Duration(p.DebounceMS) * time.Millisecond,
+		ExpiresAfter:             time.Duration(p.ExpiresAfterMS) * time.Millisecond}
 }
 
 // AsyncRoute declares an HTTP route that accepts a request into Gregale's
@@ -387,6 +390,13 @@ func (t EventTrigger) Validate(idx int) error {
 		if _, err := workpolicy.ParseSelector(t.WorkKey); err != nil {
 			return fmt.Errorf("triggers.event[%d].work_key: %w", idx, err)
 		}
+		if t.WorkFairnessKey != "" {
+			if _, err := workpolicy.ParseSelector(t.WorkFairnessKey); err != nil {
+				return fmt.Errorf("triggers.event[%d].work_fairness_key: %w", idx, err)
+			}
+		}
+	} else if t.WorkFairnessKey != "" {
+		return fmt.Errorf("triggers.event[%d]: work_fairness_key requires work_policy", idx)
 	}
 	if err := events.ValidatePattern(t.Source); err != nil {
 		return fmt.Errorf("triggers.event[%d].source: %w", idx, err)

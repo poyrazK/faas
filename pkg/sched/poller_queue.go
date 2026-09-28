@@ -167,6 +167,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 				   )
 			       ))
 			   and i.state = 'pending'
+			   and i.work_policy_name is null
 			   and i.due_at <= now()
 			   and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
 			 order by i.created_at asc

@@ -12,11 +12,12 @@ import (
 // of keyed invocations. The policy is app-scoped; the selector reads the
 // canonical CloudEvents payload delivered to the invocation.
 type EventWorkBinding struct {
-	SubscriptionID string
-	AppID          string
-	PolicyName     string
-	KeySelector    string
-	Action         string
+	SubscriptionID   string
+	AppID            string
+	PolicyName       string
+	KeySelector      string
+	FairnessSelector string
+	Action           string
 }
 
 const (
@@ -25,27 +26,42 @@ const (
 )
 
 type EventWorkBindingStore interface {
-	SetEventWorkBinding(context.Context, string, string, string, string, ...string) (*EventWorkBinding, error)
+	SetEventWorkBinding(context.Context, string, string, string, string, ...EventWorkBindingOptions) (*EventWorkBinding, error)
 	EventWorkBindingsByIDs(context.Context, []string) (map[string]EventWorkBinding, error)
 }
 
-func normalizeEventWorkAction(action []string) (string, error) {
-	if len(action) > 1 {
-		return "", ErrInvalidArgument
+type EventWorkBindingOptions struct {
+	Action           string
+	FairnessSelector string
+}
+
+func normalizeEventWorkOptions(options []EventWorkBindingOptions) (string, string, error) {
+	if len(options) > 1 {
+		return "", "", ErrInvalidArgument
 	}
-	if len(action) == 0 || action[0] == "" {
-		return EventWorkInvoke, nil
+	mode := EventWorkInvoke
+	if len(options) == 1 && options[0].Action != "" {
+		mode = options[0].Action
 	}
-	if action[0] != EventWorkInvoke && action[0] != EventWorkCancelPending {
-		return "", ErrInvalidArgument
+	if mode != EventWorkInvoke && mode != EventWorkCancelPending {
+		return "", "", ErrInvalidArgument
 	}
-	return action[0], nil
+	var fairness string
+	if len(options) == 1 {
+		fairness = options[0].FairnessSelector
+		if fairness != "" {
+			if _, err := workpolicy.ParseSelector(fairness); err != nil {
+				return "", "", err
+			}
+		}
+	}
+	return mode, fairness, nil
 }
 
 // Empty policyName removes a binding. The previous value is returned for
 // source-deployment compensation if a later manifest step fails.
-func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID, policyName, selector string, action ...string) (*EventWorkBinding, error) {
-	mode, err := normalizeEventWorkAction(action)
+func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID, policyName, selector string, options ...EventWorkBindingOptions) (*EventWorkBinding, error) {
+	mode, fairness, err := normalizeEventWorkOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +84,10 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		return nil, err
 	}
 	var current EventWorkBinding
-	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector, action
+	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action
 		from event_subscription_work_bindings where subscription_id = $1 and app_id = $2
 		for update`, subscriptionID, appID).Scan(&current.SubscriptionID, &current.AppID,
-		&current.PolicyName, &current.KeySelector, &current.Action)
+		&current.PolicyName, &current.KeySelector, &current.FairnessSelector, &current.Action)
 	var previous *EventWorkBinding
 	if err == nil {
 		previous = &current
@@ -85,13 +101,13 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		}
 	} else {
 		tag, err := tx.Exec(ctx, `insert into event_subscription_work_bindings
-			(subscription_id, app_id, policy_name, key_selector, action)
-			values ($1, $2, $3, $4, $5)
+			(subscription_id, app_id, policy_name, key_selector, action, fairness_key_selector)
+			values ($1, $2, $3, $4, $5, $6)
 			on conflict (subscription_id) do update set
 			policy_name = excluded.policy_name, key_selector = excluded.key_selector,
-			action = excluded.action
+			action = excluded.action, fairness_key_selector = excluded.fairness_key_selector
 			where event_subscription_work_bindings.app_id = excluded.app_id`,
-			subscriptionID, appID, policyName, selector, mode)
+			subscriptionID, appID, policyName, selector, mode, fairness)
 		if err != nil {
 			return nil, mapErr(err)
 		}
@@ -110,7 +126,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector, action
+	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action
 		from event_subscription_work_bindings where subscription_id = any($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
@@ -119,7 +135,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	for rows.Next() {
 		var binding EventWorkBinding
 		if err := rows.Scan(&binding.SubscriptionID, &binding.AppID,
-			&binding.PolicyName, &binding.KeySelector, &binding.Action); err != nil {
+			&binding.PolicyName, &binding.KeySelector, &binding.FairnessSelector, &binding.Action); err != nil {
 			return nil, err
 		}
 		out[binding.SubscriptionID] = binding
@@ -127,8 +143,8 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	return out, rows.Err()
 }
 
-func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID, policyName, selector string, action ...string) (*EventWorkBinding, error) {
-	mode, err := normalizeEventWorkAction(action)
+func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID, policyName, selector string, options ...EventWorkBindingOptions) (*EventWorkBinding, error) {
+	mode, fairness, err := normalizeEventWorkOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +180,8 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 	} else {
 		m.eventWorkBindings[subscriptionID] = EventWorkBinding{
 			SubscriptionID: subscriptionID, AppID: canonicalMemUUID(appID),
-			PolicyName: policyName, KeySelector: selector, Action: mode}
+			PolicyName: policyName, KeySelector: selector,
+			FairnessSelector: fairness, Action: mode}
 	}
 	return previous, nil
 }
