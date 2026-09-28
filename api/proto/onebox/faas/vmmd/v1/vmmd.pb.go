@@ -1240,9 +1240,14 @@ type WakeResponse struct {
 	// gating signal for "wake until ready" — without this, the
 	// aggregate wake latency hides whether the slowness is on the
 	// host (restore / netns) or in the guest (init handshake).
-	GuestReadyMs  int64 `protobuf:"varint,13,opt,name=guest_ready_ms,json=guestReadyMs,proto3" json:"guest_ready_ms,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	GuestReadyMs int64 `protobuf:"varint,13,opt,name=guest_ready_ms,json=guestReadyMs,proto3" json:"guest_ready_ms,omitempty"`
+	// Set only when an attempted snapshot restore falls back to a successful
+	// cold boot because the configured application after_restore hook failed.
+	// Closed value: after_restore_failed. No callback URL or error text crosses
+	// the customer telemetry boundary; empty on other wake paths.
+	RestoreFallbackReason string `protobuf:"bytes,14,opt,name=restore_fallback_reason,json=restoreFallbackReason,proto3" json:"restore_fallback_reason,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *WakeResponse) Reset() {
@@ -1364,6 +1369,13 @@ func (x *WakeResponse) GetGuestReadyMs() int64 {
 		return x.GuestReadyMs
 	}
 	return 0
+}
+
+func (x *WakeResponse) GetRestoreFallbackReason() string {
+	if x != nil {
+		return x.RestoreFallbackReason
+	}
+	return ""
 }
 
 type CreateFromSnapshotRequest struct {
@@ -8074,7 +8086,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x06 \x01(\tR\x11vmstateStorageKey\x12 \n" +
-	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\x94\x04\n" +
+	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\xcc\x04\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -8091,7 +8103,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"restore_ms\x18\v \x01(\x03R\trestoreMs\x12 \n" +
 	"\fnetns_tap_ms\x18\f \x01(\x03R\n" +
 	"netnsTapMs\x12$\n" +
-	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\"\xc8\x02\n" +
+	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\x126\n" +
+	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +

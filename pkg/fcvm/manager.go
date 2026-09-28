@@ -314,6 +314,9 @@ type bringUpTimings struct {
 	scanCheckMs  int64
 	coldBootMs   int64
 	restoreError string
+	// restoreFallbackReason is customer-safe only for the application
+	// after_restore failure. Other restore diagnostics stay operator-only.
+	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
 	// (ADR-192).
@@ -449,6 +452,10 @@ type Instance struct {
 	// operator can distinguish a stale snapshot from a guest resume-hook
 	// failure (including its ACK code).
 	RestoreError string
+	// RestoreFallbackReason is the closed customer-facing reason for a
+	// successful cold-boot fallback after an application restore hook failure.
+	// Empty for other failures, planned cold boots, and successful restores.
+	RestoreFallbackReason string
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
 	// the live map keyed by app instead of by instance, so a
@@ -4244,7 +4251,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), ReadinessProbe: append(json.RawMessage(nil), req.ReadinessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{
+		Lease: lease, Net: nc, Method: method,
+		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
+		AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
+		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
+		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
+		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),
+		StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		Characterization: report, Runtime: req.Runtime,
+		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
+		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
+	}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4529,6 +4547,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"snapshot_fc_version", req.Snapshot.FCVersion)
 			if timings != nil {
 				timings.restoreError = rErr.Error()
+				if errors.Is(rErr, ErrAfterRestoreHook) {
+					timings.restoreFallbackReason = WakeReasonAfterRestoreFailed
+				}
 			}
 			m.metrics.ObserveFallback()
 			// Issue #1059 / ADR-127: closed-reason counter on the

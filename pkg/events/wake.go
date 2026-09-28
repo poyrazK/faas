@@ -88,7 +88,7 @@ const (
 	// audit row (different timings — `app.characterized` follows
 	// after the first request lands, this fires on RUNNING).
 	// Payload: {wake_id, app_id, instance_id, node_id, method,
-	// started_at, completed_at}.
+	// started_at, completed_at, restore_fallback_reason?}.
 	WakeBootCompleted = "wake.boot_completed"
 	// WakeBootFailed — boot path failed. Sibling of the legacy
 	// `wake_boot_error` audit row. Payload: {wake_id, app_id,
@@ -648,19 +648,20 @@ func (e BootStarted) Payload() map[string]any {
 // snapshot). The customer's "wake timeline" surfaces these three
 // fields identically on both rows.
 type BootCompleted struct {
-	EmitAt             time.Time
-	WakeID             string
-	AppID              string
-	InstanceID         string
-	NodeID             string
-	Method             string
-	Tier               string // warm, init, or cold_boot_fallback
-	StartedAt          time.Time
-	CompletedAt        time.Time
-	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
-	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
-	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
-	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
+	EmitAt                time.Time
+	WakeID                string
+	AppID                 string
+	InstanceID            string
+	NodeID                string
+	Method                string
+	Tier                  string // warm, init, or cold_boot_fallback
+	RestoreFallbackReason string // closed after_restore_failed code; omitted otherwise
+	StartedAt             time.Time
+	CompletedAt           time.Time
+	Trigger               string // ADR-123 — pkg/sched/triggers.go closed enum
+	TriggerClass          string // issue #1398 — user|monitor|crawler|preview_bot|unknown
+	QueuedCount           int    // ADR-123 — ledger.Concurrency at admit
+	ConcurrencyAtAdmit    int    // ADR-123 — same reading; 0 is cold start
 }
 
 func (e BootCompleted) Kind() string     { return WakeBootCompleted }
@@ -686,6 +687,9 @@ func (e BootCompleted) Payload() map[string]any {
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
+	}
+	if e.RestoreFallbackReason != "" {
+		p["restore_fallback_reason"] = e.RestoreFallbackReason
 	}
 	return p
 }

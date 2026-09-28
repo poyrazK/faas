@@ -341,6 +341,30 @@ func TestWakeResponseFromInstance_BadIP(t *testing.T) {
 	}
 }
 
+// adr: 342 — the wire exposes the closed reason on a real fallback only.
+func TestWakeResponseFromInstance_OnlyApplicationFallbackReason(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		requested vmmdpb.WakeMethod
+		actual    fcvm.WakeMethod
+		reason    string
+		want      string
+	}{
+		{"hook fallback", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeColdBoot, fcvm.WakeReasonAfterRestoreFailed, fcvm.WakeReasonAfterRestoreFailed},
+		{"planned cold boot", vmmdpb.WakeMethod_WAKE_COLD_BOOT, fcvm.WakeColdBoot, fcvm.WakeReasonAfterRestoreFailed, ""},
+		{"successful restore", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeRestore, fcvm.WakeReasonAfterRestoreFailed, ""},
+		{"unrecognized reason", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeColdBoot, "callback /private failed", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inst := &fcvm.Instance{Method: tt.actual, RestoreFallbackReason: tt.reason}
+			got := wakeResponseFromInstance("i", fcvm.WakeRequest{}, inst, tt.requested).GetRestoreFallbackReason()
+			if got != tt.want {
+				t.Errorf("reason = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSealedFromProto(t *testing.T) {
 	// Empty input → nil output (the Manager treats nil and empty
 	// equivalently: no StageSecretsEnv call).

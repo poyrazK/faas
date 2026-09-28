@@ -874,6 +874,11 @@ message WakeResponse {
   // aggregate wake latency hides whether the slowness is on the
   // host (restore / netns) or in the guest (init handshake).
   int64  guest_ready_ms = 13;
+  // Set only when an attempted snapshot restore falls back to a successful
+  // cold boot because the configured application after_restore hook failed.
+  // Closed value: after_restore_failed. No callback URL or error text crosses
+  // the customer telemetry boundary; empty on other wake paths.
+  string restore_fallback_reason = 14;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.

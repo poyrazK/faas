@@ -551,15 +551,16 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
-	Instance         string
-	LeaseUID         int32
-	HostIP           string
-	Netns            string
-	VethHost         string
-	VethPeer         string
-	Method           vmmdpb.WakeMethod
-	RequestedMethod  vmmdpb.WakeMethod
-	Characterization api.CharacterizationReport
+	Instance              string
+	LeaseUID              int32
+	HostIP                string
+	Netns                 string
+	VethHost              string
+	VethPeer              string
+	Method                vmmdpb.WakeMethod
+	RequestedMethod       vmmdpb.WakeMethod
+	RestoreFallbackReason string
+	Characterization      api.CharacterizationReport
 }
 
 // StopInstanceOutcome (M-2 / ADR-138 §Decision 1) is the vmmd-side
@@ -1559,14 +1560,15 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
-		Instance:        r.GetInstance(),
-		LeaseUID:        r.GetLeaseUid(),
-		HostIP:          r.GetHostIp(),
-		Netns:           r.GetNetns(),
-		VethHost:        r.GetVethHost(),
-		VethPeer:        r.GetVethPeer(),
-		Method:          r.GetMethod(),
-		RequestedMethod: r.GetRequestedMethod(),
+		Instance:              r.GetInstance(),
+		LeaseUID:              r.GetLeaseUid(),
+		HostIP:                r.GetHostIp(),
+		Netns:                 r.GetNetns(),
+		VethHost:              r.GetVethHost(),
+		VethPeer:              r.GetVethPeer(),
+		Method:                r.GetMethod(),
+		RequestedMethod:       r.GetRequestedMethod(),
+		RestoreFallbackReason: r.GetRestoreFallbackReason(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

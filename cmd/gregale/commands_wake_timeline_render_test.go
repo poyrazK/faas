@@ -1,3 +1,4 @@
+// adr: 342 — the CLI explains the closed application fallback reason.
 package main
 
 import (
@@ -46,6 +47,25 @@ func TestRenderWakeTimelinePage_TriggersAndContext(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderWakeTimelinePage_ApplicationRestoreFallback(t *testing.T) {
+	resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+		Kind: "wake.boot_completed", Actor: "schedd", Data: map[string]any{
+			"restore_fallback_reason": "after_restore_failed",
+		},
+	}}}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if !strings.Contains(buf.String(), "restore_fallback=after_restore_failed (after_restore hook failed; cold boot succeeded)") {
+		t.Fatalf("fallback explanation missing: %s", buf.String())
+	}
+	resp.Events[0].Data["restore_fallback_reason"] = "raw callback /private failed"
+	buf.Reset()
+	renderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "/private") {
+		t.Fatalf("unrecognized reason exposed: %s", buf.String())
 	}
 }
 

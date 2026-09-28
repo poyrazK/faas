@@ -33,6 +33,7 @@ import (
 // resource shape of pkg/fcvm.Manager so the handlers take no test-only branch.
 type fakeVMM struct {
 	wakeFn             func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	fallbackReason     string
 	parkFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
 	destFn             func(ctx context.Context, instance string) error
 	appTaskWake        fcvm.AppTaskWakeRequest
@@ -59,7 +60,8 @@ func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instanc
 			VethHost: "vh1",
 			VethPeer: "vp1",
 		},
-		Method: fcvm.WakeColdBoot,
+		Method:                fcvm.WakeColdBoot,
+		RestoreFallbackReason: f.fallbackReason,
 	}, nil
 }
 
@@ -263,7 +265,7 @@ func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {
 }
 
 func TestVMMClient_CreateColdBoot(t *testing.T) {
-	c := newClient(t, &fakeVMM{})
+	c := newClient(t, &fakeVMM{fallbackReason: fcvm.WakeReasonAfterRestoreFailed})
 	out, err := c.CreateColdBoot(context.Background(), "i-1", sched.AppSpec{
 		BaseKey: "/srv/fc/base", LayerKey: "/srv/fc/layer", VCPUCount: 2, MemSizeMiB: 256,
 	})
@@ -278,6 +280,9 @@ func TestVMMClient_CreateColdBoot(t *testing.T) {
 	}
 	if out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		t.Errorf("method = %v, want WAKE_COLD_BOOT", out.Method)
+	}
+	if out.RestoreFallbackReason != "" {
+		t.Errorf("planned cold boot leaked restore fallback reason = %q", out.RestoreFallbackReason)
 	}
 }
 
@@ -321,7 +326,7 @@ func TestVMMClient_AppTaskRestoreAndStreamingExecute(t *testing.T) {
 func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	// Fake always cold-boots; a restore request must report Method=COLD_BOOT
 	// but RequestedMethod=RESTORE (ADR-005 fallback surfaced to schedd).
-	c := newClient(t, &fakeVMM{})
+	c := newClient(t, &fakeVMM{fallbackReason: fcvm.WakeReasonAfterRestoreFailed})
 	out, err := c.CreateFromSnapshot(context.Background(), "i-2",
 		sched.AppSpec{BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 256},
 		sched.SnapshotRef{DeploymentID: "d-1", VMStatePath: "/v", FCVersion: "1.10.0", StorageKey: "snap/d-1/mem"},
@@ -334,6 +339,9 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	}
 	if out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		t.Errorf("method = %v, want WAKE_COLD_BOOT", out.Method)
+	}
+	if out.RestoreFallbackReason != fcvm.WakeReasonAfterRestoreFailed {
+		t.Errorf("restore fallback reason = %q", out.RestoreFallbackReason)
 	}
 }
 

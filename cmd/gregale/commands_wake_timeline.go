@@ -344,15 +344,24 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 	// cold_reason explains a cold boot that did not restore (pkg/sched
 	// ColdReason* closed set); absent on restores and older events.
 	coldReason, _ := ev.Data["cold_reason"].(string)
-	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" {
+	// Only the closed customer-safe reason is rendered. Older apid versions
+	// omit the field, and unexpected values must not become terminal output.
+	fallbackReason := ""
+	if ev.Kind == "wake.boot_completed" && ev.Data["restore_fallback_reason"] == "after_restore_failed" {
+		fallbackReason = "after_restore hook failed; cold boot succeeded"
+	}
+	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" && fallbackReason == "" {
 		return ""
 	}
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 	if trigger != "" {
 		parts = append(parts, "trigger="+trigger)
 	}
 	if coldReason != "" {
 		parts = append(parts, "cold_reason="+coldReason)
+	}
+	if fallbackReason != "" {
+		parts = append(parts, "restore_fallback=after_restore_failed ("+fallbackReason+")")
 	}
 	if queued != 0 {
 		parts = append(parts, fmt.Sprintf("q=%d", queued))

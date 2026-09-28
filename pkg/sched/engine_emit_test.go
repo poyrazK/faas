@@ -12,11 +12,13 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,6 +34,56 @@ func wakeEngineWithEvents(t *testing.T, store state.Store, vmm RoutedVMM, notif 
 	}
 	e.WithEvents(events.NewPlatform("schedd", store, testLog(), nil, nil))
 	return e
+}
+
+// adr: 342 — the customer event carries the safe reason for hook fallbacks.
+func TestEngineWake_EmitsApplicationRestoreFallbackReason(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		fallback   bool
+		reason     string
+		wantReason string
+	}{
+		{"application hook failed", true, fcvm.WakeReasonAfterRestoreFailed, fcvm.WakeReasonAfterRestoreFailed},
+		{"other fallback", true, "callback /private failed", ""},
+		{"successful restore", false, fcvm.WakeReasonAfterRestoreFailed, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+				DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
+				StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "hook-reason"),
+			}); err != nil {
+				t.Fatalf("CreateSnapshot: %v", err)
+			}
+			vmm := &fakeVMM{forceColdFallback: tt.fallback, restoreFallbackReason: tt.reason}
+			e := wakeEngineWithEvents(t, store, vmm, &fakeNotifier{})
+			res, err := e.Wake(context.Background(), app.ID, "", "", "")
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			rows := eventuallyEventsForInstance(t, store, res.WakeID, 4)
+			for _, row := range rows {
+				if row.Kind != events.WakeBootCompleted {
+					continue
+				}
+				var data map[string]any
+				if err := json.Unmarshal(row.Data, &data); err != nil {
+					t.Fatalf("decode boot_completed: %v", err)
+				}
+				got, present := data["restore_fallback_reason"]
+				if tt.wantReason == "" && present {
+					t.Errorf("unexpected fallback reason %q", got)
+				}
+				if tt.wantReason != "" && got != tt.wantReason {
+					t.Errorf("fallback reason = %v, want %q", got, tt.wantReason)
+				}
+				return
+			}
+			t.Fatalf("no boot_completed row: %v", kindsOf(rows))
+		})
+	}
 }
 
 // eventsForInstance collects the events rows the engine wrote

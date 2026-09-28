@@ -3928,20 +3928,29 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	if e.events != nil {
 		now := time.Now().UTC()
+		// The customer timeline may name the application's failed callback,
+		// but must never relay a raw restore error from vmmd.
+		restoreFallbackReason := ""
+		if out.RequestedMethod == vmmdpb.WakeMethod_WAKE_RESTORE &&
+			out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT &&
+			out.RestoreFallbackReason == fcvm.WakeReasonAfterRestoreFailed {
+			restoreFallbackReason = fcvm.WakeReasonAfterRestoreFailed
+		}
 		e.events.EmitAsync(ctx, events.BootCompleted{
-			EmitAt:             now,
-			WakeID:             bootInput.wakeID,
-			AppID:              bootInput.appID,
-			InstanceID:         bootInput.insID,
-			NodeID:             bootInput.nodeID,
-			Method:             completedMethod,
-			Tier:               bootInput.chosenTier,
-			StartedAt:          bootInput.startedAt,
-			CompletedAt:        now,
-			Trigger:            bootInput.trigger,
-			TriggerClass:       inboundCorr.TriggerClass,
-			QueuedCount:        bootInput.queuedCount,
-			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
+			EmitAt:                now,
+			WakeID:                bootInput.wakeID,
+			AppID:                 bootInput.appID,
+			InstanceID:            bootInput.insID,
+			NodeID:                bootInput.nodeID,
+			Method:                completedMethod,
+			Tier:                  bootInput.chosenTier,
+			RestoreFallbackReason: restoreFallbackReason,
+			StartedAt:             bootInput.startedAt,
+			CompletedAt:           now,
+			Trigger:               bootInput.trigger,
+			TriggerClass:          inboundCorr.TriggerClass,
+			QueuedCount:           bootInput.queuedCount,
+			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
 		})
 	}
 

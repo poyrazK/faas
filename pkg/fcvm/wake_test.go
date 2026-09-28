@@ -108,6 +108,33 @@ func TestWakeRestoreFailureFallsBackToColdBoot(t *testing.T) {
 	}
 }
 
+// adr: 342 — only an application hook failure receives a customer reason.
+func TestWakeRestoreFallbackReasonOnlyForApplicationHook(t *testing.T) {
+	tests := []struct {
+		name       string
+		snapshot   *Snapshot
+		restoreErr error
+		want       string
+	}{
+		{name: "hook failure", snapshot: usableSnapshot(), restoreErr: fmt.Errorf("callback /private failed: %w", ErrAfterRestoreHook), want: WakeReasonAfterRestoreFailed},
+		{name: "other restore failure", snapshot: usableSnapshot(), restoreErr: fmt.Errorf("corrupt snapshot")},
+		{name: "successful restore", snapshot: usableSnapshot()},
+		{name: "planned cold boot"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestManager(&fakeRunner{}, &fakeVMM{restoreErr: tt.restoreErr})
+			inst, err := m.Wake(context.Background(), wakeReq("i1", tt.snapshot))
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if inst.RestoreFallbackReason != tt.want {
+				t.Errorf("RestoreFallbackReason = %q, want %q", inst.RestoreFallbackReason, tt.want)
+			}
+		})
+	}
+}
+
 // TestWakeTotalFailureNoLeak: restore fails AND cold boot fails => terminal error
 // and zero leaked resources.
 func TestWakeTotalFailureNoLeak(t *testing.T) {

@@ -31,24 +31,25 @@ import (
 // fakeVMM is a sched.VMM that records calls and stands in for firecracker. It is
 // shared by engine_test and loop_test (both package sched).
 type fakeVMM struct {
-	mu                  sync.Mutex
-	coldBoots           int
-	restores            int
-	snapshots           int
-	warmSnapshots       int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
-	destroys            int
-	pings               int // PR #114: counts Ping calls (heartbeat path)
-	frameworkReadyCount int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
-	prepares            int // Tier A5: counts PrepareLiveMigration calls
-	prepareStorageKey   string
-	adopts              int  // Tier A5: counts AdoptMigratedInstance calls
-	acks                int  // Tier A5: counts AcknowledgeMigration calls
-	cancels             int  // Tier A5: counts CancelLiveMigration calls
-	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
-	wakeErr             error
-	coldBootHook        func()
-	snapErr             error
-	snapErrSequence     []error
+	mu                    sync.Mutex
+	coldBoots             int
+	restores              int
+	snapshots             int
+	warmSnapshots         int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
+	destroys              int
+	pings                 int // PR #114: counts Ping calls (heartbeat path)
+	frameworkReadyCount   int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
+	prepares              int // Tier A5: counts PrepareLiveMigration calls
+	prepareStorageKey     string
+	adopts                int  // Tier A5: counts AdoptMigratedInstance calls
+	acks                  int  // Tier A5: counts AcknowledgeMigration calls
+	cancels               int  // Tier A5: counts CancelLiveMigration calls
+	forceColdFallback     bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
+	restoreFallbackReason string
+	wakeErr               error
+	coldBootHook          func()
+	snapErr               error
+	snapErrSequence       []error
 	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
 	// PauseAndSnapshot. The RPC shipped with NO deadline and wedged the
 	// scheduler for 10+ minutes in production (2026-09-03); these let a
@@ -191,7 +192,9 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, ap
 	if f.forceColdFallback {
 		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
 	}
-	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
+	out := f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE)
+	out.RestoreFallbackReason = f.restoreFallbackReason
+	return out, nil
 }
 
 func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (SnapshotBytes, error) {
