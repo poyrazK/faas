@@ -5,6 +5,7 @@
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
 import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatformTenantCredentialsRequest.js';
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
+import type { ApplyPlatformTenantReconciliationRequest } from '../models/ApplyPlatformTenantReconciliationRequest.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
 import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
@@ -35,6 +36,7 @@ import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTen
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
+import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
 import type { PlatformTenantReconciliationPlanResponse } from '../models/PlatformTenantReconciliationPlanResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
@@ -158,6 +160,53 @@ export class PlatformTenantsService {
       url: '/v1/account/platform-tenants/{id}/reconciliation-plan',
       path: {
         'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Apply a current, explicitly confirmed tenant reconciliation plan.
+   * Recomputes the ownership-aware plan inside the write transaction and
+   * applies it only when `expected_plan_hash` matches the current preview.
+   * The request requires an `Idempotency-Key`. Managed consumers and
+   * surfaces are detached rather than deleted; omitted managed hostnames
+   * declared through `surfaces` are removed. Unmanaged resources are never
+   * changed. A stale plan returns 409 and makes no changes.
+   *
+   * @returns PlatformTenantReconciliationApplyResponse The confirmed reconciliation changes, applied atomically.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantReconciliation({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose confirmed plan is being applied.
+     */
+    id: string,
+    /**
+     * Stable retry key for this apply operation.
+     */
+    idempotencyKey: string,
+    requestBody: ApplyPlatformTenantReconciliationRequest,
+  }): CancelablePromise<PlatformTenantReconciliationApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/reconciliation-plan/apply',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       body: requestBody,
       mediaType: 'application/json',

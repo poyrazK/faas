@@ -39,6 +39,13 @@ func (c *Client) PlanPlatformTenantReconciliation(ctx context.Context, tenantID 
 	return out, err
 }
 
+func (c *Client) ApplyPlatformTenantReconciliation(ctx context.Context, tenantID string, req ApplyPlatformTenantReconciliationRequest) (PlatformTenantReconciliationApplyResponse, error) {
+	var out PlatformTenantReconciliationApplyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/reconciliation-plan/apply"
+	err := c.do(ctx, "POST", path, req, &out)
+	return out, err
+}
+
 func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTenantDetailResponse, error) {
 	var out PlatformTenantDetailResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)

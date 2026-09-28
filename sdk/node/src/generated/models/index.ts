@@ -116,6 +116,7 @@ export type { ApplyPlatformTenantConsumerResponse } from './ApplyPlatformTenantC
 export type { ApplyPlatformTenantCredentialsRequest } from './ApplyPlatformTenantCredentialsRequest.js';
 export type { ApplyPlatformTenantCredentialsResponse } from './ApplyPlatformTenantCredentialsResponse.js';
 export type { ApplyPlatformTenantHostnameResponse } from './ApplyPlatformTenantHostnameResponse.js';
+export type { ApplyPlatformTenantReconciliationRequest } from './ApplyPlatformTenantReconciliationRequest.js';
 export type { ApplyPlatformTenantRequest } from './ApplyPlatformTenantRequest.js';
 export type { ApplyPlatformTenantResponse } from './ApplyPlatformTenantResponse.js';
 export type { ApplyPlatformTenantSelfConsumersRequest } from './ApplyPlatformTenantSelfConsumersRequest.js';
@@ -577,6 +578,7 @@ export type { PlatformTenantHostnameVerifiedWebhookPayload } from './PlatformTen
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';
+export type { PlatformTenantReconciliationApplyResponse } from './PlatformTenantReconciliationApplyResponse.js';
 export type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
 export type { PlatformTenantReconciliationPlanResponse } from './PlatformTenantReconciliationPlanResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './PlatformTenantRequestBudgetResponse.js';

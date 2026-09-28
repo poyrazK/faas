@@ -1,12 +1,18 @@
 from typing import Literal
 
-PlatformTenantReconciliationPlanChangeAction = Literal["create", "keep", "link", "remove_candidate", "retain_unmanaged"]
+PlatformTenantReconciliationPlanChangeAction = Literal[
+    "create", "created", "detached", "keep", "link", "linked", "remove_candidate", "removed", "retain_unmanaged"
+]
 
 PLATFORM_TENANT_RECONCILIATION_PLAN_CHANGE_ACTION_VALUES: set[PlatformTenantReconciliationPlanChangeAction] = {
     "create",
+    "created",
+    "detached",
     "keep",
     "link",
+    "linked",
     "remove_candidate",
+    "removed",
     "retain_unmanaged",
 }
 

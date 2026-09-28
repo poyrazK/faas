@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One deterministic plan entry. remove_candidate is informational only; no resource is detached, revoked, or deleted by planning.
+ * One deterministic planned or applied entry. remove_candidate is advisory in a plan; a confirmed apply reports detached or removed.
  */
 export type PlatformTenantReconciliationPlanChange = {
   resource_type: 'consumer' | 'surface' | 'hostname';
-  action: 'create' | 'link' | 'keep' | 'remove_candidate' | 'retain_unmanaged';
+  action: 'create' | 'link' | 'keep' | 'remove_candidate' | 'retain_unmanaged' | 'created' | 'linked' | 'detached' | 'removed';
   /**
    * Existing resource ID; absent for a resource that would be created.
    */

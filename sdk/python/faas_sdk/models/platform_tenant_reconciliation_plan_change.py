@@ -22,8 +22,8 @@ T = TypeVar("T", bound="PlatformTenantReconciliationPlanChange")
 
 @_attrs_define
 class PlatformTenantReconciliationPlanChange:
-    """One deterministic plan entry. remove_candidate is informational only; no resource is detached, revoked, or deleted
-    by planning.
+    """One deterministic planned or applied entry. remove_candidate is advisory in a plan; a confirmed apply reports
+    detached or removed.
 
     """
 

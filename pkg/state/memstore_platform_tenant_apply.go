@@ -8,12 +8,16 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
+func (m *MemStore) ApplyPlatformTenant(ctx context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
 	if err := validatePlatformTenantApply(in); err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.applyPlatformTenantLocked(ctx, in)
+}
+
+func (m *MemStore) applyPlatformTenantLocked(_ context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
 	if _, ok := m.accounts[in.AccountID]; !ok {
 		return ApplyPlatformTenantResult{}, ErrNotFound
 	}

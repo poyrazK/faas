@@ -27,6 +27,19 @@ func scanPlatformTenant(row pgx.Row) (PlatformTenant, error) {
 	return tenant, nil
 }
 
+// lockPlatformTenantAccount serializes tenant membership mutations with bundle
+// and reconciliation applies, which take the same lock before reading links.
+func lockPlatformTenantAccount(ctx context.Context, tx pgx.Tx, accountID string) error {
+	var locked string
+	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, accountID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *PgStore) CreatePlatformTenant(ctx context.Context, accountID, externalRef, name string, limit int) (PlatformTenant, bool, error) {
 	if err := validatePlatformTenantInput(accountID, externalRef, name); err != nil {
 		return PlatformTenant{}, false, err
@@ -36,11 +49,7 @@ func (s *PgStore) CreatePlatformTenant(ctx context.Context, accountID, externalR
 		return PlatformTenant{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked string
-	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, accountID).Scan(&locked); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return PlatformTenant{}, false, ErrNotFound
-		}
+	if err := lockPlatformTenantAccount(ctx, tx, accountID); err != nil {
 		return PlatformTenant{}, false, err
 	}
 	tenant, err := scanPlatformTenant(tx.QueryRow(ctx, `
@@ -127,26 +136,50 @@ func (s *PgStore) SetPlatformTenantStatus(ctx context.Context, accountID, tenant
 }
 
 func (s *PgStore) LinkPlatformTenantConsumer(ctx context.Context, accountID, tenantID, consumerID string) (APIConsumer, error) {
-	c, err := scanAPIConsumerRow(s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return APIConsumer{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockPlatformTenantAccount(ctx, tx, accountID); err != nil {
+		return APIConsumer{}, err
+	}
+	c, err := scanAPIConsumerRow(tx.QueryRow(ctx, `
 		update api_consumers c set platform_tenant_id = $2::uuid
 		where c.account_id = $1::uuid and c.id = $3::uuid
 		  and (c.platform_tenant_id is null or c.platform_tenant_id = $2::uuid)
 		  and exists (select 1 from platform_tenants t where t.account_id = $1::uuid and t.id = $2::uuid)
 		returning `+apiConsumerSelectCols, accountID, tenantID, consumerID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, getErr := s.GetPlatformTenant(ctx, accountID, tenantID); getErr != nil {
+		if _, getErr := scanPlatformTenant(tx.QueryRow(ctx, `select `+platformTenantCols+`
+			from platform_tenants where account_id = $1::uuid and id = $2::uuid`, accountID, tenantID)); getErr != nil {
 			return APIConsumer{}, getErr
 		}
-		if _, getErr := s.GetAPIConsumerByID(ctx, accountID, consumerID); getErr != nil {
-			return APIConsumer{}, getErr
+		if _, getErr := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
+			from api_consumers where account_id = $1::uuid and id = $2::uuid`, accountID, consumerID)); getErr != nil {
+			return APIConsumer{}, applyNoRows(getErr)
 		}
 		return APIConsumer{}, ErrConflict
 	}
-	return c, err
+	if err != nil {
+		return APIConsumer{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return APIConsumer{}, err
+	}
+	return c, nil
 }
 
 func (s *PgStore) LinkPlatformTenantSurface(ctx context.Context, accountID, tenantID, surfaceID string) (TenantSurface, error) {
-	surface, err := scanTenantSurface(s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return TenantSurface{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockPlatformTenantAccount(ctx, tx, accountID); err != nil {
+		return TenantSurface{}, err
+	}
+	surface, err := scanTenantSurface(tx.QueryRow(ctx, `
 		update tenant_surfaces s set platform_tenant_id = $2::uuid
 		where s.account_id = $1::uuid and s.id = $3::uuid
 		  and s.status <> 'deleted'
@@ -154,16 +187,24 @@ func (s *PgStore) LinkPlatformTenantSurface(ctx context.Context, accountID, tena
 		  and exists (select 1 from platform_tenants t where t.account_id = $1::uuid and t.id = $2::uuid)
 		returning `+tenantSurfaceCols, accountID, tenantID, surfaceID))
 	if errors.Is(err, ErrNotFound) {
-		if _, getErr := s.GetPlatformTenant(ctx, accountID, tenantID); getErr != nil {
+		if _, getErr := scanPlatformTenant(tx.QueryRow(ctx, `select `+platformTenantCols+`
+			from platform_tenants where account_id = $1::uuid and id = $2::uuid`, accountID, tenantID)); getErr != nil {
 			return TenantSurface{}, getErr
 		}
-		surface, getErr := s.GetTenantSurfaceByID(ctx, surfaceID)
-		if getErr != nil || surface.AccountID != accountID || surface.Status == SurfaceStatusDeleted {
+		existing, getErr := scanTenantSurface(tx.QueryRow(ctx, `select `+tenantSurfaceCols+`
+			from tenant_surfaces where id = $1::uuid`, surfaceID))
+		if getErr != nil || existing.AccountID != accountID || existing.Status == SurfaceStatusDeleted {
 			return TenantSurface{}, ErrNotFound
 		}
 		return TenantSurface{}, ErrConflict
 	}
-	return surface, err
+	if err != nil {
+		return TenantSurface{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TenantSurface{}, err
+	}
+	return surface, nil
 }
 
 func (s *PgStore) ListPlatformTenantConsumers(ctx context.Context, accountID, tenantID string) ([]APIConsumer, error) {

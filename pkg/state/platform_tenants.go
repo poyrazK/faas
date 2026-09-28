@@ -70,6 +70,19 @@ type PlatformTenantApplyStore interface {
 	ApplyPlatformTenant(context.Context, ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error)
 }
 
+// PlatformTenantReconciliationStore plans desired tenant state and applies a
+// confirmed plan atomically. The plan hash binds the account, tenant, desired
+// bundle, current ownership-aware changes, and applicable quotas.
+type PlatformTenantReconciliationStore interface {
+	PlanPlatformTenantReconciliation(context.Context, PlatformTenantReconciliationParams) (api.PlatformTenantReconciliationPlanResponse, error)
+	ApplyPlatformTenantReconciliation(context.Context, PlatformTenantReconciliationParams, string) (api.PlatformTenantReconciliationApplyResponse, error)
+}
+
+type PlatformTenantReconciliationParams struct {
+	TenantID string
+	ApplyPlatformTenantParams
+}
+
 type ApplyPlatformTenantParams struct {
 	AccountID   string
 	ExternalRef string
@@ -133,10 +146,12 @@ func (e *PlatformTenantQuotaError) Error() string {
 }
 
 var (
-	_ PlatformTenantStore      = (*PgStore)(nil)
-	_ PlatformTenantStore      = (*MemStore)(nil)
-	_ PlatformTenantApplyStore = (*PgStore)(nil)
-	_ PlatformTenantApplyStore = (*MemStore)(nil)
+	_ PlatformTenantStore               = (*PgStore)(nil)
+	_ PlatformTenantStore               = (*MemStore)(nil)
+	_ PlatformTenantApplyStore          = (*PgStore)(nil)
+	_ PlatformTenantApplyStore          = (*MemStore)(nil)
+	_ PlatformTenantReconciliationStore = (*PgStore)(nil)
+	_ PlatformTenantReconciliationStore = (*MemStore)(nil)
 )
 
 func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {

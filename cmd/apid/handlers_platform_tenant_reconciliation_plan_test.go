@@ -102,8 +102,8 @@ func TestPlatformTenantReconciliationPlanIsReadOnlyAndOwnershipAware(t *testing.
 	assertChange("hostname", "remove_candidate", "", "remove.example.com", "", &managed)
 	assertChange("hostname", "retain_unmanaged", "", "legacy.example.com", "", &unmanaged)
 	assertChange("hostname", "create", "", "new.example.com", "", nil)
-	if repeated := readPlan(); !equalPlatformTenantPlanChanges(plan.Changes, repeated.Changes) {
-		t.Fatalf("plan is not deterministic:\nfirst:  %+v\nsecond: %+v", plan.Changes, repeated.Changes)
+	if repeated := readPlan(); !equalPlatformTenantPlanChanges(plan.Changes, repeated.Changes) || repeated.PlanHash != plan.PlanHash {
+		t.Fatalf("plan is not deterministic:\nfirst:  %+v (%s)\nsecond: %+v (%s)", plan.Changes, plan.PlanHash, repeated.Changes, repeated.PlanHash)
 	}
 
 	consumers, err := e.store.ListPlatformTenantConsumers(ctx, e.acct.ID, applied.TenantID)

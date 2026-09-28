@@ -332,6 +332,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/dev/sessions/{project}/syncs":                                     "RecordDevSync",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
+	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":          "ApplyPlatformTenantReconciliation",
 	"GET /v1/apps/{slug}/deployments":                                           "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                                    "GetLatestAppDeployment",
 	"GET /v1/apps/{slug}/deployment-aliases":                                    "ListDeploymentAliases",

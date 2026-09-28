@@ -232,6 +232,7 @@ from .apply_platform_tenant_credentials_request import ApplyPlatformTenantCreden
 from .apply_platform_tenant_credentials_response import ApplyPlatformTenantCredentialsResponse
 from .apply_platform_tenant_hostname_response import ApplyPlatformTenantHostnameResponse
 from .apply_platform_tenant_hostname_response_action import ApplyPlatformTenantHostnameResponseAction
+from .apply_platform_tenant_reconciliation_request import ApplyPlatformTenantReconciliationRequest
 from .apply_platform_tenant_request import ApplyPlatformTenantRequest
 from .apply_platform_tenant_response import ApplyPlatformTenantResponse
 from .apply_platform_tenant_response_action import ApplyPlatformTenantResponseAction
@@ -1115,6 +1116,7 @@ from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
+from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
 from .platform_tenant_reconciliation_plan_change import PlatformTenantReconciliationPlanChange
 from .platform_tenant_reconciliation_plan_change_action import PlatformTenantReconciliationPlanChangeAction
 from .platform_tenant_reconciliation_plan_change_resource_type import PlatformTenantReconciliationPlanChangeResourceType
@@ -1906,6 +1908,7 @@ __all__ = (
     "ApplyPlatformTenantCredentialsResponse",
     "ApplyPlatformTenantHostnameResponse",
     "ApplyPlatformTenantHostnameResponseAction",
+    "ApplyPlatformTenantReconciliationRequest",
     "ApplyPlatformTenantRequest",
     "ApplyPlatformTenantResponse",
     "ApplyPlatformTenantResponseAction",
@@ -2877,6 +2880,7 @@ __all__ = (
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseUnit",
+    "PlatformTenantReconciliationApplyResponse",
     "PlatformTenantReconciliationPlanChange",
     "PlatformTenantReconciliationPlanChangeAction",
     "PlatformTenantReconciliationPlanChangeResourceType",

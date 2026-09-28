@@ -68,6 +68,15 @@ type PlanPlatformTenantReconciliationRequest struct {
 	Surfaces   []ApplyPlatformTenantSurfaceRequest  `json:"surfaces,omitempty"`
 }
 
+// ApplyPlatformTenantReconciliationRequest applies a previously reviewed plan
+// only when ExpectedPlanHash still identifies the current tenant state.
+type ApplyPlatformTenantReconciliationRequest struct {
+	Consumers        []ApplyPlatformTenantConsumerRequest `json:"consumers,omitempty"`
+	SurfaceIDs       []string                             `json:"surface_ids,omitempty"`
+	Surfaces         []ApplyPlatformTenantSurfaceRequest  `json:"surfaces,omitempty"`
+	ExpectedPlanHash string                               `json:"expected_plan_hash"`
+}
+
 // PlatformTenantReconciliationPlanChange is one proposed or retained resource
 // in a read-only platform-tenant reconciliation plan. ManagedByPlatformTenant
 // describes existing resources; it is nil for resources that would be created.
@@ -87,6 +96,17 @@ type PlatformTenantReconciliationPlanChange struct {
 // result. remove_candidate entries are advisory only and are never applied.
 type PlatformTenantReconciliationPlanResponse struct {
 	TenantID string                                   `json:"tenant_id"`
+	PlanHash string                                   `json:"plan_hash"`
+	Changes  []PlatformTenantReconciliationPlanChange `json:"changes"`
+}
+
+// PlatformTenantReconciliationApplyResponse reports the exact changes applied
+// from a confirmed plan. Consumers and surfaces are detached, not deleted;
+// omitted managed hostnames are removed from their surface.
+type PlatformTenantReconciliationApplyResponse struct {
+	TenantID string                                   `json:"tenant_id"`
+	PlanHash string                                   `json:"plan_hash"`
+	Applied  bool                                     `json:"applied"`
 	Changes  []PlatformTenantReconciliationPlanChange `json:"changes"`
 }
 

@@ -4,14 +4,15 @@
 /* eslint-disable */
 import type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
 /**
- * A deterministic, read-only plan and digest. The digest confirms this desired bundle and current ownership-aware state at apply time.
+ * The confirmed changes applied in one transaction. Consumers and surfaces are detached, not deleted.
  */
-export type PlatformTenantReconciliationPlanResponse = {
+export type PlatformTenantReconciliationApplyResponse = {
   tenant_id: string;
-  /**
-   * SHA-256 confirmation token for this desired bundle and current plan.
-   */
   plan_hash: string;
+  /**
+   * True when the confirmed plan completed
+   */
+  applied: boolean;
   changes: Array<PlatformTenantReconciliationPlanChange>;
 };
 

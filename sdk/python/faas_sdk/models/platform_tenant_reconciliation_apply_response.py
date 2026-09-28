@@ -11,19 +11,17 @@ if TYPE_CHECKING:
     from ..models.platform_tenant_reconciliation_plan_change import PlatformTenantReconciliationPlanChange
 
 
-T = TypeVar("T", bound="PlatformTenantReconciliationPlanResponse")
+T = TypeVar("T", bound="PlatformTenantReconciliationApplyResponse")
 
 
 @_attrs_define
-class PlatformTenantReconciliationPlanResponse:
-    """A deterministic, read-only plan and digest. The digest confirms this desired bundle and current ownership-aware
-    state at apply time.
-
-    """
+class PlatformTenantReconciliationApplyResponse:
+    """The confirmed changes applied in one transaction. Consumers and surfaces are detached, not deleted."""
 
     tenant_id: UUID
     plan_hash: str
-    """SHA-256 confirmation token for this desired bundle and current plan."""
+    applied: bool
+    """True when the confirmed plan completed"""
     changes: list[PlatformTenantReconciliationPlanChange]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -31,6 +29,8 @@ class PlatformTenantReconciliationPlanResponse:
         tenant_id = str(self.tenant_id)
 
         plan_hash = self.plan_hash
+
+        applied = self.applied
 
         changes = []
         for changes_item_data in self.changes:
@@ -43,6 +43,7 @@ class PlatformTenantReconciliationPlanResponse:
             {
                 "tenant_id": tenant_id,
                 "plan_hash": plan_hash,
+                "applied": applied,
                 "changes": changes,
             }
         )
@@ -58,6 +59,8 @@ class PlatformTenantReconciliationPlanResponse:
 
         plan_hash = d.pop("plan_hash")
 
+        applied = d.pop("applied")
+
         changes = []
         _changes = d.pop("changes")
         for changes_item_data in _changes:
@@ -65,14 +68,15 @@ class PlatformTenantReconciliationPlanResponse:
 
             changes.append(changes_item)
 
-        platform_tenant_reconciliation_plan_response = cls(
+        platform_tenant_reconciliation_apply_response = cls(
             tenant_id=tenant_id,
             plan_hash=plan_hash,
+            applied=applied,
             changes=changes,
         )
 
-        platform_tenant_reconciliation_plan_response.additional_properties = d
-        return platform_tenant_reconciliation_plan_response
+        platform_tenant_reconciliation_apply_response.additional_properties = d
+        return platform_tenant_reconciliation_apply_response
 
     @property
     def additional_keys(self) -> list[str]:
