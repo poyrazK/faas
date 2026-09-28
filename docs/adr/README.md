@@ -54,6 +54,12 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 299 | [Backoff-aware realtime callback replay monitoring](299-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
+| 298 | [Realtime callback replay scheduling index](298-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
+| 297 | [Realtime callback retry backoff](297-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
+| 296 | [Realtime callback dead-letter inspection and replay](296-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |
+| 295 | [Realtime callbacks without durable delivery](295-realtime-callbacks-without-durable-delivery.md) | accepted | Close sockets when direct HTTP message callbacks fail without an outbox |
+| 294 | [Realtime callback outbox admission failure handling](294-realtime-callback-outbox-admission-failures.md) | accepted | Stop socket reads and page when callback events cannot be durably admitted due to storage errors |
 | 293 | [Realtime callback outbox backpressure](293-realtime-callback-outbox-backpressure.md) | accepted | Retry admission while space frees; close overloaded sockets with 1013 and count rejected callbacks |
 | 292 | [Realtime callback outbox capacity warning](292-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
 | 291 | [Realtime callback replay recovery observability](291-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
