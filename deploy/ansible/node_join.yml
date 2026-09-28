@@ -1006,6 +1006,10 @@
           Environment=FAAS_VMM_TLS_CERT_PATH=/etc/faas/tls/imaged/vmmd-client.crt
           Environment=FAAS_VMM_TLS_KEY_PATH=/etc/faas/tls/imaged/vmmd-client.key
           Environment=FAAS_VMM_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
+          Environment=FAAS_GITHUBD_TARGET_URL={{ faas_githubd_target_url | default('') }}
+          Environment=FAAS_GITHUBD_TLS_CERT_PATH=/etc/faas/tls/imaged/githubd-client.crt
+          Environment=FAAS_GITHUBD_TLS_KEY_PATH=/etc/faas/tls/imaged/githubd-client.key
+          Environment=FAAS_GITHUBD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
           Environment=GRYPE_DB_CACHE_DIR=/var/lib/faas/grype
           Environment=TMPDIR=/srv/fc/base
           Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging

@@ -280,7 +280,7 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 	python3 scripts/ci/check_shell_quoting_test.py
 
 .PHONY: deploy-action-head-check
-deploy-action-head-check: ## Verify stale push runs cannot submit an Action deployment
+deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
 .PHONY: canary-alert-test

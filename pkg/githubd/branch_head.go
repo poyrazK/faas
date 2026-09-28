@@ -19,6 +19,7 @@ type BranchHeadClient interface {
 }
 
 var ErrBranchHeadUnavailable = errors.New("githubd: branch head unavailable")
+var ErrBranchHeadNotFound = errors.New("githubd: branch not found")
 
 type httpBranchHeads struct {
 	tokens *TokenCache
@@ -65,6 +66,9 @@ func (c *httpBranchHeads) BranchHead(ctx context.Context, installationID int64, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return "", ErrBranchHeadNotFound
+		}
 		return "", fmt.Errorf("%w: GitHub status %d", ErrBranchHeadUnavailable, resp.StatusCode)
 	}
 	var payload struct {
