@@ -20467,6 +20467,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/apps:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: createOrgApp
+      summary: Create an app attributed to the organization.
+      description: |
+        Creates an app in this workspace and records the workspace id on the
+        app row, so app lifecycle activity is attributed to this organization.
+        The creator remains the account-level quota and billing identity in
+        this rollout slice; existing app-specific routes remain creator-scoped
+        until shared app access is migrated in follow-up work. Owners, admins,
+        and developers may create apps (`org.create_app`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: App creation payload. See CreateAppRequest.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppRequest' }
+      responses:
+        '201':
+          description: The newly created organization-attributed app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller is not verified or lacks `org.create_app`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/InvalidCPURAMPair' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/members:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'

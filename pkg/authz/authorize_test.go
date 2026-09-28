@@ -90,6 +90,14 @@ var roleMatrixCells = []struct {
 	{OrgActionView, state.OrgRoleViewer, true},
 	{OrgActionView, state.OrgRoleBilling, true},
 
+	// CreateApp — operators may provision shared-workspace apps; view-only
+	// and billing roles cannot create infrastructure.
+	{OrgActionCreateApp, state.OrgRoleOwner, true},
+	{OrgActionCreateApp, state.OrgRoleAdmin, true},
+	{OrgActionCreateApp, state.OrgRoleDeveloper, true},
+	{OrgActionCreateApp, state.OrgRoleViewer, false},
+	{OrgActionCreateApp, state.OrgRoleBilling, false},
+
 	// ManageMembers — owner + admin.
 	{OrgActionManageMembers, state.OrgRoleOwner, true},
 	{OrgActionManageMembers, state.OrgRoleAdmin, true},
@@ -207,8 +215,9 @@ func TestRoleMatrix_Exhaustive(t *testing.T) {
 // Pin rationale: the original table covered 9 actions × 5 roles
 // (=45 cells); the PR-6 cells for OrgActionCreateApiKey /
 // OrgActionRevokeApiKey added two more actions, taking the matrix
-// to 11×5 = 55 cells. Without this orphan-cell test, a future PR
-// that adds an action (say, OrgActionManageSSO) could ship with
+// to 11×5 = 55 cells; the app-provisioning action brings it to
+// 12×5 = 60. Without this orphan-cell test, a future PR that adds an
+// action (say, OrgActionManageSSO) could ship with
 // the matrix updated but the test table untouched — and the
 // change would land with the matrix's per-role behaviour entirely
 // unreviewed. The test pins that drift.
@@ -389,6 +398,7 @@ func TestOrgActionString(t *testing.T) {
 		OrgActionDelete:            "org.delete",
 		OrgActionCreateApiKey:      "org.create_api_key",
 		OrgActionRevokeApiKey:      "org.revoke_api_key",
+		OrgActionCreateApp:         "org.create_app",
 	}
 	for action, want := range cases {
 		if got := action.String(); got != want {
@@ -413,6 +423,7 @@ func TestAllOrgActions_Complete(t *testing.T) {
 		OrgActionDelete:            true,
 		OrgActionCreateApiKey:      true,
 		OrgActionRevokeApiKey:      true,
+		OrgActionCreateApp:         true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {

@@ -27,9 +27,14 @@
 - **Organization attribution:** Existing apps are account-owned, so their
   activity projects into the app owner's personal organization regardless of
   the caller's active org or org-bound API key. Those credentials can authorize
-  a mutation but cannot establish the app's owning organization. Shared-org
-  resource ownership is still being rolled out across Gregale's account-owned
-  app APIs; authoritative resource `org_id` attribution is a prerequisite for
+  a mutation but cannot establish the app's owning organization. The first
+  shared-workspace app slice adds `POST /v1/orgs/{slug}/apps`, which resolves
+  ownership from verified membership and persists that organization on the new
+  app before activity is emitted. The creator account remains the current
+  quota/billing and app-API authorization identity; existing app-specific
+  routes are not yet shared-member aware. Follow-up work must migrate those
+  routes by permission class before shared-workspace app management is
+  complete. Authoritative resource `org_id` attribution is a prerequisite for
   calling the shared-workspace history complete.
 - **Delivery:** `(org_id, source_type, source_id)` is unique, so retries and
   webhook redelivery return the original row. The initial apid projection is a

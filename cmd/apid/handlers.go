@@ -145,6 +145,10 @@ func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
 }
 
 func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.createAppInOrg(w, r, acct, "")
+}
+
+func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct state.Account, orgID string) {
 	var req api.CreateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -175,6 +179,10 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	// AccountID remains the creator and the current quota/billing identity;
+	// the org-scoped route stamps the workspace attribution that activity
+	// producers and timeline reads treat as canonical.
+	app.OrgID = orgID
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
 	// — see pkg/state/pgstore.go::CreateAppIfUnderQuota +
