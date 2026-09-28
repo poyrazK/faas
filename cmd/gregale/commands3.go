@@ -33,6 +33,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +90,7 @@ func secretsList(args []string) int {
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (defaults to linked project environment; '__all__' returns nested secrets_by_scope)")
 	secretClass := fs.String("class", "", "filter by snapshot-retention class (persistent or ephemeral)")
+	olderThan := fs.String("older-than", "", "filter secrets not updated within a duration (for example 90d or 2160h)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -98,8 +100,12 @@ func secretsList(args []string) int {
 	if !validSecretClass(*secretClass) {
 		return printErr("Invalid --class", fmt.Errorf("must be %q or %q; got %q", api.SecretClassPersistent, api.SecretClassEphemeral, *secretClass))
 	}
+	age, err := parseSecretAge(*olderThan)
+	if err != nil {
+		return printErr("Invalid --older-than", err)
+	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__] [--class persistent|ephemeral]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__] [--class persistent|ephemeral] [--older-than 90d]", "secrets")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -116,12 +122,23 @@ func secretsList(args []string) int {
 		return printErr("List failed", err)
 	}
 	filterAppSecretListByClass(&resp, *secretClass)
+	if age > 0 {
+		filterAppSecretListByAge(&resp, time.Now().Add(-age))
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	if resp.Count == 0 {
+		if *secretClass != "" && age > 0 {
+			_, _ = fmt.Fprintf(osStdout, "%s: no %s secrets older than %s (0/%d)\n", *app, *secretClass, *olderThan, resp.Quota)
+			return 0
+		}
 		if *secretClass != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s: no %s secrets (0/%d)\n", *app, *secretClass, resp.Quota)
+			return 0
+		}
+		if age > 0 {
+			_, _ = fmt.Fprintf(osStdout, "%s: no secrets older than %s (0/%d)\n", *app, *olderThan, resp.Quota)
 			return 0
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
@@ -157,10 +174,10 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 		app, resp.Count, resp.Quota, len(scopes))
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
-			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
+			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
 				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
-					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete))
+					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(row.UpdatedAt))
 		}
 	}
 }
@@ -177,11 +194,87 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse) {
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
-		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
+		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
 			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
-				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete))
+				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(s.UpdatedAt))
 	}
+}
+
+func secretUpdatedAtSuffix(updatedAt string) string {
+	if updatedAt == "" {
+		return ""
+	}
+	return " · updated " + updatedAt
+}
+
+// parseSecretAge accepts Go durations plus whole-day values such as 90d.
+// A blank value means the caller did not request an age filter.
+func parseSecretAge(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	var age time.Duration
+	var err error
+	if strings.HasSuffix(raw, "d") {
+		var days uint64
+		days, err = strconv.ParseUint(strings.TrimSuffix(raw, "d"), 10, 64)
+		const maxDays = uint64((1<<63 - 1) / int64(24*time.Hour))
+		if err == nil && days <= maxDays {
+			age = time.Duration(days) * 24 * time.Hour
+		} else if err == nil {
+			err = fmt.Errorf("day value is too large")
+		}
+	} else {
+		age, err = time.ParseDuration(raw)
+	}
+	if err != nil || age <= 0 {
+		return 0, fmt.Errorf("must be a positive duration such as 90d or 2160h")
+	}
+	return age, nil
+}
+
+func secretUpdatedBefore(updatedAt string, cutoff time.Time) bool {
+	if updatedAt == "" {
+		return false
+	}
+	updated, err := time.Parse(time.RFC3339Nano, updatedAt)
+	return err == nil && !updated.After(cutoff)
+}
+
+func filterAppSecretListByAge(resp *api.AppSecretListResponse, cutoff time.Time) {
+	resp.Count = 0
+	if len(resp.SecretsByScope) > 0 {
+		for scope, rows := range resp.SecretsByScope {
+			filtered := rows[:0]
+			for _, row := range rows {
+				if secretUpdatedBefore(row.UpdatedAt, cutoff) {
+					filtered = append(filtered, row)
+				}
+			}
+			resp.SecretsByScope[scope] = filtered
+			resp.Count += len(filtered)
+		}
+		return
+	}
+	filtered := resp.Secrets[:0]
+	for _, secret := range resp.Secrets {
+		if secretUpdatedBefore(secret.UpdatedAt, cutoff) {
+			filtered = append(filtered, secret)
+		}
+	}
+	resp.Secrets = filtered
+	resp.Count = len(filtered)
+}
+
+func filterAccountSecretListByAge(resp *api.ListSecretsForAccountResponse, cutoff time.Time) {
+	filtered := resp.Secrets[:0]
+	for _, secret := range resp.Secrets {
+		if secretUpdatedBefore(secret.UpdatedAt, cutoff) {
+			filtered = append(filtered, secret)
+		}
+	}
+	resp.Secrets = filtered
 }
 
 func validSecretClass(class string) bool {
@@ -753,6 +846,7 @@ func secretsListAll(args []string) int {
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
 	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
 	secretClass := fs.String("class", "", "filter this page by snapshot-retention class (persistent or ephemeral)")
+	olderThan := fs.String("older-than", "", "filter this page to secrets not updated within a duration (for example 90d or 2160h)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -761,6 +855,10 @@ func secretsListAll(args []string) int {
 	}
 	if !validSecretClass(*secretClass) {
 		return printErr("Invalid --class", fmt.Errorf("must be %q or %q; got %q", api.SecretClassPersistent, api.SecretClassEphemeral, *secretClass))
+	}
+	age, err := parseSecretAge(*olderThan)
+	if err != nil {
+		return printErr("Invalid --older-than", err)
 	}
 	if *limit < 1 || *limit > 200 {
 		return printErr("Invalid --limit", fmt.Errorf("must be in [1,200]; got %d", *limit))
@@ -782,12 +880,19 @@ func secretsListAll(args []string) int {
 		}
 		resp.Secrets = filtered
 	}
+	if age > 0 {
+		filterAccountSecretListByAge(&resp, time.Now().Add(-age))
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Secrets) == 0 {
-		if *secretClass != "" {
+		if *secretClass != "" && age > 0 {
+			_, _ = fmt.Fprintf(osStdout, "(no %s secrets older than %s on this page)\n", *secretClass, *olderThan)
+		} else if *secretClass != "" {
 			_, _ = fmt.Fprintf(osStdout, "(no %s secrets on this page)\n", *secretClass)
+		} else if age > 0 {
+			_, _ = fmt.Fprintf(osStdout, "(no secrets older than %s on this page)\n", *olderThan)
 		} else {
 			_, _ = fmt.Fprintln(osStdout, "(no secrets)")
 		}

@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -276,6 +277,46 @@ func TestCmdSecrets_ListFiltersByClass(t *testing.T) {
 	}
 }
 
+func TestCmdSecrets_ListFiltersByAgeAndShowsUpdateTime(t *testing.T) {
+	resetJSONOut(t)
+	now := time.Now().UTC()
+	oldUpdated := now.Add(-120 * 24 * time.Hour).Format(time.RFC3339)
+	recentUpdated := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	sink := &secretsSink{onGet: func() (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{
+			Secrets: []api.AppSecretResponse{
+				{Key: "OLD_KEY", UpdatedAt: oldUpdated},
+				{Key: "RECENT_KEY", UpdatedAt: recentUpdated},
+				{Key: "UNKNOWN_KEY"},
+			},
+			Quota: 25,
+			Count: 3,
+		}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"list", "--app", "my-app", "--older-than", "90d"}); code != 0 {
+		t.Fatalf("cmdSecrets list = %d, want 0", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1/25 secrets") || !strings.Contains(out, "OLD_KEY") || !strings.Contains(out, "updated "+oldUpdated) {
+		t.Errorf("stale listing should show the matching key and timestamp: %q", out)
+	}
+	for _, excluded := range []string{"RECENT_KEY", "UNKNOWN_KEY"} {
+		if strings.Contains(out, excluded) {
+			t.Errorf("stale listing unexpectedly includes %s: %q", excluded, out)
+		}
+	}
+}
+
 func TestFilterAppSecretListByClassPreservesNestedShape(t *testing.T) {
 	resp := api.AppSecretListResponse{
 		SecretsByScope: api.SecretByScope{
@@ -311,6 +352,85 @@ func TestValidSecretClassFilterValues(t *testing.T) {
 	}
 	if validSecretClass("temporary") {
 		t.Fatal("validSecretClass accepted an unknown retention class")
+	}
+}
+
+func TestParseSecretAge(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+		bad   bool
+	}{
+		{"", 0, false},
+		{"90d", 90 * 24 * time.Hour, false},
+		{"1h30m", 90 * time.Minute, false},
+		{"0d", 0, true},
+		{"-1d", 0, true},
+		{"1.5d", 0, true},
+		{"not-a-duration", 0, true},
+		{"999999999999999999d", 0, true},
+	} {
+		got, err := parseSecretAge(tc.value)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("parseSecretAge(%q) = %v, want error", tc.value, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("parseSecretAge(%q) = %v, %v; want %v", tc.value, got, err, tc.want)
+		}
+	}
+}
+
+func TestFilterAppSecretListByAgeHandlesFlatAndNestedResponses(t *testing.T) {
+	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	resp := api.AppSecretListResponse{
+		Secrets: []api.AppSecretResponse{
+			{Key: "OLD", UpdatedAt: "2026-08-01T00:00:00Z"},
+			{Key: "BOUNDARY", UpdatedAt: cutoff.Format(time.RFC3339)},
+			{Key: "NEW", UpdatedAt: "2026-09-02T00:00:00Z"},
+			{Key: "UNKNOWN"},
+			{Key: "INVALID", UpdatedAt: "not-a-timestamp"},
+		},
+		Count: 5,
+	}
+	filterAppSecretListByAge(&resp, cutoff)
+	if resp.Count != 2 || len(resp.Secrets) != 2 || resp.Secrets[0].Key != "OLD" || resp.Secrets[1].Key != "BOUNDARY" {
+		t.Fatalf("flat age-filtered response = %+v", resp)
+	}
+
+	nested := api.AppSecretListResponse{SecretsByScope: api.SecretByScope{
+		"prod":    {{Key: "OLD_PROD", UpdatedAt: "2026-08-01T00:00:00Z"}, {Key: "NEW_PROD", UpdatedAt: "2026-09-02T00:00:00Z"}},
+		"staging": {{Key: "UNKNOWN"}},
+	}, Count: 3}
+	filterAppSecretListByAge(&nested, cutoff)
+	if nested.Count != 1 || len(nested.SecretsByScope["prod"]) != 1 || nested.SecretsByScope["prod"][0].Key != "OLD_PROD" || len(nested.SecretsByScope["staging"]) != 0 {
+		t.Fatalf("nested age-filtered response = %+v", nested)
+	}
+}
+
+func TestFilterAccountSecretListByAgeExcludesUnknownAndKeepsCursor(t *testing.T) {
+	resp := api.ListSecretsForAccountResponse{
+		Secrets: []api.AccountAppSecretResponse{
+			{Key: "OLD", UpdatedAt: "2026-08-01T00:00:00Z"},
+			{Key: "NEW", UpdatedAt: "2026-09-02T00:00:00Z"},
+			{Key: "UNKNOWN"},
+		},
+		NextBefore: "demo|UNKNOWN",
+	}
+	filterAccountSecretListByAge(&resp, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	if len(resp.Secrets) != 1 || resp.Secrets[0].Key != "OLD" || resp.NextBefore != "demo|UNKNOWN" {
+		t.Fatalf("account age-filtered response = %+v", resp)
+	}
+}
+
+func TestSecretUpdatedAtSuffix(t *testing.T) {
+	if got := secretUpdatedAtSuffix(""); got != "" {
+		t.Fatalf("empty timestamp suffix = %q, want empty", got)
+	}
+	if got := secretUpdatedAtSuffix("2026-08-01T00:00:00Z"); got != " · updated 2026-08-01T00:00:00Z" {
+		t.Fatalf("timestamp suffix = %q", got)
 	}
 }
 

@@ -2809,6 +2809,7 @@ List sealed secrets
 | `--app <slug>` | app slug | required |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
 | `--class <CLASS>` | filter by snapshot-retention class | one of `persistent` · `ephemeral` |
+| `--older-than <DURATION>` | filter to secrets not updated within a duration (for example 90d or 2160h); unknown timestamps are excluded |  |
 
 Examples:
 
@@ -2816,6 +2817,7 @@ Examples:
 gregale secrets list --app my-api
 gregale secrets list --app my-api --scope __all__
 gregale secrets list --app my-api --class ephemeral
+gregale secrets list --app my-api --older-than 90d
 ```
 
 ### secrets set
@@ -2871,11 +2873,13 @@ List every secret across apps
 | `--before <slug|key>` | pagination cursor from a previous call&#39;s next_before |  |
 | `--limit <N>` | page size (1..200; server caps at 200) |  |
 | `--class <CLASS>` | filter this page by snapshot-retention class | one of `persistent` · `ephemeral` |
+| `--older-than <DURATION>` | filter this page to secrets not updated within a duration; unknown timestamps are excluded |  |
 
 Examples:
 
 ```sh
 gregale secrets list-all --class ephemeral
+gregale secrets list-all --older-than 90d
 ```
 
 ### secrets rotate
