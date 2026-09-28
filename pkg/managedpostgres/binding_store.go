@@ -80,7 +80,9 @@ func (s *MemoryStore) DueBindings(_ context.Context, includeProvisioning bool, l
 	items := make([]Binding, 0)
 	for _, binding := range s.bindings {
 		provisioning := binding.State == BindingStateProvisioning || binding.State == BindingStateFailed
-		if binding.State != BindingStateDeleting && (!includeProvisioning || !provisioning) {
+		rotationCleanup := binding.RotationCleanupReady &&
+			(binding.State == BindingStateReady || binding.State == BindingStateRetiring)
+		if binding.State != BindingStateDeleting && !rotationCleanup && (!includeProvisioning || !provisioning) {
 			continue
 		}
 		if binding.RetryAt.After(now) || binding.LeaseUntil.After(now) {
@@ -100,6 +102,37 @@ func (s *MemoryStore) DueBindings(_ context.Context, includeProvisioning bool, l
 	return items, nil
 }
 
+func (s *MemoryStore) BeginBindingRotation(_ context.Context, accountID, bindingID, wakeID string, now time.Time) (Binding, bool, error) {
+	if accountID == "" || bindingID == "" || wakeID == "" || now.IsZero() {
+		return Binding{}, false, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	binding, ok := s.bindings[bindingID]
+	if !ok || binding.AccountID != accountID {
+		return Binding{}, false, ErrNotFound
+	}
+	if binding.RotationPreviousGeneration > 0 && binding.RotationWakeID != "" {
+		return cloneBinding(binding), false, nil
+	}
+	if binding.State != BindingStateReady || binding.CredentialGeneration < 1 || binding.CredentialGeneration == int64(^uint64(0)>>1) {
+		return Binding{}, false, ErrConflict
+	}
+	binding.RotationPreviousGeneration = binding.CredentialGeneration
+	binding.CredentialGeneration++
+	binding.RotationWakeID = wakeID
+	binding.RotationCleanupReady = false
+	binding.State = BindingStateProvisioning
+	binding.LastErrorCode = ""
+	binding.LeaseToken = ""
+	binding.LeaseUntil = time.Time{}
+	binding.AttemptCount = 0
+	binding.RetryAt = now
+	binding.UpdatedAt = now
+	s.bindings[bindingID] = binding
+	return cloneBinding(binding), true, nil
+}
+
 func (s *MemoryStore) ClaimBinding(_ context.Context, accountID, bindingID, leaseToken string, operation BindingState, now, leaseUntil time.Time) (Binding, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -116,6 +149,11 @@ func (s *MemoryStore) ClaimBinding(_ context.Context, accountID, bindingID, leas
 	switch operation {
 	case BindingStateProvisioning:
 		if (binding.State != BindingStateProvisioning && binding.State != BindingStateFailed) || binding.RetryAt.After(now) {
+			return Binding{}, ErrConflict
+		}
+	case BindingStateRetiring:
+		if !binding.RotationCleanupReady || binding.RotationPreviousGeneration < 1 ||
+			(binding.State != BindingStateReady && binding.State != BindingStateRetiring) || binding.RetryAt.After(now) {
 			return Binding{}, ErrConflict
 		}
 	case BindingStateDeleting:
@@ -171,7 +209,7 @@ func (s *MemoryStore) FinishBindingProvision(_ context.Context, bindingID, lease
 
 func (s *MemoryStore) ReleaseBinding(_ context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {
 	if leaseToken == "" || now.IsZero() || retryAt.Before(now) || !validErrorCode(errorCode) ||
-		(next != BindingStateProvisioning && next != BindingStateDeleting && next != BindingStateFailed) {
+		(next != BindingStateProvisioning && next != BindingStateDeleting && next != BindingStateRetiring && next != BindingStateFailed) {
 		return ErrInvalid
 	}
 	s.mu.Lock()
@@ -191,6 +229,34 @@ func (s *MemoryStore) ReleaseBinding(_ context.Context, bindingID, leaseToken st
 	binding.UpdatedAt = now
 	s.bindings[bindingID] = binding
 	return nil
+}
+
+func (s *MemoryStore) FinishBindingRotationCleanup(_ context.Context, bindingID, leaseToken, wakeID string, now time.Time) (Binding, error) {
+	if leaseToken == "" || wakeID == "" || now.IsZero() {
+		return Binding{}, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	binding, ok := s.bindings[bindingID]
+	if !ok {
+		return Binding{}, ErrNotFound
+	}
+	if binding.State != BindingStateRetiring || binding.LeaseToken != leaseToken || !binding.LeaseUntil.After(now) ||
+		binding.RotationWakeID != wakeID || !binding.RotationCleanupReady || binding.RotationPreviousGeneration < 1 {
+		return Binding{}, ErrConflict
+	}
+	binding.State = BindingStateReady
+	binding.RotationPreviousGeneration = 0
+	binding.RotationWakeID = ""
+	binding.RotationCleanupReady = false
+	binding.LastErrorCode = ""
+	binding.LeaseToken = ""
+	binding.LeaseUntil = time.Time{}
+	binding.AttemptCount = 0
+	binding.RetryAt = now
+	binding.UpdatedAt = now
+	s.bindings[bindingID] = binding
+	return cloneBinding(binding), nil
 }
 
 func (s *MemoryStore) FinishBindingDelete(_ context.Context, bindingID, leaseToken string, now time.Time) (Binding, error) {
@@ -214,6 +280,9 @@ func (s *MemoryStore) FinishBindingDelete(_ context.Context, bindingID, leaseTok
 	binding.RetryAt = now
 	binding.UpdatedAt = now
 	binding.DeletedAt = &now
+	binding.RotationPreviousGeneration = 0
+	binding.RotationWakeID = ""
+	binding.RotationCleanupReady = false
 	delete(s.targets, bindingTarget(binding.AppID, binding.Scope, binding.EnvironmentKey))
 	s.bindings[bindingID] = binding
 	return cloneBinding(binding), nil

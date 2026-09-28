@@ -1916,6 +1916,11 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)
 				}
 			}
+			if rotations, ok := e.store.(state.ManagedPostgresBindingRotationStore); ok {
+				if finishErr := rotations.FinalizeManagedPostgresBindingRotationsForApp(ctx, appID, wakeID); finishErr != nil {
+					return out, fmt.Errorf("sched: retire previous managed PostgreSQL credentials for app %s: %w", appID, finishErr)
+				}
+			}
 		}
 		if err == nil && out.Instance != nil && e.audit != nil {
 			e.audit.Emit(ctx, "app.runtime_config_restarted", &app.AccountID, map[string]any{

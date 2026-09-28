@@ -95,6 +95,9 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 		if binding.State == BindingStateDeleting {
 			operation = BindingStateDeleting
 			result, err = r.service.Delete(ctx, binding.AccountID, binding.ID)
+		} else if binding.RotationCleanupReady {
+			operation = BindingStateRetiring
+			result, err = r.service.ReconcileRotationCleanup(ctx, binding.AccountID, binding.ID)
 		} else {
 			result, err = r.service.Reconcile(ctx, binding.AccountID, binding.ID)
 		}

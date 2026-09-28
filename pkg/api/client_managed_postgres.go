@@ -65,3 +65,9 @@ func (c *Client) DeleteManagedPostgresBinding(ctx context.Context, id string) (M
 	err := c.do(ctx, http.MethodDelete, "/v1/postgres/bindings/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
+
+func (c *Client) RotateManagedPostgresBinding(ctx context.Context, id string) (ManagedPostgresBinding, error) {
+	var out ManagedPostgresBinding
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/bindings/"+url.PathEscape(id)+"/rotate", nil, &out)
+	return out, err
+}

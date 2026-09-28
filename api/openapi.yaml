@@ -1130,6 +1130,28 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/bindings/{id}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: rotateManagedPostgresBinding
+      summary: Rotate a workload database credential
+      description: Creates a replacement credential, refreshes the app runtime, and retains the previous provider identity until the rolling refresh completes.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Binding credential generation and rotation status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: Authentication or binding rotation error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets:
     parameters:
       - { name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: { type: string } }
@@ -21689,7 +21711,7 @@ components:
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object
-      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, state, created_at, updated_at]
+      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, rotation_pending, state, created_at, updated_at]
       properties:
         id: { type: string, minLength: 1, maxLength: 128 }
         database_id: { type: string, minLength: 1, maxLength: 128 }
@@ -21698,7 +21720,8 @@ components:
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
-        state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
+        rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
+        state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
         last_error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

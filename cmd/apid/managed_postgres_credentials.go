@@ -90,14 +90,31 @@ func (s *appSecretCredentialSink) Put(ctx context.Context, binding managedpostgr
 }
 
 func (s *appSecretCredentialSink) Delete(ctx context.Context, binding managedpostgres.Binding) error {
-	expected, err := managedPostgresCredentialRef(binding)
+	currentRef, err := managedPostgresCredentialRef(binding)
 	if err != nil {
 		return err
 	}
-	if binding.CredentialRef != "" && binding.CredentialRef != expected {
+	previousRef := ""
+	if binding.RotationPreviousGeneration > 0 {
+		previous := binding
+		previous.CredentialGeneration = binding.RotationPreviousGeneration
+		previousRef, err = managedPostgresCredentialRef(previous)
+		if err != nil {
+			return err
+		}
+	}
+	if binding.CredentialRef != "" && binding.CredentialRef != currentRef && binding.CredentialRef != previousRef {
 		return managedpostgres.ErrConflict
 	}
-	return normalizeCredentialSinkError(s.store.DeleteManagedPostgresSecret(ctx, expected))
+	if err := s.store.DeleteManagedPostgresSecret(ctx, currentRef); err != nil {
+		return normalizeCredentialSinkError(err)
+	}
+	if previousRef != "" && previousRef != currentRef {
+		if err := s.store.DeleteManagedPostgresSecret(ctx, previousRef); err != nil {
+			return normalizeCredentialSinkError(err)
+		}
+	}
+	return nil
 }
 
 func managedPostgresCredentialRef(binding managedpostgres.Binding) (string, error) {

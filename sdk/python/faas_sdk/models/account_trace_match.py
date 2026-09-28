@@ -19,7 +19,8 @@ class AccountTraceMatch:
 
     app: str
     request: DebugTelemetryRequestItem
-    """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
+    """A retained request-ID mapping, optionally enriched with a bounded telemetry row when detailed evidence is
+    available."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

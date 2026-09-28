@@ -25,6 +25,8 @@ class ManagedPostgresBinding:
     environment_key: str
     access: ManagedPostgresBindingAccess
     credential_generation: int
+    rotation_pending: bool
+    """The previous provider credential remains valid until the rolling app runtime refresh completes."""
     state: ManagedPostgresBindingState
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -45,6 +47,8 @@ class ManagedPostgresBinding:
         access: str = self.access
 
         credential_generation = self.credential_generation
+
+        rotation_pending = self.rotation_pending
 
         state: str = self.state
 
@@ -69,6 +73,7 @@ class ManagedPostgresBinding:
                 "environment_key": environment_key,
                 "access": access,
                 "credential_generation": credential_generation,
+                "rotation_pending": rotation_pending,
                 "state": state,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -96,6 +101,8 @@ class ManagedPostgresBinding:
 
         credential_generation = d.pop("credential_generation")
 
+        rotation_pending = d.pop("rotation_pending")
+
         state = check_managed_postgres_binding_state(d.pop("state"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -119,6 +126,7 @@ class ManagedPostgresBinding:
             environment_key=environment_key,
             access=access,
             credential_generation=credential_generation,
+            rotation_pending=rotation_pending,
             state=state,
             created_at=created_at,
             updated_at=updated_at,
