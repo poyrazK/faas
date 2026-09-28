@@ -64,7 +64,7 @@ func (s *PgStore) AddManagedRealtimeChannelRoutes(ctx context.Context, routes []
 	if err != nil {
 		return fmt.Errorf("state: begin realtime channel route update: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	endpointSet := make(map[string]struct{}, len(endpointIDs))
 	for _, endpointID := range endpointIDs {
 		endpointSet[endpointID] = struct{}{}

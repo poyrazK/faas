@@ -398,15 +398,20 @@ func TestLeasedRealtimeOwnerPublishReportsPartialFleet(t *testing.T) {
 func TestLeasedRealtimeOwnerPublishWithNoKnownSubscribersReturnsEmptyStatus(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	activeNodes, err := store.ActiveComputeNodes(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(activeNodes) == 0 {
+		t.Fatal("NewMemStore should provide at least one active local node")
 	}
 	local := &fakeRealtimeNode{}
 	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
 	owner.channelRoutingEnabled = true
 	owner.channelRoutes = store
-	owner.setChannelRoutesReady(node.ID, true)
+	for _, node := range activeNodes {
+		owner.setChannelRoutesReady(node.ID, true)
+	}
 	owner.clientFor = func(state.ComputeNode) (realtimeNodeOperator, error) { return local, nil }
 
 	result, err := owner.PublishWithStatus(ctx, "endpoint", "updates", realtime.Message{})
