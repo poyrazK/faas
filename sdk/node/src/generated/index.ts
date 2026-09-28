@@ -531,6 +531,8 @@ export type { OperatorRuntimeConfigOperation } from './models/OperatorRuntimeCon
 export type { OperatorRuntimeConfigRevision } from './models/OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './models/OrgAccountID.js';
 export type { OrgActivityResponse } from './models/OrgActivityResponse.js';
+export type { OrgAppDeploymentListResponse } from './models/OrgAppDeploymentListResponse.js';
+export type { OrgAppDeploymentSummary } from './models/OrgAppDeploymentSummary.js';
 export type { OrgAppListResponse } from './models/OrgAppListResponse.js';
 export type { OrgAppSlug } from './models/OrgAppSlug.js';
 export type { OrgAppSummary } from './models/OrgAppSummary.js';

@@ -275,6 +275,10 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.ListOrgApps(ctx, "o")
 			return err
 		}},
+		{"ListOrgAppDeployments", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ListOrgAppDeployments(ctx, "o", "a", "", 50)
+			return err
+		}},
 		{"CreateOrgApp", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.CreateOrgApp(ctx, "o", CreateAppRequest{Slug: "x"})
 			return err

@@ -62,6 +62,7 @@ var orgRoutesRequiringAuthorize = []struct {
 	{"PATCH", "/v1/orgs/example-slug"},
 	{"DELETE", "/v1/orgs/example-slug"},
 	{"GET", "/v1/orgs/example-slug/members"},
+	{"GET", "/v1/orgs/example-slug/apps/example-app/deployments"},
 	{"POST", "/v1/orgs/example-slug/apps/example-app/deployments"},
 	{"POST", "/v1/orgs/example-slug/members"},
 	{"PATCH", "/v1/orgs/example-slug/members/user-1"},

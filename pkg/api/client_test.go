@@ -789,6 +789,26 @@ func TestListOrgApps_DecodesSafeInventory(t *testing.T) {
 	}
 }
 
+func TestListOrgAppDeploymentsEncodesCursorAndDecodesSummary(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"0123456789abcdef0123456789abcdef","revision":7,"kind":"image","status":"pending","created_at":"2026-09-28T10:00:00Z"}],"next_before":"2026-09-28T10:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	response, err := c.ListOrgAppDeployments(context.Background(), "acme", "payments", "cursor+/=", 25)
+	if err != nil {
+		t.Fatalf("ListOrgAppDeployments: %v", err)
+	}
+	want := "/v1/orgs/acme/apps/payments/deployments?before=cursor%2B%2F%3D&limit=25"
+	if gotRequestURI != want || len(response.Items) != 1 || response.Items[0].Revision != 7 || response.Items[0].Status != "pending" || response.NextBefore == "" {
+		t.Fatalf("request=%q response=%#v", gotRequestURI, response)
+	}
+}
+
 func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

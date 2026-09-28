@@ -18,6 +18,7 @@ import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { OrgAppDeploymentListResponse } from '../models/OrgAppDeploymentListResponse.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -1773,6 +1774,69 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `The SBOM populator has not produced an artefact for this build (code=build_sbom_unavailable), or the storage backend failed (code=capacity_unavailable).`,
+      },
+    });
+  }
+  /**
+   * List safe deployment status for a workspace app.
+   * Returns newest-first deployment summaries for an active application
+   * whose persisted `org_id` matches this workspace. Every active member
+   * may read this projection (`org.view`). It contains only deployment id,
+   * revision, kind, status, and creation time; detailed configuration and
+   * diagnostics remain creator-scoped. Use the organization activity
+   * timeline for captured actor attribution. `next_before` is an RFC3339Nano
+   * cursor from the last row; pass it as `before` to fetch older deployments.
+   *
+   * @returns OrgAppDeploymentListResponse A paginated list of safe deployment summaries.
+   * @throws ApiError
+   */
+  public static listOrgAppDeployments({
+    slug,
+    appSlug,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Target app slug. It must resolve to an active application assigned to the organization named by the adjacent `slug` parameter.
+     */
+    appSlug: string,
+    /**
+     * Page size (1–200; default 50).
+     */
+    limit?: number,
+    /**
+     * Creation timestamp cursor returned by the preceding workspace history page.
+     */
+    before?: string,
+  }): CancelablePromise<OrgAppDeploymentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/apps/{app_slug}/deployments',
+      path: {
+        'slug': slug,
+        'app_slug': appSlug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller is not an active member of this workspace.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
       },
     });
   }
