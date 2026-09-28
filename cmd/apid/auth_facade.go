@@ -188,8 +188,27 @@ func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) acc
 // Keep this helper next to the auth facade so adding a new /v1/admin mutation
 // requires choosing this policy explicitly at the route table rather than
 // repeating a subtly different middleware chain at every call site.
+//
+// The admin *scope* is held by every customer's own full-access key and
+// dashboard session; only requireOperator (FAAS_ADMIN_EMAILS) makes the
+// caller a platform operator. It is part of the policy so a handler can no
+// longer forget its in-handler adminAllows call.
 func (s *server) requireAdminMutation(next accountHandler) accountHandler {
-	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next)))))
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next))))))
+}
+
+// requireOperator admits only accounts in the operator allowlist. Use it on
+// every provider route: requireScope(ScopesAdminOnly) alone admits any
+// customer, because a dashboard session is implicitly admin and a default
+// API key carries the admin scope.
+func (s *server) requireOperator(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if allowed, prob := s.adminAllows(acct); !allowed {
+			api.WriteProblem(w, prob)
+			return
+		}
+		next(w, r, acct)
+	}
 }
 
 // requireSessionPrincipal rejects bearer/API-key principals without imposing

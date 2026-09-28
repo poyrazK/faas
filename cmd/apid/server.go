@@ -2586,7 +2586,7 @@ func (s *server) handler() http.Handler {
 	// closure — fleet-level intents with account_id=NULL are
 	// visible to any admin).
 	mux.HandleFunc("GET /v1/admin/operator-intents/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorIntent)))
+		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.getOperatorIntent))))
 	// P2c (reclaim-stuck-build) — fleet-level sweep that calls
 	// state.Store.SweepStuckRunningBuilds directly (per user
 	// decision, NO builderd gRPC server). ?older_than= is
@@ -2680,7 +2680,7 @@ func (s *server) handler() http.Handler {
 	//     sessions and admin API keys are already MFA-gated upstream
 	//     at session issue time.
 	mux.HandleFunc("GET /v1/audit-log", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAuditLog))))
-	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listAuditLogAll)))
+	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listAuditLogAll))))
 
 	// ADR-089 PR-C — background re-seal progress (operator-only,
 	// FAAS_REKEY_ENABLED opt-in). Same gate as /v1/audit-log/all
@@ -2897,8 +2897,8 @@ func (s *server) handler() http.Handler {
 	// §4 ownership invariant (the apid customer-facing admin
 	// CRUD plane, not the legacy /v1/admin/ops/* operator-tools
 	// plane).
-	mux.HandleFunc("POST /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postComputeNodeDrain))))
-	mux.HandleFunc("GET /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNodeDrainProgress))))
+	mux.HandleFunc("POST /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.postComputeNodeDrain)))))
+	mux.HandleFunc("GET /v1/compute-nodes/{name}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.getComputeNodeDrainProgress)))))
 	// CP-1: heartbeat history (schedd Heartbeat.Tick writes; the
 	// endpoint reads from the append-only compute_node_heartbeats
 	// table). Auth chain mirrors the rest of /v1/compute-nodes.
