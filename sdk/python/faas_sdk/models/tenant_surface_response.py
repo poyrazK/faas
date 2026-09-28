@@ -27,7 +27,10 @@ T = TypeVar("T", bound="TenantSurfaceResponse")
 
 @_attrs_define
 class TenantSurfaceResponse:
-    """A tenant surface: a multi-hostname SAN bundle attached to one app."""
+    """A tenant surface: a multi-hostname SAN bundle attached to one app. managed_by_platform_tenant is true only when
+    created by a platform-tenant bundle apply.
+
+    """
 
     id: str
     account_id: str
@@ -41,6 +44,8 @@ class TenantSurfaceResponse:
     cert_last_error: None | str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only when a platform-tenant bundle created this surface; omitted otherwise."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +86,8 @@ class TenantSurfaceResponse:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        managed_by_platform_tenant = self.managed_by_platform_tenant
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -103,6 +110,8 @@ class TenantSurfaceResponse:
             field_dict["created_at"] = created_at
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
 
         return field_dict
 
@@ -162,6 +171,8 @@ class TenantSurfaceResponse:
         else:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         tenant_surface_response = cls(
             id=id,
             account_id=account_id,
@@ -175,6 +186,7 @@ class TenantSurfaceResponse:
             cert_last_error=cert_last_error,
             created_at=created_at,
             updated_at=updated_at,
+            managed_by_platform_tenant=managed_by_platform_tenant,
         )
 
         tenant_surface_response.additional_properties = d

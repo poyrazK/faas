@@ -16,7 +16,10 @@ T = TypeVar("T", bound="APIConsumerResponse")
 
 @_attrs_define
 class APIConsumerResponse:
-    """Stable API consumer identity. No credential secret is returned."""
+    """Stable API consumer identity. No credential secret is returned. managed_by_platform_tenant distinguishes tenant-
+    bundle-created identities from pre-existing linked identities.
+
+    """
 
     id: UUID
     app_id: UUID
@@ -26,6 +29,8 @@ class APIConsumerResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     revoked_at: datetime.datetime | None | Unset = UNSET
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only when a platform-tenant bundle created this consumer; omitted otherwise."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +56,8 @@ class APIConsumerResponse:
         else:
             revoked_at = self.revoked_at
 
+        managed_by_platform_tenant = self.managed_by_platform_tenant
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +73,8 @@ class APIConsumerResponse:
         )
         if revoked_at is not UNSET:
             field_dict["revoked_at"] = revoked_at
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
 
         return field_dict
 
@@ -103,6 +112,8 @@ class APIConsumerResponse:
 
         revoked_at = _parse_revoked_at(d.pop("revoked_at", UNSET))
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         api_consumer_response = cls(
             id=id,
             app_id=app_id,
@@ -112,6 +123,7 @@ class APIConsumerResponse:
             created_at=created_at,
             updated_at=updated_at,
             revoked_at=revoked_at,
+            managed_by_platform_tenant=managed_by_platform_tenant,
         )
 
         api_consumer_response.additional_properties = d

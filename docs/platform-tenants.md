@@ -38,6 +38,8 @@ Content-Type: application/json
 
 The response reports `create`, `link`, or `unchanged` for each resource, including hostnames. New hostnames return a TXT record name (`_faas-verify.<hostname>`) and challenge token to publish in DNS. A dry run checks ownership, quota, names, and conflicts without writes; a token for a planned hostname is withheld because it is not yet durable. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs and tokens with `unchanged` actions. A different name, revoked consumer, hostname already claimed by another surface, or resource owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed. Surface declarations require the tenant-surfaces feature flag and a plan that includes surfaces; this flow currently supports `per_host_san` certificates.
 
+Resources created by this account-owner bundle operation are marked `managed_by_platform_tenant` in responses and tenant inventory. Existing consumers or surfaces that are only linked are not adopted, and existing database rows default to unmanaged. Hostnames created by this bundle on an existing surface are marked managed individually. The field is omitted for unmanaged resources; a dry run may show `action: create` without the marker because nothing has been persisted yet. This provenance is informational in this release; it does not delete or detach anything. It is the safe ownership boundary for a future declarative reconciliation workflow.
+
 Platform owners can configure the domain boundary for downstream hostname self-service:
 
 ```http

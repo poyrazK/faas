@@ -2152,6 +2152,7 @@ CREATE TABLE public.api_consumers (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     revoked_at timestamp with time zone,
+    platform_tenant_managed boolean DEFAULT false NOT NULL,
     CONSTRAINT api_consumers_external_ref_len_chk CHECK ((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256)),
     CONSTRAINT api_consumers_name_len_chk CHECK ((char_length(name) >= 1) AND (char_length(name) <= 128)),
     CONSTRAINT api_consumers_status_chk CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text])),
@@ -4380,6 +4381,7 @@ CREATE TABLE public.tenant_hostnames (
     last_check_at timestamp with time zone,
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    platform_tenant_managed boolean DEFAULT false NOT NULL,
     CONSTRAINT tenant_hostnames_hostname_len_chk CHECK (((hostname OPERATOR(public.<>) ''::public.citext) AND (length((hostname)::text) <= 253)))
 );
 
@@ -4400,6 +4402,7 @@ CREATE TABLE public.tenant_surfaces (
     cert_last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    platform_tenant_managed boolean DEFAULT false NOT NULL,
     CONSTRAINT tenant_surfaces_app_or_not_chk CHECK ((app_id IS NOT NULL)),
     CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text, 'per_host'::text]))),
     CONSTRAINT tenant_surfaces_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text]))),

@@ -58,7 +58,8 @@ func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenant
 		item := ApplyPlatformTenantConsumerResult{Consumer: current, Action: "create"}
 		if current.ID == "" {
 			item.Consumer = APIConsumer{AccountID: in.AccountID, AppID: wanted.AppID,
-				ExternalRef: wanted.ExternalRef, Name: wanted.Name, Status: APIConsumerStatusActive}
+				ExternalRef: wanted.ExternalRef, Name: wanted.Name, Status: APIConsumerStatusActive,
+				PlatformTenantManaged: true}
 		} else {
 			if current.AccountID != in.AccountID || current.Name != wanted.Name || !current.Active() {
 				return ApplyPlatformTenantResult{}, ErrConflict
@@ -165,7 +166,8 @@ func (m *MemStore) planPlatformTenantSurfaces(in ApplyPlatformTenantParams, resu
 				return &TenantSurfaceQuotaError{Limit: in.Limits.TenantSurfacesPerAccount, Observed: count - 1}
 			}
 			item.Surface = TenantSurface{AccountID: in.AccountID, AppID: wanted.AppID, Name: wanted.Name,
-				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone}
+				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone,
+				PlatformTenantManaged: true}
 		} else {
 			if item.Surface.AppID != wanted.AppID || item.Surface.CertKind != wanted.CertKind {
 				return ErrConflict
@@ -192,7 +194,8 @@ func (m *MemStore) planPlatformTenantSurfaces(in ApplyPlatformTenantParams, resu
 		}
 		for _, wantedHost := range wanted.Hostnames {
 			hostResult := ApplyPlatformTenantHostnameResult{Hostname: TenantHostname{
-				Hostname: wantedHost.Hostname, ChallengeToken: wantedHost.ChallengeToken}, Action: "create"}
+				Hostname: wantedHost.Hostname, ChallengeToken: wantedHost.ChallengeToken,
+				PlatformTenantManaged: true}, Action: "create"}
 			for _, current := range m.tenantHostnames {
 				if !strings.EqualFold(current.Hostname, wantedHost.Hostname) {
 					continue

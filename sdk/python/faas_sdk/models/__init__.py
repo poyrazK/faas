@@ -529,6 +529,7 @@ from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
+from .debug_telemetry_request_item_evidence_status import DebugTelemetryRequestItemEvidenceStatus
 from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
@@ -2282,6 +2283,7 @@ __all__ = (
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
+    "DebugTelemetryRequestItemEvidenceStatus",
     "DebugTelemetryRequestItemMethod",
     "DebugTelemetrySpan",
     "DebugTelemetrySpanDependencyType",

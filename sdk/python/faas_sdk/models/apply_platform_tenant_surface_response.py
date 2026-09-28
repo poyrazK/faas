@@ -39,6 +39,9 @@ class ApplyPlatformTenantSurfaceResponse:
     action: ApplyPlatformTenantSurfaceResponseAction
     id: UUID | Unset = UNSET
     """Absent when a dry run would create the surface."""
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only after the tenant bundle created this surface; omitted for unmanaged resources and dry-run creates.
+    Linking an existing surface does not adopt it."""
     hostnames: list[ApplyPlatformTenantHostnameResponse] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -56,6 +59,8 @@ class ApplyPlatformTenantSurfaceResponse:
         id: str | Unset = UNSET
         if not isinstance(self.id, Unset):
             id = str(self.id)
+
+        managed_by_platform_tenant = self.managed_by_platform_tenant
 
         hostnames: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.hostnames, Unset):
@@ -77,6 +82,8 @@ class ApplyPlatformTenantSurfaceResponse:
         )
         if id is not UNSET:
             field_dict["id"] = id
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
         if hostnames is not UNSET:
             field_dict["hostnames"] = hostnames
 
@@ -104,6 +111,8 @@ class ApplyPlatformTenantSurfaceResponse:
         else:
             id = UUID(_id)
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         _hostnames = d.pop("hostnames", UNSET)
         hostnames: list[ApplyPlatformTenantHostnameResponse] | Unset = UNSET
         if _hostnames is not UNSET:
@@ -120,6 +129,7 @@ class ApplyPlatformTenantSurfaceResponse:
             cert_state=cert_state,
             action=action,
             id=id,
+            managed_by_platform_tenant=managed_by_platform_tenant,
             hostnames=hostnames,
         )
 

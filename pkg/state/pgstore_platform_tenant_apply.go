@@ -78,7 +78,8 @@ func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTen
 		item := ApplyPlatformTenantConsumerResult{Consumer: current, Action: "create"}
 		if errors.Is(err, pgx.ErrNoRows) {
 			item.Consumer = APIConsumer{AccountID: in.AccountID, AppID: wanted.AppID,
-				ExternalRef: wanted.ExternalRef, Name: wanted.Name, Status: APIConsumerStatusActive}
+				ExternalRef: wanted.ExternalRef, Name: wanted.Name, Status: APIConsumerStatusActive,
+				PlatformTenantManaged: true}
 		} else if err != nil {
 			return ApplyPlatformTenantResult{}, err
 		} else {
@@ -145,7 +146,8 @@ func planPlatformTenantSurfaces(ctx context.Context, tx pgx.Tx, in ApplyPlatform
 				return &TenantSurfaceQuotaError{Limit: in.Limits.TenantSurfacesPerAccount, Observed: surfaceCount - 1}
 			}
 			item.Surface = TenantSurface{AccountID: in.AccountID, AppID: wanted.AppID, Name: wanted.Name,
-				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone}
+				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone,
+				PlatformTenantManaged: true}
 		} else if err != nil {
 			return err
 		} else {
@@ -184,7 +186,8 @@ func planPlatformTenantSurfaces(ctx context.Context, tx pgx.Tx, in ApplyPlatform
 				from tenant_hostnames where hostname = $1 for update`, host.Hostname).
 				Scan(&id, &ownerID, &hostname, &challenge, &verifiedAt, &lastCheckAt, &lastError)
 			hostResult := ApplyPlatformTenantHostnameResult{Action: "create", Hostname: TenantHostname{
-				Hostname: host.Hostname, ChallengeToken: host.ChallengeToken}}
+				Hostname: host.Hostname, ChallengeToken: host.ChallengeToken,
+				PlatformTenantManaged: true}}
 			if errors.Is(err, pgx.ErrNoRows) {
 				existingCount++
 				if existingCount > in.Limits.TenantHostnamesPerSurface {
@@ -229,8 +232,8 @@ func commitPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformT
 		switch item.Action {
 		case "create":
 			consumer, err := scanAPIConsumerRow(tx.QueryRow(ctx, `insert into api_consumers
-				(account_id, app_id, external_ref, name, platform_tenant_id)
-				values ($1::uuid, $2::uuid, $3, $4, $5::uuid) returning `+apiConsumerSelectCols,
+				(account_id, app_id, external_ref, name, platform_tenant_id, platform_tenant_managed)
+				values ($1::uuid, $2::uuid, $3, $4, $5::uuid, true) returning `+apiConsumerSelectCols,
 				in.AccountID, item.Consumer.AppID, item.Consumer.ExternalRef, item.Consumer.Name, result.Tenant.ID))
 			if err != nil {
 				return applyWriteError(err)
@@ -249,8 +252,9 @@ func commitPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformT
 	for i := range result.Surfaces {
 		item := &result.Surfaces[i]
 		if item.Action == "create" {
-			surface, err := scanTenantSurface(tx.QueryRow(ctx, `insert into tenant_surfaces (account_id, app_id, name, cert_kind)
-				values ($1::uuid, $2::uuid, $3, $4) returning `+tenantSurfaceCols,
+			surface, err := scanTenantSurface(tx.QueryRow(ctx, `insert into tenant_surfaces
+				(account_id, app_id, name, cert_kind, platform_tenant_managed)
+				values ($1::uuid, $2::uuid, $3, $4, true) returning `+tenantSurfaceCols,
 				in.AccountID, item.Surface.AppID, item.Surface.Name, item.Surface.CertKind))
 			if err != nil {
 				return applyWriteError(err)
@@ -268,8 +272,9 @@ func commitPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformT
 			if host.Action != "create" {
 				continue
 			}
-			created, err := scanTenantHostname(tx.QueryRow(ctx, `insert into tenant_hostnames (surface_id, hostname, challenge_token)
-				values ($1::uuid, $2, $3) returning `+tenantHostnameCols,
+			created, err := scanTenantHostname(tx.QueryRow(ctx, `insert into tenant_hostnames
+				(surface_id, hostname, challenge_token, platform_tenant_managed)
+				values ($1::uuid, $2, $3, true) returning `+tenantHostnameCols,
 				item.Surface.ID, host.Hostname.Hostname, host.Hostname.ChallengeToken))
 			if err != nil {
 				return applyWriteError(err)

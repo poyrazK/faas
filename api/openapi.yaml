@@ -23948,6 +23948,7 @@ components:
         name: { type: string }
         status: { type: string, enum: [active] }
         action: { type: string, enum: [create, link, unchanged] }
+        managed_by_platform_tenant: { type: boolean, description: True only after the tenant bundle created this consumer; omitted for unmanaged resources and dry-run creates. Linking an existing consumer does not adopt it. }
 
     ApplyPlatformTenantSurfaceResponse:
       description: Planned or applied tenant surface, hostname challenges, and current certificate state.
@@ -23960,6 +23961,7 @@ components:
         status: { type: string, enum: [pending, active, suspended] }
         cert_state: { type: string, enum: [none, pending, issued, failed] }
         action: { type: string, enum: [create, link, unchanged] }
+        managed_by_platform_tenant: { type: boolean, description: True only after the tenant bundle created this surface; omitted for unmanaged resources and dry-run creates. Linking an existing surface does not adopt it. }
         hostnames:
           type: array
           items: { $ref: '#/components/schemas/ApplyPlatformTenantHostnameResponse' }
@@ -23976,6 +23978,7 @@ components:
         last_error: { type: string }
         txt_record: { type: string }
         action: { type: string, enum: [create, unchanged] }
+        managed_by_platform_tenant: { type: boolean, description: True only after the tenant bundle created this hostname; omitted for unmanaged resources and dry-run creates. }
 
     PlatformTenantActivationSurfaceResponse:
       description: Observed routing and certificate readiness for one linked customer surface.
@@ -24478,7 +24481,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
 
     PlatformTenantSurfaceResponse:
-      description: A linked tenant surface summary; use the app endpoint for hostnames.
+      description: A linked tenant surface summary; managed_by_platform_tenant is true only when a platform-tenant apply created it. Use the app endpoint for hostnames.
       type: object
       required: [id, app_id, name, status]
       properties:
@@ -24486,9 +24489,10 @@ components:
         app_id: { type: string, format: uuid }
         name: { type: string }
         status: { type: string }
+        managed_by_platform_tenant: { type: boolean, description: True when this surface originated in the account owner's tenant bundle apply; absent otherwise. }
 
     PlatformTenantDetailResponse:
-      description: One customer and its current app-local consumer and surface links.
+      description: One customer and its current app-local consumer and surface links. Resource managed_by_platform_tenant fields distinguish tenant-bundle-created resources from pre-existing resources merely linked to the tenant.
       type: object
       required: [id, external_ref, name, status, created_at, updated_at, consumers, surfaces]
       properties:
@@ -24734,7 +24738,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128, example: Acme }
 
     APIConsumerResponse:
-      description: "Stable API consumer identity. No credential secret is returned."
+      description: "Stable API consumer identity. No credential secret is returned. managed_by_platform_tenant distinguishes tenant-bundle-created identities from pre-existing linked identities."
       type: object
       required: [id, app_id, external_ref, name, status, created_at, updated_at]
       properties:
@@ -24746,6 +24750,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
+        managed_by_platform_tenant: { type: boolean, description: True only when a platform-tenant bundle created this consumer; omitted otherwise. }
 
     APIConsumerListResponse:
       description: "Stable API consumer identities for an app."
@@ -29015,7 +29020,7 @@ components:
           example: "minimal Node.js HTTP server — first-touch smoke test"
 
     TenantSurfaceResponse:
-      description: "A tenant surface: a multi-hostname SAN bundle attached to one app."
+      description: "A tenant surface: a multi-hostname SAN bundle attached to one app. managed_by_platform_tenant is true only when created by a platform-tenant bundle apply."
       type: object
       required: [id, account_id, app_id, name, cert_kind, status, cert_state, hostnames]
       properties:
@@ -29030,12 +29035,13 @@ components:
         cert_last_error: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        managed_by_platform_tenant: { type: boolean, description: True only when a platform-tenant bundle created this surface; omitted otherwise. }
         hostnames:
           type: array
           items: { $ref: '#/components/schemas/TenantHostnameResponse' }
 
     TenantHostnameResponse:
-      description: "A hostname attached to a tenant surface (DNS-01 verified)."
+      description: "A hostname attached to a tenant surface (DNS-01 verified). managed_by_platform_tenant is true only when created by a platform-tenant bundle apply."
       type: object
       required: [hostname, verified, txt_record]
       properties:
@@ -29045,6 +29051,7 @@ components:
         verified_at: { type: [string, "null"], format: date-time }
         last_error: { type: [string, "null"] }
         txt_record: { type: string, description: "TXT record the customer must publish (_faas-verify.<hostname>)." }
+        managed_by_platform_tenant: { type: boolean, description: True only when a platform-tenant bundle created this hostname; omitted otherwise. }
 
     CreateTenantSurfaceRequest:
       description: "Create a tenant surface with a seed set of hostnames."

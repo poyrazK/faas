@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
 | 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
 | 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
 | 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |

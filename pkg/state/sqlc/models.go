@@ -171,15 +171,16 @@ type AlertRule struct {
 }
 
 type ApiConsumer struct {
-	ID          pgtype.UUID
-	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	ExternalRef string
-	Name        string
-	Status      string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	ExternalRef           string
+	Name                  string
+	Status                string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	RevokedAt             pgtype.Timestamptz
+	PlatformTenantManaged bool
 }
 
 type ApiKey struct {
@@ -2251,28 +2252,30 @@ type StripePushDedupe struct {
 }
 
 type TenantHostname struct {
-	ID             pgtype.UUID
-	SurfaceID      pgtype.UUID
-	Hostname       interface{}
-	ChallengeToken string
-	VerifiedAt     pgtype.Timestamptz
-	LastCheckAt    pgtype.Timestamptz
-	LastError      pgtype.Text
-	CreatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	SurfaceID             pgtype.UUID
+	Hostname              interface{}
+	ChallengeToken        string
+	VerifiedAt            pgtype.Timestamptz
+	LastCheckAt           pgtype.Timestamptz
+	LastError             pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	PlatformTenantManaged bool
 }
 
 type TenantSurface struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	Name          interface{}
-	CertKind      string
-	Status        string
-	CertState     string
-	CertNotAfter  pgtype.Timestamptz
-	CertLastError pgtype.Text
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	Name                  interface{}
+	CertKind              string
+	Status                string
+	CertState             string
+	CertNotAfter          pgtype.Timestamptz
+	CertLastError         pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	PlatformTenantManaged bool
 }
 
 type Trigger struct {

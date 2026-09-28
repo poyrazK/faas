@@ -66,22 +66,24 @@ type ApplyPlatformTenantConsumerRequest struct {
 }
 
 type ApplyPlatformTenantConsumerResponse struct {
-	ID          string `json:"id,omitempty"`
-	AppID       string `json:"app_id"`
-	ExternalRef string `json:"external_ref"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Action      string `json:"action"`
+	ID                      string `json:"id,omitempty"`
+	AppID                   string `json:"app_id"`
+	ExternalRef             string `json:"external_ref"`
+	Name                    string `json:"name"`
+	Status                  string `json:"status"`
+	Action                  string `json:"action"`
+	ManagedByPlatformTenant bool   `json:"managed_by_platform_tenant,omitempty"`
 }
 
 type ApplyPlatformTenantSurfaceResponse struct {
-	ID        string                                `json:"id,omitempty"`
-	AppID     string                                `json:"app_id"`
-	Name      string                                `json:"name"`
-	Status    string                                `json:"status"`
-	CertState string                                `json:"cert_state"`
-	Action    string                                `json:"action"`
-	Hostnames []ApplyPlatformTenantHostnameResponse `json:"hostnames,omitempty"`
+	ID                      string                                `json:"id,omitempty"`
+	AppID                   string                                `json:"app_id"`
+	Name                    string                                `json:"name"`
+	Status                  string                                `json:"status"`
+	CertState               string                                `json:"cert_state"`
+	Action                  string                                `json:"action"`
+	ManagedByPlatformTenant bool                                  `json:"managed_by_platform_tenant,omitempty"`
+	Hostnames               []ApplyPlatformTenantHostnameResponse `json:"hostnames,omitempty"`
 }
 
 type ApplyPlatformTenantHostnameResponse struct {
@@ -226,10 +228,11 @@ type PlatformTenantListResponse struct {
 }
 
 type PlatformTenantSurfaceResponse struct {
-	ID     string `json:"id"`
-	AppID  string `json:"app_id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID                      string `json:"id"`
+	AppID                   string `json:"app_id"`
+	Name                    string `json:"name"`
+	Status                  string `json:"status"`
+	ManagedByPlatformTenant bool   `json:"managed_by_platform_tenant,omitempty"`
 }
 
 type PlatformTenantDetailResponse struct {
