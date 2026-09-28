@@ -9,6 +9,10 @@ import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObserv
 export type AppSecretResponse = {
   key: string;
   scope: string;
+  /**
+   * Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope.
+   */
+  secret_class: 'persistent' | 'ephemeral';
   created_at: string;
   updated_at: string;
   /**
