@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Create a receiver for this tenant's supported lifecycle and finalized billing events.
+ * Create a receiver for this tenant's supported hostname, certificate, and finalized billing events.
  */
 export type CreatePlatformTenantWebhookRequest = {
   target_url: string;
@@ -11,7 +11,7 @@ export type CreatePlatformTenantWebhookRequest = {
   /**
    * Events delivered to this receiver. Defaults to platform_tenant.statement.finalized when omitted.
    */
-  event_filter?: Array<'platform_tenant.statement.finalized' | 'platform_tenant.hostname.verified'>;
+  event_filter?: Array<'platform_tenant.statement.finalized' | 'platform_tenant.hostname.verified' | 'platform_tenant.surface.certificate.changed'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   delivery_format?: 'json' | 'cloudevents';
   enabled?: boolean;

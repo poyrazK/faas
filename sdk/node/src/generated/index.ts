@@ -581,6 +581,7 @@ export type { PlatformTenantStatementLineResponse } from './models/PlatformTenan
 export type { PlatformTenantStatementListResponse } from './models/PlatformTenantStatementListResponse.js';
 export type { PlatformTenantStatementResponse } from './models/PlatformTenantStatementResponse.js';
 export type { PlatformTenantStatementSummaryResponse } from './models/PlatformTenantStatementSummaryResponse.js';
+export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './models/PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
