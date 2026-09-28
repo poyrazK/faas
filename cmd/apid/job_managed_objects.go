@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -108,8 +109,14 @@ func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader
 		return nil, fmt.Errorf("%w: checksum mismatch", errJobInputManifestInvalid)
 	}
 	var inputs []api.JobRunInput
-	if err := json.Unmarshal(data, &inputs); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&inputs); err != nil {
 		return nil, fmt.Errorf("%w: invalid JSON: %v", errJobInputManifestInvalid, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("%w: trailing JSON content", errJobInputManifestInvalid)
 	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("%w: empty input set", errJobInputManifestInvalid)

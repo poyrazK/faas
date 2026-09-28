@@ -40,6 +40,11 @@ func TestJobManagedObjectManifestAndVerification(t *testing.T) {
 	if _, err := readJobInputManifest(context.Background(), jobObjectReader{body}, bucket, key, "sha256:"+strings.Repeat("0", 64)); err == nil {
 		t.Fatal("accepted wrong input checksum")
 	}
+	unknownField := `[{"input_id":"first","input_ref":"data/first","extra":"ignored"}]`
+	unknownSHA := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(unknownField)))
+	if _, err := readJobInputManifest(context.Background(), jobObjectReader{unknownField}, bucket, key, unknownSHA); err == nil {
+		t.Fatal("accepted undeclared external input field")
+	}
 	artifact := jobresult.Artifact{Name: "part", URI: uri, SizeBytes: int64(len(body)), SHA256: digest}
 	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{body}, bucket, key, artifact); err != nil {
 		t.Fatal(err)
