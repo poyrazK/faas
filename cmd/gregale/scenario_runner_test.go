@@ -234,6 +234,46 @@ func TestVerifyTestServiceWakeChecksFirstNewCompletedBoot(t *testing.T) {
 	}
 }
 
+type testServiceHotFakeClient struct {
+	wakes    []api.WakeTimelineJSONRow
+	requests []api.DebugTelemetryRequestItem
+}
+
+func (f *testServiceHotFakeClient) GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error) {
+	return api.AppWakeTimelineResponse{Rows: f.wakes}, nil
+}
+
+func (f *testServiceHotFakeClient) ListAppDebugRequestsWithOptions(context.Context, string, api.DebugTelemetryListOptions) (api.DebugTelemetryListResponse, error) {
+	return api.DebugTelemetryListResponse{Requests: f.requests}, nil
+}
+
+func TestVerifyTestServiceHotRequiresHandledRequestWithoutNewWake(t *testing.T) {
+	cutoff := time.Now().UTC().Add(-time.Minute)
+	client := &testServiceHotFakeClient{
+		wakes: []api.WakeTimelineJSONRow{{WakeID: "baseline"}},
+		requests: []api.DebugTelemetryRequestItem{
+			{ID: "new-request", RequestID: "public-request", InstanceID: "vm-1", Status: 202, ReceivedAt: cutoff.Add(time.Second).Format(time.RFC3339Nano)},
+			{ID: "late-smoke", RequestID: "smoke", InstanceID: "vm-1", ColdBoot: true, ReceivedAt: cutoff.Add(-time.Second).Format(time.RFC3339Nano)},
+			{ID: "baseline-request", InstanceID: "vm-1"},
+		},
+	}
+	wakes := map[string]bool{"baseline": true}
+	requests := map[string]bool{"baseline-request": true}
+	evidence, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff)
+	if err != nil || evidence.RequestID != "public-request" || evidence.InstanceID != "vm-1" || evidence.Status != 202 {
+		t.Fatalf("hot service evidence = (%+v, %v)", evidence, err)
+	}
+	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "unexpected-wake"}, {WakeID: "baseline"}}
+	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+		t.Fatal("new service wake satisfied warm profile")
+	}
+	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "baseline"}}
+	client.requests[0].ColdBoot = true
+	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+		t.Fatal("waking service request satisfied warm profile")
+	}
+}
+
 func TestWaitForTestDeliveryRequiresWorkloadWakeBeforeInspection(t *testing.T) {
 	reads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -168,7 +168,7 @@ command:
 
 | Profile | Preparation | Required first request |
 |---|---|---|
-| `warm` | Park and explicitly wake the app, then wait for a running instance. | `X-Faas-Wake: hot`, with no wake ID. |
+| `warm` | Park and explicitly wake every workload, then wait for running instances. | The primary request has `X-Faas-Wake: hot` with no wake ID; each service has an app-handled hot request and no new wake. |
 | `cold` | Drain the preview and invalidate its snapshots. | A wake ID whose completed boot method is `cold_boot`. |
 | `restored` | Drain the preview while retaining its deployment snapshot. | A wake ID whose completed boot method is `restore`. |
 
@@ -181,14 +181,16 @@ For cold and restored profiles, Gregale also compares each declared service's
 wake timeline before and after the trigger. Every service must show a new wake
 whose completed boot method matches the requested profile; the report records
 these in `service_wake`. The warm profile explicitly wakes all workloads before
-the trigger and verifies the primary app's first request is hot.
+the trigger, verifies the primary app's first request is hot, and checks each
+service's request telemetry against a pre-trigger baseline. A service must
+handle a request on a running instance without a new wake; its request and
+instance IDs appear in `service_hot`.
 
 The assertion commands own application-specific expectations.
 For an export test they should submit and retry the same
 export request, inspect the produced object through both customers' credentials,
 and check notification delivery. The delivery sink records each attempt's
-status and body for retry assertions. Warm first-request evidence for sibling
-workloads is still being added. Real platform reports label this path
+status and body for retry assertions. Real platform reports label this path
 `real-vm`; simulated runs never count as lifecycle proof.
 
 `--profile cold` relies on the preview-only `fresh=true` form of

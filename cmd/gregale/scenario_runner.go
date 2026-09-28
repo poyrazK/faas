@@ -126,6 +126,12 @@ type testServiceWakeEvidence struct {
 	Method string `json:"method"`
 }
 
+type testServiceHotEvidence struct {
+	RequestID  string `json:"request_id"`
+	InstanceID string `json:"instance_id"`
+	Status     int    `json:"status"`
+}
+
 type testRunReceipt struct {
 	Scenario     string                             `json:"scenario"`
 	Profile      string                             `json:"profile"`
@@ -135,6 +141,7 @@ type testRunReceipt struct {
 	DeploymentID string                             `json:"deployment_id,omitempty"`
 	Services     map[string]string                  `json:"services,omitempty"`
 	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
+	ServiceHot   map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
 	Status       string                             `json:"status"`
 	Error        string                             `json:"error,omitempty"`
 	CleanupError string                             `json:"cleanup_error,omitempty"`
@@ -832,20 +839,40 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	serviceWakeBaseline := make(map[string]map[string]bool, len(workloads)-1)
-	if profile != "warm" {
-		for _, workload := range workloads[1:] {
-			timeline, err := client.GetAppWakeTimeline(ctx, workload.session.App.Slug, api.AppWakeTimelineOptions{})
+	serviceRequestBaseline := make(map[string]map[string]bool, len(workloads)-1)
+	serviceRequestCutoff := make(map[string]time.Time, len(workloads)-1)
+	for _, workload := range workloads[1:] {
+		timeline, err := client.GetAppWakeTimeline(ctx, workload.session.App.Slug, api.AppWakeTimelineOptions{})
+		if err != nil {
+			receipt.Error = fmt.Sprintf("read wake baseline for %s: %v", workload.name, err)
+			return
+		}
+		seen := make(map[string]bool, len(timeline.Rows))
+		for _, row := range timeline.Rows {
+			if row.WakeID != "" {
+				seen[row.WakeID] = true
+			}
+		}
+		serviceWakeBaseline[workload.name] = seen
+		if profile == "warm" {
+			requests, err := client.ListAppDebugRequestsWithOptions(ctx, workload.session.App.Slug, api.DebugTelemetryListOptions{Since: "1h", Limit: 200})
 			if err != nil {
-				receipt.Error = fmt.Sprintf("read wake baseline for %s: %v", workload.name, err)
+				receipt.Error = fmt.Sprintf("read request baseline for %s: %v", workload.name, err)
 				return
 			}
-			seen := make(map[string]bool, len(timeline.Rows))
-			for _, row := range timeline.Rows {
-				if row.WakeID != "" {
-					seen[row.WakeID] = true
+			cutoff, err := time.Parse(time.RFC3339Nano, requests.WindowEnd)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("request baseline for %s omitted a valid window end: %v", workload.name, err)
+				return
+			}
+			serviceRequestCutoff[workload.name] = cutoff
+			seenRequests := make(map[string]bool, len(requests.Requests))
+			for _, request := range requests.Requests {
+				if id := testTelemetryRequestKey(request); id != "" {
+					seenRequests[id] = true
 				}
 			}
-			serviceWakeBaseline[workload.name] = seen
+			serviceRequestBaseline[workload.name] = seenRequests
 		}
 	}
 	recorder.reset()
@@ -902,6 +929,21 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 			if evidence.WakeID != "" {
 				receipt.ServiceWake[workload.name] = evidence
+			}
+		}
+	} else {
+		receipt.ServiceHot = make(map[string]testServiceHotEvidence, len(workloads)-1)
+		for _, workload := range workloads[1:] {
+			evidence, err := verifyTestServiceHot(ctx, client, workload.session.App.Slug,
+				serviceWakeBaseline[workload.name], serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+			if err != nil {
+				if receipt.Error != "" {
+					receipt.Error += "; "
+				}
+				receipt.Error += fmt.Sprintf("service %s hot evidence: %v", workload.name, err)
+			}
+			if evidence.RequestID != "" {
+				receipt.ServiceHot[workload.name] = evidence
 			}
 		}
 	}
@@ -1008,6 +1050,73 @@ func verifyTestServiceWake(ctx context.Context, client testServiceWakeClient, sl
 			return testServiceWakeEvidence{}, ctx.Err()
 		case <-deadline.C:
 			return testServiceWakeEvidence{}, fmt.Errorf("no %s wake observed after scenario trigger", profile)
+		case <-ticker.C:
+		}
+	}
+}
+
+type testServiceHotClient interface {
+	GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error)
+	ListAppDebugRequestsWithOptions(context.Context, string, api.DebugTelemetryListOptions) (api.DebugTelemetryListResponse, error)
+}
+
+func testTelemetryRequestKey(request api.DebugTelemetryRequestItem) string {
+	if request.ID != "" {
+		return request.ID
+	}
+	return request.RequestID
+}
+
+func firstNewTestServiceRequest(requests []api.DebugTelemetryRequestItem, baseline map[string]bool, cutoff time.Time) (api.DebugTelemetryRequestItem, bool) {
+	// The debug API returns newest first. An app-handled row has an instance
+	// ID; edge rejections cannot attest that the sibling VM served traffic.
+	// ReceivedAt excludes a deployment smoke whose telemetry arrived late.
+	for i := len(requests) - 1; i >= 0; i-- {
+		request := requests[i]
+		receivedAt, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
+		if err != nil || !receivedAt.After(cutoff) {
+			continue
+		}
+		if key := testTelemetryRequestKey(request); key != "" && !baseline[key] && request.InstanceID != "" {
+			return request, true
+		}
+	}
+	return api.DebugTelemetryRequestItem{}, false
+}
+
+func verifyTestServiceHot(ctx context.Context, client testServiceHotClient, slug string,
+	wakeBaseline, requestBaseline map[string]bool, cutoff time.Time) (testServiceHotEvidence, error) {
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		wakes, err := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{})
+		if err != nil {
+			return testServiceHotEvidence{}, err
+		}
+		if wakeID := firstNewTestWakeID(wakes.Rows, wakeBaseline); wakeID != "" {
+			return testServiceHotEvidence{}, fmt.Errorf("service woke during warm scenario (wake %s)", wakeID)
+		}
+		requests, err := client.ListAppDebugRequestsWithOptions(ctx, slug, api.DebugTelemetryListOptions{Since: "1h", Limit: 200})
+		if err != nil {
+			return testServiceHotEvidence{}, err
+		}
+		if request, ok := firstNewTestServiceRequest(requests.Requests, requestBaseline, cutoff); ok {
+			evidence := testServiceHotEvidence{RequestID: request.RequestID, InstanceID: request.InstanceID, Status: request.Status}
+			if evidence.RequestID == "" {
+				evidence.RequestID = request.ID
+			}
+			if request.ColdBoot {
+				return evidence, fmt.Errorf("service request %s required a wake during warm scenario", evidence.RequestID)
+			}
+			return evidence, nil
+		}
+		select {
+		case <-ctx.Done():
+			return testServiceHotEvidence{}, ctx.Err()
+		case <-deadline.C:
+			return testServiceHotEvidence{}, errors.New("no app-handled service request observed during warm scenario")
 		case <-ticker.C:
 		}
 	}
