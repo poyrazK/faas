@@ -42,6 +42,12 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("invalid bucket binding prefix was accepted")
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("subsecond timeout was accepted")
+	}
 }
 
 type testOutputFakeClient struct {

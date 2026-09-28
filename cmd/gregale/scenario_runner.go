@@ -227,7 +227,7 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		}
 		if scenario.Timeout != "" {
 			d, parseErr := time.ParseDuration(scenario.Timeout)
-			if parseErr != nil || d <= 0 || d > time.Hour {
+			if parseErr != nil || d < time.Second || d > time.Hour {
 				return nil, "", fmt.Errorf("scenario %q timeout must be a duration between 1 second and 1 hour", name)
 			}
 		}
