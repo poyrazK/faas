@@ -6,47 +6,27 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="JobRunInput")
+T = TypeVar("T", bound="JobTaskAttemptResponseOutputManifest")
 
 
 @_attrs_define
-class JobRunInput:
-    """Stable input identity and opaque reference assigned to one task."""
-
-    input_id: str
-    input_ref: str
+class JobTaskAttemptResponseOutputManifest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        input_id = self.input_id
-
-        input_ref = self.input_ref
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "input_id": input_id,
-                "input_ref": input_ref,
-            }
-        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        input_id = d.pop("input_id")
+        job_task_attempt_response_output_manifest = cls()
 
-        input_ref = d.pop("input_ref")
-
-        job_run_input = cls(
-            input_id=input_id,
-            input_ref=input_ref,
-        )
-
-        job_run_input.additional_properties = d
-        return job_run_input
+        job_task_attempt_response_output_manifest.additional_properties = d
+        return job_task_attempt_response_output_manifest
 
     @property
     def additional_keys(self) -> list[str]:

@@ -4830,6 +4830,11 @@ func EffectiveRetryMaxAttempts(requested, planLimit int) int {
 // Plan.JobsAllowed() before reading any of these slices, so Free
 // customers get a clean 404 jobs_not_allowed without an index-out-of-bounds
 // hazard on the quota side.
+const (
+	JobInputManifestMaxBytes         int64 = 16 << 20
+	JobArtifactDownloadURLExpiresSec int64 = 300
+)
+
 var (
 	// JobMaxPerAccount is the maximum number of job templates an
 	// account may own concurrently (status <> 'deleted').

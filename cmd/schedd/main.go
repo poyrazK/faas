@@ -609,6 +609,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
 	engine.WithOpsMetrics(ops)
+	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
 	// heartbeat, and floor trigger. An empty owner preserves the central
 	// scheduler's fleet-wide placement; a configured owner pins this

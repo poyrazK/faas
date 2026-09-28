@@ -96,19 +96,22 @@ type (
 	UpdateCronRequest = api.UpdateCronRequest
 
 	// Jobs (issue #1184 Workstream A).
-	CreateJobRequest        = api.CreateJobRequest
-	UpdateJobRequest        = api.UpdateJobRequest
-	CreateJobRunRequest     = api.CreateJobRunRequest
-	JobResponse             = api.JobResponse
-	JobRunResponse          = api.JobRunResponse
-	JobTaskResponse         = api.JobTaskResponse
-	JobTaskLogResponse      = api.JobTaskLogResponse
-	JobTaskRetryResponse    = api.JobTaskRetryResponse
-	ListJobsResponse        = api.ListJobsResponse
-	ListJobRunsResponse     = api.ListJobRunsResponse
-	ListJobTasksResponse    = api.ListJobTasksResponse
-	JobRunCancelledResponse = api.JobRunCancelledResponse
-	JobDeletedResponse      = api.JobDeletedResponse
+	CreateJobRequest            = api.CreateJobRequest
+	UpdateJobRequest            = api.UpdateJobRequest
+	CreateJobRunRequest         = api.CreateJobRunRequest
+	JobResponse                 = api.JobResponse
+	JobRunResponse              = api.JobRunResponse
+	JobTaskResponse             = api.JobTaskResponse
+	JobTaskLogResponse          = api.JobTaskLogResponse
+	JobTaskAttemptResponse      = api.JobTaskAttemptResponse
+	ListJobTaskAttemptsResponse = api.ListJobTaskAttemptsResponse
+	JobArtifactDownloadResponse = api.JobArtifactDownloadResponse
+	JobTaskRetryResponse        = api.JobTaskRetryResponse
+	ListJobsResponse            = api.ListJobsResponse
+	ListJobRunsResponse         = api.ListJobRunsResponse
+	ListJobTasksResponse        = api.ListJobTasksResponse
+	JobRunCancelledResponse     = api.JobRunCancelledResponse
+	JobDeletedResponse          = api.JobDeletedResponse
 
 	// Instances.
 	InstanceResponse = api.InstanceResponse

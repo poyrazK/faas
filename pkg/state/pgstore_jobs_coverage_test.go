@@ -116,6 +116,15 @@ func TestPg_Jobs_RecurringScheduleRoundTripAndClaim(t *testing.T) {
 	if err != nil || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(firedAt) {
 		t.Fatalf("JobGetByID after schedule fire = %+v, err %v", updated, err)
 	}
+	if _, err := s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("update with queued scheduled run = %v, want conflict", err)
+	}
+	if err := s.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatalf("settle scheduled task before editing job: %v", err)
+	}
+	if _, err := s.JobRunRecompute(ctx, run.ID); err != nil {
+		t.Fatalf("recompute scheduled run: %v", err)
+	}
 
 	newSchedule := "30 3 * * *"
 	newTimezone := "UTC"
@@ -712,6 +721,11 @@ func TestPg_Jobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
 	if err != nil || !retried {
 		t.Fatalf("first boot failure: retried=%v err=%v", retried, err)
 	}
+	attempts, err := s.JobTaskAttemptList(ctx, run.ID, tasks[0].TaskIndex, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].Status != "failed" ||
+		attempts[0].InstanceID == nil || *attempts[0].InstanceID != firstID {
+		t.Fatalf("boot failure attempt journal = %+v, err %v", attempts, err)
+	}
 	task, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
 	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" {
 		t.Fatalf("first boot failure task=%+v err=%v", task, err)
@@ -737,6 +751,10 @@ func TestPg_Jobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
 	task, err = s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
 	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
 		t.Fatalf("terminal boot failure task=%+v err=%v", task, err)
+	}
+	attempts, err = s.JobTaskAttemptList(ctx, run.ID, tasks[0].TaskIndex, 10, 0)
+	if err != nil || len(attempts) != 2 || attempts[1].Attempt != 2 || attempts[1].Status != "failed" {
+		t.Fatalf("exhausted boot attempt journal = %+v, err %v", attempts, err)
 	}
 }
 

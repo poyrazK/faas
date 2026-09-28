@@ -2032,9 +2032,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRuns))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRun))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelJobRun))))
+	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/replay-failed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayFailedJobRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRunTasks))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.retryJobTask)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobTaskLogs))))
+	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobTaskAttempts))))
+	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireScope(api.ScopesStorageReadSurface...)(s.downloadJobArtifact)))))
 
 	// Workflows (ADR-081)
 	// Internal event ingress (EPIC #1278 / ADR-180). The handler persists a

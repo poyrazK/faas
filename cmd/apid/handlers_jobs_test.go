@@ -679,6 +679,68 @@ func TestRetryJobTask_RequeuesFailedTask(t *testing.T) {
 	}
 }
 
+func TestJobTaskAttemptsAndLinkedReplayAPI(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	name := seedJob(t, e, "replay-input-job", "ghcr.io/example/worker:v1")
+	job, err := e.store.JobGetByName(context.Background(), e.acct.ID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.JobSetImageMaterialization(context.Background(), job.ID, job.ImageRef,
+		"ready", "sha256:"+strings.Repeat("a", 64), "jobs/replay-input.ext4", ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/jobs/"+name+"/runs", api.CreateJobRunRequest{
+		Inputs: []api.JobRunInput{{ID: "first", Ref: "data/first"}, {ID: "second", Ref: "data/second"}},
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create run = %d: %s", rec.Code, rec.Body.String())
+	}
+	var run api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.JobTaskMarkTerminal(context.Background(), run.ID, 0, "failed", 1, "failed", "bad input", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.JobTaskMarkTerminal(context.Background(), run.ID, 1, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.JobRunRecompute(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, "GET", "/v1/jobs/"+name+"/runs/"+run.ID+"/tasks/0/attempts", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attempts = %d: %s", rec.Code, rec.Body.String())
+	}
+	var attempts api.ListJobTaskAttemptsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts.Attempts) != 1 || attempts.Attempts[0].InputID != "first" || attempts.Attempts[0].ErrorMessage != "bad input" {
+		t.Fatalf("attempts = %+v", attempts)
+	}
+	rec = e.do(t, "POST", "/v1/jobs/"+name+"/runs/"+run.ID+"/replay-failed", nil, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("replay = %d: %s", rec.Code, rec.Body.String())
+	}
+	var replay api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &replay); err != nil {
+		t.Fatal(err)
+	}
+	if replay.SourceRunID != run.ID || replay.Tasks != 1 {
+		t.Fatalf("replay = %+v", replay)
+	}
+	rec = e.do(t, "GET", "/v1/jobs/"+name+"/runs/"+replay.ID+"/tasks", nil, nil)
+	var tasks api.ListJobTasksResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks.Tasks) != 1 || tasks.Tasks[0].SourceTaskIndex == nil || *tasks.Tasks[0].SourceTaskIndex != 0 {
+		t.Fatalf("replay tasks = %+v", tasks)
+	}
+}
+
 func TestRetryJobTask_RejectsQueuedAndExhausted(t *testing.T) {
 	t.Run("queued", func(t *testing.T) {
 		e := setup(t, api.PlanHobby)

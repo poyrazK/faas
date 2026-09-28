@@ -771,6 +771,11 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs/"+runID+"/cancel", nil, &out)
 }
 
+func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	return out, c.do(ctx, "POST", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/replay-failed", nil, &out)
+}
+
 // ListJobRunTasks returns a page of the run's task rows.
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
@@ -780,6 +785,16 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 // GetJobTaskLogs tails the task's stdout/stderr via vmmd's tail endpoint.
 func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskIndex int) (JobTaskLogResponse, error) {
 	return c.GetJobTaskLogsWithMaxBytes(ctx, name, runID, taskIndex, 0)
+}
+
+func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	var out ListJobTaskAttemptsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/tasks/"+strconv.Itoa(taskIndex)+"/attempts", nil, &out)
+}
+
+func (c *Client) DownloadJobArtifact(ctx context.Context, name, runID string, taskIndex int, artifact string) (JobArtifactDownloadResponse, error) {
+	var out JobArtifactDownloadResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/tasks/"+strconv.Itoa(taskIndex)+"/artifacts/"+url.PathEscape(artifact)+"/download", nil, &out)
 }
 
 // GetJobTaskLogsWithMaxBytes is GetJobTaskLogs with an optional tail size.

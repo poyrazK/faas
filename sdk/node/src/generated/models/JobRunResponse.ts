@@ -13,13 +13,21 @@ export type JobRunResponse = {
   env_overrides?: Record<string, string>;
   tasks: number;
   /**
-   * 0 for numeric fan-out, 1 for the ordered inline input manifest.
+   * 0 for numeric fan-out, 1 for an ordered inline or external input manifest.
    */
   input_manifest_version?: number;
   /**
    * SHA-256 of the canonical ordered input manifest.
    */
   input_digest?: string;
+  /**
+   * Source obj:// URI for an external input manifest.
+   */
+  input_manifest_uri?: string;
+  /**
+   * SHA-256 of the external manifest's exact bytes.
+   */
+  input_manifest_sha256?: string;
   parallelism: number;
   execution_class: 'standard' | 'flexible';
   failure_policy: 'continue' | 'fail_fast';
@@ -31,6 +39,11 @@ export type JobRunResponse = {
    * Command captured at run creation.
    */
   command?: Array<string>;
+  image_ref_snapshot?: string;
+  image_resolved_digest_snapshot?: string;
+  ram_mb_snapshot?: number;
+  effective_env_snapshot?: Record<string, string>;
+  source_run_id?: string;
   aggregate_status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter';
   tasks_succeeded: number;
   tasks_failed: number;

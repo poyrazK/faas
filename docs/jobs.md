@@ -67,10 +67,14 @@ remaining tasks stay queued until capacity opens.
 
 `--arg` may be repeated to replace the job command's arguments for one run.
 The executable stays the same. The API accepts `arguments: []` to remove all
-trailing arguments. Each new run captures its effective command, retry budget,
-and task timeout, so those values remain stable in run history. A task receives
-`GREGALE_RUN_ID`, `GREGALE_TASK_INDEX` (zero-based),
+trailing arguments. Each new run captures its effective command, image
+reference and digest, artifact key, RAM, merged environment, retry budget,
+and task timeout, so those values remain stable in run history. A run created
+while its image is pending binds the matching artifact when it becomes ready.
+A task receives `GREGALE_RUN_ID`, `GREGALE_TASK_INDEX` (zero-based),
 `GREGALE_TASK_ATTEMPT` (one-based), and `GREGALE_TASK_COUNT` in its environment.
+`GREGALE_PARTITION_INDEX` and `GREGALE_PARTITION_COUNT` expose the same stable
+partition identity to images that use those names.
 Gregale sets these values after job and run environment overrides are merged.
 Run environment overrides must use valid customer variable names and fit the
 account plan's variable count and value size limits; the `GREGALE_` prefix is
@@ -86,6 +90,14 @@ the guest. Gregale treats the reference as an opaque string; the image must
 have its own access to the referenced data. Numeric `--tasks` runs remain
 available when input binding is unnecessary.
 
+For larger input sets, the runs API accepts `input_manifest_uri` and
+`input_manifest_sha256` instead of an inline `inputs` array. The URI must be
+an account-readable `obj://<app-id>/<bucket-id>/<key>` object containing the
+same JSON array of input bindings. Gregale verifies the exact object bytes
+against the supplied SHA-256 and enforces a 16 MiB manifest limit and the
+plan's task limit. The run retains the source URI, source checksum, and the
+canonical digest of its validated inputs. Entry order determines task index.
+
 `--flexible` accepts a start window of at most 24 hours. `--eligible-at`
 defaults to the time the run is accepted; `--latest-start-at` is required.
 Standard queued tasks have dispatch priority. Flexible tasks become eligible
@@ -95,7 +107,9 @@ Gregale cancels each task
 that has not started by the latest-start time and retains its task record with
 an expiry message; running tasks keep their normal timeout. The latest-start
 time is an admission limit, not a completion deadline. Flexible runs currently
-use the same pricing as standard runs.
+use the same pricing as standard runs. Scheduler metrics record starts,
+deferrals, expiry, and queue duration; usage minutes retain run ID and
+execution class so billing can be reviewed before any rate change.
 
 Runs use `continue` failure policy by default: other eligible tasks continue
 after one task exhausts its retries. `--fail-fast` cancels tasks that have not
@@ -114,8 +128,12 @@ Gregale validates the bounded manifest and retains it on the task record;
 tasks. Artifact bytes stay in the object store chosen by the image. The image
 must upload them and provide the checksum before writing the manifest. An
 invalid manifest causes the task attempt to fail, so it follows the configured
-retry policy. Gregale validates the manifest metadata; it does not fetch the
-artifact or independently check the checksum.
+retry policy. For an `obj://` artifact, call
+`GET /v1/jobs/{name}/runs/{id}/tasks/{index}/artifacts/{artifact}/download`.
+Gregale verifies the current object's size and SHA-256, then returns a
+five-minute signed URL. The caller needs job and storage read access. Check
+the downloaded checksum too, because an object can change after verification.
+External `s3://` and `gs://` artifacts remain customer-managed references.
 
 Job definitions cannot be edited or deleted while a run has queued or claimed
 tasks. This prevents customer edits from changing the image reference, command,
@@ -126,8 +144,16 @@ Keep tasks idempotent and write checkpoints outside the VM if a retry must
 resume work. Set a timeout and retry budget that match the downstream service,
 and use the job run id as the correlation id in application logs. Failed runs
 remain inspectable; `jobs retry` re-queues one failed task while its retry
-budget remains, preserving the run history and applying capped backoff. Cancel
-a run when its work is no longer useful.
+budget remains, preserving the run history and applying capped backoff.
+`GET /v1/jobs/{name}/runs/{id}/tasks/{index}/attempts` lists the immutable
+outcome of each completed attempt. To rerun failed, timed-out, OOM, or cancelled
+inputs from a terminal run, call
+`POST /v1/jobs/{name}/runs/{id}/replay-failed`. This creates a linked standard
+run with a fresh attempt budget. Each replay task includes `source_task_index`
+so its original input can be traced. Replay requires the current ready job
+image to match the source image reference and resolved digest. A legacy run
+without a captured digest cannot be replayed. Cancel a run
+when its work is no longer useful.
 
 A VM boot failure before your command starts also consumes one configured
 retry. The next attempt waits for the same capped backoff; when retries are

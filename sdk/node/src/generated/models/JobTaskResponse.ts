@@ -17,6 +17,10 @@ export type JobTaskResponse = {
    */
   input_ref?: string;
   /**
+   * Original task index when this task came from replay-failed.
+   */
+  source_task_index?: number;
+  /**
    * Versioned artifact references published by a successful task. Gregale retains metadata, not artifact bytes.
    */
   output_manifest?: {

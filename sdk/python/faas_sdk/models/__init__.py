@@ -844,6 +844,7 @@ from .invoke_response_result import InvokeResponseResult
 from .invoke_response_status import InvokeResponseStatus
 from .issue_account_credit_body import IssueAccountCreditBody
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
+from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
 from .job_registry_credential_list_response import JobRegistryCredentialListResponse
@@ -857,10 +858,14 @@ from .job_run_cancelled_response import JobRunCancelledResponse
 from .job_run_input import JobRunInput
 from .job_run_response import JobRunResponse
 from .job_run_response_aggregate_status import JobRunResponseAggregateStatus
+from .job_run_response_effective_env_snapshot import JobRunResponseEffectiveEnvSnapshot
 from .job_run_response_env_overrides import JobRunResponseEnvOverrides
 from .job_run_response_execution_class import JobRunResponseExecutionClass
 from .job_run_response_failure_policy import JobRunResponseFailurePolicy
 from .job_run_response_trigger_kind import JobRunResponseTriggerKind
+from .job_task_attempt_response import JobTaskAttemptResponse
+from .job_task_attempt_response_output_manifest import JobTaskAttemptResponseOutputManifest
+from .job_task_attempt_response_status import JobTaskAttemptResponseStatus
 from .job_task_log_response import JobTaskLogResponse
 from .job_task_log_response_task_status import JobTaskLogResponseTaskStatus
 from .job_task_response import JobTaskResponse
@@ -891,6 +896,7 @@ from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_job_runs_response import ListJobRunsResponse
+from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
@@ -2681,6 +2687,7 @@ __all__ = (
     "InvokeResponseStatus",
     "IssueAccountCreditBody",
     "IssueBrowserCSRFTokenAction",
+    "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
     "JobRegistryCredentialListResponse",
@@ -2694,10 +2701,14 @@ __all__ = (
     "JobRunInput",
     "JobRunResponse",
     "JobRunResponseAggregateStatus",
+    "JobRunResponseEffectiveEnvSnapshot",
     "JobRunResponseEnvOverrides",
     "JobRunResponseExecutionClass",
     "JobRunResponseFailurePolicy",
     "JobRunResponseTriggerKind",
+    "JobTaskAttemptResponse",
+    "JobTaskAttemptResponseOutputManifest",
+    "JobTaskAttemptResponseStatus",
     "JobTaskLogResponse",
     "JobTaskLogResponseTaskStatus",
     "JobTaskResponse",
@@ -2729,6 +2740,7 @@ __all__ = (
     "ListInvocationsResponse",
     "ListJobRunsResponse",
     "ListJobsResponse",
+    "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",

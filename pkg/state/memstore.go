@@ -303,6 +303,7 @@ type MemStore struct {
 	jobs                     map[string]Job
 	jobRuns                  map[string]JobRun
 	jobTasks                 map[string]map[int]JobTask // run_id → task_index → task
+	jobTaskAttempts          map[string]map[int]map[int]JobTaskAttempt
 	jobMaterializationClaims map[string]jobMaterializationClaim
 	jobRegistryCredentials   map[jobRegistryCredentialKey]JobRegistryCredential
 	// migrationLeases mirrors the durable source-side migration lease table.
@@ -905,12 +906,14 @@ type usageMinute struct {
 	// MeterKind="app" and leave JobID empty; job rows use
 	// MeterKind="job" and carry the jobs.id. AppID remains the
 	// aggregate compatibility key for the in-memory read surface.
-	MeterKind  string
-	JobID      string
-	InstanceID string
-	Minute     time.Time
-	MBSeconds  int64
-	Requests   int64
+	MeterKind         string
+	JobID             string
+	JobRunID          string
+	JobExecutionClass string
+	InstanceID        string
+	Minute            time.Time
+	MBSeconds         int64
+	Requests          int64
 	// CPUUsec is the cumulative host cgroup CPU-µs consumed by the
 	// instance during this minute. Source: vmmd cpustats.Cache
 	// (cpu.stat usage_usec delta) → schedd instancestats.Poller →
@@ -1074,6 +1077,7 @@ func NewMemStore() *MemStore {
 		jobs:                            map[string]Job{},
 		jobRuns:                         map[string]JobRun{},
 		jobTasks:                        map[string]map[int]JobTask{},
+		jobTaskAttempts:                 map[string]map[int]map[int]JobTaskAttempt{},
 		jobMaterializationClaims:        map[string]jobMaterializationClaim{},
 		jobRegistryCredentials:          map[jobRegistryCredentialKey]JobRegistryCredential{},
 		migrationLeases:                 map[string]MigrationLease{},
@@ -16578,6 +16582,38 @@ func (m *MemStore) AppendUsage(ctx context.Context, accountID, appID, instanceID
 func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64, meterKind, jobID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	jobRunID, jobClass := "", ""
+	if meterKind == "job" {
+		jobClass = "standard"
+		for runID, tasks := range m.jobTasks {
+			for _, task := range tasks {
+				if task.InstanceID != nil && *task.InstanceID == instanceID {
+					jobRunID = runID
+					jobClass = m.jobRuns[runID].ExecutionClass
+					break
+				}
+			}
+			if jobRunID != "" {
+				break
+			}
+		}
+		if jobRunID == "" {
+			for runID, tasks := range m.jobTaskAttempts {
+				for _, attempts := range tasks {
+					for _, attempt := range attempts {
+						if attempt.InstanceID != nil && *attempt.InstanceID == instanceID {
+							jobRunID = runID
+							jobClass = m.jobRuns[runID].ExecutionClass
+							break
+						}
+					}
+				}
+				if jobRunID != "" {
+					break
+				}
+			}
+		}
+	}
 	key := minute.UTC().Truncate(time.Minute)
 	for i := range m.usage {
 		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
@@ -16599,12 +16635,17 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 			m.usage[i].NetRxBytes += netRxBytes
 			m.usage[i].ColdBootCount += coldBootCount
 			m.usage[i].TailSeconds += tailSeconds
+			if m.usage[i].JobRunID == "" && jobRunID != "" {
+				m.usage[i].JobRunID = jobRunID
+				m.usage[i].JobExecutionClass = jobClass
+			}
 			m.recomputeMonthLocked(accountID, appID, key)
 			return nil
 		}
 	}
 	m.usage = append(m.usage, usageMinute{
-		AccountID: accountID, AppID: appID, MeterKind: meterKind, JobID: jobID, InstanceID: instanceID,
+		AccountID: accountID, AppID: appID, MeterKind: meterKind, JobID: jobID,
+		JobRunID: jobRunID, JobExecutionClass: jobClass, InstanceID: instanceID,
 		Minute: key, MBSeconds: mbSeconds, Requests: requests,
 		CPUUsec: cpuUsec, TXBytes: txBytes, NetTxBytes: netTxBytes,
 		NetRxBytes: netRxBytes, ColdBootCount: coldBootCount,
@@ -25098,6 +25139,7 @@ func (m *MemStore) replayAccountJobDeadLetterLocked(accountID string, event Dead
 		if task.Status != "failed" && task.Status != "timeout" && task.Status != "oom" && task.Status != "cancelled" {
 			continue
 		}
+		m.recordJobTaskAttemptLocked(task)
 		task.Status = "queued"
 		task.Attempt++
 		task.InstanceID = nil
@@ -25110,6 +25152,9 @@ func (m *MemStore) replayAccountJobDeadLetterLocked(accountID string, event Dead
 		task.LeaseToken = nil
 		task.LeaseExpiresAt = nil
 		task.LastLeaseNode = nil
+		task.LogContent = ""
+		task.LogTruncated = false
+		task.OutputManifest = nil
 		m.jobTasks[run.ID][idx] = task
 	}
 	now := time.Now().UTC()

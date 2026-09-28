@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CreateJobRequest } from '../models/CreateJobRequest.js';
 import type { CreateJobRunRequest } from '../models/CreateJobRunRequest.js';
+import type { JobArtifactDownloadResponse } from '../models/JobArtifactDownloadResponse.js';
 import type { JobRegistryCredentialListResponse } from '../models/JobRegistryCredentialListResponse.js';
 import type { JobRegistryCredentialResponse } from '../models/JobRegistryCredentialResponse.js';
 import type { JobResponse } from '../models/JobResponse.js';
@@ -13,6 +14,7 @@ import type { JobTaskLogResponse } from '../models/JobTaskLogResponse.js';
 import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
+import type { ListJobTaskAttemptsResponse } from '../models/ListJobTaskAttemptsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
 import type { PutJobRegistryCredentialRequest } from '../models/PutJobRegistryCredentialRequest.js';
 import type { UpdateJobRequest } from '../models/UpdateJobRequest.js';
@@ -491,6 +493,40 @@ export class JobsService {
     });
   }
   /**
+   * Create a linked run from failed inputs of a terminal run.
+   * The ready job image must still resolve to the source image digest. New task indexes are dense; source_task_index preserves the old index.
+   * @returns JobRunResponse The linked run.
+   * @throws ApiError
+   */
+  public static replayFailedJobRun({
+    name,
+    id,
+  }: {
+    /**
+     * Job name owned by the authenticated account.
+     */
+    name: string,
+    /**
+     * Terminal source run identifier.
+     */
+    id: string,
+  }): CancelablePromise<JobRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/jobs/{name}/runs/{id}/replay-failed',
+      path: {
+        'name': name,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
    * List tasks of a run.
    * @returns ListJobTasksResponse A page of tasks for this run.
    * @throws ApiError
@@ -591,6 +627,102 @@ export class JobsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List immutable terminal attempts of a task.
+   * @returns ListJobTaskAttemptsResponse Attempts ordered by attempt number.
+   * @throws ApiError
+   */
+  public static listJobTaskAttempts({
+    name,
+    id,
+    idx,
+    limit = 50,
+    offset,
+  }: {
+    /**
+     * Job whose task attempt history is requested.
+     */
+    name: string,
+    /**
+     * Run containing the task attempt history.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task whose attempts are listed.
+     */
+    idx: number,
+    /**
+     * Maximum number of attempts to return.
+     */
+    limit?: number,
+    /**
+     * Number of attempts to skip.
+     */
+    offset?: number,
+  }): CancelablePromise<ListJobTaskAttemptsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Verify a Gregale managed result and obtain a download URL.
+   * Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then returns a 5-minute signed GET URL.
+   * @returns JobArtifactDownloadResponse Verified artifact and download capability.
+   * @throws ApiError
+   */
+  public static downloadJobArtifact({
+    name,
+    id,
+    idx,
+    artifact,
+  }: {
+    /**
+     * Job whose output artifact is requested.
+     */
+    name: string,
+    /**
+     * Run containing the successful task.
+     */
+    id: string,
+    /**
+     * Zero-based index of the successful task.
+     */
+    idx: number,
+    /**
+     * Artifact name from the successful task's output manifest.
+     */
+    artifact: string,
+  }): CancelablePromise<JobArtifactDownloadResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+        'artifact': artifact,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

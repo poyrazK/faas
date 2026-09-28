@@ -109,10 +109,17 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		_ = e.store.JobTaskCancel(ctx, runID, taskIndex)
 		return JobWakeResult{}, ErrJobNotActive
 	}
-	if job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" {
+	imageKey := job.ImageStorageKey
+	if run.ImageRefSnapshot != "" {
+		imageKey = run.ImageStorageKeySnapshot
+	}
+	if job.ImageMaterializationStatus != "ready" || imageKey == "" {
 		// The dispatch query normally filters these tasks before WakeJob is
 		// called. Keep the guard here as defense in depth for direct callers
 		// and stale queue snapshots; no VM or admission slot is created.
+		return JobWakeResult{}, ErrJobImageNotReady
+	}
+	if run.ImageStorageKeySnapshot != "" && job.ImageStorageKey != run.ImageStorageKeySnapshot {
 		return JobWakeResult{}, ErrJobImageNotReady
 	}
 
@@ -143,6 +150,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	planIdx := plan.PlanIndex()
 	ramMB := job.RAMMB
+	if run.RAMMBSnapshot != nil {
+		ramMB = *run.RAMMBSnapshot
+	}
 	if ramMB > api.JobRAMMB[planIdx] {
 		ramMB = api.JobRAMMB[planIdx]
 	}
@@ -248,7 +258,11 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 
 	// M7: real cold-boot. Keep the job and run overrides together so the
 	// vmmd request cannot silently omit a per-run environment or timeout.
-	env, err := mergeJobEnvOverrides(job.EnvOverrides, run.EnvOverrides)
+	jobEnv, runEnv := job.EnvOverrides, run.EnvOverrides
+	if len(run.EffectiveEnvSnapshot) > 0 {
+		jobEnv, runEnv = run.EffectiveEnvSnapshot, nil
+	}
+	env, err := mergeJobEnvOverrides(jobEnv, runEnv)
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
@@ -259,6 +273,8 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	env["GREGALE_TASK_INDEX"] = strconv.Itoa(task.TaskIndex)
 	env["GREGALE_TASK_ATTEMPT"] = strconv.Itoa(task.Attempt)
 	env["GREGALE_TASK_COUNT"] = strconv.Itoa(run.Tasks)
+	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(task.TaskIndex)
+	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(run.Tasks)
 	env["GREGALE_OUTPUT_MANIFEST_PATH"] = jobresult.GuestPath
 	if task.InputID != "" {
 		env["GREGALE_INPUT_ID"] = task.InputID
@@ -275,7 +291,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		InstanceID: instanceID,
 		// vmmd's ImageRef field is a StorageBackend key at this boundary;
 		// the customer-facing OCI source remains in jobs.image_ref.
-		ImageRef:       job.ImageStorageKey,
+		ImageRef:       imageKey,
 		Command:        append([]string(nil), command...),
 		Env:            env,
 		RAMMB:          ramMB,
@@ -822,6 +838,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		return fmt.Errorf("sched: expire flexible tasks: %w", err)
 	}
 	for _, runID := range expiredRuns {
+		e.jobFlexibleMetrics.ExpiredRun()
 		if _, err := e.store.JobRunRecompute(ctx, runID); err != nil && !errors.Is(err, state.ErrNotFound) {
 			return fmt.Errorf("sched: recompute expired flexible run %s: %w", runID, err)
 		}
@@ -864,6 +881,9 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.DeferredTask("account_capacity")
+			}
 			// Only defer the unchanged queued attempt: another schedd may
 			// have claimed it since ClaimBatch returned.
 			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -872,6 +892,9 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.DeferredTask("wake_error")
+			}
 			if errors.Is(err, state.ErrJobQuotaExceeded) {
 				// The transactional claim saw a concurrent schedd win the
 				// final account or per-run slot after the read-only fast path.
@@ -884,6 +907,8 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			// Before-claim errors leave the task queued. WakeJob settles any
 			// claimed boot failure itself, including retry backoff. Requeueing
 			// here would erase that backoff or race a successful exit.
+		} else if run.ExecutionClass == "flexible" {
+			e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
 		}
 	}
 	return nil

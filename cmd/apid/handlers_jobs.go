@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -97,26 +98,39 @@ func jobResponse(j state.Job) api.JobResponse {
 // appears as a misleading zero in list/detail output.
 func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 	resp := api.JobRunResponse{
-		ID:                   r.ID,
-		JobID:                r.JobID,
-		AccountID:            r.AccountID,
-		TriggerKind:          r.TriggerKind,
-		Tasks:                r.Tasks,
-		InputManifestVersion: r.InputManifestVersion,
-		InputDigest:          r.InputDigest,
-		Parallelism:          r.Parallelism,
-		ExecutionClass:       r.ExecutionClass,
-		FailurePolicy:        r.FailurePolicy,
-		AggregateStatus:      r.AggregateStatus,
-		TasksSucceeded:       r.TasksSucceeded,
-		TasksFailed:          r.TasksFailed,
-		TasksCancelled:       r.TasksCancelled,
-		TasksRunning:         r.TasksRunning,
-		DeadLetterCount:      r.DeadLetterCount,
-		CreatedAt:            r.CreatedAt.UTC().Format(time.RFC3339),
-		RetryMax:             job.RetryMax,
-		TaskTimeoutSec:       job.TaskTimeoutS,
-		Command:              append([]string(nil), r.Command...),
+		ID:                          r.ID,
+		JobID:                       r.JobID,
+		AccountID:                   r.AccountID,
+		TriggerKind:                 r.TriggerKind,
+		Tasks:                       r.Tasks,
+		InputManifestVersion:        r.InputManifestVersion,
+		InputDigest:                 r.InputDigest,
+		InputManifestURI:            r.InputManifestURI,
+		InputManifestSHA256:         r.InputManifestSHA256,
+		Parallelism:                 r.Parallelism,
+		ExecutionClass:              r.ExecutionClass,
+		FailurePolicy:               r.FailurePolicy,
+		AggregateStatus:             r.AggregateStatus,
+		TasksSucceeded:              r.TasksSucceeded,
+		TasksFailed:                 r.TasksFailed,
+		TasksCancelled:              r.TasksCancelled,
+		TasksRunning:                r.TasksRunning,
+		DeadLetterCount:             r.DeadLetterCount,
+		CreatedAt:                   r.CreatedAt.UTC().Format(time.RFC3339),
+		RetryMax:                    job.RetryMax,
+		TaskTimeoutSec:              job.TaskTimeoutS,
+		Command:                     append([]string(nil), r.Command...),
+		ImageRefSnapshot:            r.ImageRefSnapshot,
+		ImageResolvedDigestSnapshot: r.ImageResolvedDigestSnapshot,
+	}
+	if r.RAMMBSnapshot != nil {
+		resp.RAMMBSnapshot = *r.RAMMBSnapshot
+	}
+	if r.SourceRunID != nil {
+		resp.SourceRunID = *r.SourceRunID
+	}
+	if len(r.EffectiveEnvSnapshot) > 0 {
+		_ = json.Unmarshal(r.EffectiveEnvSnapshot, &resp.EffectiveEnvSnapshot)
 	}
 	if r.RetryMax != nil {
 		resp.RetryMax = *r.RetryMax
@@ -166,14 +180,15 @@ func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 // error_class as "" (no chip) rather than a JSON null.
 func jobTaskResponse(t state.JobTask) api.JobTaskResponse {
 	resp := api.JobTaskResponse{
-		RunID:          t.RunID,
-		TaskIndex:      t.TaskIndex,
-		InputID:        t.InputID,
-		InputRef:       t.InputRef,
-		OutputManifest: t.OutputManifest,
-		Status:         t.Status,
-		Attempt:        t.Attempt,
-		CreatedAt:      t.CreatedAt.UTC().Format(time.RFC3339),
+		RunID:           t.RunID,
+		TaskIndex:       t.TaskIndex,
+		InputID:         t.InputID,
+		InputRef:        t.InputRef,
+		SourceTaskIndex: t.SourceTaskIndex,
+		OutputManifest:  t.OutputManifest,
+		Status:          t.Status,
+		Attempt:         t.Attempt,
+		CreatedAt:       t.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if t.InstanceID != nil {
 		resp.InstanceID = *t.InstanceID
@@ -441,13 +456,13 @@ func (s *server) getJobRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 // task_index (the dispatch tick's primary key).
 func (s *server) listJobRunTasks(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	runID := r.PathValue("id")
-	_, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	job, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("list run tasks: resolve failed", "id", runID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list tasks"))
 		return
 	}
-	if !ok {
+	if !ok || job.Name != r.PathValue("name") {
 		s.notFound(w, "no such run")
 		return
 	}
@@ -545,6 +560,119 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 		Truncated:  truncated,
 		MaxBytes:   maxBytes,
 	})
+}
+
+func (s *server) listJobTaskAttempts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("id")
+	taskIndex, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || taskIndex < 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid task_index", "task_index must be a non-negative integer"))
+		return
+	}
+	job, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	if err != nil {
+		s.log.Error("list task attempts: resolve failed", "run", runID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not list attempts"))
+		return
+	}
+	if !ok || job.Name != r.PathValue("name") {
+		s.notFound(w, "no such run")
+		return
+	}
+	if _, err := s.store.JobTaskGet(r.Context(), runID, taskIndex); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such task")
+		} else {
+			s.log.Error("list task attempts: task lookup failed", "run", runID, "task", taskIndex, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not list attempts"))
+		}
+		return
+	}
+	limit, offset := parsePagination(r)
+	attempts, err := s.store.JobTaskAttemptList(r.Context(), runID, taskIndex, limit, offset)
+	if err != nil {
+		s.log.Error("list task attempts failed", "run", runID, "task", taskIndex, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not list attempts"))
+		return
+	}
+	out := make([]api.JobTaskAttemptResponse, 0, len(attempts))
+	for _, attempt := range attempts {
+		item := api.JobTaskAttemptResponse{
+			RunID: attempt.RunID, TaskIndex: attempt.TaskIndex,
+			Attempt: attempt.Attempt, InputID: attempt.InputID, InputRef: attempt.InputRef,
+			Status: attempt.Status, ErrorClass: stringValue(attempt.ErrorClass),
+			ErrorMessage: stringValue(attempt.ErrorMessage), ExitCode: attempt.ExitCode,
+			FinishedAt: attempt.FinishedAt.UTC().Format(time.RFC3339Nano),
+			LogContent: attempt.LogContent, LogTruncated: attempt.LogTruncated,
+			OutputManifest: attempt.OutputManifest,
+		}
+		if attempt.InstanceID != nil {
+			item.InstanceID = *attempt.InstanceID
+		}
+		if attempt.StartedAt != nil {
+			item.StartedAt = attempt.StartedAt.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, item)
+	}
+	next := -1
+	if len(out) == limit {
+		next = offset + len(out)
+	}
+	writeJSON(w, http.StatusOK, api.ListJobTaskAttemptsResponse{Attempts: out, Limit: limit, Offset: offset, NextOffset: next})
+}
+
+// replayFailedJobRun creates a linked run containing only non-successful
+// inputs from a terminal run. Storage selects them atomically with creation.
+func (s *server) replayFailedJobRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.JobsAllowed() {
+		api.WriteProblem(w, api.ErrPlanJobsNotAllowed(acct.Plan))
+		return
+	}
+	job, source, ok, err := s.resolveJobRun(r.Context(), r.PathValue("id"), acct)
+	if err != nil {
+		s.log.Error("replay failed run: resolve failed", "run", r.PathValue("id"), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not replay run"))
+		return
+	}
+	if !ok || job.Name != r.PathValue("name") {
+		s.notFound(w, "no such run")
+		return
+	}
+	idx := acct.Plan.PlanIndex()
+	if source.Tasks > api.JobMaxTasksPerRun[idx] {
+		api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "tasks_per_run", api.JobMaxTasksPerRun[idx], source.Tasks))
+		return
+	}
+	if source.RAMMBSnapshot != nil && *source.RAMMBSnapshot > api.JobRAMMB[idx] {
+		api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "ram_mb", api.JobRAMMB[idx], *source.RAMMBSnapshot))
+		return
+	}
+	if source.Parallelism > api.JobMaxParallelismPerRun[idx] ||
+		(source.TaskTimeoutS != nil && *source.TaskTimeoutS > api.JobTaskTimeoutSec[idx]) ||
+		(source.RetryMax != nil && *source.RetryMax > api.JobMaxRetries[idx]) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Run exceeds current plan", "the source execution policy exceeds the current plan limits"))
+		return
+	}
+	run, _, err := s.store.JobRunReplayFailed(r.Context(), source.ID, acct.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Run cannot be replayed", "the source must be terminal with failed inputs and the same ready image digest"))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such run")
+			return
+		}
+		s.log.Error("replay failed run failed", "run", source.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not replay run"))
+		return
+	}
+	_ = s.notif.Notify(r.Context(), db.NotifyJobChanged,
+		fmt.Sprintf(`{"kind":"run_created","job_id":"%s","run_id":"%s","account_id":"%s"}`, job.ID, run.ID, acct.ID))
+	writeJSON(w, http.StatusCreated, jobRunResponse(run, job))
 }
 
 // --- 5 write handlers (Mega-1 M11.3) ---------------------------------
@@ -1029,6 +1157,34 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			"Job image unavailable", "update image_ref to retry materialization before creating a run"))
 		return
 	}
+	if req.InputManifestURI != "" || req.InputManifestSHA256 != "" {
+		if req.InputManifestURI == "" || req.InputManifestSHA256 == "" || len(req.Inputs) != 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid input manifest", "supply both input_manifest_uri and input_manifest_sha256, without inline inputs"))
+			return
+		}
+		if principal, ok := principalFrom(r); ok && principal.Key != nil &&
+			!apiKeyCarriesScope(*principal.Key, api.ScopeAdmin) &&
+			!apiKeyCarriesScope(*principal.Key, api.ScopeStorageRead) {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeValidation,
+				"Storage read scope required", "external input manifests require storage:read"))
+			return
+		}
+		bucket, provider, key, ok := s.loadJobManagedObject(w, r, acct, req.InputManifestURI)
+		if !ok {
+			return
+		}
+		reader, ok := provider.(objectstorage.ObjectReader)
+		if !ok {
+			bucketProblem(w, objectstorage.ErrUnsupported)
+			return
+		}
+		req.Inputs, err = readJobInputManifest(r.Context(), reader, bucket.PhysicalName, key, req.InputManifestSHA256)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid input manifest", err.Error()))
+			return
+		}
+	}
 	inputs := make([]state.JobInput, 0, len(req.Inputs))
 	if len(req.Inputs) > 0 {
 		if req.Tasks != 0 && req.Tasks != len(req.Inputs) {
@@ -1179,6 +1335,7 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
 		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks,
 		state.JobRunOptions{CommandArgs: req.Arguments, Inputs: inputs,
+			InputManifestURI: req.InputManifestURI, InputManifestSHA256: req.InputManifestSHA256,
 			ExecutionClass: executionClass, EligibleAt: eligibleAt, LatestStartAt: latestStartAt,
 			FailurePolicy: failurePolicy})
 	if err != nil {
@@ -1278,6 +1435,12 @@ func (s *server) retryJobTask(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if task.Status != "failed" && task.Status != "timeout" && task.Status != "oom" && task.Status != "cancelled" {
 		api.WriteProblem(w, api.ErrJobTaskNotRetriable(runID, strconv.Itoa(taskIdx), task.Status))
+		return
+	}
+	if run.ImageStorageKeySnapshot != "" && (job.ImageMaterializationStatus != "ready" ||
+		job.ImageStorageKey != run.ImageStorageKeySnapshot) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Run image changed", "create a linked replay after the image is ready"))
 		return
 	}
 	retryMax := job.RetryMax

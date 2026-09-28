@@ -21,6 +21,7 @@ from ..models.job_run_response_trigger_kind import JobRunResponseTriggerKind, ch
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.job_run_response_effective_env_snapshot import JobRunResponseEffectiveEnvSnapshot
     from ..models.job_run_response_env_overrides import JobRunResponseEnvOverrides
 
 
@@ -48,15 +49,24 @@ class JobRunResponse:
     created_at: datetime.datetime
     env_overrides: JobRunResponseEnvOverrides | Unset = UNSET
     input_manifest_version: int | Unset = UNSET
-    """0 for numeric fan-out, 1 for the ordered inline input manifest."""
+    """0 for numeric fan-out, 1 for an ordered inline or external input manifest."""
     input_digest: str | Unset = UNSET
     """SHA-256 of the canonical ordered input manifest."""
+    input_manifest_uri: str | Unset = UNSET
+    """Source obj:// URI for an external input manifest."""
+    input_manifest_sha256: str | Unset = UNSET
+    """SHA-256 of the external manifest's exact bytes."""
     eligible_at: datetime.datetime | Unset = UNSET
     latest_start_at: datetime.datetime | Unset = UNSET
     retry_max: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
     command: list[str] | Unset = UNSET
     """Command captured at run creation."""
+    image_ref_snapshot: str | Unset = UNSET
+    image_resolved_digest_snapshot: str | Unset = UNSET
+    ram_mb_snapshot: int | Unset = UNSET
+    effective_env_snapshot: JobRunResponseEffectiveEnvSnapshot | Unset = UNSET
+    source_run_id: UUID | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -100,6 +110,10 @@ class JobRunResponse:
 
         input_digest = self.input_digest
 
+        input_manifest_uri = self.input_manifest_uri
+
+        input_manifest_sha256 = self.input_manifest_sha256
+
         eligible_at: str | Unset = UNSET
         if not isinstance(self.eligible_at, Unset):
             eligible_at = self.eligible_at.isoformat()
@@ -115,6 +129,20 @@ class JobRunResponse:
         command: list[str] | Unset = UNSET
         if not isinstance(self.command, Unset):
             command = self.command
+
+        image_ref_snapshot = self.image_ref_snapshot
+
+        image_resolved_digest_snapshot = self.image_resolved_digest_snapshot
+
+        ram_mb_snapshot = self.ram_mb_snapshot
+
+        effective_env_snapshot: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.effective_env_snapshot, Unset):
+            effective_env_snapshot = self.effective_env_snapshot.to_dict()
+
+        source_run_id: str | Unset = UNSET
+        if not isinstance(self.source_run_id, Unset):
+            source_run_id = str(self.source_run_id)
 
         started_at: str | Unset = UNSET
         if not isinstance(self.started_at, Unset):
@@ -151,6 +179,10 @@ class JobRunResponse:
             field_dict["input_manifest_version"] = input_manifest_version
         if input_digest is not UNSET:
             field_dict["input_digest"] = input_digest
+        if input_manifest_uri is not UNSET:
+            field_dict["input_manifest_uri"] = input_manifest_uri
+        if input_manifest_sha256 is not UNSET:
+            field_dict["input_manifest_sha256"] = input_manifest_sha256
         if eligible_at is not UNSET:
             field_dict["eligible_at"] = eligible_at
         if latest_start_at is not UNSET:
@@ -161,6 +193,16 @@ class JobRunResponse:
             field_dict["task_timeout_sec"] = task_timeout_sec
         if command is not UNSET:
             field_dict["command"] = command
+        if image_ref_snapshot is not UNSET:
+            field_dict["image_ref_snapshot"] = image_ref_snapshot
+        if image_resolved_digest_snapshot is not UNSET:
+            field_dict["image_resolved_digest_snapshot"] = image_resolved_digest_snapshot
+        if ram_mb_snapshot is not UNSET:
+            field_dict["ram_mb_snapshot"] = ram_mb_snapshot
+        if effective_env_snapshot is not UNSET:
+            field_dict["effective_env_snapshot"] = effective_env_snapshot
+        if source_run_id is not UNSET:
+            field_dict["source_run_id"] = source_run_id
         if started_at is not UNSET:
             field_dict["started_at"] = started_at
         if finished_at is not UNSET:
@@ -170,6 +212,7 @@ class JobRunResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.job_run_response_effective_env_snapshot import JobRunResponseEffectiveEnvSnapshot
         from ..models.job_run_response_env_overrides import JobRunResponseEnvOverrides
 
         d = dict(src_dict)
@@ -214,6 +257,10 @@ class JobRunResponse:
 
         input_digest = d.pop("input_digest", UNSET)
 
+        input_manifest_uri = d.pop("input_manifest_uri", UNSET)
+
+        input_manifest_sha256 = d.pop("input_manifest_sha256", UNSET)
+
         _eligible_at = d.pop("eligible_at", UNSET)
         eligible_at: datetime.datetime | Unset
         if isinstance(_eligible_at, Unset):
@@ -233,6 +280,26 @@ class JobRunResponse:
         task_timeout_sec = d.pop("task_timeout_sec", UNSET)
 
         command = cast(list[str], d.pop("command", UNSET))
+
+        image_ref_snapshot = d.pop("image_ref_snapshot", UNSET)
+
+        image_resolved_digest_snapshot = d.pop("image_resolved_digest_snapshot", UNSET)
+
+        ram_mb_snapshot = d.pop("ram_mb_snapshot", UNSET)
+
+        _effective_env_snapshot = d.pop("effective_env_snapshot", UNSET)
+        effective_env_snapshot: JobRunResponseEffectiveEnvSnapshot | Unset
+        if isinstance(_effective_env_snapshot, Unset):
+            effective_env_snapshot = UNSET
+        else:
+            effective_env_snapshot = JobRunResponseEffectiveEnvSnapshot.from_dict(_effective_env_snapshot)
+
+        _source_run_id = d.pop("source_run_id", UNSET)
+        source_run_id: UUID | Unset
+        if isinstance(_source_run_id, Unset):
+            source_run_id = UNSET
+        else:
+            source_run_id = UUID(_source_run_id)
 
         _started_at = d.pop("started_at", UNSET)
         started_at: datetime.datetime | Unset
@@ -267,11 +334,18 @@ class JobRunResponse:
             env_overrides=env_overrides,
             input_manifest_version=input_manifest_version,
             input_digest=input_digest,
+            input_manifest_uri=input_manifest_uri,
+            input_manifest_sha256=input_manifest_sha256,
             eligible_at=eligible_at,
             latest_start_at=latest_start_at,
             retry_max=retry_max,
             task_timeout_sec=task_timeout_sec,
             command=command,
+            image_ref_snapshot=image_ref_snapshot,
+            image_resolved_digest_snapshot=image_resolved_digest_snapshot,
+            ram_mb_snapshot=ram_mb_snapshot,
+            effective_env_snapshot=effective_env_snapshot,
+            source_run_id=source_run_id,
             started_at=started_at,
             finished_at=finished_at,
         )

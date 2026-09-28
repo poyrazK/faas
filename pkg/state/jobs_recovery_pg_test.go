@@ -126,6 +126,10 @@ func TestPg_Jobs_ReapClaimedRetriesAndDeadLetters(t *testing.T) {
 	if err != nil || !retry {
 		t.Fatalf("first reap = (%v, %v)", retry, err)
 	}
+	attempts, err := store.JobTaskAttemptList(ctx, run.ID, 0, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].Status != "timeout" {
+		t.Fatalf("reaped attempt journal = %+v, %v", attempts, err)
+	}
 	task, err := store.JobTaskGet(ctx, run.ID, 0)
 	if err != nil || task.Status != "queued" || task.Attempt != 2 {
 		t.Fatalf("retried task = %+v, %v", task, err)
@@ -142,5 +146,9 @@ func TestPg_Jobs_ReapClaimedRetriesAndDeadLetters(t *testing.T) {
 	settled, err := store.JobRunRecompute(ctx, run.ID)
 	if err != nil || settled.TasksFailed != 1 || settled.DeadLetterCount != 1 {
 		t.Fatalf("run after exhausted retry = %+v, %v", settled, err)
+	}
+	attempts, err = store.JobTaskAttemptList(ctx, run.ID, 0, 10, 0)
+	if err != nil || len(attempts) != 2 || attempts[1].Attempt != 2 || attempts[1].Status != "timeout" {
+		t.Fatalf("dead-letter attempt journal = %+v, %v", attempts, err)
 	}
 }

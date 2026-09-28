@@ -6,56 +6,36 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="JobRunInput")
+T = TypeVar("T", bound="JobRunResponseEffectiveEnvSnapshot")
 
 
 @_attrs_define
-class JobRunInput:
-    """Stable input identity and opaque reference assigned to one task."""
-
-    input_id: str
-    input_ref: str
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+class JobRunResponseEffectiveEnvSnapshot:
+    additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        input_id = self.input_id
-
-        input_ref = self.input_ref
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "input_id": input_id,
-                "input_ref": input_ref,
-            }
-        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        input_id = d.pop("input_id")
+        job_run_response_effective_env_snapshot = cls()
 
-        input_ref = d.pop("input_ref")
-
-        job_run_input = cls(
-            input_id=input_id,
-            input_ref=input_ref,
-        )
-
-        job_run_input.additional_properties = d
-        return job_run_input
+        job_run_response_effective_env_snapshot.additional_properties = d
+        return job_run_response_effective_env_snapshot
 
     @property
     def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> str:
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: str) -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

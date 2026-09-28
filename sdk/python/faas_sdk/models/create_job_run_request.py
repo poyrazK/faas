@@ -27,8 +27,10 @@ T = TypeVar("T", bound="CreateJobRunRequest")
 
 @_attrs_define
 class CreateJobRunRequest:
-    """Atomic fan-out into indexed task records; supply either `tasks` or
-    an ordered `inputs` array. The handler validates the count against `Plan.JobMaxTasksPerRun`
+    """Atomic fan-out into indexed task records; supply `tasks`, an ordered
+    `inputs` array, or an external `input_manifest_uri` and checksum.
+    Each manifest entry is assigned to one task index in array order.
+    The handler validates the count against `Plan.JobMaxTasksPerRun`
     (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
     (parallelism / retry_max / task_timeout_sec) inherit from
     the job when null.
@@ -39,6 +41,10 @@ class CreateJobRunRequest:
     inputs: list[JobRunInput] | Unset = UNSET
     """Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count.
     References are opaque and fetched by the customer image."""
+    input_manifest_uri: str | Unset = UNSET
+    """obj://<app-id>/<bucket-id>/<key> for a JSON array of inputs, up to 16 MiB. Mutually exclusive with inputs."""
+    input_manifest_sha256: str | Unset = UNSET
+    """SHA-256 of the external manifest's exact bytes; required with input_manifest_uri."""
     execution_class: CreateJobRunRequestExecutionClass | Unset = "standard"
     failure_policy: CreateJobRunRequestFailurePolicy | Unset = "continue"
     eligible_at: datetime.datetime | Unset = UNSET
@@ -63,6 +69,10 @@ class CreateJobRunRequest:
             for inputs_item_data in self.inputs:
                 inputs_item = inputs_item_data.to_dict()
                 inputs.append(inputs_item)
+
+        input_manifest_uri = self.input_manifest_uri
+
+        input_manifest_sha256 = self.input_manifest_sha256
 
         execution_class: str | Unset = UNSET
         if not isinstance(self.execution_class, Unset):
@@ -101,6 +111,10 @@ class CreateJobRunRequest:
             field_dict["tasks"] = tasks
         if inputs is not UNSET:
             field_dict["inputs"] = inputs
+        if input_manifest_uri is not UNSET:
+            field_dict["input_manifest_uri"] = input_manifest_uri
+        if input_manifest_sha256 is not UNSET:
+            field_dict["input_manifest_sha256"] = input_manifest_sha256
         if execution_class is not UNSET:
             field_dict["execution_class"] = execution_class
         if failure_policy is not UNSET:
@@ -138,6 +152,10 @@ class CreateJobRunRequest:
                 inputs_item = JobRunInput.from_dict(inputs_item_data)
 
                 inputs.append(inputs_item)
+
+        input_manifest_uri = d.pop("input_manifest_uri", UNSET)
+
+        input_manifest_sha256 = d.pop("input_manifest_sha256", UNSET)
 
         _execution_class = d.pop("execution_class", UNSET)
         execution_class: CreateJobRunRequestExecutionClass | Unset
@@ -185,6 +203,8 @@ class CreateJobRunRequest:
         create_job_run_request = cls(
             tasks=tasks,
             inputs=inputs,
+            input_manifest_uri=input_manifest_uri,
+            input_manifest_sha256=input_manifest_sha256,
             execution_class=execution_class,
             failure_policy=failure_policy,
             eligible_at=eligible_at,

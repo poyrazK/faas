@@ -139,6 +139,8 @@ type JobRun struct {
 	Tasks                int
 	InputManifestVersion int
 	InputDigest          string
+	InputManifestURI     string
+	InputManifestSHA256  string
 	Parallelism          int
 	ExecutionClass       string // standard | flexible
 	FailurePolicy        string // continue | fail_fast
@@ -148,16 +150,22 @@ type JobRun struct {
 	TaskTimeoutS         *int // effective policy; nil only for legacy runs
 	// Command is the executable and arguments captured when the run was
 	// created. Nil denotes a legacy row that predates run snapshots.
-	Command         []string
-	AggregateStatus string // 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter'
-	TasksSucceeded  int
-	TasksFailed     int
-	TasksCancelled  int
-	TasksRunning    int
-	DeadLetterCount int // migrations/00574
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	CreatedAt       time.Time
+	Command                     []string
+	ImageRefSnapshot            string
+	ImageResolvedDigestSnapshot string
+	ImageStorageKeySnapshot     string
+	RAMMBSnapshot               *int
+	EffectiveEnvSnapshot        json.RawMessage
+	SourceRunID                 *string // linked run when replaying failed inputs
+	AggregateStatus             string  // 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter'
+	TasksSucceeded              int
+	TasksFailed                 int
+	TasksCancelled              int
+	TasksRunning                int
+	DeadLetterCount             int // migrations/00574
+	StartedAt                   *time.Time
+	FinishedAt                  *time.Time
+	CreatedAt                   time.Time
 }
 
 // JobRunOptions carries optional execution-time changes. CommandArgs replaces
@@ -165,12 +173,14 @@ type JobRun struct {
 // pointer uses the job's complete command; a pointer to an empty slice runs
 // the executable with no trailing arguments.
 type JobRunOptions struct {
-	CommandArgs    *[]string
-	Inputs         []JobInput
-	ExecutionClass string
-	FailurePolicy  string
-	EligibleAt     *time.Time
-	LatestStartAt  *time.Time
+	CommandArgs         *[]string
+	Inputs              []JobInput
+	InputManifestURI    string
+	InputManifestSHA256 string
+	ExecutionClass      string
+	FailurePolicy       string
+	EligibleAt          *time.Time
+	LatestStartAt       *time.Time
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to
@@ -188,6 +198,27 @@ func jobInputDigest(inputs []JobInput) (int, string) {
 	return 1, fmt.Sprintf("sha256:%x", sha256.Sum256(encoded))
 }
 
+func jobEffectiveEnv(base, overrides json.RawMessage) (json.RawMessage, error) {
+	merged := make(map[string]json.RawMessage)
+	for _, raw := range []json.RawMessage{base, overrides} {
+		if len(raw) == 0 {
+			continue
+		}
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("state: decode job environment: %w", err)
+		}
+		for key, value := range entries {
+			merged[key] = value
+		}
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("state: encode job environment: %w", err)
+	}
+	return encoded, nil
+}
+
 // JobTask is one row of public.job_tasks (migrations/00255 + 00571 for
 // exit_code + next_attempt_at + relaxed CHECK constraints; 00574 for
 // lease_token + lease_expires_at + last_lease_node). The PK is the
@@ -200,25 +231,46 @@ func jobInputDigest(inputs []JobInput) (int, string) {
 // relationship between instance_id and status (queued ⇒ NULL;
 // claimed ⇒ NOT NULL; terminal ⇒ either, see migrations/00571).
 type JobTask struct {
+	RunID           string
+	TaskIndex       int
+	InputID         string // empty for numeric fan-out runs
+	InputRef        string // opaque customer reference
+	SourceTaskIndex *int   // original index in source run when replayed
+	Status          string // 'queued' | 'claimed' | 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom'
+	Attempt         int
+	InstanceID      *string
+	ErrorClass      *string
+	ErrorMessage    *string
+	ExitCode        *int
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	CreatedAt       time.Time
+	NextAttemptAt   *time.Time // migrations/00571 — retry backoff gate
+	LeaseToken      *string    // migrations/00574
+	LeaseExpiresAt  *time.Time // migrations/00574
+	LastLeaseNode   *string    // migrations/00574
+	LogContent      string     // persisted combined stdout/stderr tail
+	LogTruncated    bool       // true when output exceeded the retained tail
+	OutputManifest  json.RawMessage
+}
+
+// JobTaskAttempt is an immutable outcome for one task attempt. The task row
+// remains the current dispatch projection; this record survives later retries.
+type JobTaskAttempt struct {
 	RunID          string
 	TaskIndex      int
-	InputID        string // empty for numeric fan-out runs
-	InputRef       string // opaque customer reference
-	Status         string // 'queued' | 'claimed' | 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom'
 	Attempt        int
+	InputID        string
+	InputRef       string
+	Status         string
 	InstanceID     *string
 	ErrorClass     *string
 	ErrorMessage   *string
 	ExitCode       *int
 	StartedAt      *time.Time
-	FinishedAt     *time.Time
-	CreatedAt      time.Time
-	NextAttemptAt  *time.Time // migrations/00571 — retry backoff gate
-	LeaseToken     *string    // migrations/00574
-	LeaseExpiresAt *time.Time // migrations/00574
-	LastLeaseNode  *string    // migrations/00574
-	LogContent     string     // persisted combined stdout/stderr tail
-	LogTruncated   bool       // true when output exceeded the retained tail
+	FinishedAt     time.Time
+	LogContent     string
+	LogTruncated   bool
 	OutputManifest json.RawMessage
 }
 
@@ -484,6 +536,9 @@ type JobStore interface {
 	//   - ErrNotFound when the parent job_id is gone (FK violation).
 	//   - mapErr-wrapped CHECK violations on bad tasks / parallelism.
 	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...JobRunOptions) (JobRun, []JobTask, error)
+	// JobRunReplayFailed creates a linked run from the source run's failed,
+	// timed-out, OOM, and cancelled task inputs. Source must be terminal.
+	JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error)
 	// JobRunGetByID returns ErrNotFound when the row is missing.
 	// Does NOT cascade through tasks — callers that need the task
 	// slice call JobTaskList separately so the read paths stay
@@ -641,6 +696,9 @@ type JobStore interface {
 	// (job_tasks_run_idx: (run_id, task_index)). Used by the
 	// run-detail page on the dashboard.
 	JobTaskList(ctx context.Context, runID string, limit, offset int) ([]JobTask, error)
+	// JobTaskAttemptList returns completed attempts in attempt order. Records
+	// remain available after the task projection is reset for a retry.
+	JobTaskAttemptList(ctx context.Context, runID string, taskIndex, limit, offset int) ([]JobTaskAttempt, error)
 	// ListJobInstances (issue #1184 Workstream A / ADR-099) returns
 	// every live kind='job_task' instance for the meterd
 	// sampler. Mirrors ListAllApps for the job workload class:

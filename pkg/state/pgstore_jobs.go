@@ -53,7 +53,11 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
        tasks_succeeded, tasks_failed, tasks_cancelled, tasks_running,
        dead_letter_count, started_at, finished_at, created_at, command,
        execution_class, eligible_at, latest_start_at, failure_policy,
-       input_manifest_version, coalesce(input_digest, '')`
+       input_manifest_version, coalesce(input_digest, ''),
+       coalesce(image_ref_snapshot, ''), coalesce(image_resolved_digest_snapshot, ''),
+       coalesce(image_storage_key_snapshot, ''), ram_mb_snapshot,
+       effective_env_snapshot, source_run_id,
+       coalesce(input_manifest_uri, ''), coalesce(input_manifest_sha256, '')`
 
 // jobTaskSelectCols is the canonical column order for job_tasks.
 // Includes exit_code + next_attempt_at (00571), lease_token +
@@ -64,7 +68,7 @@ const jobTaskSelectCols = `run_id, task_index, status, attempt, instance_id, err
        error_message, exit_code, started_at, finished_at, created_at,
        next_attempt_at, lease_token, lease_expires_at, last_lease_node,
 	       log_content, log_truncated, coalesce(input_id, ''), coalesce(input_ref, ''),
-	       output_manifest`
+	       output_manifest, source_task_index`
 
 // jobTaskSelectColsQualified is the same column order as jobTaskSelectCols,
 // with an explicit table qualifier for joins that also expose a status column.
@@ -76,7 +80,7 @@ const jobTaskSelectColsQualified = `job_tasks.run_id, job_tasks.task_index,
        job_tasks.lease_expires_at, job_tasks.last_lease_node,
        job_tasks.log_content, job_tasks.log_truncated,
 	       coalesce(job_tasks.input_id, ''), coalesce(job_tasks.input_ref, ''),
-	       job_tasks.output_manifest`
+	       job_tasks.output_manifest, job_tasks.source_task_index`
 
 // scanJobCols reads the jobSelectCols row into a Job. Nullable columns
 // don't apply (every column on jobs is NOT NULL), but env_overrides
@@ -105,18 +109,22 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 // "zero" is preserved.
 func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 	var r JobRun
-	var envOverrides []byte
+	var envOverrides, effectiveEnv []byte
 	if err := scan(&r.ID, &r.JobID, &r.AccountID, &r.TriggerKind, &envOverrides,
 		&r.Tasks, &r.Parallelism, &r.RetryMax, &r.TaskTimeoutS, &r.AggregateStatus,
 		&r.TasksSucceeded, &r.TasksFailed, &r.TasksCancelled, &r.TasksRunning,
 		&r.DeadLetterCount, &r.StartedAt, &r.FinishedAt, &r.CreatedAt,
 		&r.Command, &r.ExecutionClass, &r.EligibleAt, &r.LatestStartAt,
-		&r.FailurePolicy, &r.InputManifestVersion, &r.InputDigest); err != nil {
+		&r.FailurePolicy, &r.InputManifestVersion, &r.InputDigest,
+		&r.ImageRefSnapshot, &r.ImageResolvedDigestSnapshot,
+		&r.ImageStorageKeySnapshot, &r.RAMMBSnapshot, &effectiveEnv,
+		&r.SourceRunID, &r.InputManifestURI, &r.InputManifestSHA256); err != nil {
 		return JobRun{}, err
 	}
 	if len(envOverrides) > 0 {
 		r.EnvOverrides = json.RawMessage(envOverrides)
 	}
+	r.EffectiveEnvSnapshot = append(json.RawMessage(nil), effectiveEnv...)
 	return r, nil
 }
 
@@ -130,7 +138,7 @@ func scanJobTaskCols(scan func(...any) error) (JobTask, error) {
 		&t.ErrorClass, &t.ErrorMessage, &t.ExitCode, &t.StartedAt, &t.FinishedAt,
 		&t.CreatedAt, &t.NextAttemptAt, &t.LeaseToken, &t.LeaseExpiresAt,
 		&t.LastLeaseNode, &t.LogContent, &t.LogTruncated,
-		&t.InputID, &t.InputRef, &outputManifest); err != nil {
+		&t.InputID, &t.InputRef, &outputManifest, &t.SourceTaskIndex); err != nil {
 		return JobTask{}, err
 	}
 	t.OutputManifest = json.RawMessage(outputManifest)
@@ -368,11 +376,28 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 // A non-nil empty schedule removes recurring execution; any schedule or
 // timezone change resets the scheduler cursor to the edit time.
 func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var lockedID string
+	if err := tx.QueryRow(ctx, `select id::text from jobs where id = $1::uuid and status <> 'deleted' for update`, id).Scan(&lockedID); err != nil {
+		return Job{}, mapErr(err)
+	}
+	var active bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from job_runs r join job_tasks t on t.run_id = r.id
+		where r.job_id = $1::uuid and t.status in ('queued','claimed'))`, id).Scan(&active); err != nil {
+		return Job{}, err
+	}
+	if active {
+		return Job{}, ErrConflict
+	}
 	var envOverridesArg any
 	if len(envOverrides) > 0 {
 		envOverridesArg = []byte(envOverrides)
 	}
-	row := s.pool.QueryRow(ctx,
+	row := tx.QueryRow(ctx,
 		`update jobs set
 		   command         = coalesce($2::text[],  command),
 		   image_ref       = coalesce($3,          image_ref),
@@ -400,7 +425,14 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		 returning `+jobSelectCols,
 		id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax,
 		envOverridesArg, status, schedule, timezone)
-	return scanJob(row)
+	job, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return job, nil
 }
 
 // JobListPendingImageMaterialization returns active jobs whose source image
@@ -798,6 +830,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	}
 	var commandArgs any
 	var inputs []JobInput
+	inputManifestURI, inputManifestSHA256 := "", ""
 	executionClass := "standard"
 	failurePolicy := "continue"
 	var eligibleAt, latestStartAt *time.Time
@@ -806,6 +839,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	}
 	if len(options) > 0 {
 		inputs = options[0].Inputs
+		inputManifestURI, inputManifestSHA256 = options[0].InputManifestURI, options[0].InputManifestSHA256
 		if options[0].ExecutionClass != "" {
 			executionClass = options[0].ExecutionClass
 		}
@@ -843,13 +877,20 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
 		                       tasks, parallelism, retry_max, task_timeout_s, command,
 		                       execution_class, eligible_at, latest_start_at, failure_policy,
-		                       input_manifest_version, input_digest)
+		                       input_manifest_version, input_digest,
+		                       image_ref_snapshot, image_resolved_digest_snapshot,
+		                       image_storage_key_snapshot, ram_mb_snapshot,
+		                       effective_env_snapshot, input_manifest_uri,
+		                       input_manifest_sha256)
 		 select j.id, $2::uuid, $3, $4::jsonb, $5,
 		        coalesce($6, j.max_parallelism), coalesce($7, j.retry_max),
 		        coalesce($8, j.task_timeout_s),
 		        case when $9::text[] is null then j.command
 		             else j.command[1:1] || $9::text[] end,
-		        $10, $11, $12, $13, $14, nullif($15, '')
+		        $10, $11, $12, $13, $14, nullif($15, ''),
+		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
+		        j.ram_mb, j.env_overrides || $4::jsonb,
+		        nullif($16, ''), nullif($17, '')
 		   from jobs j
 		  where j.id = $1::uuid
 		    and j.account_id = $2::uuid
@@ -858,7 +899,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		jobID, accountID, triggerKind, []byte(envOverrides),
 		tasks, parallelism, retryMaxOverride, taskTimeoutOverride, commandArgs,
 		executionClass, eligibleAt, latestStartAt, failurePolicy,
-		manifestVersion, inputDigest)
+		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.
@@ -914,6 +955,120 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	return run, fanned, nil
 }
 
+// JobRunReplayFailed atomically selects failed inputs from a terminal source
+// and creates a linked run. The current image must resolve to the same digest
+// so replay never silently runs the old command against different bits.
+func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	source, err := scanJobRun(tx.QueryRow(ctx, `select `+jobRunSelectCols+` from job_runs
+		where id = $1::uuid and account_id = $2::uuid for update`, sourceRunID, accountID))
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	if source.FinishedAt == nil {
+		return JobRun{}, nil, ErrConflict
+	}
+	job, err := scanJob(tx.QueryRow(ctx, `select `+jobSelectCols+` from jobs
+		where id = $1::uuid and account_id = $2::uuid and status = 'active' for update`, source.JobID, accountID))
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	if job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" ||
+		source.ImageRefSnapshot == "" || source.ImageResolvedDigestSnapshot == "" ||
+		source.ImageResolvedDigestSnapshot != job.ImageResolvedDigest ||
+		source.ImageRefSnapshot != job.ImageRef {
+		return JobRun{}, nil, ErrConflict
+	}
+	rows, err := tx.Query(ctx, `select `+jobTaskSelectCols+` from job_tasks
+		where run_id = $1::uuid
+		order by task_index for update nowait`, sourceRunID)
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	sourceTasks, err := scanJobTasks(rows)
+	rows.Close()
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	failed := make([]JobTask, 0, len(sourceTasks))
+	for _, task := range sourceTasks {
+		switch task.Status {
+		case "failed", "timeout", "oom", "cancelled":
+			failed = append(failed, task)
+		case "queued", "claimed":
+			return JobRun{}, nil, ErrConflict
+		}
+	}
+	if len(failed) == 0 {
+		return JobRun{}, nil, ErrConflict
+	}
+	command := source.Command
+	if command == nil {
+		command = job.Command
+	}
+	retryMax, timeout := job.RetryMax, job.TaskTimeoutS
+	if source.RetryMax != nil {
+		retryMax = *source.RetryMax
+	}
+	if source.TaskTimeoutS != nil {
+		timeout = *source.TaskTimeoutS
+	}
+	ramMB := job.RAMMB
+	if source.RAMMBSnapshot != nil {
+		ramMB = *source.RAMMBSnapshot
+	}
+	effectiveEnv := source.EffectiveEnvSnapshot
+	if len(effectiveEnv) == 0 {
+		effectiveEnv, err = jobEffectiveEnv(job.EnvOverrides, source.EnvOverrides)
+		if err != nil {
+			return JobRun{}, nil, err
+		}
+	}
+	inputs := make([]JobInput, len(failed))
+	for i, task := range failed {
+		inputs[i] = JobInput{ID: task.InputID, Ref: task.InputRef}
+	}
+	manifestVersion, digest := 0, ""
+	if source.InputManifestVersion > 0 {
+		manifestVersion, digest = jobInputDigest(inputs)
+	}
+	run, err := scanJobRun(tx.QueryRow(ctx, `insert into job_runs (
+		job_id, account_id, trigger_kind, env_overrides, tasks, parallelism,
+		retry_max, task_timeout_s, command, failure_policy, input_manifest_version,
+		input_digest, image_ref_snapshot, image_resolved_digest_snapshot,
+		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id)
+		values ($1::uuid,$2::uuid,'manual',$3::jsonb,$4,$5,$6,$7,$8,$9,$10,
+			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid)
+		returning `+jobRunSelectCols,
+		job.ID, accountID, []byte(source.EnvOverrides), len(failed), source.Parallelism,
+		retryMax, timeout, command, source.FailurePolicy, manifestVersion, digest,
+		job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, ramMB,
+		[]byte(effectiveEnv), sourceRunID))
+	if err != nil {
+		return JobRun{}, nil, err
+	}
+	fanned := make([]JobTask, 0, len(failed))
+	for i, task := range failed {
+		created, err := scanJobTask(tx.QueryRow(ctx, `insert into job_tasks
+			(run_id,task_index,status,input_id,input_ref,source_task_index)
+			values ($1::uuid,$2,'queued',nullif($3,''),nullif($4,''),$5)
+			returning `+jobTaskSelectCols,
+			run.ID, i, task.InputID, task.InputRef, task.TaskIndex))
+		if err != nil {
+			return JobRun{}, nil, err
+		}
+		fanned = append(fanned, created)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return JobRun{}, nil, err
+	}
+	return run, fanned, nil
+}
+
 // JobRunCreateScheduled atomically claims the current schedule occurrence and
 // persists its one-task run. If another schedd already advanced the cursor,
 // or the job was edited/paused after the candidate read, it returns created=false.
@@ -951,9 +1106,15 @@ func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, ti
 	}
 	run, err := scanJobRun(tx.QueryRow(ctx,
 		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
-		                       tasks, parallelism, retry_max, task_timeout_s, command)
+		                       tasks, parallelism, retry_max, task_timeout_s, command,
+		                       image_ref_snapshot, image_resolved_digest_snapshot,
+		                       image_storage_key_snapshot, ram_mb_snapshot,
+		                       effective_env_snapshot)
 		 select $1::uuid, $2::uuid, 'scheduled', $3::jsonb, 1, $4,
-		        j.retry_max, j.task_timeout_s, j.command from jobs j where j.id = $1::uuid
+		        j.retry_max, j.task_timeout_s, j.command,
+		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
+		        j.ram_mb, j.env_overrides || $3::jsonb
+		   from jobs j where j.id = $1::uuid
 		 returning `+jobRunSelectCols,
 		jobID, accountID, envOverrides, parallelism))
 	if err != nil {
@@ -1551,7 +1712,11 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 		   lease_expires_at  = null,
 		   last_lease_node   = null
 		 where run_id = $1::uuid and task_index = $2
-		   and status in ('failed', 'timeout', 'oom', 'cancelled')`,
+		   and status in ('failed', 'timeout', 'oom', 'cancelled')
+		   and exists (select 1 from job_runs r join jobs j on j.id = r.job_id
+		               where r.id = $1::uuid and (r.image_storage_key_snapshot is null
+		               or (j.image_materialization_status = 'ready'
+		                   and j.image_storage_key = r.image_storage_key_snapshot)))`,
 		runID, taskIndex, nextAttemptAt.UTC())
 	if err != nil {
 		return fmt.Errorf("state: retry task (%s, %d): %w", runID, taskIndex, err)
@@ -1759,6 +1924,39 @@ func (s *PgStore) JobTaskList(ctx context.Context, runID string, limit, offset i
 	}
 	defer rows.Close()
 	return scanJobTasks(rows)
+}
+
+func (s *PgStore) JobTaskAttemptList(ctx context.Context, runID string, taskIndex, limit, offset int) ([]JobTaskAttempt, error) {
+	rows, err := s.pool.Query(ctx, `select a.run_id, a.task_index, a.attempt,
+		coalesce(t.input_id, ''), coalesce(t.input_ref, ''), a.status,
+		a.instance_id, a.error_class, a.error_message, a.exit_code,
+		a.started_at, a.finished_at, a.log_content, a.log_truncated,
+		a.output_manifest
+		from job_task_attempts a join job_tasks t
+		  on t.run_id = a.run_id and t.task_index = a.task_index
+		where a.run_id = $1::uuid and a.task_index = $2
+		order by a.attempt limit $3 offset $4`, runID, taskIndex, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("state: list attempts for task (%s, %d): %w", runID, taskIndex, err)
+	}
+	defer rows.Close()
+	var attempts []JobTaskAttempt
+	for rows.Next() {
+		var a JobTaskAttempt
+		var output []byte
+		if err := rows.Scan(&a.RunID, &a.TaskIndex, &a.Attempt,
+			&a.InputID, &a.InputRef, &a.Status, &a.InstanceID,
+			&a.ErrorClass, &a.ErrorMessage, &a.ExitCode, &a.StartedAt,
+			&a.FinishedAt, &a.LogContent, &a.LogTruncated, &output); err != nil {
+			return nil, fmt.Errorf("state: scan task attempt: %w", err)
+		}
+		a.OutputManifest = append(json.RawMessage(nil), output...)
+		attempts = append(attempts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: read task attempts: %w", err)
+	}
+	return attempts, nil
 }
 
 // ListJobInstances returns every kind='job_task' instance for the

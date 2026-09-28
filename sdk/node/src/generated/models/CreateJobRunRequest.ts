@@ -4,8 +4,10 @@
 /* eslint-disable */
 import type { JobRunInput } from './JobRunInput.js';
 /**
- * Atomic fan-out into indexed task records; supply either `tasks` or
- * an ordered `inputs` array. The handler validates the count against `Plan.JobMaxTasksPerRun`
+ * Atomic fan-out into indexed task records; supply `tasks`, an ordered
+ * `inputs` array, or an external `input_manifest_uri` and checksum.
+ * Each manifest entry is assigned to one task index in array order.
+ * The handler validates the count against `Plan.JobMaxTasksPerRun`
  * (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
  * (parallelism / retry_max / task_timeout_sec) inherit from
  * the job when null.
@@ -17,6 +19,14 @@ export type CreateJobRunRequest = {
    * Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count. References are opaque and fetched by the customer image.
    */
   inputs?: Array<JobRunInput>;
+  /**
+   * obj://<app-id>/<bucket-id>/<key> for a JSON array of inputs, up to 16 MiB. Mutually exclusive with inputs.
+   */
+  input_manifest_uri?: string;
+  /**
+   * SHA-256 of the external manifest's exact bytes; required with input_manifest_uri.
+   */
+  input_manifest_sha256?: string;
   execution_class?: 'standard' | 'flexible';
   failure_policy?: 'continue' | 'fail_fast';
   /**

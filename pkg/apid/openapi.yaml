@@ -13489,6 +13489,34 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/runs/{id}/replay-failed:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Job name owned by the authenticated account.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Terminal source run identifier.
+    post:
+      tags: [jobs]
+      operationId: replayFailedJobRun
+      summary: Create a linked run from failed inputs of a terminal run.
+      description: "The ready job image must still resolve to the source image digest. New task indexes are dense; source_task_index preserves the old index."
+      responses:
+        '201':
+          description: The linked run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/jobs/{name}/runs/{id}/tasks:
     parameters:
       - name: name
@@ -13567,6 +13595,82 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Job whose task attempt history is requested.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Run containing the task attempt history.
+      - name: idx
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+        description: Zero-based index of the task whose attempts are listed.
+    get:
+      tags: [jobs]
+      operationId: listJobTaskAttempts
+      summary: List immutable terminal attempts of a task.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of attempts to return.
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of attempts to skip.
+      responses:
+        '200':
+          description: Attempts ordered by attempt number.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListJobTaskAttemptsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Job whose output artifact is requested.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Run containing the successful task.
+      - name: idx
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+        description: Zero-based index of the successful task.
+      - name: artifact
+        in: path
+        required: true
+        schema: { type: string }
+        description: Artifact name from the successful task's output manifest.
+    get:
+      tags: [jobs]
+      operationId: downloadJobArtifact
+      summary: Verify a Gregale managed result and obtain a download URL.
+      description: "Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then returns a 5-minute signed GET URL."
+      responses:
+        '200':
+          description: Verified artifact and download capability.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobArtifactDownloadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry:
     parameters:
@@ -30605,8 +30709,10 @@ components:
 
     CreateJobRunRequest:
       description: |
-        Atomic fan-out into indexed task records; supply either `tasks` or
-        an ordered `inputs` array. The handler validates the count against `Plan.JobMaxTasksPerRun`
+        Atomic fan-out into indexed task records; supply `tasks`, an ordered
+        `inputs` array, or an external `input_manifest_uri` and checksum.
+        Each manifest entry is assigned to one task index in array order.
+        The handler validates the count against `Plan.JobMaxTasksPerRun`
         (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
         (parallelism / retry_max / task_timeout_sec) inherit from
         the job when null.
@@ -30619,6 +30725,13 @@ components:
           maxItems: 5000
           description: "Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count. References are opaque and fetched by the customer image."
           items: { $ref: '#/components/schemas/JobRunInput' }
+        input_manifest_uri:
+          type: string
+          description: "obj://<app-id>/<bucket-id>/<key> for a JSON array of inputs, up to 16 MiB. Mutually exclusive with inputs."
+        input_manifest_sha256:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: "SHA-256 of the external manifest's exact bytes; required with input_manifest_uri."
         execution_class: { type: string, enum: [standard, flexible], default: standard }
         failure_policy: { type: string, enum: [continue, fail_fast], default: continue }
         eligible_at: { type: string, format: date-time, description: "Earliest admission time for flexible tasks; defaults to now." }
@@ -30636,6 +30749,7 @@ components:
           items: { type: string }
 
     JobRunInput:
+      description: Stable input identity and opaque reference assigned to one task.
       type: object
       required: [input_id, input_ref]
       properties:
@@ -30687,8 +30801,10 @@ components:
           type: object
           additionalProperties: { type: string }
         tasks: { type: integer }
-        input_manifest_version: { type: integer, description: "0 for numeric fan-out, 1 for the ordered inline input manifest." }
+        input_manifest_version: { type: integer, description: "0 for numeric fan-out, 1 for an ordered inline or external input manifest." }
         input_digest: { type: string, description: "SHA-256 of the canonical ordered input manifest." }
+        input_manifest_uri: { type: string, description: "Source obj:// URI for an external input manifest." }
+        input_manifest_sha256: { type: string, description: "SHA-256 of the external manifest's exact bytes." }
         parallelism: { type: integer }
         execution_class: { type: string, enum: [standard, flexible] }
         failure_policy: { type: string, enum: [continue, fail_fast] }
@@ -30700,6 +30816,13 @@ components:
           type: array
           description: "Command captured at run creation."
           items: { type: string }
+        image_ref_snapshot: { type: string }
+        image_resolved_digest_snapshot: { type: string }
+        ram_mb_snapshot: { type: integer }
+        effective_env_snapshot:
+          type: object
+          additionalProperties: { type: string }
+        source_run_id: { type: string, format: uuid }
         aggregate_status: { type: string, enum: [queued, running, succeeded, failed, cancelled, dead_letter] }
         tasks_succeeded: { type: integer }
         tasks_failed: { type: integer }
@@ -30719,6 +30842,7 @@ components:
         task_index: { type: integer, minimum: 0 }
         input_id: { type: string, description: "Stable declared input identity for this task." }
         input_ref: { type: string, description: "Opaque input reference passed to the guest." }
+        source_task_index: { type: integer, minimum: 0, description: "Original task index when this task came from replay-failed." }
         output_manifest:
           type: object
           description: "Versioned artifact references published by a successful task. Gregale retains metadata, not artifact bytes."
@@ -30743,6 +30867,50 @@ components:
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+
+    JobTaskAttemptResponse:
+      description: Immutable terminal outcome of one task attempt.
+      type: object
+      required: [run_id, task_index, attempt, status, finished_at, log_content, log_truncated]
+      properties:
+        run_id: { type: string, format: uuid }
+        task_index: { type: integer, minimum: 0 }
+        attempt: { type: integer, minimum: 1 }
+        input_id: { type: string }
+        input_ref: { type: string }
+        status: { type: string, enum: [succeeded, failed, timeout, cancelled, oom] }
+        instance_id: { type: string, format: uuid }
+        error_class: { type: string }
+        error_message: { type: string }
+        exit_code: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        log_content: { type: string }
+        log_truncated: { type: boolean }
+        output_manifest: { type: object, additionalProperties: true }
+
+    ListJobTaskAttemptsResponse:
+      description: A page of task attempts in attempt order.
+      type: object
+      required: [attempts, limit, offset, next_offset]
+      properties:
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/JobTaskAttemptResponse' }
+        limit: { type: integer }
+        offset: { type: integer }
+        next_offset: { type: integer }
+
+    JobArtifactDownloadResponse:
+      description: Verified managed artifact and short-lived signed download request.
+      type: object
+      required: [name, size_bytes, sha256, verified_at, download]
+      properties:
+        name: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        sha256: { type: string }
+        verified_at: { type: string, format: date-time }
+        download: { $ref: '#/components/schemas/ObjectSignedRequest' }
 
     JobTaskLogResponse:
       description: |
