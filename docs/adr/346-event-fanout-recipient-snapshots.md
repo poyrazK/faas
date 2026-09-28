@@ -1,4 +1,4 @@
-# ADR-285: Snapshot event fanout candidates at acceptance
+# ADR-346: Snapshot event fanout candidates at acceptance
 
 - Status: Accepted
 - Date: 2026-09-28
