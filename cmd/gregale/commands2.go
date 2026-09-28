@@ -4904,6 +4904,10 @@ func cmdKeys(args []string) int {
 	}
 	switch args[0] {
 	case subList:
+		if hasHelpFlag(args[1:]) {
+			PrintUsage(osStdout, "usage: gregale keys list", "keys")
+			return 0
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
