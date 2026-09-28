@@ -111,6 +111,13 @@ def sync_detailed(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
@@ -176,6 +183,13 @@ def sync(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
@@ -235,6 +249,13 @@ async def asyncio_detailed(
     failures (`wake.build_failed`, `wake.deploy_failed`,
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
+
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
 
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
@@ -298,6 +319,13 @@ async def asyncio(
     failures (`wake.build_failed`, `wake.deploy_failed`,
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
+
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
 
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
