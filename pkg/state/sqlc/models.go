@@ -461,6 +461,7 @@ type AppSecret struct {
 	Kid                              pgtype.Text
 	Scope                            string
 	ValueHash                        pgtype.Text
+	SecretClass                      string
 	ManagedObjectStorageCredentialID pgtype.UUID
 }
 

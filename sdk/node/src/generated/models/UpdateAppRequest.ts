@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DeclaredRoute } from './DeclaredRoute.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
@@ -122,6 +123,10 @@ export type UpdateAppRequest = {
    * Policy for known monitor/crawler requests. Omit for no change.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  /**
+   * Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change.
+   */
+  pre_auth_rate_limit?: (PreAuthRateLimitConfig | null);
   /**
    * Monitor-facing health path. Omit for no change; empty resets to /healthz.
    */

@@ -293,6 +293,56 @@ groups:
           description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
+  - name: managed_realtime_channel_routing
+    interval: 30s
+    rules:
+      - alert: FaasManagedRealtimeChannelRouteFallbackHigh
+        expr: |
+          (
+            sum by (decision) (
+              rate(apid_realtime_channel_route_publish_decisions_total{
+                decision=~"route_store_unavailable|directory_error|overflow|unready_fallback"
+              }[10m])
+            )
+            /
+            clamp_min(
+              sum(rate(apid_realtime_channel_route_publish_decisions_total{
+                decision=~"route_store_unavailable|directory_error|overflow|unready_fallback|targeted|no_subscribers"
+              }[10m])),
+              0.001
+            )
+          ) > 0.25
+          and on() (
+            sum(increase(apid_realtime_channel_route_publish_decisions_total{
+              decision=~"route_store_unavailable|directory_error|overflow|unready_fallback|targeted|no_subscribers"
+            }[10m])) >= 100
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_realtime_channel_routing
+        annotations:
+          summary: "Managed realtime publishes are falling back to broad fanout"
+          description: "The {{ $labels.decision }} decision accounts for more than 25% of at least 100 enabled route decisions in each ten-minute window for five minutes. This increases publish work across the compute fleet."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedRealtimeChannelRouting.md"
+
+      - alert: FaasManagedRealtimeChannelRouteRebuildUnsuccessful
+        expr: |
+          sum(increase(apid_realtime_channel_route_rebuild_checks_total{outcome="error"}[30m]))
+          +
+          sum(increase(apid_realtime_channel_route_reconcile_passes_total{outcome=~"incomplete|error"}[30m]))
+          >= 2
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_realtime_channel_routing
+        annotations:
+          summary: "Managed realtime route overflow repair is repeatedly unsuccessful"
+          description: "Apid has recorded at least two route rebuild start errors or incomplete/failed reconciliation passes in thirty minutes. Over-cap endpoints remain on full broadcast until repair succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedRealtimeChannelRouting.md"
+
   - name: account_lifecycle
     interval: 30s
     rules:

@@ -872,6 +872,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			RobotsTxt:                    a.Manifest.RobotsTxt,
 			HeadWakes:                    a.Manifest.HeadWakes,
 			CrawlerPolicy:                a.Manifest.EffectiveCrawlerPolicy(),
+			PreAuthRateLimit:             a.Manifest.PreAuthRateLimit,
 			HealthPath:                   effectiveHealthPath(a.Manifest.HealthPath),
 			HealthPathWakes:              a.Manifest.HealthPathWakes,
 			SessionAffinity:              a.Manifest.SessionAffinity,

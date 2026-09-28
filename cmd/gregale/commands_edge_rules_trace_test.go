@@ -637,6 +637,53 @@ func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{
+				RequestBudgetMS: 3000, RequestBudgetMaxMS: 5000,
+			}})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "budget", Enabled: true, Kind: "budget", MatchHost: "example.com", MatchPath: "/payments",
+				Action: json.RawMessage(`{"budget":{"budget_ms":2000}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/payments", "--method", "POST", "--header", "X-Faas-Budget-Ms:3000"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Status != "complete" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	policy := result.Simulation.Steps[0].BudgetPolicy
+	if policy == nil || policy.BudgetMS != 3000 || policy.ConfiguredMS != 2000 || policy.PlanMaxMS != 5000 || policy.Source != "header_override" || policy.OverrideStatus != "applied" {
+		t.Fatalf("effective request budget = %#v", policy)
+	}
+}
+
 func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

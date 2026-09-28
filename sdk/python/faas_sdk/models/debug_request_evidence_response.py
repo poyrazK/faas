@@ -28,7 +28,8 @@ class DebugRequestEvidenceResponse:
     """Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."""
 
     request: DebugTelemetryRequestItem
-    """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
+    """A retained request-ID mapping, optionally enriched with a bounded telemetry row when detailed evidence is
+    available."""
     timeline: list[DebugTimelineEvent]
     correlation: DebugRequestCorrelation
     """Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable

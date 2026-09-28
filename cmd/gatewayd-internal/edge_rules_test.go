@@ -870,6 +870,37 @@ func TestLoadHost_EmitsOncePerRuleNotOncePerHost(t *testing.T) {
 	}
 }
 
+func TestCompileCacheRulesIntersectsActionAndSelectorMethods(t *testing.T) {
+	rule := state.EdgeRule{
+		ID: "cache", AccountID: "account", AppID: "app", MatchHost: "example.com",
+		MatchPath: "/catalog/*", MatchMethods: []string{"GET", "HEAD"}, Enabled: true,
+		Kind: state.EdgeRuleKindCache,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCache, Cache: &state.EdgeRuleCacheAction{
+			MaxAgeSeconds: 60, Methods: []string{"GET"},
+		}},
+	}
+	got, parseErrs := compileCacheRules([]state.EdgeRule{rule})
+	if len(parseErrs) != 0 || len(got) != 1 {
+		t.Fatalf("compileCacheRules = (%#v, %#v)", got, parseErrs)
+	}
+	if len(got[0].Methods) != 1 || !got[0].Methods[http.MethodGet] || got[0].Methods[http.MethodHead] {
+		t.Fatalf("compiled methods = %#v, want GET only (action allowlist intersected with selector)", got[0].Methods)
+	}
+
+	rule.MatchMethods = nil
+	rule.Action.Cache.Methods = nil
+	got, parseErrs = compileCacheRules([]state.EdgeRule{rule})
+	if len(parseErrs) != 0 || len(got) != 1 || len(got[0].Methods) != 2 || !got[0].Methods[http.MethodGet] || !got[0].Methods[http.MethodHead] {
+		t.Fatalf("compiled default methods = (%#v, %#v), want GET + HEAD", got, parseErrs)
+	}
+
+	rule.MatchMethods = []string{"POST"}
+	got, parseErrs = compileCacheRules([]state.EdgeRule{rule})
+	if len(parseErrs) != 0 || len(got) != 1 || len(got[0].Methods) != 0 || got[0].Methods == nil {
+		t.Fatalf("compiled disjoint methods = (%#v, %#v), want an explicit empty set", got, parseErrs)
+	}
+}
+
 // TestLoadHost_AllKindsCovered pins the kind-switch. If a future
 // PR adds a new kind but forgets to add the counter loop, this
 // test (extended with the new kind) fails. Today it pins the ten:

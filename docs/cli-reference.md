@@ -408,7 +408,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -424,6 +424,10 @@ Get/update one app or run a deployment-attached command
 | `--request-timeout <SEC>` | set per-app request timeout in seconds |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 | `--security-policy <value>` | deploy posture policy | one of `off` · `warn` · `enforce` |
+| `--public-auth <MODE>` | public URL auth mode (basic and ip_allowlist are Pro+) | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
+| `--basic-user <USER>` | basic-auth username (required with --public-auth=basic) |  |
+| `--basic-pass <PASS>` | basic-auth password (required with --public-auth=basic) |  |
+| `--ip-allowlist <CIDR>` | repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist |  |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
 

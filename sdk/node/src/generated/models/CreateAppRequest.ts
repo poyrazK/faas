@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
@@ -117,6 +118,7 @@ export type CreateAppRequest = {
    * Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
   /**
    * Monitor-facing health path. Empty/omitted uses /healthz.
    */

@@ -1452,10 +1452,12 @@ CREATE TABLE public.app_secrets (
     kid text,
     scope text DEFAULT 'default'::text NOT NULL,
     value_hash text,
+    secret_class text DEFAULT 'persistent'::text NOT NULL,
     managed_object_storage_credential_id uuid,
     CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
+    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16))),
+    CONSTRAINT app_secrets_secret_class_shape CHECK ((secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text])))
 );
 
 

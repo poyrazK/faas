@@ -28,10 +28,10 @@ class ProjectEnvironmentPromotionResponse:
     to_environment: str
     promotion_hash: str
     workloads: list[ProjectEnvironmentPromotionWorkloadResponse]
-    release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
-    """Immutable graph identities involved in a graph-aware promotion and rollback."""
     sync_config: bool | Unset = UNSET
     """Whether this promotion copied the source's non-secret configuration."""
+    release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
+    """Immutable graph identities involved in a graph-aware promotion and rollback."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,10 +50,11 @@ class ProjectEnvironmentPromotionResponse:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        sync_config = self.sync_config
+
         release_graph: dict[str, Any] | Unset = UNSET
         if not isinstance(self.release_graph, Unset):
             release_graph = self.release_graph.to_dict()
-        sync_config = self.sync_config
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -67,10 +68,10 @@ class ProjectEnvironmentPromotionResponse:
                 "workloads": workloads,
             }
         )
-        if release_graph is not UNSET:
-            field_dict["release_graph"] = release_graph
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
+        if release_graph is not UNSET:
+            field_dict["release_graph"] = release_graph
 
         return field_dict
 
@@ -99,13 +100,14 @@ class ProjectEnvironmentPromotionResponse:
 
             workloads.append(workloads_item)
 
+        sync_config = d.pop("sync_config", UNSET)
+
         _release_graph = d.pop("release_graph", UNSET)
         release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset
         if isinstance(_release_graph, Unset):
             release_graph = UNSET
         else:
             release_graph = ProjectEnvironmentPromotionReleaseGraphResponse.from_dict(_release_graph)
-        sync_config = d.pop("sync_config", UNSET)
 
         project_environment_promotion_response = cls(
             promotion_id=promotion_id,
@@ -114,8 +116,8 @@ class ProjectEnvironmentPromotionResponse:
             to_environment=to_environment,
             promotion_hash=promotion_hash,
             workloads=workloads,
-            release_graph=release_graph,
             sync_config=sync_config,
+            release_graph=release_graph,
         )
 
         project_environment_promotion_response.additional_properties = d

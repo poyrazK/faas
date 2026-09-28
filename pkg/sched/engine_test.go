@@ -556,7 +556,8 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 
 type rotationFinalizeTrackingStore struct {
 	*state.MemStore
-	onFinalize func(string, string) error
+	onFinalize                func(string, string) error
+	onManagedPostgresFinalize func(string, string) error
 }
 
 func (s *rotationFinalizeTrackingStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context, appID, wakeID string) error {
@@ -566,6 +567,15 @@ func (s *rotationFinalizeTrackingStore) FinalizeObjectS3CredentialRotationsForAp
 		}
 	}
 	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID)
+}
+
+func (s *rotationFinalizeTrackingStore) FinalizeManagedPostgresBindingRotationsForApp(ctx context.Context, appID, wakeID string) error {
+	if s.onManagedPostgresFinalize != nil {
+		if err := s.onManagedPostgresFinalize(appID, wakeID); err != nil {
+			return err
+		}
+	}
+	return s.MemStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, appID, wakeID)
 }
 
 func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
@@ -592,6 +602,7 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	}
 	oldInstanceID := first.Instance.InstanceID
 	finalized := false
+	managedPostgresFinalized := false
 	store.onFinalize = func(appID, wakeID string) error {
 		finalized = true
 		if appID != app.ID || wakeID == "" {
@@ -600,6 +611,17 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
 		if readErr != nil || old.State != string(state.StateStopped) {
 			t.Errorf("rotation finalized before old instance drained: %+v, %v", old, readErr)
+		}
+		return nil
+	}
+	store.onManagedPostgresFinalize = func(appID, wakeID string) error {
+		managedPostgresFinalized = true
+		if appID != app.ID || wakeID == "" {
+			t.Errorf("managed postgres rotation finalized for app %q wake %q", appID, wakeID)
+		}
+		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		if readErr != nil || old.State != string(state.StateStopped) {
+			t.Errorf("managed postgres rotation finalized before old instance drained: %+v, %v", old, readErr)
 		}
 		return nil
 	}
@@ -621,6 +643,9 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	}
 	if !finalized {
 		t.Fatal("rotation finalization was not called after refresh")
+	}
+	if !managedPostgresFinalized {
+		t.Fatal("managed postgres rotation finalization was not called after refresh")
 	}
 	if vmm.destroys != 1 {
 		t.Errorf("destroys = %d, want 1", vmm.destroys)

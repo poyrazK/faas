@@ -664,6 +664,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RobotsTxt:          robotsTxt,
 		HeadWakes:          headWakes,
 		CrawlerPolicy:      crawlerPolicy,
+		PreAuthRateLimit:   app.Manifest.PreAuthRateLimit,
 		HealthPath:         healthPath,
 		HealthPathWakes:    healthPathWakes,
 		PublicAuth: gateway.PublicAuthConfig{

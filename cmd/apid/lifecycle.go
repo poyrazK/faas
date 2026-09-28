@@ -51,6 +51,10 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid crawler policy", err.Error())
 	}
+	if err := manifest.PreAuthRateLimit.Validate(plan); err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid pre-auth rate limit", err.Error())
+	}
 	if manifest.RevisionPinTTLSeconds < 0 || manifest.RevisionPinTTLSeconds > api.RevisionPinMaxTTLSeconds {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid revision pin window", fmt.Sprintf("revision_pin_ttl_seconds must be between 0 and %d", api.RevisionPinMaxTTLSeconds))
@@ -97,6 +101,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		RobotsTxt:                    req.RobotsTxt,
 		HeadWakes:                    req.HeadWakes,
 		CrawlerPolicy:                req.CrawlerPolicy,
+		PreAuthRateLimit:             req.PreAuthRateLimit,
 		HealthPath:                   healthPath,
 		HealthPathWakes:              req.HealthPathWakes,
 		SessionAffinity:              req.SessionAffinity != nil && *req.SessionAffinity,
@@ -140,6 +145,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		RobotsTxt:                    manifest.RobotsTxt,
 		HeadWakes:                    manifest.HeadWakes,
 		CrawlerPolicy:                manifest.CrawlerPolicy,
+		PreAuthRateLimit:             manifest.PreAuthRateLimit,
 		HealthPath:                   manifest.HealthPath,
 		HealthPathWakes:              manifest.HealthPathWakes,
 		SessionAffinity:              manifest.SessionAffinity,
@@ -183,6 +189,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		RobotsTxt:                    manifest.RobotsTxt,
 		HeadWakes:                    manifest.HeadWakes,
 		CrawlerPolicy:                manifest.CrawlerPolicy,
+		PreAuthRateLimit:             manifest.PreAuthRateLimit,
 		HealthPath:                   manifest.HealthPath,
 		HealthPathWakes:              manifest.HealthPathWakes,
 		SessionAffinity:              manifest.SessionAffinity,
@@ -196,7 +203,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
-		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
+		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
 	if !changed {
 		return api.AppManifest{}, false
@@ -248,6 +255,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.CrawlerPolicy != nil {
 		manifest.CrawlerPolicy = *req.CrawlerPolicy
 	}
+	if req.PreAuthRateLimit != nil {
+		manifest.PreAuthRateLimit = req.PreAuthRateLimit
+	}
 	if req.HealthPath != nil {
 		manifest.HealthPath = *req.HealthPath
 		if manifest.HealthPath == "" {
@@ -292,6 +302,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RobotsTxt = manifest.RobotsTxt
 	updated.HeadWakes = manifest.HeadWakes
 	updated.CrawlerPolicy = manifest.CrawlerPolicy
+	updated.PreAuthRateLimit = manifest.PreAuthRateLimit
 	updated.HealthPath = manifest.HealthPath
 	updated.HealthPathWakes = manifest.HealthPathWakes
 	updated.SessionAffinity = manifest.SessionAffinity

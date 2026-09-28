@@ -13,7 +13,11 @@ export type ManagedPostgresBinding = {
   environment_key: string;
   access: 'read_write' | 'read_only';
   credential_generation: number;
-  state: 'provisioning' | 'ready' | 'deleting' | 'failed' | 'deleted';
+  /**
+   * The previous provider credential remains valid until the rolling app runtime refresh completes.
+   */
+  rotation_pending: boolean;
+  state: 'provisioning' | 'ready' | 'deleting' | 'retiring' | 'failed' | 'deleted';
   last_error_code?: string | null;
   created_at: string;
   updated_at: string;

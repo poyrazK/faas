@@ -1647,15 +1647,16 @@ type AppManifest struct {
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
-	RequestTimeoutS int              `json:"request_timeout_s,omitempty"`
-	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
-	Favicon         []byte           `json:"favicon,omitempty"`
-	RobotsTxt       string           `json:"robots_txt,omitempty"`
-	HeadWakes       bool             `json:"head_wakes,omitempty"`
-	CrawlerPolicy   string           `json:"crawler_policy,omitempty"`
-	HealthPath      string           `json:"health_path,omitempty"`
-	HealthPathWakes bool             `json:"health_path_wakes,omitempty"`
+	RequestTimeoutS  int                         `json:"request_timeout_s,omitempty"`
+	ServiceReplicas  *ServiceReplicas            `json:"service_replicas,omitempty"`
+	WorkerReplicas   *WorkerScaling              `json:"worker_replicas,omitempty"`
+	Favicon          []byte                      `json:"favicon,omitempty"`
+	RobotsTxt        string                      `json:"robots_txt,omitempty"`
+	HeadWakes        bool                        `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string                      `json:"crawler_policy,omitempty"`
+	PreAuthRateLimit *api.PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
+	HealthPath       string                      `json:"health_path,omitempty"`
+	HealthPathWakes  bool                        `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
@@ -1706,7 +1707,7 @@ func (m AppManifest) IsZero() bool {
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
 }
 
@@ -5991,6 +5992,15 @@ type Session struct {
 // (ListAppSecretsInScope, UpsertAppSecretWithKidInScope, …) take an
 // explicit scope parameter and are the canonical path. The flat
 // methods hardcode scope='default' as a thin delegation.
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
+func validSecretClass(value string) bool {
+	return value == SecretClassPersistent || value == SecretClassEphemeral
+}
+
 type AppSecret struct {
 	AccountID string
 	AppID     string
@@ -6002,9 +6012,13 @@ type AppSecret struct {
 	// helper — the same shape as `app_envs.scope` (00203).
 	// Sealing (the secretbox step) is scope-agnostic; scope is
 	// purely a per-row address, not a seal-time identity.
-	Scope      string
-	Key        string
-	Ciphertext []byte
+	Scope string
+	Key   string
+	// SecretClass controls whether a VM that has received this value may
+	// be persisted as a resumable memory snapshot. Empty is treated as
+	// persistent for compatibility with legacy in-memory fixtures.
+	SecretClass string
+	Ciphertext  []byte
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext. Set by the apid PUT
 	// handler (cmd/apid/handlers_secrets.go::setSecret) and by
@@ -6273,15 +6287,16 @@ func (r AppSecretRevocation) Progress() (status string, acknowledged, pending in
 // ValueHash mirrors AppSecret.ValueHash (ADR-117 PR-C). Same
 // semantic + same empty-string-for-NULL posture.
 type AccountAppSecret struct {
-	AccountID  string
-	AppID      string
-	AppSlug    string
-	Key        string
-	Scope      string
-	Ciphertext []byte
-	ValueHash  string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	AccountID   string
+	AppID       string
+	AppSlug     string
+	Key         string
+	Scope       string
+	SecretClass string
+	Ciphertext  []byte
+	ValueHash   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // AppEnv is one row of customer runtime env vars (issue #395 / ADR-045).

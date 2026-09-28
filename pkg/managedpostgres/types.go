@@ -599,6 +599,7 @@ const (
 	BindingStateProvisioning BindingState = "provisioning"
 	BindingStateReady        BindingState = "ready"
 	BindingStateDeleting     BindingState = "deleting"
+	BindingStateRetiring     BindingState = "retiring"
 	BindingStateFailed       BindingState = "failed"
 	BindingStateDeleted      BindingState = "deleted"
 )
@@ -614,15 +615,21 @@ type Binding struct {
 	ProviderIdentityID   string
 	CredentialRef        string
 	CredentialGeneration int64
-	State                BindingState
-	LastErrorCode        string
-	LeaseToken           string
-	LeaseUntil           time.Time
-	AttemptCount         int32
-	RetryAt              time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	DeletedAt            *time.Time
+	// RotationPreviousGeneration and RotationWakeID retain the old provider
+	// identity until the runtime has completed its rolling credential refresh.
+	// RotationCleanupReady is set by the scheduler only after that cutover.
+	RotationPreviousGeneration int64
+	RotationWakeID             string
+	RotationCleanupReady       bool
+	State                      BindingState
+	LastErrorCode              string
+	LeaseToken                 string
+	LeaseUntil                 time.Time
+	AttemptCount               int32
+	RetryAt                    time.Time
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	DeletedAt                  *time.Time
 }
 
 // CredentialSink is implemented by the app-secret subsystem. Put must seal
@@ -681,8 +688,10 @@ type BindingStore interface {
 	GetBinding(context.Context, string, string) (Binding, error)
 	ListBindings(context.Context, string, string) ([]Binding, error)
 	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
+	BeginBindingRotation(context.Context, string, string, string, time.Time) (Binding, bool, error)
 	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
 	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
+	FinishBindingRotationCleanup(context.Context, string, string, string, time.Time) (Binding, error)
 	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error
 	FinishBindingDelete(context.Context, string, string, time.Time) (Binding, error)
 }

@@ -1130,6 +1130,28 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/bindings/{id}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: rotateManagedPostgresBinding
+      summary: Rotate a workload database credential
+      description: Creates a replacement credential, refreshes the app runtime, and retains the previous provider identity until the rolling refresh completes.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Binding credential generation and rotation status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: Authentication or binding rotation error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets:
     parameters:
       - { name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: { type: string } }
@@ -21689,7 +21711,7 @@ components:
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object
-      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, state, created_at, updated_at]
+      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, rotation_pending, state, created_at, updated_at]
       properties:
         id: { type: string, minLength: 1, maxLength: 128 }
         database_id: { type: string, minLength: 1, maxLength: 128 }
@@ -21698,7 +21720,8 @@ components:
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
-        state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
+        rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
+        state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
         last_error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -24966,6 +24989,25 @@ components:
       properties:
         wake_id: { type: string, format: uuid, description: "Wake id stamped on the admitted instance and wake timeline." }
 
+    PreAuthRateLimitConfig:
+      description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe mode records threshold crossings without rejecting requests."
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [off, observe, enforce]
+        requests_per_second:
+          type: integer
+          minimum: 1
+          maximum: 500
+          description: "Required in observe/enforce mode and bounded by the app plan's request rate."
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          description: "Required in observe/enforce mode and bounded by the app plan's request burst."
+
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
       type: object
@@ -25083,6 +25125,8 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake."
+        pre_auth_rate_limit:
+          $ref: '#/components/schemas/PreAuthRateLimitConfig'
         health_path:
           type: string
           default: /healthz
@@ -25552,6 +25596,11 @@ components:
           type: [string, "null"]
           enum: [wake, cached, block, null]
           description: "Policy for known monitor/crawler requests. Omit for no change."
+        pre_auth_rate_limit:
+          oneOf:
+            - $ref: '#/components/schemas/PreAuthRateLimitConfig'
+            - type: "null"
+          description: "Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change."
         health_path:
           type: [string, "null"]
           description: "Monitor-facing health path. Omit for no change; empty resets to /healthz."
@@ -26175,6 +26224,8 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Effective policy for known monitor/crawler requests."
+        pre_auth_rate_limit:
+          $ref: '#/components/schemas/PreAuthRateLimitConfig'
         health_path:
           type: string
           default: /healthz

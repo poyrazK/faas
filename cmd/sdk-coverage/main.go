@@ -403,6 +403,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases/{id}/bindings":               "CreateManagedPostgresBinding",
 	"GET /v1/postgres/bindings/{id}":                          "GetManagedPostgresBinding",
 	"DELETE /v1/postgres/bindings/{id}":                       "DeleteManagedPostgresBinding",
+	"POST /v1/postgres/bindings/{id}/rotate":                  "RotateManagedPostgresBinding",
 	"GET /v1/apps/{slug}/logs":                                "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                           "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                           "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down

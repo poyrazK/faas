@@ -722,9 +722,29 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	if err != nil || secret.ManagedPostgresBindingID != binding.ID || secret.ManagedCredentialRef != binding.CredentialRef {
 		t.Fatalf("ready binding secret: secret=%+v err=%v", secret, err)
 	}
+	rotated, err := service.Rotate(ctx, accountID, binding.ID)
+	if err != nil || rotated.CredentialGeneration != 2 || rotated.RotationPreviousGeneration != 1 || rotated.RotationWakeID == "" || provider.revokeCalls != 0 {
+		t.Fatalf("rotate binding: binding=%+v revoke_calls=%d err=%v", rotated, provider.revokeCalls, err)
+	}
+	secret, err = stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey)
+	if err != nil || secret.ManagedCredentialGeneration != 2 {
+		t.Fatalf("rotated binding secret: secret=%+v err=%v", secret, err)
+	}
+	if err := stateStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, app.ID, rotated.RotationWakeID); err != nil {
+		t.Fatalf("mark rotation delivered: %v", err)
+	}
+	// The finalization update uses the database clock. Advance the service's
+	// injected clock after that write so its retry_at comparison cannot race
+	// the database timestamp by a few milliseconds.
+	now = time.Now().UTC().Add(time.Second)
+	retired, err := service.ReconcileRotationCleanup(ctx, accountID, binding.ID)
+	if err != nil || retired.RotationPreviousGeneration != 0 || provider.revokeCalls != 1 {
+		t.Fatalf("retire previous credential: binding=%+v revoke_calls=%d err=%v", retired, provider.revokeCalls, err)
+	}
+	binding = retired
 
 	deleted, err := service.Delete(ctx, accountID, binding.ID)
-	if err != nil || deleted.State != BindingStateDeleted || provider.revokeCalls != 1 {
+	if err != nil || deleted.State != BindingStateDeleted || provider.revokeCalls != 2 {
 		t.Fatalf("delete binding: binding=%+v revoke_calls=%d err=%v", deleted, provider.revokeCalls, err)
 	}
 	if _, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {

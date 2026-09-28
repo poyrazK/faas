@@ -529,6 +529,7 @@ from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
+from .debug_telemetry_request_item_evidence_status import DebugTelemetryRequestItemEvidenceStatus
 from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
@@ -1175,6 +1176,8 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
+from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
 from .preflight_finding import PreflightFinding
 from .preflight_level import PreflightLevel
 from .preflight_plan_budget import PreflightPlanBudget
@@ -2282,6 +2285,7 @@ __all__ = (
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
+    "DebugTelemetryRequestItemEvidenceStatus",
     "DebugTelemetryRequestItemMethod",
     "DebugTelemetrySpan",
     "DebugTelemetrySpanDependencyType",
@@ -2906,6 +2910,8 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthRateLimitConfig",
+    "PreAuthRateLimitConfigMode",
     "PreflightFinding",
     "PreflightLevel",
     "PreflightPlanBudget",

@@ -38,6 +38,41 @@ active trusted publisher is required before recovery.
 
 Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
+## Optional pre-auth source limit
+
+Apps can opt into a gateway rate limit that runs after hostname routing and
+before consumer-key lookup, JWT verification, body admission, or VM wake. Set
+`pre_auth_rate_limit` when creating an app or through
+`PATCH /v1/apps/{slug}`:
+
+```json
+{"pre_auth_rate_limit":{"mode":"observe","requests_per_second":2,"burst":4}}
+```
+
+`observe` records requests that would exceed the source limit without
+rejecting them. Change `mode` to `enforce` to return `429` with
+`Retry-After: 1` and `x-faas-rate-limit-scope: pre-auth`. Set `mode` to `off`
+to disable the guard. The setting is absent and disabled on existing apps.
+The rate and burst must be positive and no greater than the app plan's
+request rate and burst.
+If the app moves to a lower plan, the gateway clamps an existing setting to
+the new plan ceiling.
+
+The source is the client IP verified by the public gateway, which replaces
+incoming `X-Forwarded-For` before passing the request to the internal gateway.
+An enforce-mode app returns `403` when this trusted address is missing or
+malformed. Source buckets are bounded to 1,024 per app and 65,536 per gateway;
+further addresses share an app overflow bucket until an inactive bucket can
+be safely evicted.
+The guard is local to each gateway replica, so its per-source threshold is an
+early abuse brake rather than a fleet-wide quota. Existing app and account
+limits continue to cap aggregate request rates. Shared corporate/NAT IPs
+also share a source bucket; use `observe` to choose a suitable threshold.
+
+`gateway_pre_auth_rate_limit_total{app,outcome}` reports `would_block`,
+`blocked`, and `untrusted_source` decisions without putting IP addresses in
+metric labels.
+
 ## Quarantine recovery
 
 When an enforce-policy app is parked after live security evidence regresses,

@@ -50,6 +50,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
+		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
@@ -2831,6 +2832,48 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	resealed, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil || resealed.SecretVersion != 2 || resealed.DeliveryVersion != 2 {
 		t.Fatalf("reseal changed secret revision: secret=%+v err=%v", resealed, err)
+	}
+}
+
+func testAppSecretClassSurvivesLegacyWrites(t *testing.T, fx *Fixture) {
+	const (
+		scope     = "ephemeral-conformance"
+		key       = "SESSION_TOKEN"
+		legacyKey = "LEGACY_TOKEN"
+	)
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, legacyKey, []byte("legacy-cipher")); err != nil {
+		t.Fatalf("legacy upsert: %v", err)
+	}
+	legacy, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, legacyKey)
+	if err != nil || legacy.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("legacy-created secret class = %v, err=%v; want persistent", legacy, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v1", "hash-v1", "", []byte("cipher-v1")); err != nil {
+		t.Fatalf("default classified upsert: %v", err)
+	}
+	row, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("new secret class = %v, err=%v; want persistent", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v2", "hash-v2", state.SecretClassEphemeral, []byte("cipher-v2")); err != nil {
+		t.Fatalf("ephemeral classified upsert: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretWithKidAndValueHashInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v3", "hash-v3", []byte("cipher-v3")); err != nil {
+		t.Fatalf("legacy upsert: %v", err)
+	}
+	row, err = fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassEphemeral {
+		t.Fatalf("legacy write class = %v, err=%v; want ephemeral", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v4", "hash-v4", state.SecretClassPersistent, []byte("cipher-v4")); err != nil {
+		t.Fatalf("explicit persistent upsert: %v", err)
+	}
+	row, err = fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("explicit persistent class = %v, err=%v; want persistent", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v5", "hash-v5", "unknown", []byte("cipher-v5")); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid class error = %v, want ErrInvalidArgument", err)
 	}
 }
 
