@@ -297,6 +297,12 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 				_, _ = fmt.Fprintf(osStdout, "      plan payload limit: %d bytes\n", policy.MaxPayloadBytes)
 			}
 		}
+		if step.JWTPolicy != nil {
+			policy := step.JWTPolicy
+			_, _ = fmt.Fprintf(osStdout, "    JWT policy: bearer_token_present=%t; issuer_configured=%t; jwks_configured=%t; audiences=%d; algorithms=[%s]; required_claim_names=[%s]; platform_tenant_external_ref_claim_configured=%t\n",
+				policy.BearerTokenPresent, policy.IssuerConfigured, policy.JWKSConfigured, policy.AudienceCount,
+				strings.Join(policy.Algorithms, ","), strings.Join(policy.RequiredClaimNames, ","), policy.PlatformTenantExternalRefClaimConfigured)
+		}
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)
