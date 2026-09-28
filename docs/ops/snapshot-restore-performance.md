@@ -108,3 +108,23 @@ for this PR. The rebased PR itself has not been redeployed or rebenchmarked.
 Remaining acceptance for the platform restore gate: normal traffic and bursts
 within host capacity plus the full x86 metal suite on the integrated release
 candidate. Public-edge latency is tracked separately.
+
+## Concurrent cold-wake diagnostics
+
+`cmd/e2e/TestColdWakeBurstPhaseAttributionMetal` runs ten waves of four
+independent parked apps through the gateway and records 40 wake timelines.
+Each `wake.proxy_first_byte` row includes the request-local
+`gateway_phases_ms` breakdown, alongside the correlated scheduler, readiness,
+restore and placement events. The test logs one JSON sample per wake and a
+summary with first-byte and restore p50/p95 plus node placement counts.
+
+Run it on the metal runner after setting `FAAS_TEST_KERNEL`:
+
+```bash
+go test -tags metal ./cmd/e2e \
+  -run '^TestColdWakeBurstPhaseAttributionMetal$' -count=1 -timeout=20m
+```
+
+This diagnostic currently verifies successful restores and complete
+correlation. It records the known burst-latency miss for the follow-up fix;
+the serialized and concurrent p95 budgets remain the release acceptance gate.

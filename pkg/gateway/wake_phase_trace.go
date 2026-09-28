@@ -7,8 +7,8 @@ import (
 )
 
 // wakePhaseTrace is a request-local timing carrier for the platform-only cold
-// path. It crosses gateway helpers through context values but never crosses a
-// process boundary or becomes a metric label.
+// path. Only its bounded phase values are copied into a per-wake event; the
+// trace itself stays in gateway context and never becomes a metric label.
 type wakePhaseTrace struct {
 	mu sync.Mutex
 
@@ -20,6 +20,12 @@ type wakePhaseTrace struct {
 }
 
 type wakePhaseTraceKey struct{}
+
+type wakePhaseMeasurement struct {
+	phase    string
+	duration time.Duration
+	observed bool
+}
 
 func newWakePhaseTrace(start time.Time) *wakePhaseTrace {
 	return &wakePhaseTrace{platformStarted: start}
@@ -85,6 +91,35 @@ func (t *wakePhaseTrace) observe(metrics *Metrics, firstByte time.Time) {
 	if t == nil || metrics == nil {
 		return
 	}
+	for _, phase := range t.measurements(firstByte) {
+		if phase.observed {
+			metrics.ObserveWakePhase(phase.phase, phase.duration)
+		}
+	}
+}
+
+// gatewayPhasesMS returns the request-local phase boundaries for the
+// per-wake proxy_first_byte event. The event already has a wake ID, so these
+// values let an operator correlate gateway dispatch and proxy delay with the
+// scheduler and VMMD events without adding high-cardinality metric labels.
+func (t *wakePhaseTrace) gatewayPhasesMS(firstByte time.Time) map[string]int64 {
+	if t == nil {
+		return nil
+	}
+	var phases map[string]int64
+	for _, phase := range t.measurements(firstByte) {
+		if !phase.observed {
+			continue
+		}
+		if phases == nil {
+			phases = make(map[string]int64, 5)
+		}
+		phases[phase.phase] = phase.duration.Milliseconds()
+	}
+	return phases
+}
+
+func (t *wakePhaseTrace) measurements(firstByte time.Time) [5]wakePhaseMeasurement {
 	t.mu.Lock()
 	platformStarted := t.platformStarted
 	admissionStarted := t.admissionStarted
@@ -93,16 +128,18 @@ func (t *wakePhaseTrace) observe(metrics *Metrics, firstByte time.Time) {
 	proxyStarted := t.proxyStarted
 	t.mu.Unlock()
 
-	observeWakePhaseBetween(metrics, "pre_admission", platformStarted, admissionStarted)
-	observeWakePhaseBetween(metrics, "scheduler_wake", admissionStarted, schedulerComplete)
-	observeWakePhaseBetween(metrics, "target_publication", schedulerComplete, targetPublished)
-	observeWakePhaseBetween(metrics, "post_publication", targetPublished, proxyStarted)
-	observeWakePhaseBetween(metrics, "internal_proxy", proxyStarted, firstByte)
+	return [5]wakePhaseMeasurement{
+		wakePhaseBetween("pre_admission", platformStarted, admissionStarted),
+		wakePhaseBetween("scheduler_wake", admissionStarted, schedulerComplete),
+		wakePhaseBetween("target_publication", schedulerComplete, targetPublished),
+		wakePhaseBetween("post_publication", targetPublished, proxyStarted),
+		wakePhaseBetween("internal_proxy", proxyStarted, firstByte),
+	}
 }
 
-func observeWakePhaseBetween(metrics *Metrics, phase string, start, end time.Time) {
+func wakePhaseBetween(phase string, start, end time.Time) wakePhaseMeasurement {
 	if start.IsZero() || end.IsZero() || end.Before(start) {
-		return
+		return wakePhaseMeasurement{}
 	}
-	metrics.ObserveWakePhase(phase, end.Sub(start))
+	return wakePhaseMeasurement{phase: phase, duration: end.Sub(start), observed: true}
 }
