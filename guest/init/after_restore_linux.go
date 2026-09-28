@@ -9,12 +9,18 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type afterRestoreRuntime struct {
 	hook api.AfterRestoreHook
+	port int
+}
+
+type beforeCheckpointRuntime struct {
+	hook api.BeforeCheckpointHook
 	port int
 }
 
@@ -25,23 +31,34 @@ func callAfterRestoreHook(hook api.AfterRestoreHook, port int) error {
 	if err := hook.Validate(); err != nil {
 		return fmt.Errorf("after_restore config: %w", err)
 	}
-	if port <= 0 || port > 65535 {
-		return fmt.Errorf("after_restore: invalid application port %d", port)
+	return callLifecycleHook("after_restore", "X-Faas-After-Restore", hook.Path, hook.EffectiveTimeout(), port)
+}
+
+func callBeforeCheckpointHook(hook api.BeforeCheckpointHook, port int) error {
+	if err := hook.Validate(); err != nil {
+		return fmt.Errorf("before_checkpoint config: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), hook.EffectiveTimeout())
+	return callLifecycleHook("before_checkpoint", "X-Faas-Before-Checkpoint", hook.Path, hook.EffectiveTimeout(), port)
+}
+
+func callLifecycleHook(name, header, path string, timeout time.Duration, port int) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("%s: invalid application port %d", name, port)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	endpoint := url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
-		Path:   hook.Path,
+		Path:   path,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
 	if err != nil {
-		return fmt.Errorf("after_restore request: %w", err)
+		return fmt.Errorf("%s request: %w", name, err)
 	}
 	// Gateway forwarding strips inbound x-faas-* headers, so a public
 	// request cannot impersonate this loopback-only lifecycle call.
-	req.Header.Set("X-Faas-After-Restore", "1")
+	req.Header.Set(header, "1")
 	client := &http.Client{
 		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -50,11 +67,11 @@ func callAfterRestoreHook(hook api.AfterRestoreHook, port int) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("after_restore delivery: %w", err)
+		return fmt.Errorf("%s delivery: %w", name, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("after_restore returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("%s returned HTTP %d", name, resp.StatusCode)
 	}
 	return nil
 }

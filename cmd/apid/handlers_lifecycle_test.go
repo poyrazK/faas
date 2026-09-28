@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -74,6 +75,69 @@ func TestAppAfterRestoreLifecycleRoundTrip(t *testing.T) {
 	stored, err = e.store.AppBySlug(t.Context(), "restore-app")
 	if err != nil || stored.Manifest.AfterRestore != nil {
 		t.Fatalf("cleared hook = %+v, err=%v", stored.Manifest.AfterRestore, err)
+	}
+}
+
+func TestAppBeforeCheckpointLifecycleRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	hook := &api.BeforeCheckpointHook{Path: "/internal/checkpoint", TimeoutMS: 750}
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "checkpoint-app", BeforeCheckpoint: hook}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Manifest.BeforeCheckpoint == nil || *out.Manifest.BeforeCheckpoint != *hook {
+		t.Fatalf("create response hook = %+v", out.Manifest.BeforeCheckpoint)
+	}
+	updated := &api.BeforeCheckpointHook{Path: "/internal/flush"}
+	rec = e.do(t, "PATCH", "/v1/apps/checkpoint-app", api.UpdateAppRequest{BeforeCheckpoint: updated}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "checkpoint-app")
+	if err != nil || stored.Manifest.BeforeCheckpoint == nil || *stored.Manifest.BeforeCheckpoint != *updated {
+		t.Fatalf("stored hook = %+v, err=%v", stored.Manifest.BeforeCheckpoint, err)
+	}
+	rec = e.do(t, "PATCH", "/v1/apps/checkpoint-app", api.UpdateAppRequest{BeforeCheckpoint: &api.BeforeCheckpointHook{}}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("clear: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "checkpoint-app")
+	if err != nil || stored.Manifest.BeforeCheckpoint != nil {
+		t.Fatalf("cleared hook = %+v, err=%v", stored.Manifest.BeforeCheckpoint, err)
+	}
+}
+
+func TestBeforeCheckpointUpdateInvalidatesOldSnapshots(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := createApp(t, e, "checkpoint-invalidation")
+	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := e.store.CreateSnapshot(t.Context(), state.Snapshot{
+			DeploymentID: dep.ID, Tier: tier, FCVersion: "test", StorageKey: "snap/" + tier,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := e.do(t, "PATCH", "/v1/apps/"+app.Slug, api.UpdateAppRequest{
+		BeforeCheckpoint: &api.BeforeCheckpointHook{Path: "/checkpoint"},
+	}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
+	}
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := e.store.LatestSnapshotForTier(t.Context(), dep.ID, tier); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("old %s snapshot is still reusable: %v", tier, err)
+		}
 	}
 }
 

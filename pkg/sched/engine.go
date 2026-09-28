@@ -7374,9 +7374,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	var b SnapshotBytes
 	var reused *state.Snapshot
 	if allowReuse {
-		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey)
+		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
 	} else {
-		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
+		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
@@ -7483,6 +7483,11 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 // netns / chroot cleanly. The init capture NEVER runs in this branch
 // (the caller returns early). The next wake cold-boots (ADR-005).
 func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance, app state.App) (SnapshotBytes, error) {
+	// The source VM resumes after warm capture. A callback may close sockets
+	// or flush state for checkpoint and leave that VM unable to serve traffic.
+	if app.Manifest.BeforeCheckpoint != nil {
+		return SnapshotBytes{}, nil
+	}
 	// Gate 1 + 2: the cheap configuration checks. snapshotAndPark loaded
 	// the app immediately before entering SNAPSHOTTING so the resource-shape
 	// check and warm-capture gates use the same view of the app.

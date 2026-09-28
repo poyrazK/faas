@@ -2018,8 +2018,11 @@ type PauseAndSnapshotRequest struct {
 	// storage_key (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate, OCI
 	// at repo snap-<dep>, tag vmstate).
 	VmstateStorageKey string `protobuf:"bytes,5,opt,name=vmstate_storage_key,json=vmstateStorageKey,proto3" json:"vmstate_storage_key,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Run the configured guest callback before this terminal init capture.
+	// A failed callback aborts snapshot publication.
+	BeforeCheckpoint bool `protobuf:"varint,6,opt,name=before_checkpoint,json=beforeCheckpoint,proto3" json:"before_checkpoint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *PauseAndSnapshotRequest) Reset() {
@@ -2080,15 +2083,25 @@ func (x *PauseAndSnapshotRequest) GetVmstateStorageKey() string {
 	return ""
 }
 
+func (x *PauseAndSnapshotRequest) GetBeforeCheckpoint() bool {
+	if x != nil {
+		return x.BeforeCheckpoint
+	}
+	return false
+}
+
 type SnapshotResponse struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	MemBytes     int64                  `protobuf:"varint,1,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
 	VmstateBytes int64                  `protobuf:"varint,2,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
 	// Filesystem allocation consumed by the published mem + vmstate blobs.
 	// Zero means an older vmmd did not report the additive field.
-	StoredBytes   int64 `protobuf:"varint,3,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StoredBytes int64 `protobuf:"varint,3,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
+	// Explicit ACK for an opt-in terminal callback. A new schedd rejects an
+	// older vmmd that ignored before_checkpoint on the request.
+	BeforeCheckpointCompleted bool `protobuf:"varint,4,opt,name=before_checkpoint_completed,json=beforeCheckpointCompleted,proto3" json:"before_checkpoint_completed,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -2140,6 +2153,13 @@ func (x *SnapshotResponse) GetStoredBytes() int64 {
 		return x.StoredBytes
 	}
 	return 0
+}
+
+func (x *SnapshotResponse) GetBeforeCheckpointCompleted() bool {
+	if x != nil {
+		return x.BeforeCheckpointCompleted
+	}
+	return false
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
@@ -8167,17 +8187,19 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"export_dir\x18\x01 \x01(\tR\texportDir\x12\x1f\n" +
 	"\vtimeout_sec\x18\x02 \x01(\x05R\n" +
-	"timeoutSec\"\xaf\x01\n" +
+	"timeoutSec\"\xdc\x01\n" +
 	"\x17PauseAndSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1f\n" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
 	"storageKey\x12.\n" +
-	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKeyJ\x04\b\x02\x10\x03\"w\n" +
+	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKey\x12+\n" +
+	"\x11before_checkpoint\x18\x06 \x01(\bR\x10beforeCheckpointJ\x04\b\x02\x10\x03\"\xb7\x01\n" +
 	"\x10SnapshotResponse\x12\x1b\n" +
 	"\tmem_bytes\x18\x01 \x01(\x03R\bmemBytes\x12#\n" +
 	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\x12!\n" +
-	"\fstored_bytes\x18\x03 \x01(\x03R\vstoredBytes\"\x82\x01\n" +
+	"\fstored_bytes\x18\x03 \x01(\x03R\vstoredBytes\x12>\n" +
+	"\x1bbefore_checkpoint_completed\x18\x04 \x01(\bR\x19beforeCheckpointCompleted\"\x82\x01\n" +
 	"\x13WarmSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1f\n" +
 	"\vstorage_key\x18\x02 \x01(\tR\n" +

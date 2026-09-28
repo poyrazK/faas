@@ -38,3 +38,28 @@ func TestAfterRestoreHookValidation(t *testing.T) {
 		t.Fatalf("default timeout = %s", got)
 	}
 }
+
+func TestBeforeCheckpointHookValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, path, want string
+		timeout                int
+	}{
+		{name: "request", path: "/checkpoint"},
+		{name: "service", mode: ExecutionModeService, path: "/checkpoint", timeout: 1200},
+		{name: "worker", mode: ExecutionModeWorker, path: "/checkpoint", want: "request or service"},
+		{name: "remote", path: "http://example.com/checkpoint", want: "absolute path"},
+		{name: "timeout", path: "/checkpoint", timeout: 2001, want: "timeout_ms"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := AppManifest{Entrypoint: []string{"/app"}, ExecutionMode: tc.mode,
+				BeforeCheckpoint: &BeforeCheckpointHook{Path: tc.path, TimeoutMS: tc.timeout}}
+			err := m.ValidatePlan(PlanPro)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("ValidatePlan() = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if got := (&BeforeCheckpointHook{Path: "/checkpoint"}).EffectiveTimeout(); got != 500*time.Millisecond {
+		t.Fatalf("default timeout = %v", got)
+	}
+}

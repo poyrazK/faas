@@ -76,6 +76,23 @@ func TestAfterRestoreLifecycleYAML(t *testing.T) {
 	}
 }
 
+func TestBeforeCheckpointLifecycleYAML(t *testing.T) {
+	m, err := ParseBytes([]byte("lifecycle:\n  before_checkpoint:\n    path: /internal/checkpoint\n    timeout_ms: 750\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.Lifecycle == nil || m.Lifecycle.BeforeCheckpoint == nil {
+		t.Fatalf("missing hook: %+v", m.Lifecycle)
+	}
+	if err := m.Lifecycle.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	got := m.Lifecycle.ToAPI().BeforeCheckpoint
+	if got == nil || got.Path != "/internal/checkpoint" || got.TimeoutMS != 750 {
+		t.Fatalf("API hook = %+v", got)
+	}
+}
+
 func TestManifestMainWorkloadDependencies(t *testing.T) {
 	manifest, err := ParseBytes([]byte(`main_depends_on:
   - name: proxy

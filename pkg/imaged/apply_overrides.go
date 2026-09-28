@@ -179,6 +179,11 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 		hook := *app.Manifest.AfterRestore
 		manifest.AfterRestore = &hook
 	}
+	manifest.BeforeCheckpoint = nil
+	if app.Manifest.BeforeCheckpoint != nil {
+		hook := *app.Manifest.BeforeCheckpoint
+		manifest.BeforeCheckpoint = &hook
+	}
 	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
 	manifest.MaxRetries = app.Manifest.MaxRetries
 	manifest.RequestTimeoutS = app.Manifest.RequestTimeoutS

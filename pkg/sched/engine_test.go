@@ -197,7 +197,7 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, ap
 	return out, nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	f.mu.Lock()
 	f.snapDeadline, f.snapHasDeadline = ctx.Deadline()
 	f.mu.Unlock()

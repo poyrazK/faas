@@ -2199,6 +2199,9 @@ const resumeHookAckAfterRestore byte = 13
 // guest extension bridge (guest/init/listen_resume_linux.go).
 const extensionHookMsgEvent uint32 = 3
 
+const beforeCheckpointHookMsg uint32 = 5
+const beforeCheckpointHookAckFailed byte = 14
+
 const extensionHookDialDeadline = extension.DefaultTimeout
 
 const extensionHookMaxBodyBytes = extension.MaxEventBytes
@@ -2426,6 +2429,54 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 		"connect_ms", connected.Sub(started).Milliseconds(),
 		"write_ms", sent.Sub(connected).Milliseconds(),
 		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
+	return nil
+}
+
+// TriggerBeforeCheckpoint is a fail-closed barrier before a terminal init
+// snapshot. The guest sends one ACK after its bounded loopback callback.
+// Transport errors are not retried after CONNECT because the callback may
+// already have run and its effects need not be idempotent.
+func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error {
+	if v == nil || v.chrootBase == "" || l.Instance == "" {
+		return fmt.Errorf("vmm: before_checkpoint: invalid VMM or instance")
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(callCtx, "unix", v.vsockUDSSock(l.Instance))
+	if err != nil {
+		return fmt.Errorf("vmm: before_checkpoint dial: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(callCtx, func() { _ = conn.Close() })
+	defer stop()
+	if deadline, ok := callCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", resumeHookGuestPort); err != nil {
+		return fmt.Errorf("vmm: before_checkpoint CONNECT: %w", err)
+	}
+	ack, err := readConnectAck(conn)
+	if err != nil {
+		return fmt.Errorf("vmm: before_checkpoint CONNECT reply: %w", err)
+	}
+	if ack != "OK" {
+		return fmt.Errorf("vmm: before_checkpoint CONNECT rejected: %q", ack)
+	}
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[:4], beforeCheckpointHookMsg)
+	if _, err := conn.Write(msg[:]); err != nil {
+		return fmt.Errorf("vmm: before_checkpoint send: %w", err)
+	}
+	var result [1]byte
+	if _, err := io.ReadFull(conn, result[:]); err != nil {
+		return fmt.Errorf("vmm: before_checkpoint ACK: %w", err)
+	}
+	if result[0] == beforeCheckpointHookAckFailed {
+		return fmt.Errorf("vmm: before_checkpoint application callback failed")
+	}
+	if result[0] != 0 {
+		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", result[0])
+	}
 	return nil
 }
 
@@ -2709,6 +2760,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// an extension being installed or reachable.
 	if err := v.TriggerExtensionHook(ctx, l, string(extension.PhasePreSnapshot), nil); err != nil {
 		slog.Default().Debug("vmm: pre-snapshot extension hook unavailable", "instance", l.Instance, "err", err)
+	}
+	if spec.BeforeCheckpoint {
+		if spec.ResumeBeforePublish {
+			return SnapshotInfo{}, fmt.Errorf("vmm: before_checkpoint cannot run on a resumed snapshot")
+		}
+		if err := v.TriggerBeforeCheckpoint(ctx, l); err != nil {
+			return SnapshotInfo{}, err
+		}
 	}
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {

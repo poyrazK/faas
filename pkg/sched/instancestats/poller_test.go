@@ -135,7 +135,7 @@ func (v *statsFakeVMM) CreateColdBoot(context.Context, string, sched.AppSpec) (*
 func (v *statsFakeVMM) CreateFromSnapshot(context.Context, string, sched.AppSpec, sched.SnapshotRef) (*sched.WakeOutcome, error) {
 	return &sched.WakeOutcome{}, nil
 }
-func (v *statsFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string) (sched.SnapshotBytes, error) {
+func (v *statsFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, bool) (sched.SnapshotBytes, error) {
 	return sched.SnapshotBytes{}, nil
 }
 

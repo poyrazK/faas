@@ -54,21 +54,46 @@ type AfterRestoreHook struct {
 	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
 }
 
+// BeforeCheckpointHook runs in the source guest before a new terminal init
+// snapshot. A successful response is required to publish that snapshot.
+type BeforeCheckpointHook struct {
+	Path      string `json:"path" yaml:"path"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+}
+
+func (h *BeforeCheckpointHook) Validate() error {
+	if h == nil {
+		return nil
+	}
+	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS)
+}
+
+func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
+	if h == nil || h.TimeoutMS == 0 {
+		return time.Duration(AfterRestoreHookDefaultTimeoutMS) * time.Millisecond
+	}
+	return time.Duration(h.TimeoutMS) * time.Millisecond
+}
+
 func (h *AfterRestoreHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	if !strings.HasPrefix(h.Path, "/") || strings.HasPrefix(h.Path, "//") ||
-		strings.ContainsAny(h.Path, "?#%") {
-		return fmt.Errorf("after_restore.path must be an absolute path without query, fragment, or percent escapes")
+	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
+}
+
+func validateLifecycleHook(name, path string, timeoutMS int) error {
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.ContainsAny(path, "?#%") {
+		return fmt.Errorf("%s.path must be an absolute path without query, fragment, or percent escapes", name)
 	}
-	for _, r := range h.Path {
+	for _, r := range path {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("after_restore.path must not contain control characters")
+			return fmt.Errorf("%s.path must not contain control characters", name)
 		}
 	}
-	if h.TimeoutMS < 0 || h.TimeoutMS > AfterRestoreHookMaxTimeoutMS {
-		return fmt.Errorf("after_restore.timeout_ms must be between 0 and %d", AfterRestoreHookMaxTimeoutMS)
+	if timeoutMS < 0 || timeoutMS > AfterRestoreHookMaxTimeoutMS {
+		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, AfterRestoreHookMaxTimeoutMS)
 	}
 	return nil
 }
@@ -183,8 +208,9 @@ type AppManifest struct {
 	// RestartPolicy governs the supervisor's restart-on-exit decision
 	// (ADR-137 §Decision 2). Empty defers to per-mode default
 	// (request: on-failure, service: always, worker: always, job: no).
-	RestartPolicy string            `json:"restart_policy,omitempty"`
-	AfterRestore  *AfterRestoreHook `json:"after_restore,omitempty"`
+	RestartPolicy    string                `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -624,6 +650,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.AfterRestore != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
 		return fmt.Errorf("app manifest: after_restore requires request or service execution mode")
+	}
+	if err := m.BeforeCheckpoint.Validate(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
+		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)

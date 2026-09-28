@@ -346,13 +346,20 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 }
 
 func TestVMMClient_PauseAndSnapshot(t *testing.T) {
-	c := newClient(t, &fakeVMM{})
-	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "")
+	var got fcvm.SnapshotSpec
+	c := newClient(t, &fakeVMM{parkFn: func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
+		got = spec
+		return fcvm.SnapshotInfo{MemBytes: 130 * 1024 * 1024, VMStateBytes: 4096}, nil
+	}})
+	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "", true)
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot: %v", err)
 	}
 	if b.MemBytes != 130*1024*1024 {
 		t.Errorf("mem_bytes = %d", b.MemBytes)
+	}
+	if !got.BeforeCheckpoint {
+		t.Fatal("before_checkpoint flag was lost across gRPC")
 	}
 }
 
@@ -364,7 +371,7 @@ func TestVMMClient_PauseAndSnapshot_MissingStorageKey(t *testing.T) {
 	// still an error so mem F-1 holds; an empty storage_key combined
 	// with a populated vmstate_path keeps the legacy single-box path
 	// working out of the box (default-local).
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "", "snap/d-1/vmstate")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "", "snap/d-1/vmstate", false)
 	if err == nil {
 		t.Fatal("expected error for empty storage_key")
 	}
@@ -388,7 +395,7 @@ func TestVMMClient_PauseAndSnapshot_AcceptsEitherVmstateLocator(t *testing.T) {
 	// new shape so a future regression that re-requires the legacy
 	// field trips here.
 	c := newClient(t, &fakeVMM{})
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "snap/d-1/mem", "snap/d-1/vmstate")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "snap/d-1/mem", "snap/d-1/vmstate", false)
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot with empty vmstate_path: %v", err)
 	}

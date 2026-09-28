@@ -140,6 +140,7 @@ export type { AuditEventResponse } from './models/AuditEventResponse.js';
 export type { AuditLogEntry } from './models/AuditLogEntry.js';
 export type { AuthCapabilities } from './models/AuthCapabilities.js';
 export type { AuthProviders } from './models/AuthProviders.js';
+export type { BeforeCheckpointHook } from './models/BeforeCheckpointHook.js';
 export type { BillingCancelResponse } from './models/BillingCancelResponse.js';
 export type { BillingCatalogEntry } from './models/BillingCatalogEntry.js';
 export type { BillingCatalogResponse } from './models/BillingCatalogResponse.js';

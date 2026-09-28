@@ -1213,15 +1213,16 @@ type FunctionConfig struct {
 // current app setting unchanged, while an explicit zero clears/inherits it.
 // The API remains authoritative for plan gates and workload compatibility.
 type LifecycleConfig struct {
-	ExecutionMode    *string               `yaml:"execution_mode,omitempty"`
-	RestartPolicy    *string               `yaml:"restart_policy,omitempty"`
-	AfterRestore     *api.AfterRestoreHook `yaml:"after_restore,omitempty"`
-	StartupDeadlineS *int                  `yaml:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                  `yaml:"max_retries,omitempty"`
-	RequestTimeoutS  *int                  `yaml:"request_timeout_s,omitempty"`
-	StopGracePeriodS *int                  `yaml:"stop_grace_period_s,omitempty"`
-	StopSignal       *string               `yaml:"stop_signal,omitempty"`
-	ServiceReplicas  *api.ServiceReplicas  `yaml:"service_replicas,omitempty"`
+	ExecutionMode    *string                   `yaml:"execution_mode,omitempty"`
+	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
+	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
+	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
+	StartupDeadlineS *int                      `yaml:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                      `yaml:"max_retries,omitempty"`
+	RequestTimeoutS  *int                      `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                      `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string                   `yaml:"stop_signal,omitempty"`
+	ServiceReplicas  *api.ServiceReplicas      `yaml:"service_replicas,omitempty"`
 }
 
 // ToAPI returns the lifecycle portion of an app PATCH request.
@@ -1233,6 +1234,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		ExecutionMode:    c.ExecutionMode,
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
+		BeforeCheckpoint: c.BeforeCheckpoint,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
@@ -1244,7 +1246,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1264,6 +1266,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.AfterRestore != nil && (c.AfterRestore.Path != "" || c.AfterRestore.TimeoutMS != 0) {
 		m.AfterRestore = c.AfterRestore
+	}
+	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
+		m.BeforeCheckpoint = c.BeforeCheckpoint
 	}
 	if c.StartupDeadlineS != nil {
 		m.StartupDeadlineS = *c.StartupDeadlineS

@@ -134,6 +134,7 @@ export type { AuditEventResponse } from './AuditEventResponse.js';
 export type { AuditLogEntry } from './AuditLogEntry.js';
 export type { AuthCapabilities } from './AuthCapabilities.js';
 export type { AuthProviders } from './AuthProviders.js';
+export type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 export type { BillingCancelResponse } from './BillingCancelResponse.js';
 export type { BillingCatalogEntry } from './BillingCatalogEntry.js';
 export type { BillingCatalogResponse } from './BillingCatalogResponse.js';

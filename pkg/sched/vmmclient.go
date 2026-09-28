@@ -44,7 +44,7 @@ type VMM interface {
 	// and storageKey. The empty string means "single-box default-local
 	// uses the legacy host vmstate_path"; a populated value means
 	// "vmmd publishes via the configured StorageBackend".
-	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
+	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error)
 	// WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier
 	// twin of PauseAndSnapshot. Storage key args are required
 	// (warm captures are storage-backend-only). Returns the
@@ -859,15 +859,19 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	return outcomeFromProto(resp), nil
 }
 
-func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
 		Instance:          instance,
 		VmstatePath:       vmstatePath,
 		StorageKey:        storageKey,
 		VmstateStorageKey: vmstateStorageKey,
+		BeforeCheckpoint:  beforeCheckpoint,
 	})
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
+	}
+	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
+		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
 	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
 }

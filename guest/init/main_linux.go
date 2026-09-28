@@ -289,6 +289,9 @@ func boot() error {
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
 	}
+	if manifest.BeforeCheckpoint != nil {
+		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
+	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {

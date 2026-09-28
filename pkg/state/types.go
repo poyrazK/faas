@@ -1638,16 +1638,17 @@ type AppManifest struct {
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
-	Ports            []api.WorkloadPort    `json:"ports"`
-	Healthz          string                `json:"healthz,omitempty"`
-	User             string                `json:"user,omitempty"`
-	ExecutionMode    string                `json:"execution_mode,omitempty"`
-	RestartPolicy    string                `json:"restart_policy,omitempty"`
-	AfterRestore     *api.AfterRestoreHook `json:"after_restore,omitempty"`
-	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                   `json:"max_retries,omitempty"`
-	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string                `json:"stop_signal,omitempty"`
+	Ports            []api.WorkloadPort        `json:"ports"`
+	Healthz          string                    `json:"healthz,omitempty"`
+	User             string                    `json:"user,omitempty"`
+	ExecutionMode    string                    `json:"execution_mode,omitempty"`
+	RestartPolicy    string                    `json:"restart_policy,omitempty"`
+	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                       `json:"max_retries,omitempty"`
+	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string                    `json:"stop_signal,omitempty"`
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
@@ -1707,7 +1708,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&

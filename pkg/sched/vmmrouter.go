@@ -62,7 +62,7 @@ type RoutedVMM interface {
 	// storageKey. Default-local schedd sends the empty value so vmmd's
 	// host-path branch is taken bit-for-bit; remote-node schedd sends
 	// state.SnapVMStateKey(deploymentID).
-	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
+	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error)
 	// WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier
 	// twin of PauseAndSnapshot. Always storage-backend-only
 	// (warm captures have no legacy host-path fallback). The
@@ -598,12 +598,12 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 }
 
 // PauseAndSnapshot implements RoutedVMM.
-func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return SnapshotBytes{}, err
 	}
-	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey, vmstateStorageKey)
+	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey, vmstateStorageKey, beforeCheckpoint)
 }
 
 // WarmSnapshot implements RoutedVMM (issue #470 / PR #470-FU-A).

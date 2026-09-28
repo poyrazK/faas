@@ -206,12 +206,13 @@ type (
 	AppSecretResponse     = api.AppSecretResponse
 
 	// Build + manifest.
-	BuildManifest    = api.BuildManifest
-	BuildDone        = api.BuildDone
-	BuildFramework   = api.BuildFramework
-	AppManifest      = api.AppManifest
-	AfterRestoreHook = api.AfterRestoreHook
-	ServiceReplicas  = api.ServiceReplicas
+	BuildManifest        = api.BuildManifest
+	BuildDone            = api.BuildDone
+	BuildFramework       = api.BuildFramework
+	AppManifest          = api.AppManifest
+	AfterRestoreHook     = api.AfterRestoreHook
+	BeforeCheckpointHook = api.BeforeCheckpointHook
+	ServiceReplicas      = api.ServiceReplicas
 
 	// Issue #477 / ADR-079: per-app public-URL auth. Both
 	// the write-block (PublicAuthBlock, embedded on

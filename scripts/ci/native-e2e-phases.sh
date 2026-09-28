@@ -65,6 +65,7 @@ native_e2e_phase_files() {
       wake_timeline_metal_test.go \
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
+      before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).

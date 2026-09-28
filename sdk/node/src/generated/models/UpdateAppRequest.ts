@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
@@ -68,6 +69,10 @@ export type UpdateAppRequest = {
    * Set a restore callback for request or service apps. Omit to preserve; an empty object clears it.
    */
   after_restore?: AfterRestoreHook;
+  /**
+   * Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it.
+   */
+  before_checkpoint?: BeforeCheckpointHook;
   /**
    * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
    */

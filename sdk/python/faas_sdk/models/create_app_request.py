@@ -40,6 +40,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
@@ -104,6 +105,9 @@ class CreateAppRequest:
     """Restart behavior for the workload. Omitted uses the execution-mode default."""
     after_restore: AfterRestoreHook | Unset = UNSET
     """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
@@ -268,6 +272,10 @@ class CreateAppRequest:
         if not isinstance(self.after_restore, Unset):
             after_restore = self.after_restore.to_dict()
 
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
+
         startup_deadline_s = self.startup_deadline_s
 
         stop_grace_period_s = self.stop_grace_period_s
@@ -402,6 +410,8 @@ class CreateAppRequest:
             field_dict["restart_policy"] = restart_policy
         if after_restore is not UNSET:
             field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -470,6 +480,7 @@ class CreateAppRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
@@ -578,6 +589,13 @@ class CreateAppRequest:
             after_restore = UNSET
         else:
             after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
@@ -718,6 +736,7 @@ class CreateAppRequest:
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,

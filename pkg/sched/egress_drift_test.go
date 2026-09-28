@@ -312,7 +312,7 @@ func (r *recordingRouterVMM) CreateColdBoot(context.Context, string, string, App
 func (r *recordingRouterVMM) CreateFromSnapshot(context.Context, string, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
-func (r *recordingRouterVMM) PauseAndSnapshot(context.Context, string, string, string, string, string) (SnapshotBytes, error) {
+func (r *recordingRouterVMM) PauseAndSnapshot(context.Context, string, string, string, string, string, bool) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 

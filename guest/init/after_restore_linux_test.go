@@ -35,6 +35,32 @@ func TestCallAfterRestoreHook(t *testing.T) {
 	}
 }
 
+func TestCallBeforeCheckpointHook(t *testing.T) {
+	var method, path, header string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, header = r.Method, r.URL.Path, r.Header.Get("X-Faas-Before-Checkpoint")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	if err := callBeforeCheckpointHook(api.BeforeCheckpointHook{Path: "/internal/checkpoint"}, testRestoreHookPort(t, server.URL)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/internal/checkpoint" || header != "1" {
+		t.Fatalf("request = %s %s header=%q", method, path, header)
+	}
+}
+
+func TestCallBeforeCheckpointHookFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	err := callBeforeCheckpointHook(api.BeforeCheckpointHook{Path: "/checkpoint"}, testRestoreHookPort(t, server.URL))
+	if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCallAfterRestoreHookFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

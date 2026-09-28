@@ -25920,6 +25920,8 @@ components:
           example: always
         after_restore:
           $ref: '#/components/schemas/AfterRestoreHook'
+        before_checkpoint:
+          $ref: '#/components/schemas/BeforeCheckpointHook'
         startup_deadline_s:
           type: integer
           minimum: 0
@@ -26377,6 +26379,9 @@ components:
         after_restore:
           $ref: '#/components/schemas/AfterRestoreHook'
           description: "Set a restore callback for request or service apps. Omit to preserve; an empty object clears it."
+        before_checkpoint:
+          $ref: '#/components/schemas/BeforeCheckpointHook'
+          description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
         startup_deadline_s:
           type: [integer, "null"]
           minimum: 0
@@ -26976,6 +26981,20 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+    BeforeCheckpointHook:
+      description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's loopback HTTP listener. Called with POST and X-Faas-Before-Checkpoint: 1 immediately before pausing the VM."
+          example: "/internal/before-checkpoint"
+        timeout_ms:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          default: 500
+          description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -27037,6 +27056,8 @@ components:
           example: "on-failure"
         after_restore:
           $ref: '#/components/schemas/AfterRestoreHook'
+        before_checkpoint:
+          $ref: '#/components/schemas/BeforeCheckpointHook'
         # M-2 (ADR-138 §Decision 3): upper bound on time-to-ready.
         # After this elapses, the instance transitions to FAILED
         # with lifecycle_failure_reason='startup_fail'. Per-plan

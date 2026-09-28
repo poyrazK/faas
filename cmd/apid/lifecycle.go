@@ -90,6 +90,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		ExecutionMode:                req.ExecutionMode,
 		RestartPolicy:                req.RestartPolicy,
 		AfterRestore:                 req.AfterRestore,
+		BeforeCheckpoint:             req.BeforeCheckpoint,
 		StartupDeadlineS:             req.StartupDeadlineS,
 		MaxRetries:                   req.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -135,6 +136,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		ExecutionMode:                manifest.ExecutionMode,
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
+		BeforeCheckpoint:             manifest.BeforeCheckpoint,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriodS:             stopGracePeriodS,
@@ -180,6 +182,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		ExecutionMode:                manifest.ExecutionMode,
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
+		BeforeCheckpoint:             manifest.BeforeCheckpoint,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -206,6 +209,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.AfterRestore != nil ||
+		req.BeforeCheckpoint != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
@@ -224,6 +228,13 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 			manifest.AfterRestore = nil
 		} else {
 			manifest.AfterRestore = req.AfterRestore
+		}
+	}
+	if req.BeforeCheckpoint != nil {
+		if req.BeforeCheckpoint.Path == "" && req.BeforeCheckpoint.TimeoutMS == 0 {
+			manifest.BeforeCheckpoint = nil
+		} else {
+			manifest.BeforeCheckpoint = req.BeforeCheckpoint
 		}
 	}
 	if req.StartupDeadlineS != nil {
@@ -302,6 +313,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.ExecutionMode = manifest.ExecutionMode
 	updated.RestartPolicy = manifest.RestartPolicy
 	updated.AfterRestore = manifest.AfterRestore
+	updated.BeforeCheckpoint = manifest.BeforeCheckpoint
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
 	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS

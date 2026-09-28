@@ -1022,6 +1022,9 @@ message PauseAndSnapshotRequest {
   // storage_key (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate, OCI
   // at repo snap-<dep>, tag vmstate).
   string vmstate_storage_key = 5;
+  // Run the configured guest callback before this terminal init capture.
+  // A failed callback aborts snapshot publication.
+  bool before_checkpoint = 6;
 }
 
 message SnapshotResponse {
@@ -1030,6 +1033,9 @@ message SnapshotResponse {
   // Filesystem allocation consumed by the published mem + vmstate blobs.
   // Zero means an older vmmd did not report the additive field.
   int64 stored_bytes  = 3;
+  // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
+  // older vmmd that ignored before_checkpoint on the request.
+  bool before_checkpoint_completed = 4;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input

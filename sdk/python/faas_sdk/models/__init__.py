@@ -266,6 +266,7 @@ from .audit_log_entry import AuditLogEntry
 from .audit_log_entry_data import AuditLogEntryData
 from .auth_capabilities import AuthCapabilities
 from .auth_providers import AuthProviders
+from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
 from .billing_catalog_entry_kind import BillingCatalogEntryKind
@@ -2095,6 +2096,7 @@ __all__ = (
     "AuditLogEntryData",
     "AuthCapabilities",
     "AuthProviders",
+    "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
     "BillingCatalogEntryKind",

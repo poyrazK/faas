@@ -52,7 +52,8 @@ const (
 	VsockResumeAckEntropyBase64 = 11
 	VsockResumeAckEntropyLength = 12
 	// A configured application after_restore callback failed or timed out.
-	VsockResumeAckAfterRestore = 13
+	VsockResumeAckAfterRestore     = 13
+	VsockResumeAckBeforeCheckpoint = 14
 	// VsockResumeMaxEntropyBytes is the upper bound on the entropy payload
 	// the guest will accept. Mirrors pkg/fcvm/vmm.go::resumeHookEntropyBytes
 	// (256); we keep the host's constant in sync via the V6 metal test. If
@@ -67,6 +68,8 @@ const (
 	// discriminator. It shares the resume listener and CONNECT handshake but
 	// carries a bounded phase/metadata envelope instead of resume state.
 	VsockExtensionMsgType uint32 = 3
+	// A terminal init capture asks guest-init to call the configured app hook.
+	VsockBeforeCheckpointMsgType uint32 = 5
 	// VsockExtensionMaxBodyBytes mirrors extension.MaxEventBytes.
 	VsockExtensionMaxBodyBytes = 16 * 1024
 	// VsockAppCPULimitMsgType carries a live app quota update over the same
@@ -87,6 +90,7 @@ type extensionHookRequest struct {
 // builder's wait loop.
 var warmBuilderResume = make(chan struct{}, 1)
 var warmBuilderEnabled atomic.Bool
+var beforeCheckpoint atomic.Pointer[beforeCheckpointRuntime]
 
 func enableWarmBuilderResume() {
 	warmBuilderEnabled.Store(true)
@@ -236,6 +240,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		handleExtensionConn(f, log, hdr[4:], onExtension)
 		return
 	}
+	if msgType == VsockBeforeCheckpointMsgType {
+		handleBeforeCheckpointConn(f, log, hdr[4:])
+		return
+	}
 	if msgType == VsockAppCPULimitMsgType {
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
@@ -333,6 +341,25 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	if onResume != nil {
 		onResume()
 	}
+}
+
+func handleBeforeCheckpointConn(f *os.File, log *slog.Logger, lengthHeader []byte) {
+	if binary.BigEndian.Uint32(lengthHeader) != 0 {
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	cfg := beforeCheckpoint.Load()
+	if cfg == nil {
+		log.Warn("before_checkpoint requested without guest configuration")
+		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
+		return
+	}
+	if err := callBeforeCheckpointHook(cfg.hook, cfg.port); err != nil {
+		log.Warn("application before_checkpoint hook failed", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
+		return
+	}
+	_, _ = f.Write([]byte{VsockResumeAckOK})
 }
 
 func firstCPULimitHandler(handlers []func(int) error) func(int) error {

@@ -259,6 +259,9 @@ type SnapshotSpec struct {
 	// paused for snapshot creation rather than registry latency. Migration
 	// and terminal park captures leave this false and remain paused.
 	ResumeBeforePublish bool
+	// BeforeCheckpoint requests the guest-local callback for a new terminal
+	// init capture. Warm and migration captures must leave this false.
+	BeforeCheckpoint bool
 }
 
 // SnapshotInfo is the result of a snapshot create.

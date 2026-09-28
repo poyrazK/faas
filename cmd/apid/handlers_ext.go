@@ -1460,6 +1460,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		return
 	}
+	if req.BeforeCheckpoint != nil {
+		// Existing process snapshots were created with the previous hook
+		// setting. The runtime-config stamp also retires live guests whose
+		// baked manifest does not match this update.
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			s.log.Error("invalidate snapshots after before_checkpoint update", "app", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+			return
+		}
+	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":%t}`, app.Slug, app.ID, lifecycleChanged))
 	s.log.Info("app updated", "app", updated.ID, "slug", updated.Slug, "account", acct.ID)

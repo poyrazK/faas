@@ -97,7 +97,7 @@ func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string
 func (r *deploymentFilterFakeVMM) CreateFromSnapshot(context.Context, string, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
-func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string) (SnapshotBytes, error) {
+func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string, bool) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 

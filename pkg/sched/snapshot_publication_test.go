@@ -15,11 +15,53 @@ import (
 type captureRecordingVMM struct {
 	*fakeVMM
 	memKey, stateKey string
+	beforeCheckpoint bool
 }
 
-func (v *captureRecordingVMM) PauseAndSnapshot(ctx context.Context, node, instance, hostPath, memKey, stateKey string) (SnapshotBytes, error) {
+func (v *captureRecordingVMM) PauseAndSnapshot(ctx context.Context, node, instance, hostPath, memKey, stateKey string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	v.memKey, v.stateKey = memKey, stateKey
-	return v.fakeVMM.PauseAndSnapshot(ctx, node, instance, hostPath, memKey, stateKey)
+	v.beforeCheckpoint = beforeCheckpoint
+	return v.fakeVMM.PauseAndSnapshot(ctx, node, instance, hostPath, memKey, stateKey, beforeCheckpoint)
+}
+
+func TestBeforeCheckpointTerminalCaptureAndReuse(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 3)
+	vmm := &captureRecordingVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	ins := state.Instance{ID: "i-checkpoint", AppID: app.ID, DeploymentID: dep.ID}
+	if _, reused, err := e.captureInitOrReuse(ctx, ins, "/tmp/state", "snap/mem", "snap/state", true); err != nil || reused != nil {
+		t.Fatalf("first capture: reused=%+v err=%v", reused, err)
+	}
+	if !vmm.beforeCheckpoint || vmm.snapshots != 1 {
+		t.Fatalf("callback flag=%t captures=%d", vmm.beforeCheckpoint, vmm.snapshots)
+	}
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "reusable")
+	if _, err := store.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", StorageKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	if _, reused, err := e.captureInitOrReuse(ctx, ins, "/tmp/state", "snap/mem", "snap/state", true); err != nil || reused == nil {
+		t.Fatalf("reuse: reused=%+v err=%v", reused, err)
+	}
+	if vmm.snapshots != 1 || vmm.destroys != 1 {
+		t.Fatalf("reuse recaptured: captures=%d destroys=%d", vmm.snapshots, vmm.destroys)
+	}
+}
+
+func TestBeforeCheckpointSkipsWarmCapture(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 3)
+	app.WarmSnapshotEnabled = true
+	app.Manifest.BeforeCheckpoint = &api.BeforeCheckpointHook{Path: "/checkpoint"}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.captureWarmSnapshotLocked(context.Background(), state.Instance{}, app); err != nil {
+		t.Fatal(err)
+	}
+	if vmm.warmSnapshots != 0 {
+		t.Fatalf("warm captures = %d", vmm.warmSnapshots)
+	}
 }
 
 func TestParkRetainsUsableSnapshot(t *testing.T) {

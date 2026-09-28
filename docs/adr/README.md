@@ -62,6 +62,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 342 | [Durable app park webhook completion](342-app-park-webhook-completion.md) | accepted | Track park transitions through instance drain, recover completion in schedd, then enqueue `app.parked` through ADR-344's outbox |
 | 349 | [Distinguish application restore-hook failures](349-after-restore-failure-signal.md) | accepted | Typed ACK 13 classification and bounded `after_restore_failed` wake-failure signal |
 | 350 | [Show application restore-hook fallback in wake timelines](350-customer-restore-fallback-reason.md) | accepted | Customer-visible reason when a restore hook causes cold-boot fallback |
+| 343 | [Customer callback before terminal init capture](343-customer-before-checkpoint-hook.md) | accepted | Required loopback callback for new init snapshots; warm capture is skipped |
 | 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
 | 341 | [Ownership-aware platform-tenant reconciliation plan](341-platform-tenant-reconciliation-plan.md) | accepted | Add a deterministic read-only desired-state diff with managed removal candidates and unmanaged retention |
 | 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
