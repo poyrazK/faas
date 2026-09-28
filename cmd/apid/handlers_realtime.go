@@ -23,6 +23,10 @@ type realtimeEndpointRegistrar interface {
 	RemoveEndpoint(context.Context, string) error
 }
 
+type realtimeEndpointInventory interface {
+	ListEndpointInventory(context.Context) (realtime.EndpointInventory, error)
+}
+
 func realtimeEndpointStore(s *server) (state.ManagedRealtimeEndpointStore, bool) {
 	store, ok := s.store.(state.ManagedRealtimeEndpointStore)
 	return store, ok

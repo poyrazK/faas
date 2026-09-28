@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
 
 T = TypeVar("T", bound="AppResponse")
@@ -129,6 +130,9 @@ class AppResponse:
     variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
     apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
     outbound authorization allowlist under the `declared` policy."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
@@ -350,6 +354,10 @@ class AppResponse:
                 service_bindings_item = service_bindings_item_data.to_dict()
                 service_bindings.append(service_bindings_item)
 
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
+
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
@@ -548,6 +556,8 @@ class AppResponse:
             field_dict["preview_expires_at"] = preview_expires_at
         if service_bindings is not UNSET:
             field_dict["service_bindings"] = service_bindings
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_binding_transport is not UNSET:
@@ -633,6 +643,7 @@ class AppResponse:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -789,6 +800,13 @@ class AppResponse:
                 service_bindings_item = AppServiceBinding.from_dict(service_bindings_item_data)
 
                 service_bindings.append(service_bindings_item)
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
 
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: ServiceBindingPolicy | Unset
@@ -1053,6 +1071,7 @@ class AppResponse:
             preview_pr_state=preview_pr_state,
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
+            service_reliability=service_reliability,
             service_binding_policy=service_binding_policy,
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,

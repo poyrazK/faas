@@ -1,5 +1,7 @@
 package main
 
+// adr: 281
+
 import (
 	"context"
 	"errors"
@@ -18,6 +20,11 @@ type reconcileRealtimeRegistrar struct {
 	registered []realtime.Endpoint
 	removed    []string
 	fail       map[string]error
+	inventory  []string
+}
+
+func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (realtime.EndpointInventory, error) {
+	return realtime.EndpointInventory{IDs: append([]string(nil), r.inventory...), NodesQueried: 1}, nil
 }
 
 func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoint realtime.Endpoint) error {
@@ -84,6 +91,38 @@ func TestReconcileManagedRealtimeEndpointsNoRegistrarIsNoop(t *testing.T) {
 	srv := newServer(state.NewMemStore(), discardLogger(), "gregale.dev", noopNotifier{})
 	if err := srv.reconcileManagedRealtimeEndpoints(context.Background()); err != nil {
 		t.Fatalf("reconcile without registrar = %v, want nil", err)
+	}
+}
+
+func TestReconcileManagedRealtimeEndpointsRemovesDeletedRegistration(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "deleted-realtime-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "deleted-realtime-" + uuid.NewString(), Status: state.AppActive, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.CreateManagedRealtimeEndpointIfUnderQuota(ctx, state.ManagedRealtimeEndpoint{
+		ID: "deleted-endpoint", AccountID: account.ID, AppID: app.ID,
+		CallbackURL: "https://example.com/callback", Enabled: true,
+	}, 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteManagedRealtimeEndpoint(ctx, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	registrar := &reconcileRealtimeRegistrar{inventory: []string{row.ID}}
+	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
+	srv.realtimeRegistrar = registrar
+	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(registrar.removed) != 1 || registrar.removed[0] != row.ID {
+		t.Fatalf("removed endpoints = %v, want %s", registrar.removed, row.ID)
 	}
 }
 

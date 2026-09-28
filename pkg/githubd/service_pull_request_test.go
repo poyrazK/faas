@@ -631,7 +631,7 @@ func TestHandlePullRequest_ForkRefused(t *testing.T) {
 }
 
 // TestHandlePullRequest_QuotaExhausted covers the
-// DeployedAppMax path. With limits.DeployedApps=0, every
+// PreviewApps path. The stub rejects every
 // CreateAppIfUnderQuota call returns state.QuotaError; the
 // handler should refuse + write a failure Check Run + return
 // ErrIgnored.
@@ -661,8 +661,8 @@ func TestHandlePullRequest_QuotaExhausted(t *testing.T) {
 	if c.phase != githubdgrpc.CheckPhaseFailed {
 		t.Errorf("phase = %v, want Failed", c.phase)
 	}
-	if !strings.Contains(c.summary, "deployed app limit") {
-		t.Errorf("summary = %q, want it to mention the deployed app limit", c.summary)
+	if !strings.Contains(c.summary, "PR preview limit") {
+		t.Errorf("summary = %q, want it to mention the PR preview limit", c.summary)
 	}
 
 	// No fork-refused Check Run.

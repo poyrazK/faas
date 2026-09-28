@@ -31,6 +31,7 @@ type manifestInternalHost struct {
 
 const manifestGatewayEgressPort = 9092
 const manifestAppErrorsPort = 9093
+const manifestGithubdPort = 50053
 
 // manifestPrivateHostsGroupVarsThreshold keeps the generated inventory
 // compact as fleets grow. Below this point retaining the resolver map in each
@@ -325,6 +326,7 @@ func renderManifestInternalHosts(m *manifest.Manifest) ([]manifestInternalHost, 
 			// the control-plane address from this manifest's resolver map and
 			// is independent of the provider or the host's public IP.
 			entry.Names = append(entry.Names, "apid.faas")
+			entry.Names = append(entry.Names, "githubd.faas")
 		}
 		internalHosts = append(internalHosts, entry)
 	}
@@ -410,6 +412,7 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 		fmt.Fprintf(&b, "faas_gatewayd_apid_loopback: %q\n", controlPlaneAPIDLoopback)
 		fmt.Fprintf(&b, "faas_gatewayd_egress_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestGatewayEgressPort))
 		fmt.Fprintf(&b, "faas_gatewayd_app_errors_target: %q\n", fmt.Sprintf("tcp://apid.faas:%d", manifestAppErrorsPort))
+		fmt.Fprintf(&b, "faas_githubd_target_url: %q\n", fmt.Sprintf("tcp://githubd.faas:%d", manifestGithubdPort))
 		b.WriteString("faas_gateway_listen: \"0.0.0.0:8080\"\n")
 		// Multi-host safety cluster PR-9 (audit F8-B): emit
 		// faas_public_listen_addr so the ansible role passes
@@ -431,6 +434,7 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 			b.WriteString("faas_cloudflare_origin_only: true\n")
 		}
 		fmt.Fprintf(&b, "faas_apid_app_errors_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestAppErrorsPort))
+		fmt.Fprintf(&b, "faas_githubd_listen_addr: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestGithubdPort))
 	}
 	if host.Role == roleControlPlane && gatewaySynthTarget != "" {
 		b.WriteString("faas_meterd_config_managed: true\n")

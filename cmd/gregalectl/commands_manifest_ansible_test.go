@@ -82,6 +82,9 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_gatewayd_app_errors_target: "tcp://apid.faas:9093"`) {
 		t.Errorf("compute host vars missing split AppErrors target:\n%s", computeVars)
 	}
+	if !strings.Contains(computeVars, `faas_githubd_target_url: "tcp://githubd.faas:50053"`) {
+		t.Errorf("compute host vars missing source-ref mTLS target:\n%s", computeVars)
+	}
 	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://10.42.0.2:7100"`) {
 		t.Errorf("compute host vars missing scheduler target:\n%s", computeVars)
 	}
@@ -121,6 +124,9 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(controlVars, `faas_apid_app_errors_listen: "tcp://0.0.0.0:9093"`) {
 		t.Errorf("control host vars missing AppErrors listener:\n%s", controlVars)
 	}
+	if !strings.Contains(controlVars, `faas_githubd_listen_addr: "tcp://0.0.0.0:50053"`) {
+		t.Errorf("control host vars missing githubd mTLS listener:\n%s", controlVars)
+	}
 	if !strings.Contains(controlVars, `faas_schedd_gateway_synth_target: "tcp://127.0.0.1:8080"`) {
 		t.Errorf("control host vars missing schedd synth target:\n%s", controlVars)
 	}
@@ -134,7 +140,7 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_control_plane_allowed_cidrs: ["10.42.0.1/32"]`) {
 		t.Errorf("compute host vars missing control-plane service allowlist:\n%s", computeVars)
 	}
-	if !strings.Contains(computeVars, `10.42.0.1"`) || !strings.Contains(computeVars, `schedd.faas`) {
+	if !strings.Contains(computeVars, `10.42.0.1"`) || !strings.Contains(computeVars, `schedd.faas`) || !strings.Contains(computeVars, `githubd.faas`) {
 		t.Errorf("compute host vars missing control-plane private alias:\n%s", computeVars)
 	}
 	if !strings.Contains(computeVars, `10.42.0.2"`) || !strings.Contains(computeVars, `vmmd.faas`) {
@@ -255,7 +261,7 @@ func TestRenderManifestAnsibleFiles_HostnameEndpointsUseOverlayBoundary(t *testi
 		`faas_private_dns_zone: "gregale.dev"`,
 		`faas_private_hosts:`,
 		`- inventory_host: "fsn-1"`,
-		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas"]`,
+		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas", "githubd.faas"]`,
 		`- inventory_host: "fsn-2"`,
 		`names: ["fsn-2.gregale.dev", "vmmd.faas", "egress.faas"]`,
 	} {

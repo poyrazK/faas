@@ -272,7 +272,12 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 		t.Fatalf("seed rendered imaged owner node %q: %v", nodeName, err)
 	}
 	configPath := renderedConfigPath(t, unit, etcDir, "imaged")
-	controlAddr := freeTCPAddr(t)
+	controlListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve imaged metrics address: %v", err)
+	}
+	controlAddr := controlListener.Addr().String()
+	t.Cleanup(func() { _ = controlListener.Close() })
 	relocateRenderedMetricsAddr(t, configPath, controlAddr)
 
 	fixtureRoot := t.TempDir()
@@ -331,6 +336,9 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 	proc.Stdout = &logs
 	proc.Stderr = &logs
 	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := controlListener.Close(); err != nil {
+		t.Fatalf("release reserved imaged metrics address: %v", err)
+	}
 	if err := proc.Start(); err != nil {
 		t.Fatalf("start rendered imaged: %v", err)
 	}

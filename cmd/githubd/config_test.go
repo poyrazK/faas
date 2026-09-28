@@ -28,6 +28,24 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_EnvironmentOverridesSplitBoxListener(t *testing.T) {
+	t.Setenv("FAAS_GITHUBD_LISTEN_ADDR", "tcp://0.0.0.0:50053")
+	t.Setenv("FAAS_GITHUBD_TLS_CERT_PATH", "/etc/faas/tls/githubd/server.crt")
+	t.Setenv("FAAS_GITHUBD_TLS_KEY_PATH", "/etc/faas/tls/githubd/server.key")
+	t.Setenv("FAAS_GITHUBD_TLS_CA_PATH", "/etc/faas/tls/ca/ca.crt")
+
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("missing file with deployment env: %v", err)
+	}
+	if cfg.ListenAddr != "tcp://0.0.0.0:50053" ||
+		cfg.TLSCertPath != "/etc/faas/tls/githubd/server.crt" ||
+		cfg.TLSKeyPath != "/etc/faas/tls/githubd/server.key" ||
+		cfg.TLSCAPath != "/etc/faas/tls/ca/ca.crt" {
+		t.Fatalf("deployment listener env not applied: %+v", cfg)
+	}
+}
+
 func TestLoadConfig_OverridesFromTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "githubd.toml")
 	body := `

@@ -42,7 +42,7 @@
     {"path": "orgs", "source": "docs/account.md"},
     {"path": "plans", "source": "docs/plans.md"},
     {"path": "postgres", "source": "docs/managed-postgres.md"},
-    {"path": "preview-environments", "source": "docs/preview-environments.md"},
+    {"path": "preview-environments", "source": "docs/preview-environments.md", "required_text": ["pr-{N}-{slug}"]},
     {"path": "registry-credentials", "source": "docs/registry-credentials.md"},
     {"path": "runtime-node", "source": "docs/functions.md"},
     {"path": "scale-to-zero", "source": "docs/cold-wake.md"},

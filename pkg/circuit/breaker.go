@@ -21,6 +21,7 @@
 package circuit
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -122,8 +123,9 @@ type bucket struct {
 // breaker is the per-key state. Guarded by Group.mu; it has no lock of its own
 // so that a caller holding the group lock can read several keys consistently.
 type breaker struct {
-	state   State
-	buckets [windowBuckets]bucket
+	state       State
+	buckets     [windowBuckets]bucket
+	lastTouched time.Time
 	// openedAt and openFor describe the current open interval. openFor grows
 	// by doubling on each re-open and resets to Config.OpenDuration on a
 	// successful close.
@@ -139,12 +141,8 @@ type breaker struct {
 // Group is a keyed set of breakers sharing one Config — for the gateway, keyed
 // by "appID/instanceID"; for egress, by "appID/upstreamHash/port".
 //
-// Keys are not garbage-collected on their own because an entry is tiny and a
-// key's lifetime is bounded by the thing it names (an instance ID is unique
-// per instance, an upstream row is bounded by plan quota). Forget is provided
-// for the caller that knows a key is retired — the gateway calls it when an
-// instance is destroyed, which is what keeps the map bounded across park/wake
-// cycles.
+// Keys are not garbage-collected automatically. Callers use Forget for known
+// retired subjects or PruneIdle for keys whose source has no destruction event.
 type Group struct {
 	mu  sync.Mutex
 	cfg Config
@@ -218,6 +216,18 @@ func (g *Group) Success(key string) { g.observe(key, true) }
 // Failure reports a failed outcome for key.
 func (g *Group) Failure(key string) { g.observe(key, false) }
 
+// Release gives up a half-open probe when no transport outcome was observed
+// (for example, the caller disconnected before the upgrade handshake). It
+// does not teach the breaker that the endpoint is healthy or unhealthy.
+func (g *Group) Release(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if b := g.m[key]; b != nil && b.state == StateHalfOpen {
+		b.probeInFlight = false
+		b.lastTouched = g.now()
+	}
+}
+
 func (g *Group) observe(key string, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -274,6 +284,39 @@ func (g *Group) Forget(key string) {
 	g.mu.Unlock()
 }
 
+// OpenCount counts currently open keys with prefix. The service proxy uses an
+// appID plus a NUL separator, so one app cannot match another app's prefix.
+func (g *Group) OpenCount(prefix string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	count := 0
+	for key, b := range g.m {
+		if b.state == StateOpen && strings.HasPrefix(key, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// PruneIdle removes keys that have not been consulted within maxIdle. A live
+// half-open probe is retained until it reports or is released.
+func (g *Group) PruneIdle(maxIdle time.Duration) []string {
+	if maxIdle <= 0 {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var removed []string
+	now := g.now()
+	for key, b := range g.m {
+		if !b.probeInFlight && now.Sub(b.lastTouched) >= maxIdle {
+			delete(g.m, key)
+			removed = append(removed, key)
+		}
+	}
+	return removed
+}
+
 // Len reports the number of tracked keys. Used by the residency test that
 // asserts park/wake cycles do not grow the map.
 func (g *Group) Len() int {
@@ -289,6 +332,7 @@ func (g *Group) at(key string) *breaker {
 		b = &breaker{state: StateClosed, openFor: g.cfg.OpenDuration}
 		g.m[key] = b
 	}
+	b.lastTouched = g.now()
 	return b
 }
 

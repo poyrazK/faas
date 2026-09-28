@@ -317,6 +317,51 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestDetectCompose_ServiceReliabilityFollowsDeclaredDependency(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      billing:
+        timeout_ms: 1500
+        max_attempts: 1
+  billing:
+    build: ./billing
+`
+	seeds, _, _, err := detectCompose(fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(body)}})
+	if err != nil {
+		t.Fatalf("detectCompose: %v", err)
+	}
+	for _, seed := range seeds {
+		if seed.name == "api" {
+			got := seed.serviceReliability["billing"]
+			if got.TimeoutMS != 1500 || got.MaxAttempts != 1 {
+				t.Fatalf("api reliability = %+v", got)
+			}
+			return
+		}
+	}
+	t.Fatal("api workload missing")
+}
+
+func TestDetectCompose_RejectsReliabilityForUndeclaredDependency(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      database:
+        timeout_ms: 1500
+`
+	_, _, _, err := detectCompose(fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(body)}})
+	if err == nil || !strings.Contains(err.Error(), "must name a declared service binding") {
+		t.Fatalf("detectCompose error = %v, want undeclared target rejection", err)
+	}
+}
+
 func TestDetectCompose_RejectsUnknownServiceBindingTransport(t *testing.T) {
 	t.Parallel()
 	_, _, _, err := detectCompose(fstest.MapFS{

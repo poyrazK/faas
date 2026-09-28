@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -61,6 +62,9 @@ import (
 // Streams exercised: A (audit endpoint), F (custom canary wire).
 func TestProdLevelBackstop_CustomCanaryRoundTrip(t *testing.T) {
 	env := setup(t, api.PlanPro)
+	if err := env.store.StampSafeReleaseWorkerLease(t.Context(), time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	// App seed.
 	createApp := env.do(t, "POST", "/v1/apps", api.CreateAppRequest{
 		Slug: "prod-level-app", RAMMB: 256,

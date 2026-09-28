@@ -30,7 +30,7 @@ func TestReleaseManagementHelpPaths(t *testing.T) {
 		{
 			name:      "rollback",
 			args:      []string{"rollback", "--help"},
-			wantUsage: "usage: gregale rollback <slug>",
+			wantUsage: "gregale rollback <slug>",
 		},
 	}
 	for _, tc := range cases {

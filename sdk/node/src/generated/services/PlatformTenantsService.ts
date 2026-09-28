@@ -7,6 +7,8 @@ import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatf
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
+import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
+import type { ApplyPlatformTenantSelfConsumersResponse } from '../models/ApplyPlatformTenantSelfConsumersResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -15,6 +17,8 @@ import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePla
 import type { CreatePlatformTenantAccessTokenResponse } from '../models/CreatePlatformTenantAccessTokenResponse.js';
 import type { CreatePlatformTenantRateCardRequest } from '../models/CreatePlatformTenantRateCardRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
+import type { CreatePlatformTenantSelfConsumerRequest } from '../models/CreatePlatformTenantSelfConsumerRequest.js';
+import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
@@ -22,13 +26,21 @@ import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTe
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantConsumerProvisioningPolicyResponse } from '../models/PlatformTenantConsumerProvisioningPolicyResponse.js';
+import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
+import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
+import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
+import type { PlatformTenantSelfConsumerResponse } from '../models/PlatformTenantSelfConsumerResponse.js';
+import type { PlatformTenantSelfConsumerRevocationResponse } from '../models/PlatformTenantSelfConsumerRevocationResponse.js';
+import type { PlatformTenantSelfConsumersResponse } from '../models/PlatformTenantSelfConsumersResponse.js';
+import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
@@ -37,8 +49,12 @@ import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurf
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
 import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { RevokePlatformTenantSelfConsumersRequest } from '../models/RevokePlatformTenantSelfConsumersRequest.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { SetPlatformTenantConsumerProvisioningPolicyRequest } from '../models/SetPlatformTenantConsumerProvisioningPolicyRequest.js';
+import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlatformTenantCredentialPolicyRequest.js';
+import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
 import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
@@ -252,6 +268,170 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the downstream customer's hostname delegation policy.
+   * Empty suffixes and a zero limit mean self-service hostname creation is disabled. Tenant-surface feature and plan gates still apply.
+   * @returns PlatformTenantHostnamePolicyResponse Current hostname delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantHostnamePolicy({
+    id,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a downstream customer's hostname delegation policy.
+   * Requires deploy:write and recent MFA. Suffixes are canonical DNS names; delegation is disabled with an empty array and a zero limit. Tenant-bound access tokens do not gain these account-owner permissions.
+   * @returns PlatformTenantHostnamePolicyResponse Updated hostname delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantHostnamePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantHostnamePolicyRequest,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid suffixes or hostname limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's delegated credential policy.
+   * An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+   * @returns PlatformTenantCredentialPolicyResponse Current credential delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantCredentialPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's delegated credential policy.
+   * Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+   * @returns PlatformTenantCredentialPolicyResponse Updated credential delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantCredentialPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantCredentialPolicyRequest,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid scope set or per-consumer limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's self-service customer-provisioning policy.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Current customer-provisioning policy; absent policies are disabled.
+   * @throws ApiError
+   */
+  public static getPlatformTenantConsumerProvisioningPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's self-service customer-provisioning policy.
+   * Requires deploy:write and recent MFA. Provisioning is disabled with enabled=false and max_consumers=0; enabled policies require a 1-100000 customer cap.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Updated customer-provisioning policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantConsumerProvisioningPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantConsumerProvisioningPolicyRequest,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid enablement and customer-cap combination.`,
       },
     });
   }
@@ -1065,8 +1245,8 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Mint a tenant-bound read-only self-service credential.
-   * The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+   * Mint a tenant-bound, explicitly scoped self-service credential.
+   * The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service scopes. Credential management additionally requires the owner to enable a scope allowlist and per-consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
    * @returns CreatePlatformTenantAccessTokenResponse Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
    * @throws ApiError
    */
@@ -1123,6 +1303,195 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's own redacted activation snapshot.
+   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
+   * @returns PlatformTenantSelfActivationResponse Current activation state for the caller's linked surfaces.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfActivation(): CancelablePromise<PlatformTenantSelfActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/activation',
+    });
+  }
+  /**
+   * List this tenant's linked consumers for credential management.
+   * Requires platform_tenant:credentials:read. The tenant is derived from the bearer. The response omits app IDs and account-owned details.
+   * @returns PlatformTenantSelfConsumersResponse Linked consumer identities belonging only to the caller's tenant.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfConsumers(): CancelablePromise<PlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/consumers',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create or replay a customer identity on a linked surface.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage and an owner-enabled provisioning policy. The tenant comes from the bearer; surface_id must already be linked and active. App and tenant IDs are never accepted from the request. An identical retry returns the original identity without consuming another slot.
+   * @returns PlatformTenantSelfConsumerResponse Identical request replayed; the existing identity is unchanged.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfConsumer({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfConsumerRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or the same app already has a conflicting identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Onboard one customer across selected linked app surfaces.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The bearer supplies the tenant, while Gregale resolves each selected active, already-linked surface to its app. At most one surface per app may be selected. The batch is all-or-nothing, honors the owner's provisioning policy and tenant-wide cap, and safely replays existing identities. Set dry_run to validate and preview actions without mutation or consumer IDs.
+   * @returns ApplyPlatformTenantSelfConsumersResponse Dry-run preview or exact replay with no new identities.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<ApplyPlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or an app already has a conflicting customer identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Revoke selected customers and all of their credentials atomically.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The tenant is derived from the bearer; consumer_ids must be IDs returned by this tenant's customer listing. Every ID is validated before any change. Revocation remains available when customer provisioning is disabled or the tenant is suspended. An exact retry is safe and reports zero newly revoked keys.
+   * @returns PlatformTenantSelfConsumerRevocationResponse Revoked customer identities and count of keys newly revoked by this request.
+   * @throws ApiError
+   */
+  public static revokePlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: RevokePlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerRevocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/revoke',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List this tenant's linked consumer-key metadata.
+   * Requires platform_tenant:credentials:read. Plaintext and hashes are never returned.
+   * @returns PlatformTenantCredentialsResponse One bounded page of redacted key metadata.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfCredentials({
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Maximum keys in this page.
+     */
+    limit?: number,
+    /**
+     * Zero-based offset for the next page.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/credentials',
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Reconcile this tenant's downstream consumer keys.
+   * Requires platform_tenant:credentials:manage. New keys must use an owner-allowed scope and fit the owner's active-key cap; revocation remains available even after delegation is disabled. Submit only client-generated SHA-256 hashes, never plaintext. Changes are atomic, account/tenant identity comes from the bearer, and responses contain metadata only.
+   * @returns ApplyPlatformTenantCredentialsResponse Credential metadata after atomic tenant-scoped reconciliation.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfCredentials({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantCredentialsRequest,
+  }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/credentials/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `The owner disabled delegation, a requested scope is not permitted, or the per-consumer active-key ceiling would be exceeded.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Request a hostname on one of the caller tenant's linked surfaces.
+   * Requires platform_tenant:hostnames:manage. Hostnames must match the platform owner's delegated DNS suffix policy, remain within account/plan quotas, and pass DNS TXT ownership verification. The same request safely replays its pending challenge; the response is never cached.
+   * @returns PlatformTenantSelfHostnameResponse Hostname intent accepted; DNS verification and certificate issuance are asynchronous.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfHostname({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfHostnameRequest,
+  }): CancelablePromise<PlatformTenantSelfHostnameResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/hostnames',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

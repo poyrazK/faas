@@ -12,14 +12,14 @@ import (
 )
 
 func TestNormalizeDebugRequestIdentifier(t *testing.T) {
-	for _, raw := range []string{
-		"0123456789abcdef0123456789abcdef",
-		"00000000-0000-0000-0000-000000000001",
-		"  public-request-id  ",
+	for _, test := range []struct{ raw, want string }{
+		{raw: "0123456789abcdef0123456789abcdef", want: "0123456789abcdef0123456789abcdef"},
+		{raw: "00000000-0000-0000-0000-000000000001", want: "00000000-0000-0000-0000-000000000001"},
+		{raw: "  public-request-id  ", want: "  public-request-id  "},
 	} {
-		got, err := normalizeDebugRequestIdentifier(raw)
-		if err != nil || got != strings.TrimSpace(raw) {
-			t.Fatalf("normalize(%q) = %q, %v", raw, got, err)
+		got, err := normalizeDebugRequestIdentifier(test.raw)
+		if err != nil || got != test.want {
+			t.Fatalf("normalize(%q) = %q, %v", test.raw, got, err)
 		}
 	}
 	if _, err := normalizeDebugRequestIdentifier("   "); err == nil {

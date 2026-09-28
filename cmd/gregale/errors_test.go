@@ -35,6 +35,7 @@ func TestDocsURLForCode_KnownCodes(t *testing.T) {
 		api.CodeImageRequired,
 		api.CodeDeployFailed,
 		api.CodeNoRollbackTarget,
+		api.CodeTrafficChangeDuringCanary,
 		api.CodePlanLimitSecrets,
 		api.CodeSecretInvalidKey,
 		api.CodeSecretValueTooLarge,

@@ -189,7 +189,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
 	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
 	// accounts under concurrency (spec §4.2).
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
+	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
@@ -493,6 +493,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if bindingsProblem != nil {
 		return state.App{}, bindingsProblem
 	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForCreate(req.ServiceReliability, bindings)
+	if reliabilityProblem != nil {
+		return state.App{}, reliabilityProblem
+	}
 	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
 	if servicePolicyProblem != nil {
 		return state.App{}, servicePolicyProblem
@@ -505,6 +509,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.AllowedServiceCallScopes = allowedCallScopes
 	appManifest.ServiceBindings = bindings
+	appManifest.ServiceReliability = serviceReliability
 	appManifest.ServiceBindingPolicy = servicePolicy
 	appManifest.ServiceBindingTransport = serviceTransport
 	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
@@ -666,6 +671,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, dep) {
 		return
 	}
 	// Capture the current predecessor for audit. It remains live until the
@@ -869,6 +877,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
+		ServiceReliability:        a.Manifest.ServiceReliability,
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
 		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
@@ -1192,6 +1201,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			PreviewApps:                 l.PreviewApps,
 			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),

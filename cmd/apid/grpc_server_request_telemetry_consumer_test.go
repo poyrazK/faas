@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,10 +18,81 @@ import (
 )
 
 type consumerTelemetryStore struct {
-	account  state.Account
-	inserted []sqlc.InsertRequestTelemetryParams
-	eventIDs []string
-	usage    []state.APIConsumerUsageEvent
+	account    state.Account
+	inserted   []sqlc.InsertRequestTelemetryParams
+	eventIDs   []string
+	usage      []state.APIConsumerUsageEvent
+	journal    []state.RequestIDJournalEntry
+	journalErr error
+}
+
+func TestRequestIDJournalPersistsIndependentlyOfTelemetryKillSwitch(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	store := &consumerTelemetryStore{account: state.Account{ID: accountID, Plan: api.PlanPro}}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	request := &apidpb.RecordRequestIDJournalRequest{
+		RecordId: uuid.NewString(), AccountId: accountID, AppId: appID,
+		RequestId: "public-correlation-id", TraceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+		ReceivedAtUnixMs: now.UnixMilli(),
+	}
+	receipt, err := receiver.RecordRequestIDJournal(context.Background(), request)
+	if err != nil || !receipt.GetRecorded() {
+		t.Fatalf("journal receipt=%v err=%v", receipt, err)
+	}
+	if len(store.journal) != 1 {
+		t.Fatalf("journal entries=%d, want 1", len(store.journal))
+	}
+	entry := store.journal[0]
+	if entry.RequestID != request.RequestId || entry.TraceID != request.TraceId || entry.AccountID != accountID || entry.AppID != appID {
+		t.Fatalf("journal entry=%+v", entry)
+	}
+	if want := now.Add(7 * 24 * time.Hour); !entry.ExpiresAt.Equal(want) {
+		t.Fatalf("expiry=%s, want %s", entry.ExpiresAt, want)
+	}
+}
+
+func TestRequestIDJournalFreePlanDoesNotPersist(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receipt, err := receiver.RecordRequestIDJournal(context.Background(), &apidpb.RecordRequestIDJournalRequest{
+		RecordId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
+		RequestId: "free-request-id", ReceivedAtUnixMs: time.Now().UTC().UnixMilli(),
+	})
+	if err != nil || receipt.GetRecorded() || len(store.journal) != 0 {
+		t.Fatalf("receipt=%v journal=%+v err=%v", receipt, store.journal, err)
+	}
+}
+
+func TestRequestIDJournalRejectsMalformedIdentifiersAndFailsClosed(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	valid := &apidpb.RecordRequestIDJournalRequest{
+		RecordId: uuid.NewString(), AccountId: accountID, AppId: appID,
+		RequestId: "public-id", TraceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+		ReceivedAtUnixMs: time.Now().UTC().UnixMilli(),
+	}
+	for _, mutate := range []func(*apidpb.RecordRequestIDJournalRequest){
+		func(r *apidpb.RecordRequestIDJournalRequest) { r.RequestId = strings.Repeat("x", 129) },
+		func(r *apidpb.RecordRequestIDJournalRequest) { r.RequestId = "bad\nvalue" },
+		func(r *apidpb.RecordRequestIDJournalRequest) { r.TraceId = "not-a-trace-id" },
+		func(r *apidpb.RecordRequestIDJournalRequest) {
+			r.ReceivedAtUnixMs = time.Now().Add(2 * time.Minute).UnixMilli()
+		},
+	} {
+		request := proto.Clone(valid).(*apidpb.RecordRequestIDJournalRequest)
+		mutate(request)
+		receiver := newRequestTelemetryReceiver(&consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}, nil, nil, false)
+		if _, err := receiver.RecordRequestIDJournal(context.Background(), request); status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("malformed request error=%v, want InvalidArgument", err)
+		}
+	}
+
+	dbErr := errors.New("journal database unavailable")
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}, journalErr: dbErr}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	if _, err := receiver.RecordRequestIDJournal(context.Background(), valid); status.Code(err) != codes.Unavailable {
+		t.Fatalf("journal write error=%v, want Unavailable", err)
+	}
 }
 
 func TestConsumerUsageReceiptIndependentOfDebuggerAndIdempotent(t *testing.T) {
@@ -137,6 +210,14 @@ func (s *consumerTelemetryStore) AccountByID(context.Context, string) (state.Acc
 func (s *consumerTelemetryStore) InsertRequestTelemetryWithLogEvent(_ context.Context, arg sqlc.InsertRequestTelemetryParams, eventID string) error {
 	s.inserted = append(s.inserted, arg)
 	s.eventIDs = append(s.eventIDs, eventID)
+	return nil
+}
+
+func (s *consumerTelemetryStore) RecordRequestIDJournal(_ context.Context, entry state.RequestIDJournalEntry) error {
+	if s.journalErr != nil {
+		return s.journalErr
+	}
+	s.journal = append(s.journal, entry)
 	return nil
 }
 

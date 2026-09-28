@@ -18,4 +18,10 @@ func TestGithubSetupBranchAcceptsHyphensAndRejectsControls(t *testing.T) {
 	if err != nil || branches["release/v1-2"] != "production" || branches["feature/my-api"] != "staging" {
 		t.Fatalf("deploy branch mappings=%v, err=%v", branches, err)
 	}
+	if _, err := parseGithubSetupDeployBranches("staging=default,qa=staging"); err != nil {
+		t.Fatalf("default and registered environments should be accepted: %v", err)
+	}
+	if _, err := parseGithubSetupDeployBranches("staging=environment-name-that-is-too-long-abc"); err == nil {
+		t.Fatal("accepted a scope that cannot be a registered project environment slug")
+	}
 }

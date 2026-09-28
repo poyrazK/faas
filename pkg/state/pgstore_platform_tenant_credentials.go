@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -153,7 +154,68 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 			return result, &PlatformTenantCredentialQuotaError{Scope: "app", Limit: in.AppLimit, Observed: count - 1}
 		}
 	}
+	if in.EnforceDelegationPolicy {
+		policy, err := lockPlatformTenantCredentialPolicy(ctx, tx, in.AccountID, in.TenantID)
+		if err != nil {
+			return result, err
+		}
+		creates, err := validatePlatformTenantCredentialPolicyCreates(policy, result)
+		if err != nil {
+			return result, err
+		}
+		if err := enforcePlatformTenantCredentialConsumerLimit(ctx, tx, in, policy, creates, result); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+func enforcePlatformTenantCredentialConsumerLimit(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantCredentialsParams,
+	policy PlatformTenantCredentialPolicy, creates map[string]int, result ApplyPlatformTenantCredentialsResult) error {
+	if len(creates) == 0 {
+		return nil
+	}
+	consumerIDs := make([]string, 0, len(creates))
+	for consumerID := range creates {
+		consumerIDs = append(consumerIDs, consumerID)
+	}
+	sort.Strings(consumerIDs)
+	now := time.Now().UTC()
+	rows, err := tx.Query(ctx, `select consumer_id::text, count(*)
+		from consumer_keys
+		where account_id = $1::uuid and consumer_id = any($2::uuid[])
+		  and revoked_at is null and (expires_at is null or expires_at > $3)
+		group by consumer_id`, in.AccountID, consumerIDs, now)
+	if err != nil {
+		return err
+	}
+	counts := make(map[string]int, len(consumerIDs))
+	for rows.Next() {
+		var consumerID string
+		var count int
+		if err := rows.Scan(&consumerID, &count); err != nil {
+			rows.Close()
+			return err
+		}
+		counts[consumerID] = count
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, item := range result.Keys {
+		if item.Action == "revoke" && activePlatformTenantCredentialKey(item.Key, now) {
+			counts[item.Key.ConsumerID]--
+		}
+	}
+	for consumerID, added := range creates {
+		observed := counts[consumerID] + added
+		if observed > policy.MaxKeysPerConsumer {
+			return &PlatformTenantCredentialPolicyQuotaError{Limit: policy.MaxKeysPerConsumer, Observed: observed}
+		}
+	}
+	return nil
 }
 
 func commitPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantCredentialsParams, result *ApplyPlatformTenantCredentialsResult) error {

@@ -1,5 +1,7 @@
 package main
 
+// adr: 281
+
 import (
 	"context"
 	"errors"
@@ -15,6 +17,7 @@ import (
 
 type fakeRealtimeNode struct {
 	connections []realtime.ConnectionInfo
+	endpoints   []string
 	sends       int
 	closes      int
 	subs        int
@@ -23,6 +26,7 @@ type fakeRealtimeNode struct {
 	removed     int
 	connReads   int
 	connErr     error
+	publishErr  error
 }
 
 func (f *fakeRealtimeNode) Send(context.Context, string, string, realtime.Message) error {
@@ -43,6 +47,9 @@ func (f *fakeRealtimeNode) Unsubscribe(context.Context, string, string, string) 
 }
 func (f *fakeRealtimeNode) Publish(context.Context, string, string, realtime.Message) (int, error) {
 	f.pubs++
+	if f.publishErr != nil {
+		return 0, f.publishErr
+	}
 	return 1, nil
 }
 func (f *fakeRealtimeNode) Connections(context.Context) ([]realtime.ConnectionInfo, error) {
@@ -51,6 +58,12 @@ func (f *fakeRealtimeNode) Connections(context.Context) ([]realtime.ConnectionIn
 		return nil, f.connErr
 	}
 	return append([]realtime.ConnectionInfo(nil), f.connections...), nil
+}
+func (f *fakeRealtimeNode) Endpoints(context.Context) ([]string, error) {
+	if f.connErr != nil {
+		return nil, f.connErr
+	}
+	return append([]string(nil), f.endpoints...), nil
 }
 func (f *fakeRealtimeNode) RegisterEndpoint(context.Context, realtime.Endpoint) error {
 	f.registered++
@@ -323,5 +336,61 @@ func TestLeasedRealtimeOwnerListsPartialConnectionInventory(t *testing.T) {
 	wantUnavailable := len(activeNodes) - 1 // fakeA is the only healthy responder.
 	if inventory.NodesQueried != 1 || inventory.NodesUnavailable != wantUnavailable || len(inventory.Connections) != 1 || inventory.Connections[0].ID != "conn-a" {
 		t.Fatalf("inventory = %+v", inventory)
+	}
+}
+
+func TestLeasedRealtimeOwnerDoesNotReportAbsentFromPartialFleet(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	nodeA, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeB, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-b", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.clientFor = func(node state.ComputeNode) (realtimeNodeOperator, error) {
+		if node.ID == nodeA.ID {
+			return &fakeRealtimeNode{}, nil
+		}
+		if node.ID == nodeB.ID {
+			return &fakeRealtimeNode{connErr: errors.New("node unreachable")}, nil
+		}
+		return nil, errors.New("unknown node")
+	}
+	err = owner.Send(ctx, "endpoint", "connection", realtime.Message{Data: []byte("hello")})
+	if !errors.Is(err, errManagedRealtimeOwnerUnavailable) {
+		t.Fatalf("partial discovery = %v, want retryable unavailable", err)
+	}
+}
+
+func TestLeasedRealtimeOwnerPublishReportsPartialFleet(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeB, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-b", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.clientFor = func(node state.ComputeNode) (realtimeNodeOperator, error) {
+		if node.ID == nodeB.ID {
+			return &fakeRealtimeNode{publishErr: errors.New("node unreachable")}, nil
+		}
+		return &fakeRealtimeNode{}, nil
+	}
+	activeNodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := owner.PublishWithStatus(ctx, "endpoint", "updates", realtime.Message{Data: []byte("hello")})
+	if err != nil || result.Queued != len(activeNodes)-1 || !result.Partial ||
+		result.NodesQueried != len(activeNodes)-1 || result.NodesUnavailable != 1 {
+		t.Fatalf("partial publish = (%+v, %v)", result, err)
 	}
 }

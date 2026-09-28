@@ -18,21 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// TestOrchestrator_IncOps_BumpsAllSixCounters walks the stub store
+// TestOrchestrator_IncOpsCountsActualOutcomes walks the stub store
 // with two seeded rows (one pending+ladder → start, one rolling_out
-// + terminal step → complete) and asserts that IncOps bumps every
-// orchestrator counter by exactly one. The accessor pattern returns
-// the prometheus.Counter directly (LogsDropped precedent) so the test
-// reads the value with testutil.ToFloat64 without walking the
-// registry's Gather() output.
-//
-// The current design bumps all 6 counters per tick regardless of
-// Stats values — the journal line at the cmd/meterd call site
-// carries the per-tick numbers, and PR-B's
-// safedeploy_orchestrator_*_total rate() queries roll the counter
-// into per-second rates. Pinning this so a future refactor that
-// gates on Stats doesn't silently break the alert tripwires.
-func TestOrchestrator_IncOps_BumpsAllSixCounters(t *testing.T) {
+// + terminal step → complete) and asserts that only those transition
+// counters rise. An idle tick must leave all event counters unchanged.
+func TestOrchestrator_IncOpsCountsActualOutcomes(t *testing.T) {
 	ops := wire.NewOpsMetrics("meterd_test_obs_pr_a")
 	store := newStubStore()
 
@@ -52,11 +42,11 @@ func TestOrchestrator_IncOps_BumpsAllSixCounters(t *testing.T) {
 	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
 	orch.Ops = ops
 
-	stats, _, err := orch.Once(context.Background())
+	stats, inFlight, err := orch.Once(context.Background())
 	if err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
-	orch.IncOps(ops, stats, 0)
+	orch.IncOps(ops, stats, inFlight, err)
 
 	if got := stats.Started; got != 1 {
 		t.Errorf("stats.Started = %d, want 1", got)
@@ -65,7 +55,6 @@ func TestOrchestrator_IncOps_BumpsAllSixCounters(t *testing.T) {
 		t.Errorf("stats.Completed = %d, want 1", got)
 	}
 
-	// IncOps bumps every orchestrator counter by 1 per tick.
 	cases := []struct {
 		name string
 		c    prometheus.Counter
@@ -73,16 +62,46 @@ func TestOrchestrator_IncOps_BumpsAllSixCounters(t *testing.T) {
 	}{
 		{"SafedeployOrchestratorStartedTotal", ops.SafedeployOrchestratorStartedTotal(), 1},
 		{"SafedeployOrchestratorCompletedTotal", ops.SafedeployOrchestratorCompletedTotal(), 1},
-		{"SafedeployOrchestratorAbortedTotal", ops.SafedeployOrchestratorAbortedTotal(), 1},
-		{"SafedeployOrchestratorStuckDetectedTotal", ops.SafedeployOrchestratorStuckDetectedTotal(), 1},
-		{"SafedeployOrchestratorAuditEmitFailedTotal", ops.SafedeployOrchestratorAuditEmitFailedTotal(), 1},
-		{"SafedeployOrchestratorStuckCheckMissingTimestampTotal", ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(), 1},
+		{"SafedeployOrchestratorAbortedTotal", ops.SafedeployOrchestratorAbortedTotal(), 0},
+		{"SafedeployOrchestratorStuckDetectedTotal", ops.SafedeployOrchestratorStuckDetectedTotal(), 0},
+		{"SafedeployOrchestratorAuditEmitFailedTotal", ops.SafedeployOrchestratorAuditEmitFailedTotal(), 0},
+		{"SafedeployOrchestratorStuckCheckMissingTimestampTotal", ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(), 0},
 	}
+	idle := NewOrchestrator(newStubStore(), discardLog(), "meterd:test", "")
+	idleStats, idleInFlight, idleErr := idle.Once(context.Background())
+	if idleErr != nil {
+		t.Fatalf("idle orchestrator.Once: %v", idleErr)
+	}
+	idle.IncOps(ops, idleStats, idleInFlight, idleErr)
 	for _, tc := range cases {
 		if tc.c == nil {
 			t.Errorf("%s: nil counter", tc.name)
 			continue
 		}
+		if got := testutil.ToFloat64(tc.c); got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestOrchestrator_IncOpsCountsMultipleRecoveries(t *testing.T) {
+	ops := wire.NewOpsMetrics("meterd_test_obs_recovery_counts")
+	orch := NewOrchestrator(newStubStore(), discardLog(), "meterd:test", "")
+	orch.IncOps(ops, Stats{
+		StuckDetected: 2, StuckCheckMissingTimestamp: 1,
+		AutoAborted: 2, AutoAbortFailed: 1,
+	}, 2, nil)
+	for _, tc := range []struct {
+		name string
+		c    prometheus.Counter
+		want float64
+	}{
+		{"stuck", ops.SafedeployOrchestratorStuckDetectedTotal(), 2},
+		{"missing_timestamp", ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(), 1},
+		{"aborted", ops.SafedeployOrchestratorAbortedTotal(), 2},
+		{"auto_aborted", ops.SafedeployOrchestratorAutoAbortedTotal(), 2},
+		{"auto_abort_failed", ops.SafedeployOrchestratorAutoAbortFailedTotal(), 1},
+	} {
 		if got := testutil.ToFloat64(tc.c); got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
 		}
@@ -139,7 +158,7 @@ func TestOrchestrator_AuditEmittedTotal_BumpsOnFailure(t *testing.T) {
 	if stats.AuditEmitFailed != 1 {
 		t.Errorf("stats.AuditEmitFailed = %d, want 1", stats.AuditEmitFailed)
 	}
-	orch.IncOps(ops, stats, 0)
+	orch.IncOps(ops, stats, 0, err)
 	if got := testutil.ToFloat64(ops.SafedeployOrchestratorAuditEmitFailedTotal()); got != 1 {
 		t.Errorf("SafedeployOrchestratorAuditEmitFailedTotal = %v, want 1", got)
 	}
@@ -169,7 +188,7 @@ func TestOrchestrator_NilOps_Safe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
-	orch.IncOps(nil, stats, 0) // must not panic
+	orch.IncOps(nil, stats, 0, err) // must not panic
 }
 
 // TestOpsMetrics_DeploymentAuditEmittedTotal_UnknownKindDrops pins
@@ -189,12 +208,10 @@ func TestOpsMetrics_DeploymentAuditEmittedTotal_UnknownKindDrops(t *testing.T) {
 }
 
 // TestOrchestrator_IncOps_SetsInFlightGauge (PR-B) pins the gauge
-// behaviour: IncOps(ops, stats, inFlight) sets the
+// behaviour: IncOps(ops, stats, inFlight, err) sets the
 // safedeploy_in_flight_rollouts gauge to the inFlight value. The
 // orchestrator hands the row count from SafedeployListPendingRollouts
-// straight to the gauge every tick so PR-B's
-// canary_fleet_in_flight_high alert has a flat counter-of-truth to
-// rate() against.
+// to the gauge only after a successful tick.
 func TestOrchestrator_IncOps_SetsInFlightGauge(t *testing.T) {
 	store := newStubStore()
 	seedDeployment(store, t, nil)
@@ -214,8 +231,27 @@ func TestOrchestrator_IncOps_SetsInFlightGauge(t *testing.T) {
 	if inFlight < 1 {
 		t.Fatalf("expected inFlight>=1 (seedDeployment inserts a row), got %d", inFlight)
 	}
-	orch.IncOps(ops, stats, inFlight)
+	orch.IncOps(ops, stats, inFlight, err)
 	if got := testutil.ToFloat64(gauge); got != float64(inFlight) {
 		t.Fatalf("expected gauge=%d after IncOps(%d), got %v", inFlight, inFlight, got)
+	}
+	store.listErr = errors.New("listing failed")
+	stats, failedCount, err := orch.Once(context.Background())
+	if !errors.Is(err, store.listErr) || failedCount != 0 {
+		t.Fatalf("failed listing: count=%d err=%v", failedCount, err)
+	}
+	orch.IncOps(ops, stats, failedCount, err)
+	if got := testutil.ToFloat64(gauge); got != float64(inFlight) {
+		t.Fatalf("failed listing overwrote last known count: got %v, want %d", got, inFlight)
+	}
+	store.listErr = nil
+	store.rollouts = map[string]state.Deployment{}
+	stats, emptyCount, err := orch.Once(context.Background())
+	if err != nil || emptyCount != 0 {
+		t.Fatalf("empty listing: count=%d err=%v", emptyCount, err)
+	}
+	orch.IncOps(ops, stats, emptyCount, err)
+	if got := testutil.ToFloat64(gauge); got != 0 {
+		t.Fatalf("successful empty listing should clear gauge: got %v", got)
 	}
 }

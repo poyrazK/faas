@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -360,31 +361,34 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 	if err != nil {
 		return fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
-	credential, err := store.CreateObjectS3Credential(r.Context(), state.ObjectS3Credential{
-		ID: uuid.NewString(), AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
-		SecretSealed: sealed, KID: recipient.String(), Label: plan.objectCred.Label,
-		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
-	}, api.MaxObjectS3CredentialsPerBucket)
-	if err != nil {
-		return fmt.Errorf("create isolated object storage credential: %w", err)
-	}
-	credentialID, bucketID := credential.ID, plan.bucket.ID
-	*cleanup = append(*cleanup, func(ctx context.Context) error {
-		revokeErr := store.RevokeObjectS3Credential(ctx, acct.ID, bucketID, credentialID)
-		if errors.Is(revokeErr, state.ErrNotFound) {
-			revokeErr = nil
-		}
-		secretErr := s.store.DeleteManagedObjectStorageSecrets(ctx, credentialID)
-		return errors.Join(revokeErr, secretErr)
-	})
+	credentialID := uuid.NewString()
 	values := objectStorageBindingSecretValues(
 		objectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix),
 		s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion,
 		plan.bucket.Name, accessKeyID, secretAccessKey,
 	)
-	if problem := s.persistObjectStorageBindingSecrets(r, acct, plan.app, credential.ID, target, values, api.MustLimitsFor(acct.Plan)); problem != nil {
+	limits := api.MustLimitsFor(acct.Plan)
+	secrets, problem := s.sealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
+	if problem != nil {
 		return errors.New(problem.Detail)
 	}
+	_, err = store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+		ID: credentialID, AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
+		SecretSealed: sealed, KID: recipient.String(), Label: plan.objectCred.Label,
+		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
+	if err != nil {
+		return fmt.Errorf("create isolated object storage credential: %w", err)
+	}
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, plan.app, "binding_created", target, "")
+	bucketID := plan.bucket.ID
+	*cleanup = append(*cleanup, func(ctx context.Context) error {
+		changed, err := store.RevokeObjectS3ComputeBinding(ctx, acct.ID, bucketID, credentialID)
+		if err == nil && changed {
+			s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, plan.app, "binding_revoked", target, "")
+		}
+		return err
+	})
 	return nil
 }

@@ -23,6 +23,8 @@ class AccountLimits:
     reads."""
     max_concurrency: int
     deployed_apps: int
+    preview_apps: int
+    """Maximum live pull-request preview apps, separate from production apps."""
     deploys_per_hour: int
     """Account-wide deployment admissions per fixed one-hour window."""
     developer_apps: int
@@ -59,6 +61,8 @@ class AccountLimits:
         max_concurrency = self.max_concurrency
 
         deployed_apps = self.deployed_apps
+
+        preview_apps = self.preview_apps
 
         deploys_per_hour = self.deploys_per_hour
 
@@ -100,6 +104,7 @@ class AccountLimits:
                 "vcpu": vcpu,
                 "max_concurrency": max_concurrency,
                 "deployed_apps": deployed_apps,
+                "preview_apps": preview_apps,
                 "deploys_per_hour": deploys_per_hour,
                 "developer_apps": developer_apps,
                 "included_gb_hours": included_gb_hours,
@@ -131,6 +136,8 @@ class AccountLimits:
         max_concurrency = d.pop("max_concurrency")
 
         deployed_apps = d.pop("deployed_apps")
+
+        preview_apps = d.pop("preview_apps")
 
         deploys_per_hour = d.pop("deploys_per_hour")
 
@@ -171,6 +178,7 @@ class AccountLimits:
             vcpu=vcpu,
             max_concurrency=max_concurrency,
             deployed_apps=deployed_apps,
+            preview_apps=preview_apps,
             deploys_per_hour=deploys_per_hour,
             developer_apps=developer_apps,
             included_gb_hours=included_gb_hours,

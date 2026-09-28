@@ -37,19 +37,20 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 		PreviewEnabled:       false,
 		PreviewTTLHours:      72,
 		PreviewServicePolicy: state.PreviewServicePolicyAllowMarked,
+		ProductionTrigger:    state.ProductionTriggerActions,
 	}
 	stored, err := store.UpsertGitHubDeployPolicy(ctx, policy)
 	if err != nil {
 		t.Fatalf("UpsertGitHubDeployPolicy: %v", err)
 	}
-	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled || stored.PreviewServicePolicy != state.PreviewServicePolicyAllowMarked {
+	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled || stored.PreviewServicePolicy != state.PreviewServicePolicyAllowMarked || stored.ProductionTrigger != state.ProductionTriggerActions {
 		t.Fatalf("stored policy = %+v", stored)
 	}
 	got, err := store.GetGitHubDeployPolicy(ctx, project.ID, acct.ID)
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(stored): %v", err)
 	}
-	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 {
+	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 || got.ProductionTrigger != state.ProductionTriggerActions {
 		t.Fatalf("round trip = %+v", got)
 	}
 	if _, err := store.UpsertGitHubDeployPolicy(ctx, state.GitHubDeployPolicy{

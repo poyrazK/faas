@@ -201,6 +201,10 @@ func validPlatformTenantHostname(host string) bool {
 	return len(host) <= 253 && platformTenantHostnamePattern.MatchString(host) && net.ParseIP(host) == nil
 }
 
+// ValidPlatformTenantHostname reports whether host is a canonical DNS name
+// accepted by tenant-surface hostname records.
+func ValidPlatformTenantHostname(host string) bool { return validPlatformTenantHostname(host) }
+
 func validatePlatformTenantInput(accountID, externalRef, name string) error {
 	externalRef = strings.TrimSpace(externalRef)
 	name = strings.TrimSpace(name)

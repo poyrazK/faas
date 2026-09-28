@@ -19,7 +19,7 @@ func BenchmarkManagerPublishSparseSubscribers(b *testing.B) {
 	}
 	receivers := make([]*connection, 0, subscribers)
 	for i := 0; i < connections; i++ {
-		c := m.addConnection(endpoint, "", nil)
+		c := addSyntheticConnection(b, m, endpoint.ID)
 		if i < subscribers {
 			if err := m.Subscribe(c.info.ID, "updates"); err != nil {
 				b.Fatal(err)

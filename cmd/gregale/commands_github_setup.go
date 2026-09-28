@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const defaultGithubSetupWorkflow = ".github/workflows/gregale.yml"
@@ -47,7 +49,7 @@ func cmdGithubSetup(args []string) int {
 	fs := newFlagSet("github setup", flag.ContinueOnError)
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required for a dry run; otherwise defaults to the current binding)")
 	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or main)")
-	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=scope mappings")
+	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
 	workflow := fs.String("workflow", defaultGithubSetupWorkflow, "workflow path relative to the repository root")
 	preview := fs.Bool("preview", false, "enable pull-request previews")
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
@@ -123,7 +125,7 @@ func cmdGithubSetup(args []string) int {
 		if branch == "" {
 			branch = "main"
 		}
-		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout)
+		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches)
 		existing, exists, err := readGithubSetupWorkflow(workflowFile)
 		if err != nil {
 			return printErr("Could not inspect the workflow file", err)
@@ -174,7 +176,14 @@ func cmdGithubSetup(args []string) int {
 	if !validGithubSetupBranch(branch) {
 		return printErr("Invalid production branch", errors.New("the bound or requested branch contains an unsupported character"))
 	}
-	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout)
+	workflowBranches := parsedBranches
+	if workflowBranches == nil {
+		workflowBranches = status.DeployBranches
+	}
+	if err := validateGithubSetupDeployBranches(workflowBranches); err != nil {
+		return printErr("Invalid saved deploy branch mappings", err)
+	}
+	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches)
 	existing, exists, err := readGithubSetupWorkflow(workflowFile)
 	if err != nil {
 		return printErr("Could not inspect the workflow file", err)
@@ -209,21 +218,33 @@ func cmdGithubSetup(args []string) int {
 		}
 		receipt.Binding = &bound
 	}
-	if policyPatch != nil {
-		policy, err := client.PatchGitHubDeploymentPolicy(ctx, positional[0], *policyPatch)
-		if err != nil {
-			return printErr("GitHub deployment policy update failed", err)
-		}
-		receipt.Policy = &policy
-	}
 	if changed {
 		if err := writeGithubSetupWorkflow(workflowFile, []byte(desired)); err != nil {
 			return printErr("Could not write the workflow file", err)
 		}
 		receipt.WorkflowWritten = true
 	}
+	if policyPatch != nil {
+		policy, err := client.PatchGitHubDeploymentPolicy(ctx, positional[0], *policyPatch)
+		if err != nil {
+			if changed {
+				if rollbackErr := restoreGithubSetupWorkflow(workflowFile, existing, exists); rollbackErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore workflow after policy failure: %w", rollbackErr))
+				}
+			}
+			return printErr("GitHub deployment policy update failed", err)
+		}
+		receipt.Policy = &policy
+	}
 
 	return renderGithubSetupReceipt(receipt, existing, exists)
+}
+
+func restoreGithubSetupWorkflow(path string, previous []byte, existed bool) error {
+	if existed {
+		return writeGithubSetupWorkflow(path, previous)
+	}
+	return os.Remove(path)
 }
 
 func parseGithubSetupDeployBranches(raw string) (map[string]string, error) {
@@ -231,12 +252,29 @@ func parseGithubSetupDeployBranches(raw string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	for branch := range branches {
-		if !validGithubSetupBranch(branch) {
-			return nil, fmt.Errorf("invalid branch %q", branch)
-		}
+	if err := validateGithubSetupDeployBranches(branches); err != nil {
+		return nil, err
 	}
 	return branches, nil
+}
+
+func validateGithubSetupDeployBranches(branches map[string]string) error {
+	if len(branches) > 32 {
+		return errors.New("at most 32 deploy branch mappings are supported")
+	}
+	for branch := range branches {
+		if !validGithubSetupBranch(branch) {
+			return fmt.Errorf("invalid branch %q", branch)
+		}
+		scope := branches[branch]
+		if api.ValidateScope(scope) != nil {
+			return fmt.Errorf("invalid deployment scope %q for branch %q", scope, branch)
+		}
+		if scope != state.DefaultEnvScope && !api.ValidProjectEnvironmentSlug(scope) {
+			return fmt.Errorf("scope %q must be default or a valid project environment slug", scope)
+		}
+	}
+	return nil
 }
 
 func parseGithubSetupIgnoredPaths(raw string) ([]string, error) {
@@ -262,10 +300,11 @@ func parseGithubSetupIgnoredPaths(raw string) ([]string, error) {
 }
 
 func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string, previewServicePolicy string) *api.GitHubDeploymentPolicyPatch {
-	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil && previewServicePolicy == "" {
-		return nil
-	}
-	patch := &api.GitHubDeploymentPolicyPatch{}
+	// The generated push workflow owns production deployments. Keep the App
+	// connected for PR previews and repository access, but disable its push
+	// deploy path before the workflow is committed.
+	trigger := string(state.ProductionTriggerActions)
+	patch := &api.GitHubDeploymentPolicyPatch{ProductionTrigger: &trigger}
 	if preview || noPreview {
 		value := preview
 		patch.PreviewEnabled = &value
@@ -279,9 +318,10 @@ func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ig
 	if ignored != nil {
 		patch.IgnoredPaths = &ignored
 	}
-	if previewServicePolicy != "" {
-		patch.PreviewServicePolicy = &previewServicePolicy
+	if previewServicePolicy == "" {
+		previewServicePolicy = githubSetupPreviewServicesDeny
 	}
+	patch.PreviewServicePolicy = &previewServicePolicy
 	return patch
 }
 
@@ -348,18 +388,30 @@ func validGithubSetupPreviewServicePolicy(policy string) bool {
 	return policy == githubSetupPreviewServicesDeny || policy == githubSetupPreviewServicesAllowMarked
 }
 
-func renderGithubSetupWorkflow(app, repo, branch, rollout string) string {
+func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches map[string]string) string {
 	if branch == "" {
 		branch = "main"
 	}
 	if rollout == "" {
 		rollout = githubSetupRolloutStandard
 	}
-	quotedBranch := strconv.Quote(branch)
 	rolloutInput := ""
 	if rollout == githubSetupRolloutSafe {
 		rolloutInput = "          # Balanced health-gated rollout; available on Pro/Scale.\n          rollout: \"safe\"\n"
 	}
+	branches := githubSetupWorkflowBranches(branch, deployBranches)
+	var branchFilters strings.Builder
+	var dispatchConditions []string
+	for _, deployBranch := range branches {
+		branchFilters.WriteString("      - ")
+		branchFilters.WriteString(strconv.Quote(deployBranch))
+		branchFilters.WriteByte('\n')
+		dispatchConditions = append(dispatchConditions, "github.ref == "+githubSetupExpressionString("refs/heads/"+deployBranch))
+	}
+	workflowDispatchCondition := "github.event_name != 'workflow_dispatch' || " + strings.Join(dispatchConditions, " || ")
+	githubEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "production")
+	deploymentEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "")
+	deploymentConcurrencyScope := githubSetupBranchEnvironmentExpression(deployBranches, state.DefaultEnvScope)
 	return fmt.Sprintf(`# Gregale deploy · generated by `+"`gregale github setup`"+`
 # App: %s · Repo: %s · Production branch: %s
 # PR previews are managed by the connected GitHub integration.
@@ -367,13 +419,20 @@ name: Gregale deploy
 on:
   push:
     branches:
-      - %s
+%s    tags:
+      - "v*"
   workflow_dispatch:
+
+concurrency:
+  group: gregale-${{ github.repository }}-%s-%s
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: ${{ %s }}
     runs-on: ubuntu-22.04
-    environment: production
+    environment:
+      name: %s
     permissions:
       contents: read
       checks: write
@@ -385,9 +444,43 @@ jobs:
           app: %s
           repo: ${{ github.repository }}
           ref: ${{ github.sha }}
+          environment: %s
           wait: "true"
           wait-timeout: "1200"
-%s`, app, repo, branch, quotedBranch, githubActionRepo, githubActionPath, githubActionVersion, defaultAPIBase, app, rolloutInput)
+%s`, app, repo, branch, branchFilters.String(), app, deploymentConcurrencyScope, workflowDispatchCondition, githubEnvironment, githubActionRepo, githubActionPath, githubActionVersion, defaultAPIBase, app, deploymentEnvironment, rolloutInput)
+}
+
+func githubSetupWorkflowBranches(productionBranch string, deployBranches map[string]string) []string {
+	branches := []string{productionBranch}
+	var mapped []string
+	for branch := range deployBranches {
+		if branch == productionBranch {
+			continue
+		}
+		mapped = append(mapped, branch)
+	}
+	sort.Strings(mapped)
+	return append(branches, mapped...)
+}
+
+func githubSetupBranchEnvironmentExpression(deployBranches map[string]string, fallback string) string {
+	branches := make([]string, 0, len(deployBranches))
+	for branch, scope := range deployBranches {
+		if scope != state.DefaultEnvScope {
+			branches = append(branches, branch)
+		}
+	}
+	sort.Strings(branches)
+	terms := make([]string, 0, len(branches)+1)
+	for _, branch := range branches {
+		terms = append(terms, "github.ref == "+githubSetupExpressionString("refs/heads/"+branch)+" && "+githubSetupExpressionString(deployBranches[branch]))
+	}
+	terms = append(terms, githubSetupExpressionString(fallback))
+	return "${{ " + strings.Join(terms, " || ") + " }}"
+}
+
+func githubSetupExpressionString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func readGithubSetupWorkflow(path string) ([]byte, bool, error) {
@@ -464,8 +557,12 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 		_, _ = fmt.Fprintf(osStdout, "  binding:           %s\n", receipt.Binding.RepoFullName)
 	}
 	if receipt.Policy != nil {
+		_, _ = fmt.Fprintf(osStdout, "  production_trigger: %s\n", receipt.Policy.ProductionTrigger)
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
+	}
+	if receipt.WorkflowWritten {
+		_, _ = fmt.Fprintf(osStdout, "  next:              commit and push %s to activate production deploys\n", receipt.WorkflowPath)
 	}
 	if receipt.DryRun {
 		_, _ = fmt.Fprintln(osStdout)

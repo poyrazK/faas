@@ -1513,9 +1513,15 @@ type ProjectEnvironmentEdgeRule struct {
 
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
-// have a positive PR number and remain on the normal deployed-app quota.
+// have a positive PR number and have a separate bounded quota.
 func IsDeveloperApp(app App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
+// IsPRPreviewApp identifies a leased pull-request preview. It is separate
+// from both production and developer environments for quota accounting.
+func IsPRPreviewApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0
 }
 
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
@@ -1605,6 +1611,9 @@ type AppManifest struct {
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceReliability is caller-owned policy keyed by a declared target name.
+	// It lives in the existing manifest JSONB, so no app-row migration is needed.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
@@ -1686,7 +1695,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1700,6 +1709,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	existing.ServiceBindingTransport = desired.ServiceBindingTransport
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
@@ -2056,6 +2066,11 @@ type Deployment struct {
 	// migrations/00047). Empty for image/tarball deploys that don't
 	// have an upstream commit.
 	CommitSHA string
+	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
+	// for source-ref deployments. Empty/zero for pinned SHAs, tags, and all
+	// other deployment kinds; imaged checks the branch head before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).
@@ -2787,8 +2802,11 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain           string
-	AppID            string
+	Domain string
+	AppID  string
+	// EnvironmentID is empty for the legacy application-wide route. A
+	// non-empty value binds the hostname to one project environment.
+	EnvironmentID    string
 	ChallengeToken   string
 	VerifiedAt       time.Time // zero = unverified
 	CertStatus       CustomDomainCertStatus
@@ -3344,6 +3362,8 @@ const (
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
+	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
+	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3370,6 +3390,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventPlatformTenantStatementFinalized,
+	AppWebhookEventDebugRegressionDetected,
+	AppWebhookEventDebugRegressionResolved,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -6474,34 +6496,42 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                         string
-	AccountID                  string
-	ProjectID                  string
-	ProjectSlug                string
-	FromEnvironment            string
-	ToEnvironment              string
-	PromotionHash              string
-	ReleaseGraphMode           bool
-	SourceReleaseSetID         string
-	PreviousTargetReleaseSetID string
-	TargetReleaseSetID         string
-	RestoredTargetReleaseSetID string
-	ReleaseTTLSeconds          int
-	IdempotencyKey             string
-	Status                     string
-	Error                      string
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
-	CompletedAt                *time.Time
-	RollbackStatus             string
-	RollbackIdempotencyKey     string
-	RollbackError              string
-	RollbackStartedAt          *time.Time
-	RollbackCompletedAt        *time.Time
-	VerificationStatus         string
-	VerificationError          string
-	VerificationStartedAt      *time.Time
-	VerificationCompletedAt    *time.Time
+	ID                           string
+	AccountID                    string
+	ProjectID                    string
+	ProjectSlug                  string
+	FromEnvironment              string
+	ToEnvironment                string
+	PromotionHash                string
+	ReleaseGraphMode             bool
+	SourceReleaseSetID           string
+	PreviousTargetReleaseSetID   string
+	TargetReleaseSetID           string
+	RestoredTargetReleaseSetID   string
+	ReleaseTTLSeconds            int
+	IdempotencyKey               string
+	Status                       string
+	Error                        string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+	CompletedAt                  *time.Time
+	RollbackStatus               string
+	RollbackIdempotencyKey       string
+	RollbackError                string
+	RollbackStartedAt            *time.Time
+	RollbackCompletedAt          *time.Time
+	VerificationStatus           string
+	VerificationError            string
+	VerificationStartedAt        *time.Time
+	VerificationCompletedAt      *time.Time
+	RollbackReleaseSetID         string
+	SyncConfig                   bool
+	SourceConfigHash             string
+	PreviousTargetConfigHash     string
+	SourceConfigSnapshot         json.RawMessage
+	PreviousTargetConfigSnapshot json.RawMessage
+	TargetConfigVersion          int64
+	RollbackConfigVersion        int64
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.

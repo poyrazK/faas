@@ -12,10 +12,46 @@ import (
 )
 
 var (
-	_ OrgActivityOutboxStore             = (*PgStore)(nil)
-	_ OrgActivityEnvMutationStore        = (*PgStore)(nil)
-	_ OrgActivityDeploymentMutationStore = (*PgStore)(nil)
+	_ OrgActivityOutboxStore               = (*PgStore)(nil)
+	_ OrgActivityEnvMutationStore          = (*PgStore)(nil)
+	_ OrgActivityDeploymentMutationStore   = (*PgStore)(nil)
+	_ OrgActivityDomainMutationStore       = (*PgStore)(nil)
+	_ OrgActivityCancellationMutationStore = (*PgStore)(nil)
 )
+
+func enqueueDeploymentOutcomeActivityTx(ctx context.Context, tx pgx.Tx, deploymentID, outcome, errorCode string) error {
+	var payload []byte
+	err := tx.QueryRow(ctx, `
+		SELECT activity
+		  FROM org_activity_outbox
+		 WHERE source_type IN ('deployment.requested', 'rollback.requested')
+		   AND activity->>'Kind' IN ('deploy.requested', 'deploy.rollback_requested')
+		   AND activity->>'DeploymentID' = $1::uuid::text
+		 ORDER BY id DESC
+		 LIMIT 1
+	`, deploymentID).Scan(&payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("state: load deployment request activity: %w", err)
+	}
+	var request OrgActivity
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return fmt.Errorf("state: decode deployment request activity: %w", err)
+	}
+	activity, emit, err := deploymentOutcomeActivity(request, outcome, errorCode, time.Now())
+	if err != nil {
+		return err
+	}
+	if !emit {
+		return nil
+	}
+	if _, err := enqueueOrgActivityOutboxTx(ctx, tx, activity); err != nil {
+		return fmt.Errorf("state: enqueue deployment outcome activity: %w", err)
+	}
+	return nil
+}
 
 // UpsertAppEnvInScopeWithActivity persists the env update and its activity
 // handoff in one transaction. If either write fails, neither is committed.
@@ -75,6 +111,35 @@ func (s *PgStore) DeleteAppEnvInScopeWithActivity(ctx context.Context, accountID
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: commit env activity delete: %w", err)
+	}
+	return outboxID, nil
+}
+
+// DeleteCustomDomainWithActivity deletes an existing domain and enqueues its
+// timeline handoff in one transaction. A missing domain produces no event.
+func (s *PgStore) DeleteCustomDomainWithActivity(ctx context.Context, domain string, entry OrgActivity) (int64, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("state: begin domain activity delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `delete from custom_domains where domain = $1`, domain)
+	if err != nil {
+		return 0, fmt.Errorf("state: delete domain with activity: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotFound
+	}
+	outboxID, err := enqueueOrgActivityOutboxTx(ctx, tx, entry)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("state: commit domain activity delete: %w", err)
 	}
 	return outboxID, nil
 }

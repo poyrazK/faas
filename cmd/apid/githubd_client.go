@@ -215,6 +215,10 @@ func (stubGithubdClient) StreamSourceRef(context.Context, string, int64, string,
 	return nil, errGithubdNotReady
 }
 
+func (stubGithubdClient) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
+	return "", false, errGithubdNotReady
+}
+
 // Close is a no-op for the stub.
 func (stubGithubdClient) Close() error { return nil }
 
@@ -339,6 +343,10 @@ func (l *liveClient) StreamSourceRef(ctx context.Context, accountID string, inst
 		Body:  &liveSourceRefBody{ReadCloser: res.Body, remote: res.Stats, local: stats},
 		Stats: stats,
 	}, nil
+}
+
+func (l *liveClient) GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (string, bool, error) {
+	return l.c.GetBranchHead(ctx, accountID, installationID, repoFullName, branch)
 }
 
 type liveSourceRefBody struct {

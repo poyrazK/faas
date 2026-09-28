@@ -8,6 +8,82 @@ import (
 	"time"
 )
 
+const (
+	MaxPlatformTenantCredentialScopes          = 3
+	MaxPlatformTenantKeysPerConsumer           = 100
+	MaxPlatformTenantSelfConsumerRevokeBatch   = 100
+	MaxPlatformTenantSelfConsumerApplySurfaces = 100
+)
+
+type SetPlatformTenantCredentialPolicyRequest struct {
+	AllowedScopes      []string `json:"allowed_scopes"`
+	MaxKeysPerConsumer *int     `json:"max_keys_per_consumer"`
+}
+
+type PlatformTenantCredentialPolicyResponse struct {
+	TenantID           string     `json:"tenant_id"`
+	Enabled            bool       `json:"enabled"`
+	AllowedScopes      []string   `json:"allowed_scopes"`
+	MaxKeysPerConsumer int        `json:"max_keys_per_consumer"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+}
+
+// PlatformTenantSelfConsumerResponse omits app IDs and account-owned details;
+// the tenant only needs its stable consumer ID to manage credentials.
+type PlatformTenantSelfConsumerResponse struct {
+	ConsumerID  string `json:"consumer_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+}
+
+type PlatformTenantSelfConsumersResponse struct {
+	Consumers []PlatformTenantSelfConsumerResponse `json:"consumers"`
+}
+
+// ApplyPlatformTenantSelfConsumersRequest creates or replays one customer
+// identity per selected active surface already linked to the bearer tenant.
+type ApplyPlatformTenantSelfConsumersRequest struct {
+	ExternalRef string   `json:"external_ref"`
+	Name        string   `json:"name"`
+	SurfaceIDs  []string `json:"surface_ids"`
+	DryRun      bool     `json:"dry_run,omitempty"`
+}
+
+type PlatformTenantSelfConsumerApplyItemResponse struct {
+	SurfaceID   string `json:"surface_id"`
+	ConsumerID  string `json:"consumer_id,omitempty"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Action      string `json:"action"`
+}
+
+type ApplyPlatformTenantSelfConsumersResponse struct {
+	DryRun    bool                                          `json:"dry_run"`
+	Consumers []PlatformTenantSelfConsumerApplyItemResponse `json:"consumers"`
+}
+
+// CreatePlatformTenantSelfConsumerRequest creates an identity on a surface
+// already linked to the authenticated tenant. App and tenant IDs are derived
+// server-side and cannot be selected by the caller.
+type CreatePlatformTenantSelfConsumerRequest struct {
+	SurfaceID   string `json:"surface_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+}
+
+// RevokePlatformTenantSelfConsumersRequest revokes selected app-local
+// identities and their credentials as one tenant-scoped operation.
+type RevokePlatformTenantSelfConsumersRequest struct {
+	ConsumerIDs []string `json:"consumer_ids"`
+}
+
+type PlatformTenantSelfConsumerRevocationResponse struct {
+	Consumers   []PlatformTenantSelfConsumerResponse `json:"consumers"`
+	RevokedKeys int                                  `json:"revoked_keys"`
+}
+
 // PlatformTenantCredentialIntent contains only public key metadata and the
 // SHA-256 digest of a client-generated key. Never send the plaintext key.
 type PlatformTenantCredentialIntent struct {
@@ -85,4 +161,57 @@ func (c *Client) ListPlatformTenantCredentials(ctx context.Context, tenantID str
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) GetPlatformTenantCredentialPolicy(ctx context.Context, tenantID string) (PlatformTenantCredentialPolicyResponse, error) {
+	var out PlatformTenantCredentialPolicyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/credential-policy"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) SetPlatformTenantCredentialPolicy(ctx context.Context, tenantID string, req SetPlatformTenantCredentialPolicyRequest) (PlatformTenantCredentialPolicyResponse, error) {
+	var out PlatformTenantCredentialPolicyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/credential-policy"
+	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+func (c *Client) ListPlatformTenantSelfConsumers(ctx context.Context) (PlatformTenantSelfConsumersResponse, error) {
+	var out PlatformTenantSelfConsumersResponse
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/consumers", nil, &out)
+}
+
+func (c *Client) CreatePlatformTenantSelfConsumer(ctx context.Context, req CreatePlatformTenantSelfConsumerRequest) (PlatformTenantSelfConsumerResponse, error) {
+	var out PlatformTenantSelfConsumerResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers", req, &out)
+}
+
+func (c *Client) RevokePlatformTenantSelfConsumers(ctx context.Context, req RevokePlatformTenantSelfConsumersRequest) (PlatformTenantSelfConsumerRevocationResponse, error) {
+	var out PlatformTenantSelfConsumerRevocationResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers/revoke", req, &out)
+}
+
+func (c *Client) ApplyPlatformTenantSelfConsumers(ctx context.Context, req ApplyPlatformTenantSelfConsumersRequest) (ApplyPlatformTenantSelfConsumersResponse, error) {
+	var out ApplyPlatformTenantSelfConsumersResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/consumers/apply", req, &out)
+}
+
+func (c *Client) ListPlatformTenantSelfCredentials(ctx context.Context, limit, offset int) (PlatformTenantCredentialsResponse, error) {
+	var out PlatformTenantCredentialsResponse
+	path := "/v1/platform-tenant-self/credentials"
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) ApplyPlatformTenantSelfCredentials(ctx context.Context, req ApplyPlatformTenantCredentialsRequest) (ApplyPlatformTenantCredentialsResponse, error) {
+	var out ApplyPlatformTenantCredentialsResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/credentials/apply", req, &out)
 }
