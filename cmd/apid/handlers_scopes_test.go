@@ -195,6 +195,14 @@ func TestScopeMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("usage-read-only-key/billing-cancel-forbidden", func(t *testing.T) {
+		// Cancelling downgrades the plan at period end; a read-only
+		// usage key (a cost dashboard) must not be able to do it.
+		e := setupWithScopes(t, []string{api.ScopeUsageRead})
+		rec := e.do(t, http.MethodPost, "/v1/billing/cancel", nil, nil)
+		assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+	})
+
 	t.Run("usage-read-only-key/GET-apps-forbidden", func(t *testing.T) {
 		e := setupWithScopes(t, []string{api.ScopeUsageRead})
 		rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)

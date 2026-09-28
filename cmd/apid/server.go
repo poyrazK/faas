@@ -2813,8 +2813,11 @@ func (s *server) handler() http.Handler {
 	// but session-cookie-only — the CLI front-loads the typed-
 	// confirm gate from PR #782 ("cancel subscription"). Headless
 	// callers can wire their own confirm. MFA-gated for parity
-	// with changePlan.
-	mux.HandleFunc("POST /v1/billing/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.postBillingCancel)))))
+	// with changePlan. Cancelling is a plan change (it downgrades to
+	// Free at period end), so it carries changePlan's admin scope and
+	// step-up: a usage:read key handed to a cost dashboard must not be
+	// able to end the subscription.
+	mux.HandleFunc("POST /v1/billing/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.postBillingCancel))))))
 
 	// Credit consumption reducer (issue #279 PR-C). Admin-only +
 	// MFA-gated — operator action that mutates money (spec §11). The
