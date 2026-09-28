@@ -291,6 +291,8 @@ func TestPg_UpsertGithubInstallBinding_PersistsAllColumns(t *testing.T) {
 		BindingID:        "bind-pg-1",
 		InstallID:        42,
 		RepoFullName:     "octo/api",
+		OwnerID:          123456,
+		RepoID:           789012,
 		ProductionBranch: "main",
 		LinkedAt:         linked,
 	}
@@ -315,6 +317,9 @@ func TestPg_UpsertGithubInstallBinding_PersistsAllColumns(t *testing.T) {
 	}
 	if got.InstallID != 42 {
 		t.Errorf("InstallID = %d, want 42", got.InstallID)
+	}
+	if got.OwnerID != 123456 || got.RepoID != 789012 {
+		t.Errorf("identity IDs = (%d, %d), want (123456, 789012)", got.OwnerID, got.RepoID)
 	}
 	if got.ProductionBranch != "main" {
 		t.Errorf("ProductionBranch = %q, want main", got.ProductionBranch)

@@ -178,6 +178,37 @@ func (q *Queries) AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg A
 	return i, err
 }
 
+const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
+select min(a.github_install_account_id::text)::uuid as account_id
+from apps a
+join github_installations gi
+  on gi.account_id = a.github_install_account_id
+ and gi.installation_id = a.github_install_id
+where lower(a.github_repo_full_name) = lower($1::text)
+  and a.github_install_account_id = a.account_id
+  and a.deleted_at is null
+  and ($2::bigint = 0 or a.github_owner_id = $2::bigint)
+  and ($3::bigint = 0 or a.github_repo_id = $3::bigint)
+having count(distinct a.github_install_account_id) = 1
+`
+
+type AccountIDByGitHubOIDCRepositoryIdentityParams struct {
+	RepoFullName string
+	OwnerID      int64
+	RepoID       int64
+}
+
+// First-use GitHub Actions bootstrap through an OAuth-verified install
+// binding. Immutable subjects must match both persisted numeric IDs as well
+// as the current repository name; a zero ID preserves legacy name-only
+// subject behavior.
+func (q *Queries) AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, accountIDByGitHubOIDCRepositoryIdentity, arg.RepoFullName, arg.OwnerID, arg.RepoID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const accountsByIDs = `-- name: AccountsByIDs :many
 select id, email, plan, status, coalesce(provider_customer_id, ''), coalesce(stripe_subscription_item, ''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required
 from accounts where id = any($1::uuid[])

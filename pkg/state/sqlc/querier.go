@@ -25,6 +25,11 @@ type Querier interface {
 	// treating them as "accept any subject" routed every foreign
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
+	// First-use GitHub Actions bootstrap through an OAuth-verified install
+	// binding. Immutable subjects must match both persisted numeric IDs as well
+	// as the current repository name; a zero ID preserves legacy name-only
+	// subject behavior.
+	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)

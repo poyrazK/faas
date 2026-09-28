@@ -442,7 +442,8 @@ func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
 		}
 		if err := m.UpsertGithubInstallBinding(ctx, GitHubBinding{
 			AppID: app.ID, AccountID: acct.ID, BindingID: "bind-" + slug,
-			InstallID: installID, RepoFullName: "OctoCat/Hello", ProductionBranch: "main",
+			InstallID: installID, RepoFullName: "OctoCat/Hello", OwnerID: 123456, RepoID: 789012,
+			ProductionBranch: "main",
 		}); err != nil {
 			t.Fatalf("UpsertGithubInstallBinding(%s): %v", slug, err)
 		}
@@ -461,6 +462,10 @@ func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
 		if resolved.ID != first.ID {
 			t.Fatalf("AccountByOIDCSubject(%q) resolved account %q, want %q", subject, resolved.ID, first.ID)
 		}
+	}
+	if _, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
+		"repo:octocat@654321/hello@789012:environment:production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("immutable subject with mismatched owner ID: got %v, want ErrNotFound", err)
 	}
 
 	seed("oidc-github-b-"+uuid.NewString()+"@example.com", "oidc-gh-b-"+uuid.NewString(), 202)

@@ -504,34 +504,30 @@ func (s *PgStore) AccountByOIDCSubject(ctx context.Context, issuerURL, subject s
 	return s.AccountByID(ctx, uuidFromPgtype(row.ID).String())
 }
 
-// AccountByOIDCRepositoryBinding resolves a GitHub Actions subject to the one
-// account whose app is bound to the subject's repository through an
-// installation proven by that account's user OAuth. ErrNotFound when the
-// issuer is not GitHub Actions, the repository is unbound, or more than one
-// account binds it.
+// AccountByOIDCRepositoryBinding resolves a GitHub Actions subject, including
+// immutable owner and repository IDs when present, to the one account whose app
+// is bound through an installation proven by that account's user OAuth.
+// ErrNotFound when the issuer is not GitHub Actions, the repository is unbound,
+// the immutable IDs do not match, or more than one account binds it.
 func (s *PgStore) AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (Account, error) {
-	repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+	identity, ok := githubActionsRepositoryIdentityFromSubject(issuerURL, subject)
 	if !ok {
 		return Account{}, ErrNotFound
 	}
-	var accountID string
-	err := s.pool.QueryRow(ctx, `
-		select min(a.github_install_account_id::text)
-		from apps a
-		join github_installations gi
-		  on gi.account_id = a.github_install_account_id
-		 and gi.installation_id = a.github_install_id
-		where lower(a.github_repo_full_name) = lower($1)
-		  and a.github_install_account_id = a.account_id
-		  and a.deleted_at is null
-		having count(distinct a.github_install_account_id) = 1`, repo).Scan(&accountID)
+	q := sqlc.New()
+	accountUUID, err := q.AccountIDByGitHubOIDCRepositoryIdentity(ctx, s.pool,
+		sqlc.AccountIDByGitHubOIDCRepositoryIdentityParams{
+			RepoFullName: identity.FullName,
+			OwnerID:      identity.OwnerID,
+			RepoID:       identity.RepoID,
+		})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrNotFound
 	}
 	if err != nil {
 		return Account{}, err
 	}
-	return s.AccountByID(ctx, accountID)
+	return s.AccountByID(ctx, uuidFromPgtype(accountUUID).String())
 }
 
 // UpsertOIDCTrustPolicy is the per-(account, issuer) insert-or-update
@@ -5960,6 +5956,8 @@ func (s *PgStore) RecordGitHubBinding(ctx context.Context, appID string, install
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
+		     github_owner_id = null,
+		     github_repo_id = null,
 		     github_production_branch = $4
 		 where id = $1`,
 		appID, installID, repoFullName, nullString(productionBranch))
@@ -5972,12 +5970,14 @@ func (s *PgStore) RecordGitHubBinding(ctx context.Context, appID string, install
 func (s *PgStore) GitHubBindingForApp(ctx context.Context, appID string) (GitHubBinding, error) {
 	var b GitHubBinding
 	var installID *int64
+	var ownerID, repoID *int64
 	var repoFullName *string
 	var branch *string
 	err := s.pool.QueryRow(ctx,
-		`select id, github_install_id, github_repo_full_name, github_production_branch
+		`select id, github_install_id, github_repo_full_name, github_owner_id,
+		        github_repo_id, github_production_branch
 		 from apps where id = $1`, appID,
-	).Scan(&b.AppID, &installID, &repoFullName, &branch)
+	).Scan(&b.AppID, &installID, &repoFullName, &ownerID, &repoID, &branch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -5990,6 +5990,12 @@ func (s *PgStore) GitHubBindingForApp(ctx context.Context, appID string) (GitHub
 	b.InstallID = *installID
 	if repoFullName != nil {
 		b.RepoFullName = *repoFullName
+	}
+	if ownerID != nil {
+		b.OwnerID = *ownerID
+	}
+	if repoID != nil {
+		b.RepoID = *repoID
 	}
 	if branch != nil {
 		b.ProductionBranch = *branch
@@ -6042,6 +6048,9 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.AccountID == "" {
 		return fmt.Errorf("state: AccountID required")
 	}
+	if b.OwnerID < 0 || b.RepoID < 0 || (b.OwnerID == 0) != (b.RepoID == 0) {
+		return fmt.Errorf("state: GitHub owner and repository IDs must both be positive or both be absent")
+	}
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
@@ -6049,13 +6058,15 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
-		     github_production_branch = $4,
-		     github_install_binding_id = $5,
-		     github_install_account_id = $6,
-		     github_install_linked_at = $7
-		 where id = $1 and account_id = $6`,
-		b.AppID, b.InstallID, nullString(b.RepoFullName), nullString(b.ProductionBranch),
-		b.BindingID, b.AccountID, b.LinkedAt,
+		     github_owner_id = $4,
+		     github_repo_id = $5,
+		     github_production_branch = $6,
+		     github_install_binding_id = $7,
+		     github_install_account_id = $8,
+		     github_install_linked_at = $9
+		 where id = $1 and account_id = $8`,
+		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
+		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -6077,6 +6088,8 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		`update apps
 		 set github_install_id = null,
 		     github_repo_full_name = null,
+		     github_owner_id = null,
+		     github_repo_id = null,
 		     github_production_branch = null,
 		     github_install_binding_id = null,
 		     github_install_account_id = null,
@@ -6295,7 +6308,8 @@ func (s *PgStore) ListGitHubInstallBindingsForInstallation(ctx context.Context, 
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id::text, github_install_binding_id,
 		        github_install_linked_at, github_install_id,
-		        github_repo_full_name, github_production_branch
+		        github_repo_full_name, github_owner_id, github_repo_id,
+		        github_production_branch
 		   from apps
 		  where github_install_id = $1
 		    and github_repo_full_name is not null
@@ -6310,8 +6324,9 @@ func (s *PgStore) ListGitHubInstallBindingsForInstallation(ctx context.Context, 
 		var bindingID *string
 		var linkedAt *time.Time
 		var installID *int64
+		var ownerID, repoID *int64
 		var repo, branch *string
-		if err := rows.Scan(&b.AppID, &b.AccountID, &bindingID, &linkedAt, &installID, &repo, &branch); err != nil {
+		if err := rows.Scan(&b.AppID, &b.AccountID, &bindingID, &linkedAt, &installID, &repo, &ownerID, &repoID, &branch); err != nil {
 			return nil, err
 		}
 		if bindingID != nil {
@@ -6325,6 +6340,12 @@ func (s *PgStore) ListGitHubInstallBindingsForInstallation(ctx context.Context, 
 		}
 		if repo != nil {
 			b.RepoFullName = *repo
+		}
+		if ownerID != nil {
+			b.OwnerID = *ownerID
+		}
+		if repoID != nil {
+			b.RepoID = *repoID
 		}
 		if branch != nil {
 			b.ProductionBranch = *branch
@@ -6394,6 +6415,8 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		update apps
 		   set github_install_id = null,
 		       github_repo_full_name = null,
+		       github_owner_id = null,
+		       github_repo_id = null,
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
@@ -6444,6 +6467,8 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		update apps
 		   set github_install_id = null,
 		       github_repo_full_name = null,
+		       github_owner_id = null,
+		       github_repo_id = null,
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
@@ -6487,17 +6512,19 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 	}
 	var b GitHubBinding
 	var installID *int64
+	var ownerID, repoID *int64
 	var branch *string
 	var bindingID *string
 	var linkedAt *time.Time
 	err := s.pool.QueryRow(ctx,
-		`select id, github_install_id, github_repo_full_name, github_production_branch,
+		`select id, github_install_id, github_repo_full_name, github_owner_id,
+		        github_repo_id, github_production_branch,
 		        github_install_binding_id, github_install_account_id, github_install_linked_at
 		 from apps
 		 where id = $1
 		   and account_id = $2
 		   and github_install_id is not null`, appID, accountID,
-	).Scan(&b.AppID, &installID, &b.RepoFullName, &branch, &bindingID, &b.AccountID, &linkedAt)
+	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -6506,6 +6533,12 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 	}
 	if installID != nil {
 		b.InstallID = *installID
+	}
+	if ownerID != nil {
+		b.OwnerID = *ownerID
+	}
+	if repoID != nil {
+		b.RepoID = *repoID
 	}
 	if branch != nil {
 		b.ProductionBranch = *branch
@@ -6544,13 +6577,15 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 	}
 	var b GitHubBinding
 	var installID *int64
+	var ownerID, repoID *int64
 	var branch *string
 	var accountID *string
 	var bindingID *string
 	var linkedAt *time.Time
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_account_id, github_install_binding_id, github_install_linked_at,
-		        github_install_id, github_repo_full_name, github_production_branch
+		        github_install_id, github_repo_full_name, github_owner_id, github_repo_id,
+		        github_production_branch
 		 from apps
 		 where github_repo_full_name = $1
 		   and github_production_branch = $2
@@ -6558,7 +6593,7 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 		   and ($3::bigint = 0 or github_install_id = $3)
 		 order by id
 		 limit 1`, repoFullName, productionBranch, installationID,
-	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &branch)
+	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -6569,6 +6604,12 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 		return GitHubBinding{}, ErrNotFound
 	}
 	b.InstallID = *installID
+	if ownerID != nil {
+		b.OwnerID = *ownerID
+	}
+	if repoID != nil {
+		b.RepoID = *repoID
+	}
 	if accountID != nil {
 		b.AccountID = *accountID
 	}
@@ -6594,7 +6635,8 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, github_install_id, github_repo_full_name, github_production_branch,
+		`select id, github_install_id, github_repo_full_name, github_owner_id,
+		        github_repo_id, github_production_branch,
 		        github_install_binding_id, github_install_linked_at
 		 from apps
 		 where github_install_account_id = $1
@@ -6608,14 +6650,21 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		var b GitHubBinding
 		b.AccountID = accountID
 		var installID *int64
+		var ownerID, repoID *int64
 		var branch *string
 		var bindingID *string
 		var linkedAt *time.Time
-		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &branch, &bindingID, &linkedAt); err != nil {
+		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt); err != nil {
 			return nil, err
 		}
 		if installID != nil {
 			b.InstallID = *installID
+		}
+		if ownerID != nil {
+			b.OwnerID = *ownerID
+		}
+		if repoID != nil {
+			b.RepoID = *repoID
 		}
 		if branch != nil {
 			b.ProductionBranch = *branch
@@ -25279,6 +25328,13 @@ func nullString(s string) any {
 }
 
 func nullableInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
+func nullableInt64(n int64) any {
 	if n == 0 {
 		return nil
 	}

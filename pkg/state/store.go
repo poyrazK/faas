@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,53 +48,67 @@ var (
 // `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` subject forms. It is used only as a
 // first-use bridge from an already OAuth-verified repository binding to an
 // OIDC trust policy. The caller must still verify and pin the original,
-// complete subject; these names are only for locating the existing binding.
+// complete subject; the parsed name and IDs only locate the existing binding.
 func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
+	identity, ok := githubActionsRepositoryIdentityFromSubject(issuerURL, subject)
+	return identity.FullName, ok
+}
+
+type githubActionsRepositoryIdentity struct {
+	FullName string
+	OwnerID  int64
+	RepoID   int64
+}
+
+func githubActionsRepositoryIdentityFromSubject(issuerURL, subject string) (githubActionsRepositoryIdentity, bool) {
 	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
 	rest := strings.TrimPrefix(subject, "repo:")
 	colon := strings.IndexByte(rest, ':')
 	if colon <= 0 {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
 	repoPath := rest[:colon]
 	if strings.Count(repoPath, "/") != 1 || strings.HasPrefix(repoPath, "/") || strings.HasSuffix(repoPath, "/") {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
 	parts := strings.SplitN(repoPath, "/", 2)
-	owner, ownerImmutable, ok := githubActionsSubjectRepoComponent(parts[0])
+	owner, ownerID, ownerImmutable, ok := githubActionsSubjectRepoComponent(parts[0])
 	if !ok {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
-	repo, repoImmutable, ok := githubActionsSubjectRepoComponent(parts[1])
+	repo, repoID, repoImmutable, ok := githubActionsSubjectRepoComponent(parts[1])
 	if !ok || ownerImmutable != repoImmutable {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
-	return owner + "/" + repo, true
+	return githubActionsRepositoryIdentity{
+		FullName: owner + "/" + repo,
+		OwnerID:  ownerID,
+		RepoID:   repoID,
+	}, true
 }
 
 // GitHub's immutable OIDC subject format appends a numeric owner or repo ID
 // after an @. Repository names themselves cannot contain @, so reject
 // malformed or partial immutable components rather than treating an ID as
 // part of the binding name.
-func githubActionsSubjectRepoComponent(component string) (name string, immutable, ok bool) {
+func githubActionsSubjectRepoComponent(component string) (name string, id int64, immutable, ok bool) {
 	if !strings.Contains(component, "@") {
-		return component, false, component != ""
+		return component, 0, false, component != ""
 	}
 	if strings.Count(component, "@") != 1 {
-		return "", false, false
+		return "", 0, false, false
 	}
-	name, id, _ := strings.Cut(component, "@")
-	if name == "" || id == "" {
-		return "", false, false
+	name, idPart, _ := strings.Cut(component, "@")
+	if name == "" || idPart == "" {
+		return "", 0, false, false
 	}
-	for _, r := range id {
-		if r < '0' || r > '9' {
-			return "", false, false
-		}
+	numericID, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || numericID <= 0 {
+		return "", 0, false, false
 	}
-	return name, true, true
+	return name, numericID, true, true
 }
 
 // ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
