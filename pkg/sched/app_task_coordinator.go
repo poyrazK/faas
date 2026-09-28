@@ -258,6 +258,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		code, message := "restore_failed", "app task environment could not be prepared"
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
+		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
+			code, message = accountInactiveFailureCode, accountInactiveFailureMessage
 		}
 		c.log.Warn("schedd: app task restore failed", "task_id", task.ID, "error_class", appTaskErrorClass(restoreErr))
 		return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, code, message), c.now().UTC())

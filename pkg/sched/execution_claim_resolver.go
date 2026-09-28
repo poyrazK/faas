@@ -62,6 +62,9 @@ var (
 	ErrExecutionClaimResolverUnwired        = errors.New("sched: execution claim resolver is not wired")
 	ErrExecutionClaimInvalid                = errors.New("sched: execution claim is invalid")
 	ErrExecutionRuntimeArtifactsUnavailable = errors.New("sched: execution runtime artifacts unavailable")
+	// ErrExecutionAccountInactive refuses a claim whose account was
+	// suspended (or is pending deletion) after the execution was queued.
+	ErrExecutionAccountInactive = errors.New("sched: execution account is not active")
 )
 
 // ExecutionClaimResolver turns a durable claim into a payload-free restore
@@ -94,6 +97,11 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	account, err := r.accounts.AccountByID(ctx, claim.AccountID)
 	if err != nil {
 		return ExecutionRestoreRequest{}, fmt.Errorf("sched: resolve execution account: %w", err)
+	}
+	// Spec §4.7: a suspended account's compute is parked. A queued or
+	// retried execution must not boot a VM after the suspension.
+	if !account.Active() {
+		return ExecutionRestoreRequest{}, ErrExecutionAccountInactive
 	}
 	planLimits, ok := account.Plan.ExecutionLimits()
 	if !ok || !planLimits.Allowed {

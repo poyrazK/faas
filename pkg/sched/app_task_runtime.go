@@ -9,6 +9,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ErrAppTaskAccountInactive refuses a task whose account was suspended (or is
+// pending deletion) after the task was queued.
+var ErrAppTaskAccountInactive = errors.New("sched: app task account is not active")
+
+const (
+	accountInactiveFailureCode    = "account_inactive"
+	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
+)
+
 // ResolveAppTaskRuntime resolves the immutable deployment pin captured when
 // the task was created. It deliberately accepts AppTaskRestoreRequest, which
 // has no command field, so placement, secret loading, and vmmd restore cannot
@@ -45,6 +54,11 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	if acct.ID != app.AccountID {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	// Spec §4.7: a suspended account's apps are parked. A task queued (or
+	// scheduled for retry) before the suspension must not boot a VM.
+	if !acct.Active() {
+		return ResolvedAppTaskRuntime{}, ErrAppTaskAccountInactive
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{

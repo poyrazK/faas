@@ -402,6 +402,11 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 			return err
 		}
 		c.log.Warn("schedd: execution claim resolution failed", "execution_id", claim.ID, "error_class", executionErrorClass(resolveErr))
+		if errors.Is(resolveErr, ErrExecutionAccountInactive) {
+			return c.complete(parent, claim, executionFailure(
+				accountInactiveFailureCode, accountInactiveFailureMessage,
+			), c.now().UTC())
+		}
 		return c.complete(parent, claim, executionFailure(
 			"restore_failed", "execution environment could not be prepared",
 		), c.now().UTC())

@@ -159,3 +159,32 @@ type unexpectedAppTaskVMM struct{ *recordingRoutedAppTaskVMM }
 func (r *unexpectedAppTaskVMM) RestoreAppTask(context.Context, string, AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
 	return &AppTaskRestoreOutcome{Instance: "wrong-instance"}, nil
 }
+
+// Spec §4.7: a suspended account's apps are parked. A task queued (or
+// waiting on a retry) before the suspension must fail without placement.
+func TestAppTaskRefusedAfterAccountSuspension(t *testing.T) {
+	store, account, app, _, tasks := newAppTaskCoordinatorFixture(t, 1, 30, 2048)
+	if err := store.UpdateAccountStatus(context.Background(), account.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	backend := appTaskBackendFunc(func(ctx context.Context, request AppTaskRestoreRequest) (AppTaskSession, error) {
+		resolved, err := engine.ResolveAppTaskRuntime(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		resolved.release()
+		return nil, errors.New("suspended account task was placed")
+	})
+	coordinator := NewAppTaskCoordinator(store, backend, appTaskCoordinatorTestConfig(), nil)
+	if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("ProcessNext = %v, %v", processed, err)
+	}
+	row, err := store.AppTaskByID(context.Background(), account.ID, app.ID, tasks[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != state.AppTaskFailed || row.FailureCode == nil || *row.FailureCode != accountInactiveFailureCode {
+		t.Fatalf("task = %s/%v, want failed/%s", row.Status, row.FailureCode, accountInactiveFailureCode)
+	}
+}
