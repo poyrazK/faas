@@ -1,4 +1,4 @@
-# ADR-285 · Tenant-scoped surface certificate lifecycle webhooks
+# ADR-290 · Tenant-scoped surface certificate lifecycle webhooks
 
 - **Status:** accepted
 - **Date:** 2026-09-27
