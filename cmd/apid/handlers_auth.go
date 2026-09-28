@@ -35,6 +35,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
@@ -108,7 +109,12 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
+	// The magic-link mailer encodes the token base64url; legacy links used
+	// hex. Accept both so neither generation of link 410s.
 	raw, err := hex.DecodeString(token)
+	if err != nil {
+		raw, err = base64.RawURLEncoding.DecodeString(token)
+	}
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
@@ -134,7 +140,7 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	// The magic link was delivered to acct.Email, so consuming it also
 	// proves address ownership. This leaves OAuth behavior unchanged and
 	// avoids sending passwordless customers through a second email loop.
-	if err := a.srv.store.MarkAccountEmailVerified(r.Context(), accountID); err != nil {
+	if _, err := a.srv.claimAccountByEmailOwnership(r.Context(), acct); err != nil {
 		a.log.Error("auth.verify.mark_email_verified", "err", err, "account", accountID)
 		api.WriteProblemForRequest(w, r, api.ErrInternal(
 			"Gregale could not verify this email address.",

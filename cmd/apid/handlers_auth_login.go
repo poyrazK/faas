@@ -699,8 +699,24 @@ func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string
 // existing-password-account path when the customer later signs in through a
 // provider with the same verified address.
 func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account) (state.Account, error) {
+	return s.claimAccountByEmailOwnership(ctx, acct)
+}
+
+// claimAccountByEmailOwnership verifies an account whose address owner just
+// proved control through a channel that bypasses the account's own
+// credentials: a magic link or an OAuth provider. Password signup does not
+// prove the address, so anything minted before this point may belong to
+// whoever signed up with the address first (account pre-hijacking: sign up
+// as victim@..., keep the password and the signup API key, wait for the
+// victim to arrive through Google or a magic link). The password, every
+// session and every API key are revoked before the address is marked
+// verified; the verify-email link sent to the password creator keeps them.
+func (s *server) claimAccountByEmailOwnership(ctx context.Context, acct state.Account) (state.Account, error) {
 	if acct.EmailVerified() {
 		return acct, nil
+	}
+	if err := s.revokePreVerificationCredentials(ctx, acct.ID); err != nil {
+		return state.Account{}, err
 	}
 	if err := s.store.MarkAccountEmailVerified(ctx, acct.ID); err != nil {
 		return state.Account{}, err
@@ -708,6 +724,31 @@ func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account
 	verifiedAt := time.Now().UTC()
 	acct.EmailVerifiedAt = &verifiedAt
 	return acct, nil
+}
+
+func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID string) error {
+	if err := s.store.DeleteAccountPassword(ctx, accountID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return fmt.Errorf("clear pre-verification password: %w", err)
+	}
+	sessions, err := s.store.RevokeAllSessions(ctx, accountID, uuid.Nil.String())
+	if err != nil {
+		return fmt.Errorf("revoke pre-verification sessions: %w", err)
+	}
+	keys, err := s.store.ListAPIKeys(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list pre-verification api keys: %w", err)
+	}
+	for _, key := range keys {
+		if err := s.store.DeleteAPIKey(ctx, accountID, key.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("revoke pre-verification api key: %w", err)
+		}
+	}
+	if sessions > 0 || len(keys) > 0 {
+		s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &accountID, map[string]any{
+			"sessions": sessions, "api_keys": len(keys),
+		})
+	}
+	return nil
 }
 
 // issueSessionCookie mints a session via the server's session.Manager
@@ -967,16 +1008,20 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	}
 	bindIP := clientIPFromRequest(r)
 	bindUA := r.UserAgent()
+	// Scopes must be explicit: api_keys.scopes is NOT NULL with a
+	// cardinality CHECK, so a nil slice (NULL) failed every programmatic
+	// signup/login on Postgres with a 500, while MemStore minted a
+	// scope-less key that could reach nothing.
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
 	var k state.APIKey
 	switch {
 	case perr == nil:
 		// Personal-org modern path. The label "signup" distinguishes
 		// these rows from /v1/keys-add key-mints in the audit query.
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", nil, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback (pre-00127 fixtures). Same provenance columns.
-		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", nil, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
 	default:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "could not resolve personal org"))

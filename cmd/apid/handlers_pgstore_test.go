@@ -761,3 +761,26 @@ func TestPGHandler_ComputeNodeRoundTrip(t *testing.T) {
 	}
 	t.Fatalf("upserted PgStore node missing from list: %+v", nodes)
 }
+
+// Programmatic signup/login minted its key with nil scopes. api_keys.scopes
+// is NOT NULL with a cardinality CHECK, so on Postgres every `gregale
+// signup` and JSON login failed with 500 "could not create api key"
+// (MemStore accepted the nil slice, which hid it).
+func TestPGProgrammaticSignupMintsUsableKey(t *testing.T) {
+	e := setupPGHandler(t, api.PlanFree)
+	email := "pg-signup-" + uuid.NewString()[:8] + "@example.com"
+	rec := v1AuthJSONRequest(t, e.h, "/v1/auth/signup", `{"email":"`+email+`","password":"pg-signup-password-123!"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signup = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp api.ProgrammaticAuthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.APIKey.Plaintext == "" {
+		t.Fatalf("signup response %s: %v", rec.Body.String(), err)
+	}
+	if code := bearerStatus(e.h, resp.APIKey.Plaintext); code != http.StatusOK {
+		t.Fatalf("signup key GET /v1/account = %d, want 200", code)
+	}
+	if rec := v1AuthJSONRequest(t, e.h, "/v1/auth/login", `{"email":"`+email+`","password":"pg-signup-password-123!"}`); rec.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", rec.Code, rec.Body.String())
+	}
+}
