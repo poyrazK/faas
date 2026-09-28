@@ -102,7 +102,7 @@ func (s *server) internalAdvanceCanary(w http.ResponseWriter, r *http.Request) {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
-	s.idempotent(s.advanceCanary)(w, r, acct)
+	s.idempotent(s.advanceCanaryByWorker)(w, r, acct)
 }
 
 func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http.Request) {

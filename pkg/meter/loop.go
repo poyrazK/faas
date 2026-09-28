@@ -405,7 +405,7 @@ func (l *Loop) Run(ctx context.Context) error {
 					// (Loop.ops is always non-nil but the test seam
 					// builds Loop without one).
 					stats, inFlight, err := l.safedeploy.Once(c)
-					l.safedeploy.IncOps(l.ops, stats, inFlight)
+					l.safedeploy.IncOps(l.ops, stats, inFlight, err)
 					return err
 				}, "safedeploy")
 		}()
