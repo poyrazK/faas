@@ -395,8 +395,8 @@ func TestPgStoreCancelDeploymentWithActivityIsAtomic(t *testing.T) {
 	if _, _, _, err := s.CancelDeploymentTxWithActivity(ctx, deployment.ID, accountID, state.CancelReasonUser, bad); err == nil {
 		t.Fatal("cancellation with invalid activity succeeded")
 	}
-	if current, err := s.DeploymentByID(ctx, deployment.ID); err != nil || current.Status != state.DeployBuilding {
-		t.Fatalf("deployment after invalid activity = (%+v, %v); want building", current, err)
+	if current, err := s.DeploymentByID(ctx, deployment.ID); err != nil || current.Status != deployment.Status {
+		t.Fatalf("deployment after invalid activity = (%+v, %v); want unchanged status %q", current, err, deployment.Status)
 	}
 	var outboxRows int
 	if err := pool.QueryRow(ctx, `select count(*) from org_activity_outbox where source_type = 'deployment.cancelled' and source_id = $1`, entry.SourceID).Scan(&outboxRows); err != nil || outboxRows != 0 {

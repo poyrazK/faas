@@ -2789,11 +2789,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
 		return
 	}
-	createDomain := func() (state.CustomDomain, error) {
+	createDomain := func(ctx context.Context) (state.CustomDomain, error) {
 		if environmentID != "" {
-			return environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount)
+			return environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, domain, app.ID, environmentID, token, perApp, perAccount)
 		}
-		return creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+		return creator.CreateCustomDomainIfUnderQuota(ctx, domain, app.ID, token, perApp, perAccount)
 	}
 	activity := state.OrgActivity{
 		Kind: "domain.added", ResourceType: "domain", ResourceID: domain,
@@ -2813,10 +2813,10 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 				d, activityOutboxID, err = mutationStore.CreateCustomDomainIfUnderQuotaWithActivity(r.Context(), domain, app.ID, token, perApp, perAccount, prepared)
 			}
 		} else {
-			d, err = createDomain()
+			d, err = createDomain(r.Context())
 		}
 	} else {
-		d, err = createDomain()
+		d, err = createDomain(r.Context())
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {

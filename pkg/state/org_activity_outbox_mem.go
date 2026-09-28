@@ -62,10 +62,10 @@ func (m *MemStore) enqueueOrgActivityOutboxLocked(entry OrgActivity) int64 {
 }
 
 func (m *MemStore) enqueueDeploymentOutcomeActivityLocked(deploymentID, outcome, errorCode string) error {
-	targetID, err := uuid.Parse(deploymentID)
-	if err != nil {
+	if uuid.Validate(deploymentID) != nil {
 		return nil
 	}
+	targetID := uuid.MustParse(deploymentID)
 	var latestID int64
 	var request OrgActivity
 	for id, row := range m.orgActivityOutbox {
