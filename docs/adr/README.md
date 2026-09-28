@@ -54,10 +54,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 293 | [Shared outbound provider cooldown](293-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
-| 292 | [Shared outbound retry budget](292-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
-| 291 | [Per-integration outbound circuit breaker](291-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
-| 290 | [Opt-in outbound HTTP response cache](290-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
+| 297 | [Shared outbound provider cooldown](297-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
+| 296 | [Shared outbound retry budget](296-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
+| 295 | [Per-integration outbound circuit breaker](295-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
+| 294 | [Opt-in outbound HTTP response cache](294-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
 | 288 | [Service dependency reliability controls and fleet signals](288-service-dependency-reliability.md) | accepted | Caller-bounded timeouts and retries, shared retry budgets, breakers, and trusted per-edge telemetry |
 | 289 | [Tenant-scoped hostname verification webhooks](289-platform-tenant-hostname-webhooks.md) | accepted | Transactional hostname-verification events only for surfaces explicitly linked to the tenant; DNS ownership does not imply certificate or route readiness |
 | 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |

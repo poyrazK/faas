@@ -1,4 +1,4 @@
-# ADR-292 · Shared outbound retry budget
+# ADR-296 · Shared outbound retry budget
 
 - **Status:** proposed
 - **Date:** 2026-09-27
