@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Counts for one bounded app, route, or failed-response policy slot.
+ */
 export type PreAuthPolicyObservation = {
   /**
    * Bounded app, route_<index>, or failures_<index> policy identifier. Index is the route's current array position.

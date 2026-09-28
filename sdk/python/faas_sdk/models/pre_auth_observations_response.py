@@ -21,6 +21,8 @@ T = TypeVar("T", bound="PreAuthObservationsResponse")
 
 @_attrs_define
 class PreAuthObservationsResponse:
+    """Observe-mode decisions and final response classes for an app's configured pre-auth policies."""
+
     app_id: str
     range_: PreAuthObservationsResponseRange
     source: str

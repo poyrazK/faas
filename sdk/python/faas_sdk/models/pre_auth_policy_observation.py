@@ -17,6 +17,8 @@ T = TypeVar("T", bound="PreAuthPolicyObservation")
 
 @_attrs_define
 class PreAuthPolicyObservation:
+    """Counts for one bounded app, route, or failed-response policy slot."""
+
     policy_id: str
     """Bounded app, route_<index>, or failures_<index> policy identifier. Index is the route's current array
     position."""

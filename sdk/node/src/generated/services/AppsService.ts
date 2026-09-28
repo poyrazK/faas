@@ -714,6 +714,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Time window for the returned policy observations. Defaults to five minutes.
+     */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<PreAuthObservationsResponse> {
     return __request(OpenAPI, {

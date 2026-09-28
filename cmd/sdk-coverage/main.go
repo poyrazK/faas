@@ -887,6 +887,7 @@ var methodRouteMap = map[string]string{
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/metrics":            "GetAppMetrics",
+	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
 	"GET /v1/apps/{slug}/debug/dependencies": "GetAppDebugDependencyLatency",
 	"POST /v1/apps/{slug}/prewarm":           "CreatePrewarm",
 	"GET /v1/apps/{slug}/prewarms":           "ListPrewarms",
