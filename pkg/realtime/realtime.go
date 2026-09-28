@@ -221,6 +221,14 @@ type ConnectionInfo struct {
 	Channels   []string  `json:"channels,omitempty"`
 }
 
+// ChannelRoute is one endpoint-scoped channel with at least one local
+// subscriber. It is the compact projection used to refresh fleet routing
+// hints without copying every connection record.
+type ChannelRoute struct {
+	EndpointID string `json:"endpoint_id"`
+	Channel    string `json:"channel"`
+}
+
 // ConnectionInventory is a point-in-time fleet snapshot. NodesQueried counts
 // nodes that returned a snapshot; NodesUnavailable records active nodes that
 // could not be reached. A partial inventory is still useful to operators and
@@ -1142,6 +1150,31 @@ func (m *Manager) Snapshot() []ConnectionInfo {
 		c.mu.RUnlock()
 	}
 	return result
+}
+
+// ChannelRouteSnapshot returns the unique endpoint/channel pairs currently
+// present in the local subscriber index. The manager lock gives the snapshot
+// one consistent view while subscriptions and connection closes are applied.
+func (m *Manager) ChannelRouteSnapshot() []ChannelRoute {
+	if m == nil {
+		return []ChannelRoute{}
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	routes := make([]ChannelRoute, 0, len(m.subscribers))
+	for key, members := range m.subscribers {
+		if len(members) == 0 {
+			continue
+		}
+		routes = append(routes, ChannelRoute{EndpointID: key.endpointID, Channel: key.channel})
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].EndpointID == routes[j].EndpointID {
+			return routes[i].Channel < routes[j].Channel
+		}
+		return routes[i].EndpointID < routes[j].EndpointID
+	})
+	return routes
 }
 
 // Stats returns bounded resource and delivery counters for this realtime

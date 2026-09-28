@@ -153,6 +153,14 @@ func (c *Client) Connections(ctx context.Context) ([]ConnectionInfo, error) {
 	return response, err
 }
 
+// ChannelRoutes returns the unique endpoint/channel pairs with local
+// subscribers, without transferring full connection records.
+func (c *Client) ChannelRoutes(ctx context.Context) ([]ChannelRoute, error) {
+	var response []ChannelRoute
+	err := c.do(ctx, http.MethodGet, "/internal/channel-routes", nil, &response)
+	return response, err
+}
+
 // Stats returns the local realtime counters.
 func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	var response Stats

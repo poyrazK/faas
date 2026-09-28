@@ -88,15 +88,18 @@ broadcast to active nodes by default. New apid versions also record shared
 PostgreSQL channel-to-node hints while routing is disabled. After every apid
 replica has been upgraded, set
 `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
-nodes with subscribers. Each apid seeds its readiness from
-live connection snapshots; a node receives full-fleet fallback traffic until
-its snapshot succeeds. Directory read errors fall back to full broadcast. The
-route directory caps each endpoint at 10,000 rows by isolating the channels
-with the largest route sets; after node snapshots are ready, those channels use
-full broadcast while unrelated indexed channels remain targeted. The
-reconciler periodically rebuilds capped indexes from live connection snapshots
-and retries isolated channels every five minutes. Stale route rows can add an
-unneeded node request, but cannot exclude a subscriber. The
+nodes with subscribers. Each apid seeds readiness from node-local snapshots of
+the endpoint/channel subscriber index; during rolling upgrades it falls back
+to the per-connection inventory when an older realtime node lacks the compact
+snapshot endpoint. A new or unready node receives full-fleet fallback traffic
+until its snapshot succeeds. Ready snapshots refresh every five minutes to
+remove route hints left by unsubscribes and disconnected sockets. Directory
+read errors fall back to full broadcast. The route directory caps each
+endpoint at 10,000 rows by isolating the channels with the largest route sets;
+after node snapshots are ready, those channels use full broadcast while
+unrelated indexed channels remain targeted. The reconciler retries isolated
+channels every five minutes. Stale route rows can add an unneeded node request,
+but cannot exclude a subscriber. The
 daemon-socket example below remains useful for node-local bootstrap and
 recovery tooling.
 

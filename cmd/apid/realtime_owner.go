@@ -36,6 +36,7 @@ type realtimeNodeOperator interface {
 	realtimeOwner
 	Connections(context.Context) ([]realtime.ConnectionInfo, error)
 	Endpoints(context.Context) ([]string, error)
+	ChannelRoutes(context.Context) ([]realtime.ChannelRoute, error)
 	RegisterEndpoint(context.Context, realtime.Endpoint) error
 	RemoveEndpoint(context.Context, string) error
 }
@@ -65,6 +66,9 @@ func (o localRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.
 }
 func (o localRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.client.Endpoints(ctx)
+}
+func (o localRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
+	return o.client.ChannelRoutes(ctx)
 }
 func (o localRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)
@@ -106,6 +110,9 @@ func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime
 }
 func (o remoteRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.client.Endpoints(ctx)
+}
+func (o remoteRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
+	return o.client.ChannelRoutes(ctx)
 }
 func (o remoteRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)

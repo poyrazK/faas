@@ -560,6 +560,8 @@ func (m *Manager) internalHandler() http.Handler {
 			m.handleEndpointRoute(w, r, strings.TrimPrefix(path, "endpoints/"))
 		case path == "connections" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, m.Snapshot())
+		case path == "channel-routes" && r.Method == http.MethodGet:
+			writeJSON(w, http.StatusOK, m.ChannelRouteSnapshot())
 		case path == "stats" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, m.Stats())
 		case strings.HasPrefix(path, "connections/"):

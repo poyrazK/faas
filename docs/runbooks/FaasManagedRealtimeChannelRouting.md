@@ -34,7 +34,10 @@ sum by (outcome) (increase(apid_realtime_channel_route_reconcile_passes_total[15
 
 The publish metrics intentionally omit endpoint and node identifiers. Inspect
 the shared overflow and readiness rows on the control-plane database to find
-the affected state:
+the affected state. Active nodes with snapshots older than five minutes are
+refreshed by the reconciler. A rising `updated_at` confirms refresh progress; a
+persistently old timestamp points to a node control-route or realtime-service
+failure.
 
 ```sql
 SELECT endpoints.id AS endpoint_id,

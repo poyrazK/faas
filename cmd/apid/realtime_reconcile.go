@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -29,10 +30,10 @@ const (
 const managedRealtimeChannelRouteSnapshotConcurrency = 4
 
 // reconcileManagedRealtimeChannelRoutes replaces each active node's shared
-// routing rows from an authoritative connection snapshot. Bounded workers
-// snapshot independent nodes concurrently; each per-node lock still makes
-// replacement atomic with Subscribe, while generation state keeps publishes
-// broad until active nodes have fresh snapshots.
+// routing rows from authoritative node-local channel route snapshots.
+// Bounded workers snapshot independent nodes concurrently; each per-node lock
+// still makes replacement atomic with Subscribe, while generation state keeps
+// publishes broad until active nodes have fresh snapshots.
 func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedRealtimeOwner) error {
 	if owner == nil || !owner.channelRoutingEnabled || owner.channelRoutes == nil || owner.nodes == nil {
 		return nil
@@ -110,7 +111,7 @@ dispatch:
 	return finalized, joined
 }
 
-func reconcileMissingManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedRealtimeOwner, coordinator state.ManagedRealtimeChannelRouteSnapshotCoordinator) error {
+func reconcileDueManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedRealtimeOwner, coordinator state.ManagedRealtimeChannelRouteSnapshotCoordinator) error {
 	started := time.Now()
 	outcome := "complete"
 	defer func() {
@@ -158,11 +159,11 @@ func snapshotManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedReal
 	}
 	defer lock.Release(ctx)
 	if coordinator, ok := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotCoordinator); ok {
-		current, err := coordinator.ManagedRealtimeChannelRouteNodeSnapshotCurrent(ctx, node.ID)
+		fresh, err := coordinator.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, node.ID)
 		if err != nil {
 			return false, fmt.Errorf("node %s route snapshot readiness: %w", node.ID, err)
 		}
-		if current {
+		if fresh {
 			return false, nil
 		}
 	}
@@ -174,30 +175,56 @@ func snapshotManagedRealtimeChannelRoutes(ctx context.Context, owner *leasedReal
 	if err != nil {
 		return false, fmt.Errorf("node %s operator: %w", node.ID, err)
 	}
-	connections, err := op.Connections(ctx)
+	channelRoutes, err := nodeChannelRouteSnapshot(ctx, op)
 	if err != nil {
-		return false, fmt.Errorf("node %s connections: %w", node.ID, err)
+		return false, fmt.Errorf("node %s channel route snapshot: %w", node.ID, err)
 	}
-	routes := make([]state.ManagedRealtimeChannelRoute, 0)
-	for _, connection := range connections {
-		if connection.EndpointID == "" {
+	routes := make([]state.ManagedRealtimeChannelRoute, 0, len(channelRoutes))
+	for _, route := range channelRoutes {
+		if route.EndpointID == "" {
 			continue
 		}
-		for _, channel := range connection.Channels {
-			if !realtime.ValidateChannel(channel) {
-				return false, fmt.Errorf("node %s has invalid channel %q in connection snapshot", node.ID, channel)
-			}
-			routes = append(routes, state.ManagedRealtimeChannelRoute{
-				EndpointID: connection.EndpointID,
-				Channel:    channel,
-				NodeID:     node.ID,
-			})
+		if !realtime.ValidateChannel(route.Channel) {
+			return false, fmt.Errorf("node %s has invalid channel %q in route snapshot", node.ID, route.Channel)
 		}
+		routes = append(routes, state.ManagedRealtimeChannelRoute{
+			EndpointID: route.EndpointID,
+			Channel:    route.Channel,
+			NodeID:     node.ID,
+		})
 	}
 	if err := owner.channelRoutes.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, routes); err != nil {
 		return false, fmt.Errorf("node %s route snapshot: %w", node.ID, err)
 	}
 	return true, nil
+}
+
+func nodeChannelRouteSnapshot(ctx context.Context, op realtimeNodeOperator) ([]realtime.ChannelRoute, error) {
+	if snapshotter, ok := op.(interface {
+		ChannelRoutes(context.Context) ([]realtime.ChannelRoute, error)
+	}); ok {
+		routes, err := snapshotter.ChannelRoutes(ctx)
+		if err == nil {
+			return routes, nil
+		}
+		var managementErr *realtime.ManagementError
+		if !errors.As(err, &managementErr) || managementErr.StatusCode != http.StatusNotFound {
+			return nil, err
+		}
+		// During a rolling upgrade older realtime nodes lack the compact
+		// endpoint; retain the existing connection inventory fallback.
+	}
+	connections, err := op.Connections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]realtime.ChannelRoute, 0)
+	for _, connection := range connections {
+		for _, channel := range connection.Channels {
+			routes = append(routes, realtime.ChannelRoute{EndpointID: connection.EndpointID, Channel: channel})
+		}
+	}
+	return routes, nil
 }
 
 func realtimeRouteErrorOutcome(ctx context.Context, err error) string {
@@ -246,8 +273,8 @@ func (s *server) runManagedRealtimeChannelRouteReconciler(ctx context.Context) {
 		if !started {
 			owner.channelRouteMetrics.rebuildCheck("idle")
 			if hasCoordinator {
-				if err := reconcileMissingManagedRealtimeChannelRoutes(ctx, owner, coordinator); err != nil && !errors.Is(err, context.Canceled) {
-					log.Warn("managed realtime channel route bootstrap pass failed", "err", err)
+				if err := reconcileDueManagedRealtimeChannelRoutes(ctx, owner, coordinator); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("managed realtime channel route snapshot refresh pass failed", "err", err)
 				}
 			}
 			return

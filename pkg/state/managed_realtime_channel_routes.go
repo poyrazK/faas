@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	managedRealtimeChannelRouteLimit        = 10000
-	managedRealtimeChannelRouteMaxLength    = 256
-	managedRealtimeChannelRouteRebuildDelay = 5 * time.Minute
-	managedRealtimeChannelRouteLockLease    = 10 * time.Minute
+	managedRealtimeChannelRouteLimit                   = 10000
+	managedRealtimeChannelRouteMaxLength               = 256
+	managedRealtimeChannelRouteRebuildDelay            = 5 * time.Minute
+	managedRealtimeChannelRouteSnapshotRefreshInterval = 5 * time.Minute
+	managedRealtimeChannelRouteLockLease               = 10 * time.Minute
 )
 
 // ManagedRealtimeChannelRoute is a node-level hint. A stale row can cause an
@@ -88,11 +89,12 @@ type ManagedRealtimeChannelPublishTargetStore interface {
 
 // ManagedRealtimeChannelRouteSnapshotCoordinator coordinates route snapshot
 // reconciliation across apid instances and identifies active nodes that need
-// a snapshot for the current generation.
+// a snapshot because it is missing, stale by generation, or old enough to
+// refresh stale positive route hints.
 type ManagedRealtimeChannelRouteSnapshotCoordinator interface {
 	TryAcquireManagedRealtimeChannelRouteReconcileLock(context.Context) (ManagedRealtimeChannelRouteLock, bool, error)
 	ListManagedRealtimeChannelRouteNodesNeedingSnapshot(context.Context) ([]string, error)
-	ManagedRealtimeChannelRouteNodeSnapshotCurrent(context.Context, string) (bool, error)
+	ManagedRealtimeChannelRouteNodeSnapshotFresh(context.Context, string) (bool, error)
 }
 
 var (
@@ -213,9 +215,12 @@ func (s *PgStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx contex
 	   left join managed_realtime_channel_route_node_state node_state
 	     on node_state.node_id = nodes.id
 		 where nodes.active = true
-		   and coalesce(node_state.snapshot_generation, -1) < generation.generation
-	 order by nodes.name
-	`)
+		   and (coalesce(node_state.snapshot_generation, -1) < generation.generation
+		        or node_state.updated_at <= now() - ($1::double precision * interval '1 second'))
+	 order by (coalesce(node_state.snapshot_generation, -1) < generation.generation) desc,
+	          node_state.updated_at asc nulls first,
+	          nodes.name
+	`, managedRealtimeChannelRouteSnapshotRefreshInterval.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("state: list realtime channel route nodes needing snapshots: %w", err)
 	}
@@ -234,14 +239,15 @@ func (s *PgStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx contex
 	return nodeIDs, nil
 }
 
-func (s *PgStore) ManagedRealtimeChannelRouteNodeSnapshotCurrent(ctx context.Context, nodeID string) (bool, error) {
+func (s *PgStore) ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx context.Context, nodeID string) (bool, error) {
 	var current bool
 	if err := s.pool.QueryRow(ctx, `
-		select coalesce(node_state.snapshot_generation, -1) >= generation.generation
+		select coalesce(node_state.snapshot_generation >= generation.generation
+		                and node_state.updated_at > now() - ($2::double precision * interval '1 second'), false)
 		  from managed_realtime_channel_route_generation generation
 		  left join managed_realtime_channel_route_node_state node_state on node_state.node_id = $1
 		 where generation.singleton = true
-	`, nodeID).Scan(&current); err != nil {
+	`, nodeID, managedRealtimeChannelRouteSnapshotRefreshInterval.Seconds()).Scan(&current); err != nil {
 		return false, fmt.Errorf("state: check realtime channel route node snapshot: %w", err)
 	}
 	return current, nil
@@ -993,16 +999,38 @@ func (m *MemStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(_ context
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	nodes := make([]ComputeNode, 0)
+	now := time.Now()
 	for _, node := range m.computeNodes {
 		if !node.Active {
 			continue
 		}
 		snapshotGeneration, ok := m.realtimeChannelRouteSnapshots[node.ID]
-		if !ok || snapshotGeneration < m.realtimeChannelRouteGeneration {
+		updatedAt, hasUpdateTime := m.realtimeRouteSnapshotAt[node.ID]
+		if !ok || snapshotGeneration < m.realtimeChannelRouteGeneration || !hasUpdateTime || now.Sub(updatedAt) >= managedRealtimeChannelRouteSnapshotRefreshInterval {
 			nodes = append(nodes, node)
 		}
 	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	sort.Slice(nodes, func(i, j int) bool {
+		leftGeneration, leftHasSnapshot := m.realtimeChannelRouteSnapshots[nodes[i].ID]
+		rightGeneration, rightHasSnapshot := m.realtimeChannelRouteSnapshots[nodes[j].ID]
+		leftStale := !leftHasSnapshot || leftGeneration < m.realtimeChannelRouteGeneration
+		rightStale := !rightHasSnapshot || rightGeneration < m.realtimeChannelRouteGeneration
+		if leftStale != rightStale {
+			return leftStale
+		}
+		leftUpdatedAt := m.realtimeRouteSnapshotAt[nodes[i].ID]
+		rightUpdatedAt := m.realtimeRouteSnapshotAt[nodes[j].ID]
+		if !leftUpdatedAt.Equal(rightUpdatedAt) {
+			if leftUpdatedAt.IsZero() {
+				return true
+			}
+			if rightUpdatedAt.IsZero() {
+				return false
+			}
+			return leftUpdatedAt.Before(rightUpdatedAt)
+		}
+		return nodes[i].Name < nodes[j].Name
+	})
 	nodeIDs := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		nodeIDs = append(nodeIDs, node.ID)
@@ -1010,11 +1038,12 @@ func (m *MemStore) ListManagedRealtimeChannelRouteNodesNeedingSnapshot(_ context
 	return nodeIDs, nil
 }
 
-func (m *MemStore) ManagedRealtimeChannelRouteNodeSnapshotCurrent(_ context.Context, nodeID string) (bool, error) {
+func (m *MemStore) ManagedRealtimeChannelRouteNodeSnapshotFresh(_ context.Context, nodeID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	snapshotGeneration, ok := m.realtimeChannelRouteSnapshots[nodeID]
-	return ok && snapshotGeneration >= m.realtimeChannelRouteGeneration, nil
+	updatedAt, hasUpdateTime := m.realtimeRouteSnapshotAt[nodeID]
+	return ok && snapshotGeneration >= m.realtimeChannelRouteGeneration && hasUpdateTime && time.Since(updatedAt) < managedRealtimeChannelRouteSnapshotRefreshInterval, nil
 }
 
 func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
@@ -1053,6 +1082,7 @@ func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID
 		return err
 	}
 	m.realtimeChannelRouteSnapshots[nodeID] = snapshotGeneration
+	m.realtimeRouteSnapshotAt[nodeID] = time.Now()
 	now := time.Now()
 	for endpointID, overflow := range m.realtimeChannelRouteOverflow {
 		if overflow.Rebuilding && overflow.RebuildGeneration <= snapshotGeneration {
@@ -1184,6 +1214,7 @@ func (m *MemStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Contex
 				}
 			}
 			delete(m.realtimeChannelRouteSnapshots, nodeID)
+			delete(m.realtimeRouteSnapshotAt, nodeID)
 		}
 		m.mu.Unlock()
 		lock.Release(ctx)
@@ -1192,7 +1223,8 @@ func (m *MemStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Contex
 	defer m.mu.Unlock()
 	m.ensureRealtimeChannelRouteMapsLocked()
 	for _, node := range m.computeNodes {
-		if node.Active && m.realtimeChannelRouteSnapshots[node.ID] < m.realtimeChannelRouteGeneration {
+		snapshotGeneration, hasSnapshot := m.realtimeChannelRouteSnapshots[node.ID]
+		if node.Active && (!hasSnapshot || snapshotGeneration < m.realtimeChannelRouteGeneration) {
 			return false, nil
 		}
 	}
@@ -1235,6 +1267,9 @@ func (m *MemStore) ensureRealtimeChannelRouteMapsLocked() {
 	}
 	if m.realtimeChannelRouteSnapshots == nil {
 		m.realtimeChannelRouteSnapshots = make(map[string]int64)
+	}
+	if m.realtimeRouteSnapshotAt == nil {
+		m.realtimeRouteSnapshotAt = make(map[string]time.Time)
 	}
 }
 
