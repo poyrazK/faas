@@ -6,17 +6,14 @@
 // OCI registry + pgtest harness and exercises one job lifecycle
 // path end-to-end through the real wire.
 //
-// 12 tests per the plan, each -timeout 10-30 min, run via
-// `make metal-lima` (Apple Silicon) or `make test-metal` (EX44).
+// Run via `make test-metal` on the designated native x86_64 Linux KVM host.
 //
 // Build tag: metal. Requires:
 //   - /dev/kvm + root (jailer needs CAP_NET_ADMIN, CAP_MKNOD, …)
 //   - Firecracker on PATH
 //   - FAAS_TEST_KERNEL pointing at a vmlinux (any recent one)
 //
-// The Lima caveat (CLAUDE.md): this validates the arch-agnostic
-// VM lifecycle + boot path on arm64; production x86_64 snapshot
-// correctness remains an EX44-only check.
+// The retired Lima harness is not an acceptance environment.
 
 package e2e
 

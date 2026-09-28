@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,11 +17,30 @@ import (
 	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
-type jobObjectReader struct{ body string }
+type jobObjectReader struct {
+	body      string
+	readBytes *int
+}
 
 func (r jobObjectReader) ReadObject(_ context.Context, _, _ string) (io.ReadCloser, error) {
+	if r.readBytes != nil {
+		return &countedJobReadCloser{Reader: strings.NewReader(r.body), readBytes: r.readBytes}, nil
+	}
 	return io.NopCloser(strings.NewReader(r.body)), nil
 }
+
+type countedJobReadCloser struct {
+	io.Reader
+	readBytes *int
+}
+
+func (r *countedJobReadCloser) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	*r.readBytes += n
+	return n, err
+}
+
+func (r *countedJobReadCloser) Close() error { return nil }
 
 func TestJobManagedObjectManifestAndVerification(t *testing.T) {
 	uri := "obj://123e4567-e89b-12d3-a456-426614174000/123e4567-e89b-12d3-a456-426614174001/results/task.json"
@@ -33,25 +53,35 @@ func TestJobManagedObjectManifestAndVerification(t *testing.T) {
 	}
 	body := `[{"input_id":"first","input_ref":"data/first"}]`
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(body)))
-	inputs, err := readJobInputManifest(context.Background(), jobObjectReader{body}, bucket, key, digest)
+	inputs, err := readJobInputManifest(context.Background(), jobObjectReader{body: body}, bucket, key, digest)
 	if err != nil || len(inputs) != 1 || inputs[0].ID != "first" {
 		t.Fatalf("inputs = %+v, %v", inputs, err)
 	}
-	if _, err := readJobInputManifest(context.Background(), jobObjectReader{body}, bucket, key, "sha256:"+strings.Repeat("0", 64)); err == nil {
+	if _, err := readJobInputManifest(context.Background(), jobObjectReader{body: body}, bucket, key, "sha256:"+strings.Repeat("0", 64)); err == nil {
 		t.Fatal("accepted wrong input checksum")
 	}
 	unknownField := `[{"input_id":"first","input_ref":"data/first","extra":"ignored"}]`
 	unknownSHA := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(unknownField)))
-	if _, err := readJobInputManifest(context.Background(), jobObjectReader{unknownField}, bucket, key, unknownSHA); err == nil {
+	if _, err := readJobInputManifest(context.Background(), jobObjectReader{body: unknownField}, bucket, key, unknownSHA); err == nil {
 		t.Fatal("accepted undeclared external input field")
 	}
 	artifact := jobresult.Artifact{Name: "part", URI: uri, SizeBytes: int64(len(body)), SHA256: digest}
-	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{body}, bucket, key, artifact); err != nil {
+	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{body: body}, bucket, key, artifact); err != nil {
 		t.Fatal(err)
 	}
 	artifact.SizeBytes++
-	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{body}, bucket, key, artifact); err == nil {
+	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{body: body}, bucket, key, artifact); err == nil {
 		t.Fatal("accepted wrong artifact size")
+	}
+	readBytes := 0
+	artifact.SizeBytes = 3
+	if _, err := verifyJobManagedArtifact(context.Background(), jobObjectReader{
+		body: strings.Repeat("x", 1<<20), readBytes: &readBytes,
+	}, bucket, key, artifact); !errors.Is(err, errJobManagedArtifactMismatch) {
+		t.Fatalf("oversized artifact error = %v", err)
+	}
+	if readBytes != 4 {
+		t.Fatalf("oversized object read %d bytes, want declared size plus one", readBytes)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -125,12 +126,22 @@ func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader
 }
 
 func verifyJobManagedArtifact(ctx context.Context, reader objectstorage.ObjectReader, bucket, key string, artifact jobresult.Artifact) (int64, error) {
+	if artifact.SizeBytes < 0 {
+		return 0, errJobManagedArtifactMismatch
+	}
 	stream, err := reader.ReadObject(ctx, bucket, key)
 	if err != nil {
 		return 0, err
 	}
 	hasher := sha256.New()
-	size, copyErr := io.Copy(hasher, stream)
+	// One byte past the declared size is enough to reject an oversized object.
+	// This keeps a bogus small manifest from forcing a full read of a very
+	// large object merely to prove the size does not match.
+	readLimit := artifact.SizeBytes
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	size, copyErr := io.Copy(hasher, io.LimitReader(stream, readLimit))
 	closeErr := stream.Close()
 	if copyErr != nil {
 		return 0, copyErr
