@@ -189,8 +189,12 @@ func deployPreflightRuntime(plan *api.BuildPlan) string {
 
 func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) string {
 	port, health := 0, ""
+	readiness := simpleapp.ReadinessMode("")
 	if build != nil {
 		port, health = build.Port, build.HealthPath
+		if health != "" {
+			readiness = simpleapp.ReadinessHTTP
+		}
 	}
 	if simple != nil {
 		if port == 0 {
@@ -199,9 +203,15 @@ func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) strin
 		if health == "" {
 			health = simple.HealthPath
 		}
+		if readiness == "" {
+			readiness = simple.ReadinessMode
+		}
 	}
 	if port == 0 && health == "" {
 		return ""
+	}
+	if readiness == simpleapp.ReadinessTCP && port > 0 {
+		return fmt.Sprintf(":%d · TCP readiness", port)
 	}
 	if port == 0 {
 		return "health GET " + health

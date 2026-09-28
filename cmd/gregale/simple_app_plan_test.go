@@ -92,6 +92,23 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveSimpleAppPlanDirectOCIUsesTCPReadiness(t *testing.T) {
+	plan, err := resolveSimpleAppPlan("", "demo", "", simpleapp.SourceImage, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Port != simpleapp.DefaultPort || plan.ReadinessMode != simpleapp.ReadinessTCP || plan.HealthPath != "" {
+		t.Fatalf("image plan = %+v, want default port and TCP readiness without a path", plan)
+	}
+	var out bytes.Buffer
+	if code := renderSimpleAppPlan(&out, plan, false); code != 0 {
+		t.Fatalf("render code = %d", code)
+	}
+	if !strings.Contains(out.String(), "listener:           :8080 · TCP readiness") || strings.Contains(out.String(), "/healthz") {
+		t.Fatalf("image plan output misstates readiness:\n%s", out.String())
+	}
+}
+
 func TestDeployPlanUsesCommittedProfileUnlessWorktreeSelected(t *testing.T) {
 	repo := initZeroConfigRepo(t)
 	packageJSON := `{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`

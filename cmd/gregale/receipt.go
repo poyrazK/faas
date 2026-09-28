@@ -57,7 +57,8 @@ type SimpleAppReceiptPlan struct {
 	MemoryMB        int    `json:"memory_mb,omitempty"`
 	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
 	Port            int    `json:"port"`
-	HealthPath      string `json:"health_path"`
+	ReadinessMode   string `json:"readiness_mode"`
+	HealthPath      string `json:"health_path,omitempty"`
 	ExecutionMode   string `json:"execution_mode"`
 	ScaleToZero     bool   `json:"scale_to_zero"`
 	LocalStorage    string `json:"local_storage"`
@@ -114,6 +115,7 @@ func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, ap
 			MemoryMB:        plan.MemoryMB,
 			CPUMillicores:   plan.CPUMillicores,
 			Port:            plan.Port,
+			ReadinessMode:   string(plan.ReadinessMode),
 			HealthPath:      plan.HealthPath,
 			ExecutionMode:   plan.ExecutionMode,
 			ScaleToZero:     plan.ScaleToZero,

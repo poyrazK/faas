@@ -19,6 +19,14 @@ const (
 	SourceImage     SourceKind = "image"
 )
 
+// ReadinessMode is the startup gate Gregale uses before routing traffic.
+type ReadinessMode string
+
+const (
+	ReadinessHTTP ReadinessMode = "http"
+	ReadinessTCP  ReadinessMode = "tcp"
+)
+
 // Spec is the small, user-facing set of deployment inputs. Empty values use
 // the platform defaults; advanced lifecycle modes intentionally do not belong
 // in this contract.
@@ -42,12 +50,15 @@ type Plan struct {
 	MemoryMB        int        `json:"memory_mb,omitempty"`
 	CPUMillicores   int        `json:"cpu_millicores,omitempty"`
 	Port            int        `json:"port"`
-	HealthPath      string     `json:"health_path"`
-	ExecutionMode   string     `json:"execution_mode"`
-	ScaleToZero     bool       `json:"scale_to_zero"`
-	LocalStorage    string     `json:"local_storage"`
-	DurableState    string     `json:"durable_state"`
-	DefaultsApplied []string   `json:"defaults_applied"`
+	// ReadinessMode selects the startup gate; HealthPath is only set when
+	// the gate uses HTTP.
+	ReadinessMode   ReadinessMode `json:"readiness_mode"`
+	HealthPath      string        `json:"health_path,omitempty"`
+	ExecutionMode   string        `json:"execution_mode"`
+	ScaleToZero     bool          `json:"scale_to_zero"`
+	LocalStorage    string        `json:"local_storage"`
+	DurableState    string        `json:"durable_state"`
+	DefaultsApplied []string      `json:"defaults_applied"`
 }
 
 // CreateRequest compiles the resolved intent into Gregale's existing app
@@ -106,10 +117,15 @@ func Resolve(spec Spec) (Plan, error) {
 		return Plan{}, fmt.Errorf("port must be between 1 and 65535")
 	}
 	health := strings.TrimSpace(spec.HealthPath)
-	if health == "" {
+	readiness := ReadinessHTTP
+	if health == "" && source == SourceImage {
+		// A direct OCI image promises a listening process, not a Gregale
+		// /healthz route. Keep the default aligned with the runtime's TCP gate.
+		readiness = ReadinessTCP
+	} else if health == "" {
 		health = DefaultHealthPath
 	}
-	if !strings.HasPrefix(health, "/") || strings.ContainsAny(health, "\x00\r\n") {
+	if health != "" && (!strings.HasPrefix(health, "/") || strings.ContainsAny(health, "\x00\r\n")) {
 		return Plan{}, fmt.Errorf("health path must start with '/' and contain no control characters")
 	}
 	if len(health) > 1024 {
@@ -124,8 +140,10 @@ func Resolve(spec Spec) (Plan, error) {
 	if spec.Port == 0 {
 		defaults = append(defaults, fmt.Sprintf("port=%d", port))
 	}
-	if strings.TrimSpace(spec.HealthPath) == "" {
+	if strings.TrimSpace(spec.HealthPath) == "" && readiness == ReadinessHTTP {
 		defaults = append(defaults, "health_path="+health)
+	} else if readiness == ReadinessTCP {
+		defaults = append(defaults, "readiness=tcp")
 	}
 	return Plan{
 		Slug:            slug,
@@ -135,6 +153,7 @@ func Resolve(spec Spec) (Plan, error) {
 		MemoryMB:        profileSpec.MemoryMB,
 		CPUMillicores:   profileSpec.CPUMillicores,
 		Port:            port,
+		ReadinessMode:   readiness,
 		HealthPath:      health,
 		ExecutionMode:   api.ExecutionModeRequest,
 		ScaleToZero:     true,

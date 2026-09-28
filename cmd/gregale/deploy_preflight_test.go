@@ -92,6 +92,15 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 	}
 }
 
+func TestDeployPreflightListenerShowsTCPForDirectOCI(t *testing.T) {
+	plan := &simpleapp.Plan{
+		Port: simpleapp.DefaultPort, ReadinessMode: simpleapp.ReadinessTCP,
+	}
+	if got := deployPreflightListener(&api.BuildPlan{Class: "app"}, plan); got != ":8080 · TCP readiness" {
+		t.Fatalf("listener = %q, want direct OCI TCP readiness", got)
+	}
+}
+
 func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	var out bytes.Buffer
 	renderDeployPreflight(&out, deployPreflightSummary{

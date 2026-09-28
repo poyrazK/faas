@@ -15,6 +15,7 @@ func TestNewDeployReceiptIncludesSimpleAppPlan(t *testing.T) {
 		MemoryMB:        512,
 		CPUMillicores:   500,
 		Port:            8080,
+		ReadinessMode:   simpleapp.ReadinessHTTP,
 		HealthPath:      "/ready",
 		ExecutionMode:   api.ExecutionModeRequest,
 		ScaleToZero:     true,
@@ -31,6 +32,9 @@ func TestNewDeployReceiptIncludesSimpleAppPlan(t *testing.T) {
 	}
 	if got := receipt.SimpleAppPlan.HealthPath; got != "/ready" {
 		t.Fatalf("health path = %q, want /ready", got)
+	}
+	if got := receipt.SimpleAppPlan.ReadinessMode; got != string(simpleapp.ReadinessHTTP) {
+		t.Fatalf("readiness mode = %q, want http", got)
 	}
 	if !receipt.SimpleAppPlan.ScaleToZero {
 		t.Fatal("scale_to_zero = false, want true")

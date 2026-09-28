@@ -71,7 +71,13 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 	if plan.MemoryMB > 0 {
 		_, _ = fmt.Fprintf(w, "  memory/cpu:         %d MB / %d millicores\n", plan.MemoryMB, plan.CPUMillicores)
 	}
-	_, _ = fmt.Fprintf(w, "  listener:           :%d %s\n", plan.Port, plan.HealthPath)
+	listener := fmt.Sprintf(":%d", plan.Port)
+	if plan.ReadinessMode == simpleapp.ReadinessTCP {
+		listener += " · TCP readiness"
+	} else if plan.HealthPath != "" {
+		listener += " · health GET " + plan.HealthPath
+	}
+	_, _ = fmt.Fprintf(w, "  listener:           %s\n", listener)
 	_, _ = fmt.Fprintf(w, "  execution:          %s\n", plan.ExecutionMode)
 	_, _ = fmt.Fprintf(w, "  scaling:            scale to zero\n")
 	_, _ = fmt.Fprintf(w, "  local storage:      %s\n", plan.LocalStorage)
