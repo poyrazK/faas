@@ -28,7 +28,8 @@ type ManagedRealtimeChannelRoute struct {
 
 // ManagedRealtimeChannelRouteView is one consistent directory snapshot.
 // ReadyNodeIDs have a complete snapshot for the current generation; all other
-// active nodes must remain in the publish fanout.
+// active nodes must remain in the publish fanout. Disabled means this
+// endpoint-channel pair must use the full-fleet fallback.
 type ManagedRealtimeChannelRouteView struct {
 	NodeIDs      []string
 	ReadyNodeIDs []string
@@ -65,6 +66,8 @@ var (
 type managedRealtimeChannelRouteOverflowState struct {
 	RebuildGeneration int64
 	Rebuilding        bool
+	OverflowAll       bool
+	OverflowChannels  map[string]struct{}
 	NextRebuildAt     time.Time
 	RebuildStartedAt  time.Time
 }
@@ -236,12 +239,23 @@ func (s *PgStore) BeginManagedRealtimeChannelRouteRebuild(ctx context.Context) (
 		return false, fmt.Errorf("state: lock realtime channel route generation: %w", err)
 	}
 	rows, err := tx.Query(ctx, `
-		select endpoint_id::text
-		  from managed_realtime_channel_route_overflow
-		 where (not rebuilding and next_rebuild_at <= now())
-		    or (rebuilding and (rebuild_started_at is null or rebuild_started_at < now() - ($1::double precision * interval '1 second')))
-		 order by endpoint_id
-	 for update skip locked`, int64(managedRealtimeChannelRouteLockLease.Seconds()))
+		select due.endpoint_id::text
+		  from (
+		    select endpoint_id
+		      from managed_realtime_channel_route_overflow
+		     where (not rebuilding and next_rebuild_at <= now())
+		        or (rebuilding and (rebuild_started_at is null or rebuild_started_at < now() - ($1::double precision * interval '1 second')))
+		    union
+		    select endpoint_id
+		      from managed_realtime_channel_route_overflow_channels
+		     where next_rebuild_at <= now()
+		       and not exists (
+		         select 1 from managed_realtime_channel_route_overflow overflow
+		          where overflow.endpoint_id = managed_realtime_channel_route_overflow_channels.endpoint_id
+		            and overflow.rebuilding = true
+		       )
+		  ) due
+		 order by due.endpoint_id`, int64(managedRealtimeChannelRouteLockLease.Seconds()))
 	if err != nil {
 		return false, fmt.Errorf("state: list realtime channel routes to rebuild: %w", err)
 	}
@@ -273,15 +287,29 @@ func (s *PgStore) BeginManagedRealtimeChannelRouteRebuild(ctx context.Context) (
 	`).Scan(&generation); err != nil {
 		return false, fmt.Errorf("state: advance realtime channel route generation: %w", err)
 	}
+	// Older apid versions treat any endpoint row here as full overflow. Keep
+	// that marker only for the rebuild window; selective state lives in the
+	// channel table so mixed-version route snapshots stay safe.
 	if _, err := tx.Exec(ctx, `
-		update managed_realtime_channel_route_overflow
-		   set rebuilding = true,
-		       rebuild_generation = $1,
-		       rebuild_started_at = now(),
-		       next_rebuild_at = now() + ($2::double precision * interval '1 second')
-		 where endpoint_id = any($3::uuid[])
+		insert into managed_realtime_channel_route_overflow
+			(endpoint_id, rebuild_generation, rebuilding, next_rebuild_at, rebuild_started_at, overflow_all)
+		select endpoint_id::uuid, $1, true,
+		       now() + ($2::double precision * interval '1 second'), now(), true
+		  from unnest($3::text[]) as endpoint_id
+		on conflict (endpoint_id) do update set
+			rebuild_generation = excluded.rebuild_generation,
+			rebuilding = true,
+			next_rebuild_at = excluded.next_rebuild_at,
+			rebuild_started_at = excluded.rebuild_started_at,
+			overflow_all = true
 	`, generation, int64(managedRealtimeChannelRouteLockLease.Seconds()), endpointIDs); err != nil {
 		return false, fmt.Errorf("state: mark realtime channel route rebuild: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from managed_realtime_channel_route_overflow_channels
+		 where endpoint_id = any($1::uuid[])
+	`, endpointIDs); err != nil {
+		return false, fmt.Errorf("state: reset realtime channel route overflow channels for rebuild: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("state: commit realtime channel route rebuild: %w", err)
@@ -298,9 +326,13 @@ func (s *PgStore) ListManagedRealtimeChannelRouteView(ctx context.Context, endpo
 	// rows, and node readiness cannot describe different rebuild phases.
 	if err := s.pool.QueryRow(ctx, `
 		select exists (
-		         select 1 from managed_realtime_channel_route_overflow
-		          where endpoint_id = $1
-		       ),
+		         select 1 from managed_realtime_channel_route_overflow overflow
+	          where overflow.endpoint_id = $1
+	       ) or exists (
+	         select 1
+	           from managed_realtime_channel_route_overflow_channels channels
+	          where channels.endpoint_id = $1 and channels.channel = $2
+	       ),
 	       coalesce((
 	         select array_agg(distinct routes.node_id::text order by routes.node_id::text)
 	           from managed_realtime_channel_routes routes
@@ -402,6 +434,9 @@ func (s *PgStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Context
 		return false, fmt.Errorf("state: iterate realtime channel route finalization rows: %w", err)
 	}
 	rows.Close()
+	if err := enforceManagedRealtimeChannelRouteLimit(ctx, tx, endpointIDs); err != nil {
+		return false, err
+	}
 	for _, endpointID := range endpointIDs {
 		var count int
 		if err := tx.QueryRow(ctx, `
@@ -409,23 +444,27 @@ func (s *PgStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Context
 		`, endpointID).Scan(&count); err != nil {
 			return false, fmt.Errorf("state: count rebuilt realtime channel routes: %w", err)
 		}
-		if count <= managedRealtimeChannelRouteLimit {
+		var overflowChannels int
+		if err := tx.QueryRow(ctx, `
+			select count(*) from managed_realtime_channel_route_overflow_channels where endpoint_id = $1
+		`, endpointID).Scan(&overflowChannels); err != nil {
+			return false, fmt.Errorf("state: count rebuilt realtime route overflow channels: %w", err)
+		}
+		if count <= managedRealtimeChannelRouteLimit && overflowChannels == 0 {
 			if _, err := tx.Exec(ctx, `delete from managed_realtime_channel_route_overflow where endpoint_id = $1`, endpointID); err != nil {
 				return false, fmt.Errorf("state: re-enable realtime channel route index: %w", err)
 			}
 			continue
 		}
-		if _, err := tx.Exec(ctx, `delete from managed_realtime_channel_routes where endpoint_id = $1`, endpointID); err != nil {
-			return false, fmt.Errorf("state: clear over-cap realtime channel routes: %w", err)
-		}
 		if _, err := tx.Exec(ctx, `
-		update managed_realtime_channel_route_overflow
-		   set rebuilding = false,
-		       next_rebuild_at = now() + interval '5 minutes',
-			       rebuild_started_at = null
+			update managed_realtime_channel_route_overflow_channels
+			   set next_rebuild_at = now() + interval '5 minutes'
 			 where endpoint_id = $1
 		`, endpointID); err != nil {
-			return false, fmt.Errorf("state: defer over-cap realtime route rebuild: %w", err)
+			return false, fmt.Errorf("state: schedule channel-scoped realtime route rebuild: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `delete from managed_realtime_channel_route_overflow where endpoint_id = $1`, endpointID); err != nil {
+			return false, fmt.Errorf("state: clear endpoint-wide realtime route rebuild state: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -564,10 +603,15 @@ func insertManagedRealtimeChannelRoutes(ctx context.Context, tx pgx.Tx, routes [
 		select incoming.endpoint_id::uuid, incoming.channel, incoming.node_id::uuid
 		  from unnest($1::text[], $2::text[], $3::text[]) as incoming(endpoint_id, node_id, channel)
 		 where not exists (
-		   select 1 from managed_realtime_channel_route_overflow overflow
-		    where overflow.endpoint_id = incoming.endpoint_id::uuid
-		      and overflow.rebuilding = false
+		   select 1 from managed_realtime_channel_route_overflow_channels overflow_channel
+		    where overflow_channel.endpoint_id = incoming.endpoint_id::uuid
+		      and overflow_channel.channel = incoming.channel
 		 )
+		   and not exists (
+		     select 1 from managed_realtime_channel_route_overflow overflow
+		      where overflow.endpoint_id = incoming.endpoint_id::uuid
+		        and overflow.rebuilding = false
+		   )
 		on conflict (endpoint_id, channel, node_id) do nothing`, endpointIDs, nodeIDs, channels)
 	if err != nil {
 		return fmt.Errorf("state: add realtime channel routes: %w", err)
@@ -580,32 +624,23 @@ func enforceManagedRealtimeChannelRouteLimit(ctx context.Context, tx pgx.Tx, end
 		return nil
 	}
 	rows, err := tx.Query(ctx, `
-		select routes.endpoint_id::text, count(*),
-		       bool_or(overflow.endpoint_id is not null),
-		       coalesce(bool_or(overflow.rebuilding), false)
-		  from managed_realtime_channel_routes routes
-		  left join managed_realtime_channel_route_overflow overflow
-		    on overflow.endpoint_id = routes.endpoint_id
-		 where routes.endpoint_id = any($1::uuid[])
-		 group by routes.endpoint_id
-		having count(*) > $2`, endpointIDs, managedRealtimeChannelRouteLimit)
+		select endpoint_id::text
+		  from managed_realtime_channel_routes
+		 where endpoint_id = any($1::uuid[])
+		 group by endpoint_id
+		having count(*) > $2
+		 order by endpoint_id`, endpointIDs, managedRealtimeChannelRouteLimit)
 	if err != nil {
 		return fmt.Errorf("state: inspect realtime channel route limit: %w", err)
 	}
-	type overLimit struct {
-		endpointID string
-		exists     bool
-		rebuilding bool
-	}
-	var overLimitEndpoints []overLimit
+	var overLimitEndpoints []string
 	for rows.Next() {
-		var item overLimit
-		var count int
-		if err := rows.Scan(&item.endpointID, &count, &item.exists, &item.rebuilding); err != nil {
+		var endpointID string
+		if err := rows.Scan(&endpointID); err != nil {
 			rows.Close()
 			return fmt.Errorf("state: scan over-limit realtime channel route: %w", err)
 		}
-		overLimitEndpoints = append(overLimitEndpoints, item)
+		overLimitEndpoints = append(overLimitEndpoints, endpointID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -615,52 +650,80 @@ func enforceManagedRealtimeChannelRouteLimit(ctx context.Context, tx pgx.Tx, end
 	if len(overLimitEndpoints) == 0 {
 		return nil
 	}
-	var newOverflow, rebuildingOverflow, disabledOverflow []string
-	for _, endpoint := range overLimitEndpoints {
-		switch {
-		case !endpoint.exists:
-			newOverflow = append(newOverflow, endpoint.endpointID)
-		case endpoint.rebuilding:
-			rebuildingOverflow = append(rebuildingOverflow, endpoint.endpointID)
-		default:
-			disabledOverflow = append(disabledOverflow, endpoint.endpointID)
-		}
-	}
-	if len(newOverflow) > 0 {
-		var generation int64
+	for _, endpointID := range overLimitEndpoints {
+		var routeCount int
 		if err := tx.QueryRow(ctx, `
-			update managed_realtime_channel_route_generation
-			   set generation = generation + 1
-			 where singleton = true
-			 returning generation
-		`).Scan(&generation); err != nil {
-			return fmt.Errorf("state: advance realtime channel route generation for overflow: %w", err)
+			select count(*) from managed_realtime_channel_routes where endpoint_id = $1
+		`, endpointID).Scan(&routeCount); err != nil {
+			return fmt.Errorf("state: count over-limit realtime channel routes: %w", err)
 		}
+		var rebuilding bool
+		err := tx.QueryRow(ctx, `
+			select rebuilding
+			  from managed_realtime_channel_route_overflow
+			 where endpoint_id = $1
+		`, endpointID).Scan(&rebuilding)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("state: read realtime channel route overflow state: %w", err)
+		}
+		if err == nil && !rebuilding {
+			if _, err := tx.Exec(ctx, `delete from managed_realtime_channel_routes where endpoint_id = $1`, endpointID); err != nil {
+				return fmt.Errorf("state: clear legacy over-cap realtime channel routes: %w", err)
+			}
+			continue
+		}
+
+		type channelCount struct {
+			channel string
+			count   int
+		}
+		channelRows, err := tx.Query(ctx, `
+			select channel, count(*)
+			  from managed_realtime_channel_routes
+			 where endpoint_id = $1
+			 group by channel
+			 order by count(*) desc, channel
+		`, endpointID)
+		if err != nil {
+			return fmt.Errorf("state: group over-limit realtime routes by channel: %w", err)
+		}
+		overflowChannels := make([]string, 0)
+		toRemove := routeCount - managedRealtimeChannelRouteLimit
+		for channelRows.Next() {
+			if toRemove <= 0 {
+				continue
+			}
+			var item channelCount
+			if err := channelRows.Scan(&item.channel, &item.count); err != nil {
+				channelRows.Close()
+				return fmt.Errorf("state: scan over-limit realtime route channel: %w", err)
+			}
+			overflowChannels = append(overflowChannels, item.channel)
+			toRemove -= item.count
+		}
+		if err := channelRows.Err(); err != nil {
+			channelRows.Close()
+			return fmt.Errorf("state: iterate over-limit realtime route channels: %w", err)
+		}
+		channelRows.Close()
+		if toRemove > 0 {
+			return fmt.Errorf("state: could not compact over-limit realtime channel routes for endpoint %s", endpointID)
+		}
+		// Older apid versions treat any row in the endpoint overflow table as
+		// endpoint-wide fallback, so persist selective markers separately.
 		if _, err := tx.Exec(ctx, `
-			insert into managed_realtime_channel_route_overflow
-				(endpoint_id, rebuild_generation, rebuilding, next_rebuild_at)
-			select endpoint_id::uuid, $1, false, now() + interval '5 minutes'
-			  from unnest($2::text[]) as endpoint_id
-			on conflict (endpoint_id) do nothing`, generation, newOverflow); err != nil {
-			return fmt.Errorf("state: disable over-limit realtime channel route indexes: %w", err)
+			insert into managed_realtime_channel_route_overflow_channels (endpoint_id, channel)
+			select $1::uuid, channel
+			  from unnest($2::text[]) as selected(channel)
+			on conflict (endpoint_id, channel) do nothing
+		`, endpointID, overflowChannels); err != nil {
+			return fmt.Errorf("state: mark overflowing realtime channels: %w", err)
 		}
-	}
-	if len(rebuildingOverflow) > 0 {
-		if _, err := tx.Exec(ctx, `
-			update managed_realtime_channel_route_overflow
-			   set rebuilding = false,
-			       rebuild_started_at = null,
-			       next_rebuild_at = now() + interval '5 minutes'
-			 where endpoint_id = any($1::uuid[])`, rebuildingOverflow); err != nil {
-			return fmt.Errorf("state: defer over-limit realtime route rebuild: %w", err)
-		}
-	}
-	clear := append(append(newOverflow, rebuildingOverflow...), disabledOverflow...)
-	if len(clear) > 0 {
 		if _, err := tx.Exec(ctx, `
 			delete from managed_realtime_channel_routes
-			 where endpoint_id = any($1::uuid[])`, clear); err != nil {
-			return fmt.Errorf("state: clear over-limit realtime channel routes: %w", err)
+			 where endpoint_id = $1 and channel = any($2::text[])
+		`, endpointID, overflowChannels); err != nil {
+			return fmt.Errorf("state: clear overflowing realtime channel routes: %w", err)
 		}
 	}
 	return nil
@@ -699,7 +762,7 @@ func (m *MemStore) AddManagedRealtimeChannelRoutes(_ context.Context, routes []M
 	m.ensureRealtimeChannelRouteMapsLocked()
 	for _, route := range unique {
 		overflow, disabled := m.realtimeChannelRouteOverflow[route.EndpointID]
-		if disabled && !overflow.Rebuilding {
+		if disabled && ((overflow.OverflowAll && !overflow.Rebuilding) || managedRealtimeChannelRouteChannelOverflowed(overflow, route.Channel)) {
 			continue
 		}
 		m.addRealtimeChannelRouteLocked(route)
@@ -740,7 +803,7 @@ func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID
 	}
 	for _, route := range unique {
 		overflow, disabled := m.realtimeChannelRouteOverflow[route.EndpointID]
-		if disabled && !overflow.Rebuilding {
+		if disabled && ((overflow.OverflowAll && !overflow.Rebuilding) || managedRealtimeChannelRouteChannelOverflowed(overflow, route.Channel)) {
 			continue
 		}
 		m.addRealtimeChannelRouteLocked(route)
@@ -778,6 +841,8 @@ func (m *MemStore) BeginManagedRealtimeChannelRouteRebuild(_ context.Context) (b
 	for _, endpointID := range eligible {
 		overflow := m.realtimeChannelRouteOverflow[endpointID]
 		overflow.Rebuilding = true
+		overflow.OverflowAll = true
+		overflow.OverflowChannels = make(map[string]struct{})
 		overflow.RebuildGeneration = m.realtimeChannelRouteGeneration
 		overflow.RebuildStartedAt = now
 		overflow.NextRebuildAt = now.Add(managedRealtimeChannelRouteLockLease)
@@ -793,7 +858,9 @@ func (m *MemStore) ListManagedRealtimeChannelRouteView(_ context.Context, endpoi
 	if endpointID == "" || channel == "" {
 		return view, nil
 	}
-	_, view.Disabled = m.realtimeChannelRouteOverflow[endpointID]
+	if overflow, ok := m.realtimeChannelRouteOverflow[endpointID]; ok {
+		view.Disabled = overflow.OverflowAll || managedRealtimeChannelRouteChannelOverflowed(overflow, channel)
+	}
 	nodes := make(map[string]struct{})
 	for route := range m.realtimeChannelRoutes {
 		if route.EndpointID == endpointID && route.Channel == channel {
@@ -852,16 +919,25 @@ func (m *MemStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Contex
 			return false, nil
 		}
 	}
+	var rebuildingEndpoints []string
+	for endpointID, overflow := range m.realtimeChannelRouteOverflow {
+		if overflow.Rebuilding {
+			rebuildingEndpoints = append(rebuildingEndpoints, endpointID)
+		}
+	}
+	if err := m.enforceMemRealtimeChannelRouteLimitLocked(rebuildingEndpoints); err != nil {
+		return false, err
+	}
 	now := time.Now()
 	for endpointID, overflow := range m.realtimeChannelRouteOverflow {
 		if !overflow.Rebuilding {
 			continue
 		}
-		if m.realtimeChannelRouteCounts[endpointID] <= managedRealtimeChannelRouteLimit {
+		if m.realtimeChannelRouteCounts[endpointID] <= managedRealtimeChannelRouteLimit && len(overflow.OverflowChannels) == 0 {
 			delete(m.realtimeChannelRouteOverflow, endpointID)
 			continue
 		}
-		m.clearMemRealtimeChannelRoutesLocked(endpointID)
+		overflow.OverflowAll = false
 		overflow.Rebuilding = false
 		overflow.RebuildStartedAt = time.Time{}
 		overflow.NextRebuildAt = now.Add(managedRealtimeChannelRouteRebuildDelay)
@@ -895,25 +971,79 @@ func (m *MemStore) addRealtimeChannelRouteLocked(route ManagedRealtimeChannelRou
 
 func (m *MemStore) enforceMemRealtimeChannelRouteLimitLocked(endpointIDs []string) error {
 	for _, endpointID := range endpointIDs {
-		if m.realtimeChannelRouteCounts[endpointID] <= managedRealtimeChannelRouteLimit {
+		routeCount := m.realtimeChannelRouteCounts[endpointID]
+		if routeCount <= managedRealtimeChannelRouteLimit {
 			continue
 		}
 		overflow, disabled := m.realtimeChannelRouteOverflow[endpointID]
 		if !disabled {
-			m.realtimeChannelRouteGeneration++
 			overflow = managedRealtimeChannelRouteOverflowState{
-				RebuildGeneration: m.realtimeChannelRouteGeneration,
-				NextRebuildAt:     time.Now().Add(managedRealtimeChannelRouteRebuildDelay),
+				OverflowChannels: make(map[string]struct{}),
+				NextRebuildAt:    time.Now().Add(managedRealtimeChannelRouteRebuildDelay),
 			}
-		} else if overflow.Rebuilding {
-			overflow.Rebuilding = false
-			overflow.RebuildStartedAt = time.Time{}
-			overflow.NextRebuildAt = time.Now().Add(managedRealtimeChannelRouteRebuildDelay)
+		}
+		if overflow.OverflowAll && !overflow.Rebuilding {
+			m.clearMemRealtimeChannelRoutesLocked(endpointID)
+			m.realtimeChannelRouteOverflow[endpointID] = overflow
+			continue
+		}
+		if overflow.OverflowChannels == nil {
+			overflow.OverflowChannels = make(map[string]struct{})
+		}
+		type channelCount struct {
+			channel string
+			count   int
+		}
+		countsByChannel := make(map[string]int)
+		for route := range m.realtimeChannelRoutes {
+			if route.EndpointID == endpointID {
+				countsByChannel[route.Channel]++
+			}
+		}
+		channels := make([]channelCount, 0, len(countsByChannel))
+		for channel, count := range countsByChannel {
+			channels = append(channels, channelCount{channel: channel, count: count})
+		}
+		sort.Slice(channels, func(i, j int) bool {
+			if channels[i].count == channels[j].count {
+				return channels[i].channel < channels[j].channel
+			}
+			return channels[i].count > channels[j].count
+		})
+		toRemove := routeCount - managedRealtimeChannelRouteLimit
+		selectedChannels := make(map[string]struct{})
+		for _, item := range channels {
+			if toRemove <= 0 {
+				break
+			}
+			overflow.OverflowChannels[item.channel] = struct{}{}
+			selectedChannels[item.channel] = struct{}{}
+			toRemove -= item.count
+		}
+		if toRemove > 0 {
+			return fmt.Errorf("state: could not compact over-limit realtime channel routes for endpoint %s", endpointID)
+		}
+		for route := range m.realtimeChannelRoutes {
+			if route.EndpointID != endpointID {
+				continue
+			}
+			if _, selected := selectedChannels[route.Channel]; !selected {
+				continue
+			}
+			delete(m.realtimeChannelRoutes, route)
+			m.realtimeChannelRouteCounts[endpointID]--
+		}
+		if m.realtimeChannelRouteCounts[endpointID] <= 0 {
+			delete(m.realtimeChannelRouteCounts, endpointID)
 		}
 		m.realtimeChannelRouteOverflow[endpointID] = overflow
-		m.clearMemRealtimeChannelRoutesLocked(endpointID)
 	}
 	return nil
+}
+
+func managedRealtimeChannelRouteChannelOverflowed(overflow managedRealtimeChannelRouteOverflowState, channel string) bool {
+	_, ok := overflow.OverflowChannels[channel]
+	return ok
 }
 
 func (m *MemStore) clearMemRealtimeChannelRoutesLocked(endpointID string) {

@@ -340,7 +340,7 @@ groups:
           family: managed_realtime_channel_routing
         annotations:
           summary: "Managed realtime route overflow repair is repeatedly unsuccessful"
-          description: "Apid has recorded at least two route rebuild start errors or incomplete/failed reconciliation passes in thirty minutes. Over-cap endpoints remain on full broadcast until repair succeeds."
+          description: "Apid has recorded at least two route rebuild start errors or incomplete/failed reconciliation passes in thirty minutes. Overflowed channels remain on full broadcast until repair succeeds."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedRealtimeChannelRouting.md"
 
   - name: account_lifecycle
