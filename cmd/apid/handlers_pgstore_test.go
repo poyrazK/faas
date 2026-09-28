@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -782,5 +783,84 @@ func TestPGProgrammaticSignupMintsUsableKey(t *testing.T) {
 	}
 	if rec := v1AuthJSONRequest(t, e.h, "/v1/auth/login", `{"email":"`+email+`","password":"pg-signup-password-123!"}`); rec.Code != http.StatusOK {
 		t.Fatalf("login = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The app_errors retention cron observed `no_accounts` every 24h and never
+// deleted anything, so every 4xx/5xx row (with its headers sample) was kept
+// forever. purgeAll must drop rows past the retention horizon and keep
+// fresh ones.
+func TestPGAppErrorsPurgeEnforcesRetention(t *testing.T) {
+	e := setupPGHandler(t, api.PlanFree)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "purge-" + uuid.NewString()[:8], Status: state.AppActive, RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID, appID := uuid.MustParse(e.acct.ID), uuid.MustParse(app.ID)
+	seed := func(fingerprint string, at time.Time) {
+		t.Helper()
+		if _, err := e.store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
+			ID: state.NewPgtypeUUID(uuid.New()), AccountID: state.NewPgtypeUUID(accountID), AppID: state.NewPgtypeUUID(appID),
+			Fingerprint: fingerprint, Route: "/x", HttpStatus: 500, ErrorClass: "unhandled", FirstSeenAt: state.NewPgtypeTime(at),
+		}); err != nil {
+			t.Fatalf("IncrementAppError: %v", err)
+		}
+		if err := e.store.InsertAppErrorRequest(ctx, sqlc.InsertAppErrorRequestParams{
+			ID: state.NewPgtypeUUID(uuid.New()), AccountID: state.NewPgtypeUUID(accountID), AppID: state.NewPgtypeUUID(appID),
+			Fingerprint: fingerprint, RequestID: state.NewPgtypeUUID(uuid.New()), ReceivedAt: state.NewPgtypeTime(at),
+			Route: "/x", HttpStatus: 500, ErrorClass: "unhandled", HeadersSample: []byte("{}"), Redactions: []string{},
+		}); err != nil {
+			t.Fatalf("InsertAppErrorRequest: %v", err)
+		}
+	}
+	old := time.Now().Add(-200 * 24 * time.Hour)
+	seed(strings.Repeat("a", 64), old)
+	seed(strings.Repeat("b", 64), time.Now())
+	if _, err := e.pool.Exec(ctx, `update app_errors set last_seen_at = $2 where account_id = $1 and fingerprint = $3`,
+		e.acct.ID, old, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+
+	newAppErrorsPurger(e.store, nil, nil, discardLogger(), true).purgeAll(ctx)
+
+	var requests, groups int
+	if err := e.pool.QueryRow(ctx, `select count(*) from app_error_requests where account_id = $1`, e.acct.ID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.pool.QueryRow(ctx, `select count(*) from app_errors where account_id = $1`, e.acct.ID).Scan(&groups); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || groups != 1 {
+		t.Fatalf("after purge: %d request rows, %d groups; want only the fresh 1 and 1", requests, groups)
+	}
+}
+
+// An error with nothing to redact arrives with an empty (nil) redactions
+// list; pgx sent it as NULL into a NOT NULL column, so the per-request row
+// was never written and the customer's error drill-down stayed empty.
+func TestPGAppErrorsReceiverStoresUnredactedRequests(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "errs-" + uuid.NewString()[:8], Status: state.AppActive, RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver := newAppErrorsReceiver(e.store, nil, true)
+	out := receiver.handleOne(ctx, &apidpb.IncrementAppErrorRequest{
+		AccountId: e.acct.ID, AppId: app.ID, Fingerprint: strings.Repeat("c", 64),
+		RouteTemplate: "/boom", HttpStatus: 500, ErrorClass: "unhandled",
+		SampleMessage: "boom", HeadersSampleJson: "{}", ReceivedAtUnixMs: time.Now().UnixMilli(),
+		RequestId: uuid.NewString(),
+	})
+	if out.GetOutcome() != outcomeInserted {
+		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), outcomeInserted)
+	}
+	var requests int
+	if err := e.pool.QueryRow(ctx, `select count(*) from app_error_requests where app_id = $1`, app.ID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("app_error_requests rows = %d, want 1", requests)
 	}
 }

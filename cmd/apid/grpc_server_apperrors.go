@@ -221,6 +221,14 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 	// request_id (RequestID), a fresh row id (ID), and the
 	// route template as `Route` (the SQL column name in
 	// migrations/00222_app_errors.sql is route_template).
+	// app_error_requests.redactions is NOT NULL DEFAULT '{}', but an
+	// empty proto repeated field decodes to nil, which pgx sends as NULL:
+	// every error without a redaction (nearly all of them) failed this
+	// insert, so the customer drill-down stayed empty.
+	redactions := req.GetRedactionsApplied()
+	if redactions == nil {
+		redactions = []string{}
+	}
 	reqErr := a.store.InsertAppErrorRequest(ctx, sqlc.InsertAppErrorRequestParams{
 		ID:                  state.NewPgtypeUUID(newRowID()),
 		AccountID:           state.NewPgtypeUUID(accountID),
@@ -234,7 +242,7 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 		SampleMessage:       "",
 		DeploymentID:        deploymentUUID,
 		HeadersSample:       []byte(req.GetHeadersSampleJson()),
-		Redactions:          req.GetRedactionsApplied(),
+		Redactions:          redactions,
 		InstanceID:          req.GetInstanceId(),
 		NodeID:              req.GetNodeId(),
 		Region:              req.GetRegion(),
