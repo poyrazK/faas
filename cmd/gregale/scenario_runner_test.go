@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,7 +19,7 @@ import (
 func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gregale-test.yaml")
-	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, prefix: EXPORT_STORAGE}]\n"
+	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +41,44 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	}
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("invalid bucket binding prefix was accepted")
+	}
+}
+
+type testOutputFakeClient struct {
+	polls int
+}
+
+func (f *testOutputFakeClient) QueueState(_ context.Context, _ string) (api.QueueStateResponse, error) {
+	f.polls++
+	if f.polls < 2 {
+		return api.QueueStateResponse{Depth: 1}, nil
+	}
+	return api.QueueStateResponse{}, nil
+}
+
+func (f *testOutputFakeClient) ListBucketObjects(_ context.Context, _, bucket, prefix, cursor string, _ int) (api.BucketObjectPage, error) {
+	if bucket != "exports-123" || prefix != "reports/run-123/" || cursor != "" {
+		return api.BucketObjectPage{}, fmt.Errorf("unexpected object lookup %q %q %q", bucket, prefix, cursor)
+	}
+	if f.polls < 2 {
+		return api.BucketObjectPage{}, nil
+	}
+	return api.BucketObjectPage{Items: []api.BucketObject{{Key: "reports/run-123/result.csv", SizeBytes: 25}}}, nil
+}
+
+func TestWaitForTestOutputsPollsQueueAndObjects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client := &testOutputFakeClient{}
+	outputs, err := waitForTestOutputs(ctx, client, "test-app", testWaitFor{
+		QueueIdle: true,
+		Objects:   []testObjectOutput{{Bucket: "exports", Prefix: "reports/${GREGALE_TEST_RUN_ID}/", MinCount: 1, MinTotalBytes: 1}},
+	}, map[string]string{"exports": "exports-123"}, "run-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.polls != 2 || len(outputs) != 1 || outputs[0].Count != 1 || outputs[0].TotalBytes != 25 {
+		t.Fatalf("polls=%d outputs=%+v", client.polls, outputs)
 	}
 }
 
@@ -159,43 +198,5 @@ func TestVerifyTestProfileUsesCompletedWakeMethod(t *testing.T) {
 				t.Fatalf("method = %q, want %q", evidence.Method, tc.method)
 			}
 		})
-	}
-}
-
-func TestDeleteTestBucketEmptiesBeforeDelete(t *testing.T) {
-	objects := map[string]bool{"exports/a": true, "exports/b": true}
-	deletedBucket := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/apps/test-app/buckets/exports" && r.URL.Path != "/v1/apps/test-app/buckets/exports/objects" {
-			t.Errorf("unexpected path %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/objects"):
-			if len(objects) == 0 {
-				_, _ = w.Write([]byte(`{"items":[]}`))
-			} else {
-				_, _ = w.Write([]byte(`{"items":[{"key":"exports/a"},{"key":"exports/b"}]}`))
-			}
-		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/objects"):
-			delete(objects, r.URL.Query().Get("key"))
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/test-app/buckets/exports":
-			if len(objects) != 0 {
-				t.Error("bucket deleted with objects remaining")
-			}
-			deletedBucket = true
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	if err := deleteTestBucket(context.Background(), api.NewClient(server.URL, "token"), "test-app", "exports"); err != nil {
-		t.Fatal(err)
-	}
-	if !deletedBucket || len(objects) != 0 {
-		t.Fatalf("cleanup incomplete: deleted=%v objects=%v", deletedBucket, objects)
 	}
 }

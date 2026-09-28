@@ -22,6 +22,14 @@ scenarios:
     timeout: 15m
     setup:
       - [node, test/fixtures/seed.mjs]
+    trigger: [node, test/submit-export.mjs]
+    wait_for:
+      queue_idle: true
+      objects:
+        - bucket: exports
+          prefix: reports/${GREGALE_TEST_RUN_ID}/
+          min_count: 1
+          min_total_bytes: 1
     command: [node, --test, test/customer-export.test.mjs]
     cleanup:
       - [node, test/fixtures/cleanup.mjs]
@@ -42,6 +50,16 @@ This lets the CLI record the first request's `X-Faas-Wake` and
 `X-Faas-Wake-ID` without changing the application's request or response.
 The setup and cleanup commands receive the same variables. Commands are
 argument arrays, not shell strings.
+
+`trigger` runs immediately after Gregale prepares the selected lifecycle
+profile. It can submit the authenticated export request through
+`GREGALE_TEST_URL`. When `wait_for` is present, Gregale polls the isolated
+app's queue until both depth and in-flight work reach zero, and polls declared
+bucket prefixes until the minimum object count and total size are present.
+`${GREGALE_TEST_RUN_ID}` in an object prefix is replaced with the current run
+ID. The assertion `command` then checks application-specific ownership,
+authorization, deduplication, and delivery policy. The overall `timeout`
+includes deployment, trigger, waiting, and assertions.
 
 For each declared bucket, Gregale creates an isolated bucket and a compute
 binding before deploying the app. It exposes the bucket name to local commands
@@ -66,11 +84,10 @@ profile. A restore that falls back to cold boot is recorded as cold boot and
 fails the restored profile. Reports include the run ID, app slug, deployment ID,
 first response status, wake headers, completed method, and cleanup outcome.
 
-The assertion command owns application-specific identities and expectations.
-For an export test it should create two customers, submit and retry the same
-export request, wait for the application-visible completion condition, inspect
-the produced object through both customers' credentials, and check notification
-delivery. Gregale's test runner currently provisions one HTTP app and optional
+The assertion commands own application-specific identities and expectations.
+For an export test they should create two customers, submit and retry the same
+export request, inspect the produced object through both customers' credentials,
+and check notification delivery. Gregale's test runner currently provisions one HTTP app and optional
 PostgreSQL and buckets; queue bindings, notification failure controls, multi-workload
 profiles, and simulated execution are still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.

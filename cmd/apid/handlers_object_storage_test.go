@@ -28,6 +28,7 @@ type fakeObjectProvider struct {
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
 	multipartAborted     []string
+	objects              map[string]bool
 }
 
 func (p *fakeObjectProvider) ReadObject(_ context.Context, b, key string) (io.ReadCloser, error) {
@@ -45,14 +46,27 @@ func (p *fakeObjectProvider) CreateBucket(_ context.Context, b string) error {
 }
 func (p *fakeObjectProvider) DeleteBucket(_ context.Context, b string) error {
 	p.accessed = append(p.accessed, b)
+	if len(p.objects) > 0 {
+		return objectstorage.ErrNotEmpty
+	}
 	return p.deleteErr
 }
 func (p *fakeObjectProvider) ListObjects(_ context.Context, b, prefix, cursor string, limit int32) (objectstorage.ObjectPage, error) {
 	p.accessed = append(p.accessed, b)
+	if p.objects != nil {
+		items := make([]objectstorage.Object, 0, len(p.objects))
+		for key := range p.objects {
+			if strings.HasPrefix(key, prefix) {
+				items = append(items, objectstorage.Object{Key: key, Size: 3})
+			}
+		}
+		return objectstorage.ObjectPage{Items: items}, nil
+	}
 	return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: prefix + "file", Size: 3}}, NextCursor: "next"}, nil
 }
 func (p *fakeObjectProvider) DeleteObject(_ context.Context, b, key string) error {
 	p.accessed = append(p.accessed, b)
+	delete(p.objects, key)
 	return nil
 }
 func (p *fakeObjectProvider) Presign(_ context.Context, b string, r objectstorage.SignRequest) (objectstorage.SignedRequest, error) {

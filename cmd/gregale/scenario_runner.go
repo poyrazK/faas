@@ -37,12 +37,33 @@ type testManifest struct {
 type testScenario struct {
 	Project  string       `yaml:"project"`
 	Source   string       `yaml:"source"`
+	Trigger  []string     `yaml:"trigger"`
 	Command  []string     `yaml:"command"`
 	Setup    [][]string   `yaml:"setup"`
 	Cleanup  [][]string   `yaml:"cleanup"`
 	Postgres bool         `yaml:"postgres"`
 	Buckets  []testBucket `yaml:"buckets"`
+	WaitFor  testWaitFor  `yaml:"wait_for"`
 	Timeout  string       `yaml:"timeout"`
+}
+
+type testWaitFor struct {
+	QueueIdle bool               `yaml:"queue_idle"`
+	Objects   []testObjectOutput `yaml:"objects"`
+}
+
+type testObjectOutput struct {
+	Bucket        string `yaml:"bucket"`
+	Prefix        string `yaml:"prefix"`
+	MinCount      int    `yaml:"min_count"`
+	MinTotalBytes int64  `yaml:"min_total_bytes"`
+}
+
+type testOutputEvidence struct {
+	Bucket     string `json:"bucket"`
+	Prefix     string `json:"prefix"`
+	Count      int    `json:"count"`
+	TotalBytes int64  `json:"total_bytes"`
 }
 
 type testBucket struct {
@@ -63,17 +84,19 @@ type testWakeEvidence struct {
 }
 
 type testRunReceipt struct {
-	Scenario     string           `json:"scenario"`
-	Profile      string           `json:"profile"`
-	Engine       string           `json:"engine"`
-	RunID        string           `json:"run_id"`
-	AppSlug      string           `json:"app_slug,omitempty"`
-	DeploymentID string           `json:"deployment_id,omitempty"`
-	Status       string           `json:"status"`
-	Error        string           `json:"error,omitempty"`
-	CleanupError string           `json:"cleanup_error,omitempty"`
-	Buckets      []string         `json:"buckets,omitempty"`
-	Evidence     testWakeEvidence `json:"evidence"`
+	Scenario     string               `json:"scenario"`
+	Profile      string               `json:"profile"`
+	Engine       string               `json:"engine"`
+	RunID        string               `json:"run_id"`
+	AppSlug      string               `json:"app_slug,omitempty"`
+	DeploymentID string               `json:"deployment_id,omitempty"`
+	Status       string               `json:"status"`
+	Error        string               `json:"error,omitempty"`
+	CleanupError string               `json:"cleanup_error,omitempty"`
+	Buckets      []string             `json:"buckets,omitempty"`
+	Evidence     testWakeEvidence     `json:"evidence"`
+	Outputs      []testOutputEvidence `json:"outputs,omitempty"`
+	QueueIdle    bool                 `json:"queue_idle,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -191,6 +214,12 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		if len(scenario.Command) == 0 || scenario.Command[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q needs a command", name)
 		}
+		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
+			return nil, "", fmt.Errorf("scenario %q has an empty trigger command", name)
+		}
+		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Objects) > 0) && len(scenario.Trigger) == 0 {
+			return nil, "", fmt.Errorf("scenario %q needs trigger when wait_for is set", name)
+		}
 		for _, step := range append(append([][]string{}, scenario.Setup...), scenario.Cleanup...) {
 			if len(step) == 0 || step[0] == "" {
 				return nil, "", fmt.Errorf("scenario %q has an empty setup or cleanup command", name)
@@ -213,6 +242,11 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 			}
 			if bucket.Prefix != "" && !testBucketPrefixPattern.MatchString(bucket.Prefix) {
 				return nil, "", fmt.Errorf("scenario %q bucket %q has invalid secret prefix", name, bucket.Name)
+			}
+		}
+		for _, output := range scenario.WaitFor.Objects {
+			if !seenBuckets[output.Bucket] || output.MinCount < 1 || output.MinTotalBytes < 0 {
+				return nil, "", fmt.Errorf("scenario %q has an invalid object wait condition for bucket %q", name, output.Bucket)
 			}
 		}
 	}
@@ -254,26 +288,16 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	receipt.AppSlug = session.App.Slug
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 		if err := client.DestroyDevSession(cleanupCtx, scenario.Project, receipt.RunID); err != nil {
 			receipt.addCleanupError(fmt.Sprintf("destroy test environment %s: %v", receipt.AppSlug, err))
 		}
 	}()
-	bucketNames := make([]string, 0, len(scenario.Buckets))
-	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cleanupCancel()
-		for _, bucket := range bucketNames {
-			if err := deleteTestBucket(cleanupCtx, client, receipt.AppSlug, bucket); err != nil {
-				receipt.addCleanupError(fmt.Sprintf("delete bucket %s: %v", bucket, err))
-			}
-		}
-	}()
-	bucketEnv := make([]string, 0, len(scenario.Buckets))
+	bucketEnv := make([]string, 0, 2*len(scenario.Buckets))
+	bucketByName := make(map[string]string, len(scenario.Buckets))
 	for _, spec := range scenario.Buckets {
 		bucketName := spec.Name + "-" + receipt.RunID[:8]
-		bucketNames = append(bucketNames, bucketName)
 		bucket, err := client.CreateObjectBucket(ctx, session.App.Slug, api.CreateObjectBucketRequest{
 			Name: bucketName, Region: spec.Region,
 		})
@@ -282,6 +306,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		receipt.Buckets = append(receipt.Buckets, bucket.Name)
+		bucketByName[spec.Name] = bucket.Name
 		permission := spec.Permission
 		if permission == "" {
 			permission = "read_write"
@@ -348,6 +373,21 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	recorder.reset()
+	if len(scenario.Trigger) > 0 {
+		if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
+			receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+			receipt.Evidence = recorder.snapshot()
+			return
+		}
+		outputs, err := waitForTestOutputs(ctx, client, session.App.Slug, scenario.WaitFor, bucketByName, receipt.RunID)
+		receipt.Outputs = outputs
+		if err != nil {
+			receipt.Error = fmt.Sprintf("wait for application output: %v", err)
+			receipt.Evidence = recorder.snapshot()
+			return
+		}
+		receipt.QueueIdle = scenario.WaitFor.QueueIdle
+	}
 	if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
 		receipt.Error = fmt.Sprintf("application assertion command: %v", err)
 	}
@@ -465,6 +505,65 @@ func runTestCommand(ctx context.Context, dir string, env, argv []string) error {
 	return nil
 }
 
+type testOutputClient interface {
+	QueueState(context.Context, string) (api.QueueStateResponse, error)
+	ListBucketObjects(context.Context, string, string, string, string, int) (api.BucketObjectPage, error)
+}
+
+func waitForTestOutputs(ctx context.Context, client testOutputClient, slug string, conditions testWaitFor, buckets map[string]string, runID string) ([]testOutputEvidence, error) {
+	if !conditions.QueueIdle && len(conditions.Objects) == 0 {
+		return nil, nil
+	}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready := true
+		if conditions.QueueIdle {
+			state, err := client.QueueState(ctx, slug)
+			if err != nil {
+				return nil, fmt.Errorf("read queue state: %w", err)
+			}
+			ready = state.Depth == 0 && state.InFlight == 0
+		}
+		observed := make([]testOutputEvidence, 0, len(conditions.Objects))
+		for _, condition := range conditions.Objects {
+			bucket := buckets[condition.Bucket]
+			prefix := strings.ReplaceAll(condition.Prefix, "${GREGALE_TEST_RUN_ID}", runID)
+			output := testOutputEvidence{Bucket: bucket, Prefix: prefix}
+			cursor := ""
+			for pages := 0; pages < 100; pages++ {
+				page, err := client.ListBucketObjects(ctx, slug, bucket, prefix, cursor, 100)
+				if err != nil {
+					return observed, fmt.Errorf("list bucket %s: %w", bucket, err)
+				}
+				for _, object := range page.Items {
+					output.Count++
+					output.TotalBytes += object.SizeBytes
+				}
+				if page.NextCursor == "" {
+					break
+				}
+				if pages == 99 {
+					return observed, fmt.Errorf("bucket %s output listing exceeded 10000 objects", bucket)
+				}
+				cursor = page.NextCursor
+			}
+			observed = append(observed, output)
+			if output.Count < condition.MinCount || output.TotalBytes < condition.MinTotalBytes {
+				ready = false
+			}
+		}
+		if ready {
+			return observed, nil
+		}
+		select {
+		case <-ctx.Done():
+			return observed, fmt.Errorf("completion conditions not reached: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
 type testProxyRecorder struct {
 	mu       sync.Mutex
 	evidence testWakeEvidence
@@ -524,37 +623,4 @@ func writeTestReport(path string, receipts []testRunReceipt) error {
 		return err
 	}
 	return nil
-}
-
-func deleteTestBucket(ctx context.Context, client *Client, slug, bucket string) error {
-	// List from the beginning after every batch. Cursors over a mutating
-	// bucket can skip keys; repeated first-page reads cannot.
-	for deleted := 0; deleted < 10000; {
-		page, err := client.ListBucketObjects(ctx, slug, bucket, "", "", 100)
-		if err != nil {
-			if testAPIStatus(err, http.StatusNotFound) {
-				return nil
-			}
-			return err
-		}
-		if len(page.Items) == 0 {
-			err := client.DeleteObjectBucket(ctx, slug, bucket)
-			if testAPIStatus(err, http.StatusNotFound) {
-				return nil
-			}
-			return err
-		}
-		for _, object := range page.Items {
-			if err := client.DeleteBucketObject(ctx, slug, bucket, object.Key); err != nil {
-				return err
-			}
-			deleted++
-		}
-	}
-	return errors.New("test bucket contains more than 10000 objects; cleanup requires manual inspection")
-}
-
-func testAPIStatus(err error, status int) bool {
-	var apiErr *api.APIError
-	return errors.As(err, &apiErr) && apiErr.Problem.Status == status
 }
