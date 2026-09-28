@@ -25,11 +25,12 @@ T = TypeVar("T", bound="CreatePlatformTenantWebhookRequest")
 
 @_attrs_define
 class CreatePlatformTenantWebhookRequest:
-    """Create a receiver for this tenant's supported hostname, certificate, deployment, and finalized billing events.
+    """Create a receiver for this tenant's supported customer, hostname, certificate, deployment, and finalized billing
+    events.
 
-    Example:
-        {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
-            submitting'}
+        Example:
+            {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
+                submitting'}
 
     """
 

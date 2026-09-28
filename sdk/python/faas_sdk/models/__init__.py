@@ -1097,6 +1097,10 @@ from .platform_tenant_credential_policy_response_allowed_scopes_item import (
 from .platform_tenant_credential_result import PlatformTenantCredentialResult
 from .platform_tenant_credential_result_action import PlatformTenantCredentialResultAction
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
+from .platform_tenant_customer_lifecycle_webhook_payload import PlatformTenantCustomerLifecycleWebhookPayload
+from .platform_tenant_customer_lifecycle_webhook_payload_customer_status import (
+    PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus,
+)
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_hostname_policy_response import PlatformTenantHostnamePolicyResponse
@@ -2833,6 +2837,8 @@ __all__ = (
     "PlatformTenantCredentialResult",
     "PlatformTenantCredentialResultAction",
     "PlatformTenantCredentialsResponse",
+    "PlatformTenantCustomerLifecycleWebhookPayload",
+    "PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantHostnamePolicyResponse",
