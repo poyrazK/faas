@@ -465,7 +465,7 @@ func (g *gatewaydEdgeRules) MatchRoute(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Route
 	}
-	return gateway.PickFirstRouteMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstRouteMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchRewrite returns the highest-priority `kind=rewrite` rule
@@ -488,7 +488,7 @@ func (g *gatewaydEdgeRules) MatchRewrite(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Rewrite
 	}
-	return gateway.PickFirstRewriteMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstRewriteMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRewriteResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchRedirect returns the highest-priority `kind=redirect` rule
@@ -509,7 +509,7 @@ func (g *gatewaydEdgeRules) MatchRedirect(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Redirect
 	}
-	return gateway.PickFirstRedirectMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstRedirectMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRedirectResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchHeaders returns the highest-priority `kind=headers` rule
@@ -530,7 +530,7 @@ func (g *gatewaydEdgeRules) MatchHeaders(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Headers
 	}
-	return gateway.PickFirstHeadersMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstHeadersMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleHeadersResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchCORS returns the highest-priority `kind=cors` rule whose
@@ -553,7 +553,7 @@ func (g *gatewaydEdgeRules) MatchCORS(ctx context.Context, host, requestPath, me
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CORS
 	}
-	return gateway.PickFirstCORSMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstCORSMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCORSResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchJWT returns the highest-priority `kind=jwt` rule whose
@@ -578,7 +578,7 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.JWT
 	}
-	return gateway.PickFirstJWTMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstJWTMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchIP returns the highest-priority `kind=ip` rule whose host,
@@ -602,7 +602,7 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.IP
 	}
-	return gateway.PickFirstIPMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstIPMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchValidate returns the highest-priority `kind=validate` rule
@@ -628,7 +628,7 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Validate
 	}
-	return gateway.PickFirstValidateMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstValidateMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchLimit returns the highest-priority `kind=limit` rule whose
@@ -655,7 +655,7 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Limit
 	}
-	return gateway.PickFirstLimitMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstLimitMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchMaintenance returns the highest-priority `kind=maintenance`
@@ -683,7 +683,7 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Maintenance
 	}
-	return gateway.PickFirstMaintenanceMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstMaintenanceMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchGeo returns the highest-priority `kind=geo` rule whose
@@ -710,7 +710,7 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Geo
 	}
-	return gateway.PickFirstGeoMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstGeoMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchThrottle returns the highest-priority `kind=throttle` rule
@@ -739,7 +739,7 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Throttle
 	}
-	return gateway.PickFirstThrottleMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstThrottleMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchBudget is the ADR-093 matcher for the kind=budget subset.
@@ -768,7 +768,7 @@ func (g *gatewaydEdgeRules) MatchBudget(ctx context.Context, host, requestPath, 
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Budget
 	}
-	return gateway.PickFirstBudgetMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstBudgetMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleBudgetResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchCache is the ADR-122 matcher for the kind=cache subset.
@@ -805,7 +805,7 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Cache
 	}
-	return gateway.PickFirstCacheMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstCacheMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchRespond returns the highest-priority preview-response rule matching the
@@ -826,7 +826,7 @@ func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Respond
 	}
-	return gateway.PickFirstRespondMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstRespondMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRespondResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchAsync returns the highest-priority durable async-route rule matching
@@ -848,7 +848,7 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Async
 	}
-	return gateway.PickFirstAsyncMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.PickFirstAsyncMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in

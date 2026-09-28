@@ -2129,7 +2129,7 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 // returns false and ServeHTTP proceeds with the legacy
 // Backend.Lookup. Extracted from ServeHTTP to keep the
 // handler cap under 50 lines.
-func (h *Handler) matchAndSubstituteRoute(r *http.Request, app *App) bool {
+func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *App) bool {
 	if h.edgeRules == nil || h.resolveTargetApp == nil {
 		return false
 	}
@@ -2175,6 +2175,26 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, app *App) bool {
 			// PR-B: cross-account is a defense-in-depth no-op, not an
 			// apply failure. Surface as success so the §12 apply-rate
 			// panel counts it as a successful (no-op) apply.
+			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
+		}
+		return false
+	}
+	// The inbound host must itself belong to the rule's account. The target
+	// check above only proved the rule points at its own app; match_host is
+	// free-form, so without this any account could route another tenant's
+	// hostname (or "*") to an app it controls and serve that traffic.
+	if hostApp, found := h.backend.Lookup(r.Context(), appHost); !found || hostApp.AccountID != rule.AccountID {
+		if h.edgeRuleAudit != nil {
+			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &rule.AccountID, map[string]any{
+				"rule_id":         rule.ID,
+				"from_host":       r.Host,
+				"to_slug":         rule.TargetAppSlug,
+				"rule_account_id": rule.AccountID,
+				"reason":          "host_not_owned",
+			})
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
 			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 		}
 		return false
@@ -5619,7 +5639,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lookedApp App
 		ok        bool
 	)
-	if h.matchAndSubstituteRoute(r, &app) {
+	if h.matchAndSubstituteRoute(r, appHost, &app) {
 		goto haveApp
 	}
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
@@ -5632,6 +5652,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Edge-rule matching from here on ignores rules another account
+	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
+	// could otherwise shadow this app's own gates.
+	//nolint:contextcheck // same request context, extended with the owner.
+	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
 	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})

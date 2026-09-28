@@ -4390,3 +4390,92 @@ func TestCORSDefaultWildcardEchoesRequestOrigin(t *testing.T) {
 		}
 	}
 }
+
+type routeRuleMatcher struct {
+	stubEdgeRuleMatcher
+	route *EdgeRuleResolved
+}
+
+func (m routeRuleMatcher) MatchRoute(context.Context, string, string, string) *EdgeRuleResolved {
+	return m.route
+}
+
+// kind=route substitution checked only that the rule's target app belonged
+// to the rule's account. match_host is free-form, so any account could
+// route another tenant's hostname (or "*") to an app it controls and serve
+// that tenant's traffic. The inbound host must now belong to the rule's
+// account too.
+func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ruleAccount string
+		wantAudit   string
+	}{
+		{"foreign account", "acct-attacker", "edge_rule.route_blocked"},
+		{"owner account", "acct-1", "edge_rule.route_matched"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newTestHandler(t)
+			audit := &captureAuditor{}
+			target := App{ID: "app-target", AccountID: tc.ruleAccount, Slug: "target", Plan: api.PlanPro}
+			h.WithEdgeRules(routeRuleMatcher{route: &EdgeRuleResolved{
+				ID: "rule-route", AccountID: tc.ruleAccount, TargetAppSlug: "target",
+			}}, func(context.Context, string) (App, bool) { return target, true }, audit)
+			req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+			req.Header.Set("X-Forwarded-For", "192.0.2.1")
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			audit.mu.Lock()
+			defer audit.mu.Unlock()
+			var kinds []string
+			for _, c := range audit.captured {
+				if strings.HasPrefix(c.kind, "edge_rule.route_") {
+					kinds = append(kinds, c.kind)
+				}
+			}
+			if len(kinds) != 1 || kinds[0] != tc.wantAudit {
+				t.Fatalf("route audit = %v, want [%s]", kinds, tc.wantAudit)
+			}
+		})
+	}
+}
+
+// Edge-rule matching after app resolution must see only the owner's rules.
+func TestOwnedEdgeRulesDropsForeignRules(t *testing.T) {
+	rules := []EdgeRuleJWTResolved{{ID: "foreign", AccountID: "attacker"}, {ID: "own", AccountID: "owner"}}
+	account := func(r *EdgeRuleJWTResolved) string { return r.AccountID }
+	if got := OwnedEdgeRules(context.Background(), rules, account); len(got) != 2 {
+		t.Fatalf("no owner recorded: got %d rules, want both", len(got))
+	}
+	ctx := WithEdgeRuleOwner(context.Background(), "owner")
+	got := OwnedEdgeRules(ctx, rules, account)
+	if len(got) != 1 || got[0].ID != "own" {
+		t.Fatalf("owned rules = %+v, want only the owner's", got)
+	}
+	if picked := PickFirstJWTMatch(got, "/admin", http.MethodGet); picked == nil || picked.ID != "own" {
+		t.Fatalf("picked %+v, want the owner's rule", picked)
+	}
+}
+
+type ownerRecordingMatcher struct {
+	stubEdgeRuleMatcher
+	seen *string
+}
+
+func (m ownerRecordingMatcher) MatchJWT(ctx context.Context, _, _, _ string) *EdgeRuleJWTResolved {
+	*m.seen = EdgeRuleOwner(ctx)
+	return nil
+}
+
+// The handler must record the resolved app's account before edge-rule
+// matching so the matcher can drop other accounts' rules.
+func TestEdgeRuleMatchingSeesTheAppOwner(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	var seen string
+	h.WithEdgeRules(ownerRecordingMatcher{seen: &seen}, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "192.0.2.1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if seen != "acct-1" {
+		t.Fatalf("edge-rule owner seen by MatchJWT = %q, want acct-1", seen)
+	}
+}
