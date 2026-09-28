@@ -62,6 +62,10 @@ such as `worker.svc` inside the platform. Local commands receive
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40
 characters; plan developer-session quotas apply to every workload.
+Each workload's normal `gregale.yaml` is applied during deployment. A worker
+can declare `queue_bindings` and retry policy there; the runner waits for
+queues on all test workloads when `wait_for.queue_idle` is enabled. Queue
+binding plan gates still apply.
 
 `trigger` runs immediately after Gregale prepares the selected lifecycle
 profile. It can submit the authenticated export request through
@@ -101,7 +105,7 @@ first response status, wake headers, completed method, and cleanup outcome.
 The assertion commands own application-specific identities and expectations.
 For an export test they should create two customers, submit and retry the same
 export request, inspect the produced object through both customers' credentials,
-and check notification delivery. Queue bindings, notification failure controls,
+and check notification delivery. Built-in notification failure controls,
 per-workload lifecycle evidence, and simulated execution are still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
 
