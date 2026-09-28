@@ -18516,7 +18516,8 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			Ciphertext: ciphertext, SecretClass: SecretClassPersistent,
+			SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -18551,7 +18552,8 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, Kid: kid, SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			Ciphertext: ciphertext, Kid: kid, SecretClass: SecretClassPersistent,
+			SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -18581,7 +18583,16 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 // the zero-value (matches the SQL `NULLIF($7, ”)` for the
 // pgstore sibling) so pre-PR-C callers preserve their prior
 // behavior.
-func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	return m.UpsertAppSecretWithClassInScope(ctx, accountID, appID, scope, key, kid, valueHash, "", ciphertext)
+}
+
+// UpsertAppSecretWithClassInScope mirrors the atomic pgstore upsert. An empty
+// class preserves an existing row and defaults a new one to persistent.
+func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error {
+	if secretClass != "" && !validSecretClass(secretClass) {
+		return ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
@@ -18591,6 +18602,7 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
+			SecretClass:   defaultSecretClass(secretClass),
 			SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -18605,6 +18617,9 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
+	if secretClass != "" {
+		existing.SecretClass = secretClass
+	}
 	existing.SecretVersion++
 	existing.DeliveryVersion++
 	existing.DeliveryStatus = SecretDeliveryPending
@@ -18613,6 +18628,13 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
 	return nil
+}
+
+func defaultSecretClass(value string) string {
+	if value == "" {
+		return SecretClassPersistent
+	}
+	return value
 }
 
 // ResealAppSecretWithKidAndValueHashInScope is the maintenance-only update
@@ -18773,6 +18795,7 @@ func (m *MemStore) GetAppSecretInScope(_ context.Context, accountID, appID, scop
 		return nil, ErrNotFound
 	}
 	cp := row
+	cp.SecretClass = defaultSecretClass(cp.SecretClass)
 	return &cp, nil
 }
 
@@ -19029,6 +19052,7 @@ func (m *MemStore) ListAppSecretsInScope(_ context.Context, accountID, appID, sc
 		if s.AppID != appID || s.AccountID != accountID || s.Scope != scope {
 			continue
 		}
+		s.SecretClass = defaultSecretClass(s.SecretClass)
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
@@ -19060,6 +19084,7 @@ func (m *MemStore) ListAllAppSecrets(_ context.Context, accountID, appID string)
 		if s.AppID != appID || s.AccountID != accountID {
 			continue
 		}
+		s.SecretClass = defaultSecretClass(s.SecretClass)
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -19106,15 +19131,16 @@ func (m *MemStore) ListAppSecretsForAccount(_ context.Context, accountID string,
 			}
 		}
 		out = append(out, AccountAppSecret{
-			AccountID:  s.AccountID,
-			AppID:      s.AppID,
-			AppSlug:    slug,
-			Key:        s.Key,
-			Scope:      s.Scope,
-			Ciphertext: s.Ciphertext,
-			ValueHash:  s.ValueHash,
-			CreatedAt:  s.CreatedAt,
-			UpdatedAt:  s.UpdatedAt,
+			AccountID:   s.AccountID,
+			AppID:       s.AppID,
+			AppSlug:     slug,
+			Key:         s.Key,
+			Scope:       s.Scope,
+			SecretClass: defaultSecretClass(s.SecretClass),
+			Ciphertext:  s.Ciphertext,
+			ValueHash:   s.ValueHash,
+			CreatedAt:   s.CreatedAt,
+			UpdatedAt:   s.UpdatedAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

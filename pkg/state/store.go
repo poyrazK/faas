@@ -5571,6 +5571,10 @@ type Store interface {
 	// legacy UpsertAppSecretWithKidInScope stays for callers
 	// that don't carry the field.
 	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// UpsertAppSecretWithClassInScope atomically stores the encrypted value
+	// and its optional snapshot-retention class. Empty class preserves an
+	// existing class and defaults new rows to persistent.
+	UpsertAppSecretWithClassInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error
 	// ResealAppSecretWithKidAndValueHashInScope is reserved for the host-key
 	// maintenance replayer. It updates an existing encrypted row while
 	// preserving managed credential ownership metadata.

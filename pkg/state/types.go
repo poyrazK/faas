@@ -5980,6 +5980,15 @@ type Session struct {
 // (ListAppSecretsInScope, UpsertAppSecretWithKidInScope, …) take an
 // explicit scope parameter and are the canonical path. The flat
 // methods hardcode scope='default' as a thin delegation.
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
+func validSecretClass(value string) bool {
+	return value == SecretClassPersistent || value == SecretClassEphemeral
+}
+
 type AppSecret struct {
 	AccountID string
 	AppID     string
@@ -5991,9 +6000,13 @@ type AppSecret struct {
 	// helper — the same shape as `app_envs.scope` (00203).
 	// Sealing (the secretbox step) is scope-agnostic; scope is
 	// purely a per-row address, not a seal-time identity.
-	Scope      string
-	Key        string
-	Ciphertext []byte
+	Scope string
+	Key   string
+	// SecretClass controls whether a VM that has received this value may
+	// be persisted as a resumable memory snapshot. Empty is treated as
+	// persistent for compatibility with legacy in-memory fixtures.
+	SecretClass string
+	Ciphertext  []byte
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext. Set by the apid PUT
 	// handler (cmd/apid/handlers_secrets.go::setSecret) and by
@@ -6262,15 +6275,16 @@ func (r AppSecretRevocation) Progress() (status string, acknowledged, pending in
 // ValueHash mirrors AppSecret.ValueHash (ADR-117 PR-C). Same
 // semantic + same empty-string-for-NULL posture.
 type AccountAppSecret struct {
-	AccountID  string
-	AppID      string
-	AppSlug    string
-	Key        string
-	Scope      string
-	Ciphertext []byte
-	ValueHash  string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	AccountID   string
+	AppID       string
+	AppSlug     string
+	Key         string
+	Scope       string
+	SecretClass string
+	Ciphertext  []byte
+	ValueHash   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // AppEnv is one row of customer runtime env vars (issue #395 / ADR-045).

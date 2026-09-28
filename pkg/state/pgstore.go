@@ -22265,13 +22265,24 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 // NULLIF($7, ”) preserves the "empty string = NULL" semantic
 // so an unconfigured handler surface as NULL on the column.
 func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	return s.UpsertAppSecretWithClassInScope(ctx, accountID, appID, scope, key, kid, valueHash, "", ciphertext)
+}
+
+// UpsertAppSecretWithClassInScope stores the value and lifecycle class in a
+// single statement. Empty class preserves an existing class and lets the
+// schema default new rows to persistent.
+func (s *PgStore) UpsertAppSecretWithClassInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error {
+	if secretClass != "" && !validSecretClass(secretClass) {
+		return ErrInvalidArgument
+	}
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
-		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version)
-		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), 1)
+		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_class, secret_version)
+		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), COALESCE(NULLIF($8, ''), 'persistent'), 1)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
+		       secret_class = CASE WHEN NULLIF($8, '') IS NULL THEN app_secrets.secret_class ELSE $8 END,
 		       updated_at = now(),
 		       secret_version = coalesce(app_secrets.secret_version, 0) + 1,
 		       delivery_version = app_secrets.delivery_version + 1,
@@ -22280,7 +22291,7 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
-		accountID, appID, scope, key, ciphertext, kid, valueHash)
+		accountID, appID, scope, key, ciphertext, kid, valueHash, secretClass)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
 	}
@@ -22492,7 +22503,7 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		        COALESCE(last_runtime_reload_version, 0), COALESCE(last_runtime_reload_revision, ''),
 		        COALESCE(last_runtime_reload_projection, ''), COALESCE(last_runtime_reload_signal, ''),
 		        last_runtime_reload_at, COALESCE(last_runtime_reload_error_code, ''),
-		        COALESCE(last_runtime_reload_instance_id, ''), created_at, updated_at
+		        COALESCE(last_runtime_reload_instance_id, ''), created_at, updated_at, COALESCE(secret_class, 'persistent')
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
@@ -22504,7 +22515,7 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		&out.LastRuntimeReloadVersion, &out.LastRuntimeReloadRevision,
 		&out.LastRuntimeReloadProjection, &out.LastRuntimeReloadSignal,
 		&out.LastRuntimeReloadAt, &out.LastRuntimeReloadErrorCode, &out.LastRuntimeReloadInstanceID,
-		&out.CreatedAt, &out.UpdatedAt)
+		&out.CreatedAt, &out.UpdatedAt, &out.SecretClass)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -22840,7 +22851,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
 		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
 		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
-		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at, coalesce(secret_class, 'persistent')
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -22861,7 +22872,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
 			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
 			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
-			&r.CreatedAt, &r.UpdatedAt,
+			&r.CreatedAt, &r.UpdatedAt, &r.SecretClass,
 		); err != nil {
 			return nil, err
 		}
@@ -22895,7 +22906,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
 		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
 		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
-		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at, coalesce(secret_class, 'persistent')
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -22916,7 +22927,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
 			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
 			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
-			&r.CreatedAt, &r.UpdatedAt,
+			&r.CreatedAt, &r.UpdatedAt, &r.SecretClass,
 		); err != nil {
 			return nil, err
 		}
@@ -22953,7 +22964,7 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 		limit = 25
 	}
 	rows, err := s.pool.Query(ctx,
-		`select s.account_id, s.app_id, a.slug, s.key, s.scope, s.ciphertext, coalesce(s.value_hash, '') as value_hash, s.created_at, s.updated_at
+		`select s.account_id, s.app_id, a.slug, s.key, s.scope, s.ciphertext, coalesce(s.value_hash, '') as value_hash, coalesce(s.secret_class, 'persistent'), s.created_at, s.updated_at
 		 from app_secrets s
 		 join apps a on a.id = s.app_id
 		 where s.account_id = $1
@@ -22967,7 +22978,7 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 	var out []AccountAppSecret
 	for rows.Next() {
 		var r AccountAppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.AppSlug, &r.Key, &r.Scope, &r.Ciphertext, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.AccountID, &r.AppID, &r.AppSlug, &r.Key, &r.Scope, &r.Ciphertext, &r.ValueHash, &r.SecretClass, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
