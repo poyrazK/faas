@@ -421,12 +421,19 @@ func (d *Dispatcher) shutdown() error {
 // cycle is the per-tick drain walk. Private — public tests drive it
 // via Dispatcher.Run with a stubbed ticker.
 func (d *Dispatcher) cycle(ctx context.Context) {
+	parkRelayOK := true
+	if parks, ok := d.store.(state.AppParkTransitionStore); ok {
+		if _, err := parks.DrainDrainedAppParkTransitions(ctx, 16); err != nil {
+			parkRelayOK = false
+			d.log.Warn("webhook: reconcile drained app parks", "err", err)
+		}
+	}
 	if outbox, ok := d.store.(state.AppWebhookEventOutboxStore); ok {
 		if _, err := outbox.DrainAppWebhookEventOutbox(ctx, 16); err != nil {
 			d.HealthMetrics.setOutboxRelaySuccess(false)
 			d.log.Warn("webhook: event outbox relay", "err", err)
 		} else {
-			d.HealthMetrics.setOutboxRelaySuccess(true)
+			d.HealthMetrics.setOutboxRelaySuccess(parkRelayOK)
 		}
 	}
 	limit := d.reserveClaimSlots()

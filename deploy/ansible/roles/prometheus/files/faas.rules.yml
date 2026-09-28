@@ -205,7 +205,7 @@ groups:
           family: outbound_webhooks
         annotations:
           summary: "Transactional webhook events are not reaching the delivery ledger"
-          description: "Schedd's latest event outbox relay failed. Finalized usage statement events remain durable but cannot be delivered until relay recovers."
+          description: "Schedd could not reconcile a drained app park or relay a transactional webhook event. Pending source records remain durable until recovery."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
 
       - alert: FaasWebhookDeliveryRetentionFailed

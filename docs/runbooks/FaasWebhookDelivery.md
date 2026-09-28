@@ -90,22 +90,32 @@ poll; treat them as stale until the success gauge returns to one.
 
 ## Event outbox relay failure
 
-`FaasWebhookEventOutboxRelayFailed` means finalized usage statement events may
-remain in `app_webhook_event_outbox`. The statement and event commit together;
-the failed relay does not discard the event. Check schedd logs for
-`webhook: event outbox relay` and database availability. Once the relay succeeds,
-the outbox row is removed in the same transaction that creates delivery rows.
+`FaasWebhookEventOutboxRelayFailed` means a drained app park could not be
+reconciled or a transactional webhook event could not reach the delivery
+ledger. Usage statement events remain in `app_webhook_event_outbox`; incomplete
+park requests remain in `app_park_transitions`. Check schedd logs for
+`webhook: reconcile drained app parks` or `webhook: event outbox relay` and
+database availability. Once recovered, the event outbox row is removed in the
+same transaction that creates delivery rows.
 
 ```sql
 SELECT event, count(*) AS pending_events, min(created_at) AS oldest_event_at
 FROM app_webhook_event_outbox
 GROUP BY event;
+
+SELECT p.app_id, p.id AS transition_id, p.requested_at, a.status
+FROM app_park_transitions p
+JOIN apps a ON a.id = p.app_id AND a.park_transition_id = p.id
+WHERE p.completed_at IS NULL AND p.superseded_at IS NULL
+ORDER BY p.requested_at;
 ```
 
-The request handler also attempts immediate relay after finalization, so an
-empty outbox is normal. If the gauge is zero with no pending rows, inspect the
-relay error before assuming events were lost. Avoid manually inserting delivery
-rows; the unique event/subscription key and replay worker own fan-out.
+The request handlers also attempt immediate relay after statement finalization
+or app drain, so empty queues are normal. A park transition may legitimately
+wait while live instances drain. If the gauge is zero but both queries show no
+pending rows, inspect the relay error before assuming events were lost. Avoid
+manually inserting delivery rows; the unique event/subscription key and replay
+worker own fan-out.
 
 ## Retention and storage
 

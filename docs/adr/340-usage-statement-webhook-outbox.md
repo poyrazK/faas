@@ -37,8 +37,9 @@ when inline relay fails or the process exits.
   delivery ID.
 - The outbox stores only pending events. Successful fan-out deletes the source
   row in the same transaction, so it needs no separate retention sweep.
-- This change covers `usage_statement.finalized`. The post-commit `app.parked`
-  and `app.woken` producers need their own source-transaction integration.
+- This change covers `usage_statement.finalized`. `app.parked` completion uses
+  the durable drain-boundary transition documented in ADR-341. The post-ready
+  `app.woken` producer still needs its own source-state integration.
 - A failed relay remains visible through the schedd outbox-relay success gauge
   and alert, independently of delivery queue age.
 

@@ -2377,7 +2377,18 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	st := state.AppEvictedCold
-	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	var (
+		claimed        bool
+		err            error
+		parkTransition state.AppParkTransition
+		durablePark    state.AppParkTransitionStore
+	)
+	if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
+		durablePark = transitionStore
+		parkTransition, claimed, err = transitionStore.BeginAppParkTransition(r.Context(), app.ID, app.Status)
+	} else {
+		claimed, err = transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
 		return
@@ -2400,7 +2411,15 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
 		return
 	}
-	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
+	if durablePark != nil {
+		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {
+			s.log.WarnContext(r.Context(), "complete drained app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+		} else if outbox, ok := s.store.(state.AppWebhookEventOutboxStore); ok {
+			if _, err := outbox.RelayAppWebhookEventOutboxSource(r.Context(), state.AppWebhookEventAppParked, parkTransition.ID); err != nil {
+				s.log.WarnContext(r.Context(), "relay app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+			}
+		}
+	} else if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))

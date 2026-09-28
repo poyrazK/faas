@@ -2168,6 +2168,10 @@ func TestParkApp_HappyPath(t *testing.T) {
 		t.Fatalf("idempotent park status %d: %s", rec.Code, rec.Body)
 	}
 	assertLifecycleAudit(t, e, "app.parked", appID, "")
+	deliveries, _, err = e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("idempotent park enqueued %d deliveries, err=%v; want one", len(deliveries), err)
+	}
 }
 
 func TestParkApp_WaitsForLiveInstanceDrain(t *testing.T) {

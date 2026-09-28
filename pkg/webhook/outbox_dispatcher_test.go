@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -42,5 +43,36 @@ func TestDispatcherCycleRelaysCommittedWebhookEventWithoutDeliverySlots(t *testi
 	}
 	if n, err := store.DrainAppWebhookEventOutbox(ctx, 10); err != nil || n != 0 {
 		t.Fatalf("outbox after cycle = %d, %v", n, err)
+	}
+}
+
+func TestDispatcherCycleCompletesDrainedAppParkTransition(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "park-outbox-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "park-outbox-" + uuid.NewString(), RAMMB: 512, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(ctx, state.AppWebhook{
+		AccountID: account.ID, AppID: app.ID, TargetURL: "https://example.com/parked",
+		EventFilter: []string{string(state.AppWebhookEventAppParked)}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive); err != nil || !changed {
+		t.Fatalf("begin park transition changed=%v err=%v", changed, err)
+	}
+	d := NewDispatcher(store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d.Cap = 0
+	d.cycle(ctx)
+	d.cycle(ctx)
+	deliveries, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppParked {
+		t.Fatalf("recovered parked deliveries = %+v, %v", deliveries, err)
 	}
 }

@@ -16,6 +16,20 @@ type AppWebhookEventOutboxStore interface {
 	RelayAppWebhookEventOutboxSource(context.Context, AppWebhookEvent, string) (bool, error)
 }
 
+// AppParkTransitionStore durably tracks a customer park request until the app
+// has drained. The dispatcher calls DrainDrainedAppParkTransitions as a
+// recovery path when the API process exits before observing the drain.
+type AppParkTransitionStore interface {
+	BeginAppParkTransition(context.Context, string, AppStatus) (AppParkTransition, bool, error)
+	CompleteDrainedAppParkTransition(context.Context, string) (bool, error)
+	DrainDrainedAppParkTransitions(context.Context, int) (int, error)
+}
+
+type AppParkTransition struct {
+	ID    string
+	AppID string
+}
+
 type appWebhookOutboxEvent struct {
 	ID                  string
 	AccountID           string
@@ -48,4 +62,11 @@ func usageStatementFinalizedWebhookPayload(statement APIConsumerUsageStatement) 
 		})
 	}
 	return json.Marshal(payload)
+}
+
+func appParkedWebhookPayload(app App, occurredAt time.Time) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"app_id": app.ID, "slug": app.Slug,
+		"status": AppEvictedCold, "occurred_at": occurredAt.UTC(),
+	})
 }

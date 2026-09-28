@@ -619,6 +619,8 @@ type MemStore struct {
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
 	appWebhookEventOutbox      map[string]appWebhookOutboxEvent
+	appParkTransitionByApp     map[string]string
+	appParkTransitions         map[string]memAppParkTransition
 	// apiConsumerUsageStatementHandoffs is keyed by statement ID. A statement
 	// can be handed off at most once, while the implementation also rejects
 	// reuse of an external invoice reference within an account.
@@ -1172,6 +1174,8 @@ func NewMemStore() *MemStore {
 		platformTenantRateCards:           map[string]PlatformTenantRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
 		appWebhookEventOutbox:             map[string]appWebhookOutboxEvent{},
+		appParkTransitionByApp:            map[string]string{},
+		appParkTransitions:                map[string]memAppParkTransition{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
 		platformTenantStatements:          map[string]PlatformTenantStatement{},
 		platformTenantStatementHandoffs:   map[string]PlatformTenantStatementHandoff{},
@@ -5505,6 +5509,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	if p.Status != nil {
 		a.Status = *p.Status
+		if *p.Status != AppEvictedCold {
+			m.clearCurrentAppParkTransitionLocked(id)
+		}
 	}
 	if p.Manifest != nil {
 		a.Manifest = *p.Manifest
@@ -5828,6 +5835,9 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 		return false, nil
 	}
 	a.Status = to
+	if to != AppEvictedCold {
+		m.clearCurrentAppParkTransitionLocked(id)
+	}
 	m.apps[id] = a
 	return true, nil
 }
