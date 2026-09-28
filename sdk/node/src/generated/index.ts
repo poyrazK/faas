@@ -80,6 +80,7 @@ export type { ApplyPlatformTenantConsumerResponse } from './models/ApplyPlatform
 export type { ApplyPlatformTenantCredentialsRequest } from './models/ApplyPlatformTenantCredentialsRequest.js';
 export type { ApplyPlatformTenantCredentialsResponse } from './models/ApplyPlatformTenantCredentialsResponse.js';
 export type { ApplyPlatformTenantHostnameResponse } from './models/ApplyPlatformTenantHostnameResponse.js';
+export type { ApplyPlatformTenantOffboardingRequest } from './models/ApplyPlatformTenantOffboardingRequest.js';
 export type { ApplyPlatformTenantReconciliationRequest } from './models/ApplyPlatformTenantReconciliationRequest.js';
 export type { ApplyPlatformTenantRequest } from './models/ApplyPlatformTenantRequest.js';
 export type { ApplyPlatformTenantResponse } from './models/ApplyPlatformTenantResponse.js';
@@ -593,8 +594,12 @@ export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetail
 export type { PlatformTenantHostnamePolicyResponse } from './models/PlatformTenantHostnamePolicyResponse.js';
 export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/PlatformTenantHostnameVerifiedWebhookPayload.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
+export type { PlatformTenantOffboardingApplyResponse } from './models/PlatformTenantOffboardingApplyResponse.js';
 export type { PlatformTenantOffboardingPlanActions } from './models/PlatformTenantOffboardingPlanActions.js';
 export type { PlatformTenantOffboardingPlanResponse } from './models/PlatformTenantOffboardingPlanResponse.js';
+export type { PlatformTenantOffboardingReceiptListResponse } from './models/PlatformTenantOffboardingReceiptListResponse.js';
+export type { PlatformTenantOffboardingReceiptResponse } from './models/PlatformTenantOffboardingReceiptResponse.js';
+export type { PlatformTenantOffboardingReceiptSummary } from './models/PlatformTenantOffboardingReceiptSummary.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';
 export type { PlatformTenantReconciliationAppliedWebhookPayload } from './models/PlatformTenantReconciliationAppliedWebhookPayload.js';

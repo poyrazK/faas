@@ -4192,11 +4192,11 @@ paths:
         - name: id
           in: path
           required: true
-          description: Existing platform tenant UUID.
+          description: Platform tenant UUID whose durable offboarding history is being listed.
           schema: { type: string, format: uuid }
         - name: page_size
           in: query
-          description: Maximum number of receipt summaries to return, from 1 to 100.
+          description: Maximum number of durable offboarding receipts in this page, from 1 to 100.
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
         - name: page_token
           in: query

@@ -240,6 +240,7 @@ from .apply_platform_tenant_credentials_request import ApplyPlatformTenantCreden
 from .apply_platform_tenant_credentials_response import ApplyPlatformTenantCredentialsResponse
 from .apply_platform_tenant_hostname_response import ApplyPlatformTenantHostnameResponse
 from .apply_platform_tenant_hostname_response_action import ApplyPlatformTenantHostnameResponseAction
+from .apply_platform_tenant_offboarding_request import ApplyPlatformTenantOffboardingRequest
 from .apply_platform_tenant_reconciliation_request import ApplyPlatformTenantReconciliationRequest
 from .apply_platform_tenant_request import ApplyPlatformTenantRequest
 from .apply_platform_tenant_response import ApplyPlatformTenantResponse
@@ -1136,6 +1137,13 @@ from .platform_tenant_detail_response_status import PlatformTenantDetailResponse
 from .platform_tenant_hostname_policy_response import PlatformTenantHostnamePolicyResponse
 from .platform_tenant_hostname_verified_webhook_payload import PlatformTenantHostnameVerifiedWebhookPayload
 from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_offboarding_apply_response import PlatformTenantOffboardingApplyResponse
+from .platform_tenant_offboarding_plan_actions import PlatformTenantOffboardingPlanActions
+from .platform_tenant_offboarding_plan_response import PlatformTenantOffboardingPlanResponse
+from .platform_tenant_offboarding_plan_response_status import PlatformTenantOffboardingPlanResponseStatus
+from .platform_tenant_offboarding_receipt_list_response import PlatformTenantOffboardingReceiptListResponse
+from .platform_tenant_offboarding_receipt_response import PlatformTenantOffboardingReceiptResponse
+from .platform_tenant_offboarding_receipt_summary import PlatformTenantOffboardingReceiptSummary
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
@@ -1961,6 +1969,7 @@ __all__ = (
     "ApplyPlatformTenantCredentialsResponse",
     "ApplyPlatformTenantHostnameResponse",
     "ApplyPlatformTenantHostnameResponseAction",
+    "ApplyPlatformTenantOffboardingRequest",
     "ApplyPlatformTenantReconciliationRequest",
     "ApplyPlatformTenantRequest",
     "ApplyPlatformTenantResponse",
@@ -2949,6 +2958,13 @@ __all__ = (
     "PlatformTenantHostnamePolicyResponse",
     "PlatformTenantHostnameVerifiedWebhookPayload",
     "PlatformTenantListResponse",
+    "PlatformTenantOffboardingApplyResponse",
+    "PlatformTenantOffboardingPlanActions",
+    "PlatformTenantOffboardingPlanResponse",
+    "PlatformTenantOffboardingPlanResponseStatus",
+    "PlatformTenantOffboardingReceiptListResponse",
+    "PlatformTenantOffboardingReceiptResponse",
+    "PlatformTenantOffboardingReceiptSummary",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseUnit",

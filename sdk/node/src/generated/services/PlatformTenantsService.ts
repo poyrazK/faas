@@ -5,6 +5,7 @@
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
 import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatformTenantCredentialsRequest.js';
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
+import type { ApplyPlatformTenantOffboardingRequest } from '../models/ApplyPlatformTenantOffboardingRequest.js';
 import type { ApplyPlatformTenantReconciliationRequest } from '../models/ApplyPlatformTenantReconciliationRequest.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
@@ -36,7 +37,10 @@ import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenant
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
+import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformTenantOffboardingApplyResponse.js';
 import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
+import type { PlatformTenantOffboardingReceiptListResponse } from '../models/PlatformTenantOffboardingReceiptListResponse.js';
+import type { PlatformTenantOffboardingReceiptResponse } from '../models/PlatformTenantOffboardingReceiptResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
@@ -217,6 +221,124 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Apply a current, explicitly confirmed platform-tenant offboarding plan.
+   * Recomputes the read-only plan while locking the tenant and affected
+   * resources, then applies all actions and persists a secret-free receipt
+   * in one transaction only when `expected_plan_hash` matches. The request
+   * requires an `Idempotency-Key`. Unmanaged resources and usage, billing,
+   * reconciliation history, and webhook subscriptions are preserved. A
+   * stale plan returns 409 and makes no changes.
+   *
+   * @returns PlatformTenantOffboardingApplyResponse Applied actions and durable receipt identifier.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantOffboarding({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose confirmed offboarding is being applied.
+     */
+    id: string,
+    /**
+     * Stable retry key for this offboarding operation.
+     */
+    idempotencyKey: string,
+    requestBody: ApplyPlatformTenantOffboardingRequest,
+  }): CancelablePromise<PlatformTenantOffboardingApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/offboarding-plan/apply',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List durable platform-tenant offboarding receipts.
+   * @returns PlatformTenantOffboardingReceiptListResponse One page of immutable offboarding receipts.
+   * @throws ApiError
+   */
+  public static listPlatformTenantOffboardingReceipts({
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Platform tenant UUID whose durable offboarding history is being listed.
+     */
+    id: string,
+    /**
+     * Maximum number of durable offboarding receipts in this page, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the preceding page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<PlatformTenantOffboardingReceiptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/offboardings',
+      path: {
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read one durable platform-tenant offboarding receipt.
+   * @returns PlatformTenantOffboardingReceiptResponse Exact secret-free offboarding outcome.
+   * @throws ApiError
+   */
+  public static getPlatformTenantOffboardingReceipt({
+    id,
+    receiptId,
+  }: {
+    /**
+     * Platform tenant UUID that owns the requested receipt.
+     */
+    id: string,
+    /**
+     * Offboarding receipt UUID returned by the apply operation.
+     */
+    receiptId: string,
+  }): CancelablePromise<PlatformTenantOffboardingReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/offboardings/{receipt_id}',
+      path: {
+        'id': id,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }
