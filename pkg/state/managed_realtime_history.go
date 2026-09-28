@@ -57,11 +57,24 @@ type ManagedRealtimeHistoryReaper interface {
 	PruneExpiredManagedRealtimeChannelMessages(context.Context, int) (int64, error)
 }
 
+// ManagedRealtimeHistoryStorageStats measures physical PostgreSQL relation
+// size, including indexes and dead tuples awaiting vacuum. It is an operator
+// capacity observation, not a customer billing quantity.
+type ManagedRealtimeHistoryStorageStats struct {
+	HeadsRelationBytes    int64
+	MessagesRelationBytes int64
+}
+
+type ManagedRealtimeHistoryStorageObserver interface {
+	ObserveManagedRealtimeHistoryStorage(context.Context) (ManagedRealtimeHistoryStorageStats, error)
+}
+
 var (
-	_ ManagedRealtimeHistoryStore  = (*PgStore)(nil)
-	_ ManagedRealtimeHistoryStore  = (*MemStore)(nil)
-	_ ManagedRealtimeHistoryReaper = (*PgStore)(nil)
-	_ ManagedRealtimeHistoryReaper = (*MemStore)(nil)
+	_ ManagedRealtimeHistoryStore           = (*PgStore)(nil)
+	_ ManagedRealtimeHistoryStore           = (*MemStore)(nil)
+	_ ManagedRealtimeHistoryReaper          = (*PgStore)(nil)
+	_ ManagedRealtimeHistoryReaper          = (*MemStore)(nil)
+	_ ManagedRealtimeHistoryStorageObserver = (*PgStore)(nil)
 )
 
 func validateManagedRealtimeHistoryRequest(endpointID, channel string) error {

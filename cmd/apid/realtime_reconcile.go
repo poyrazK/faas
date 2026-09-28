@@ -665,13 +665,27 @@ func (s *server) runManagedRealtimeHistoryReaper(ctx context.Context) {
 	}
 	runPass := func() {
 		removed, err := reaper.PruneExpiredManagedRealtimeChannelMessages(ctx, managedRealtimeHistoryReapBatch)
+		if !errors.Is(err, context.Canceled) {
+			s.realtimeHistoryMetrics.observePrune(removed, err)
+		}
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("managed realtime history reaper pass failed", "err", err)
-			return
-		}
-		if removed > 0 {
+		} else if removed > 0 {
 			log.Info("managed realtime history reaper pass complete", "removed", removed)
 		}
+		observer, ok := s.store.(state.ManagedRealtimeHistoryStorageObserver)
+		if !ok || ctx.Err() != nil {
+			return
+		}
+		stats, err := observer.ObserveManagedRealtimeHistoryStorage(ctx)
+		if err != nil {
+			s.realtimeHistoryMetrics.observeStorageFailure()
+			if !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime history storage sample failed", "err", err)
+			}
+			return
+		}
+		s.realtimeHistoryMetrics.observeStorage(stats, time.Now().UTC())
 	}
 	runPass()
 	ticker := time.NewTicker(managedRealtimeHistoryReapInterval)

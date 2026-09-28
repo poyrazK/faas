@@ -71,6 +71,25 @@ func TestPgStoreManagedRealtimeHistorySerializesPublishers(t *testing.T) {
 	}
 }
 
+func TestPgStoreManagedRealtimeHistoryStorageObservation(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-storage", "realtime-storage")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "updates", []byte("payload"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := s.ObserveManagedRealtimeHistoryStorage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.HeadsRelationBytes <= 0 || stats.MessagesRelationBytes <= 0 {
+		t.Fatalf("physical history allocation = %+v, want both relations allocated", stats)
+	}
+}
+
 func TestPgStoreManagedRealtimeHistoryExpiryAndKeyReuse(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-expiry", "realtime-expiry")

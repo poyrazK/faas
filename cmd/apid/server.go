@@ -135,6 +135,7 @@ type server struct {
 	// Retained messages are a storage preview until channel grants and the
 	// versioned reconnect protocol are ready for customer traffic.
 	realtimeHistoryPreviewEnabled bool
+	realtimeHistoryMetrics        *managedRealtimeHistoryMetrics
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -470,6 +471,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
+		s.realtimeHistoryMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -477,6 +479,9 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
+		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about

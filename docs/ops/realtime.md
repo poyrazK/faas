@@ -257,6 +257,25 @@ The storage window is capped at 1,024 messages of 4 KiB each per channel and
 32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
 only deduplicate while their messages remain retained.
 
+Apid samples the physical PostgreSQL storage allocated to the history head
+and message relations after each one-minute expiry pass. The
+`apid_realtime_history_relation_bytes{relation="heads|messages"}` gauges include
+indexes and space awaiting vacuum. `apid_realtime_history_sample_success` and
+`apid_realtime_history_last_sample_timestamp_seconds` identify stale samples;
+`apid_realtime_history_pruned_messages_total` and
+`apid_realtime_history_prune_failures_total` show cleanup activity. Every apid
+replica observes the same database, so use `max by (relation)` for relation
+bytes across replicas rather than summing them:
+
+```promql
+max by (relation) (apid_realtime_history_relation_bytes)
+min(apid_realtime_history_sample_success)
+time() - min(apid_realtime_history_last_sample_timestamp_seconds)
+sum(rate(apid_realtime_history_pruned_messages_total[5m]))
+```
+
+These are physical capacity measurements, not per-account billable usage.
+
 The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
 same bounded page from apid. On a single box it shares
 `/run/faas/request_telemetry.sock`; split-box apid registers it on the private

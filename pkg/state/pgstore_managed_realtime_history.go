@@ -12,6 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// ObserveManagedRealtimeHistoryStorage samples actual table, TOAST, and index
+// allocation. It is constant-cost with respect to retained message count and
+// deliberately has no customer identifiers for Prometheus label cardinality.
+func (s *PgStore) ObserveManagedRealtimeHistoryStorage(ctx context.Context) (ManagedRealtimeHistoryStorageStats, error) {
+	var stats ManagedRealtimeHistoryStorageStats
+	err := s.pool.QueryRow(ctx, `
+		select pg_total_relation_size('managed_realtime_channel_heads'::regclass),
+		       pg_total_relation_size('managed_realtime_channel_messages'::regclass)
+	`).Scan(&stats.HeadsRelationBytes, &stats.MessagesRelationBytes)
+	if err != nil {
+		return ManagedRealtimeHistoryStorageStats{}, fmt.Errorf("state: observe managed realtime history storage: %w", err)
+	}
+	return stats, nil
+}
+
 // AppendManagedRealtimeChannelMessage allocates the sequence and persists the
 // message in one transaction. The channel head row is the cross-replica
 // serialization point; rolled-back attempts cannot leave sequence holes.
