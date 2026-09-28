@@ -1974,7 +1974,8 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 //     for Hobby/Free.
 //  5. Call store.UpdateDeploymentTraffic (atomic, with FOR UPDATE
 //     lock on live rows + Σ = 100 invariant check via
-//     RedistributeTraffic largest-remainder — issue #556 PR-C).
+//     RedistributeTraffic largest-remainder — issue #556 PR-C). An active
+//     managed canary returns 409 before traffic, audit, or notify writes.
 //  6. Audit emit deployment.traffic_percent_changed with
 //     {app, deployment, traffic_percent, prev} payload.
 //  7. pg_notify `deployment_changed` with kind="traffic" so the
@@ -2069,6 +2070,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
+		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
+			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",

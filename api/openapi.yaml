@@ -10810,6 +10810,9 @@ paths:
         An optional expected_serving_deployment_id is checked under the
         same live-row locks before rebalance. A stale expectation returns
         409 `traffic_serving_changed` without changing traffic.
+        An in-flight managed canary owns the app's traffic weights; direct
+        traffic changes during `pending` or `rolling_out` return 409
+        `traffic_change_during_canary` without changing traffic.
       requestBody:
         required: true
         content:
@@ -10837,11 +10840,13 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — either the post-write Σ invariant check
-            tripped (`traffic_percent_sum_invalid`) or the optional
+            `409 Conflict` — the post-write Σ invariant check tripped
+            (`traffic_percent_sum_invalid`), the optional
             expected_serving_deployment_id was stale
-            (`traffic_serving_changed`). A stale expectation is checked
-            before any traffic write.
+            (`traffic_serving_changed`), or an in-flight managed canary
+            owns traffic (`traffic_change_during_canary`). The canary and
+            serving checks run before mutation; a sum-invariant failure
+            rolls back all tentative updates.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |

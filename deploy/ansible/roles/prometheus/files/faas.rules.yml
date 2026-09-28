@@ -116,6 +116,73 @@ groups:
           description: "Meterd cannot refresh usage_daily. Raw usage and provider billing remain authoritative, but daily customer usage and daily cost alerts are stale until the rollup succeeds."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableBackgroundWorkers.md"
 
+  - name: faas_safe_release
+    interval: 15s
+    rules:
+      - alert: FaasSafeReleaseWorkerLeaseStale
+        expr: faas_safe_release_worker_lease_ready == 0 and on(job, instance) faas_safe_release_worker_lease_check_success == 1 and on(job, instance) faas_safe_release_serving_canaries == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "Safe Deploy worker lease is stale"
+          description: "APID can reach Postgres but meterd's Safe Deploy lease is absent or expired. New canaries are rejected. Check meterd release ticks and APID operator probes before re-enabling rollouts."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseServingCanaryAtRisk
+        expr: (faas_safe_release_worker_lease_ready == 0 or faas_safe_release_worker_lease_check_success == 0) and on(job, instance) faas_safe_release_serving_canaries > 0
+        for: 30s
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "Serving canary has no healthy Safe Deploy worker lease"
+          description: "APID sees a canary serving traffic while the worker lease is stale or unreadable. Emergency abort starts after the restart grace; inspect the rollout, predecessor, and APID recovery outcome now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseLeaseObservationStalled
+        expr: time() - faas_safe_release_worker_lease_last_check_timestamp_seconds > 90
+        for: 1m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+        annotations:
+          summary: "APID has not observed the Safe Deploy worker lease recently"
+          description: "The lease health poll has not succeeded for over 90 seconds. Check APID's database access and background recovery loop; the last readiness value is not trustworthy."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseEmergencyAbort
+        expr: increase(faas_safe_release_emergency_abort_total{outcome="aborted"}[5m]) > 0 or (faas_safe_release_emergency_abort_total{outcome="aborted"} > 0 unless faas_safe_release_emergency_abort_total{outcome="aborted"} offset 5m)
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "APID aborted a serving canary after worker lease expiry"
+          description: "APID restored the serving predecessor after the Safe Deploy worker lease remained expired past its grace period. Confirm gateway traffic, audit actor, and meterd recovery before deploying again."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseEmergencyRecoveryFailed
+        expr: increase(faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"}[5m]) > 0 or (faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"} > 0 unless faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"} offset 5m)
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "APID emergency canary recovery failed"
+          description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
   - name: account_lifecycle
     interval: 30s
     rules:
