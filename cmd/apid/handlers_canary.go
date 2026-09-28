@@ -29,8 +29,8 @@ func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct stat
 }
 
 // advanceCanaryByWorker is used only by meterd's loopback operator route. Its
-// state transaction rechecks the lease so worker health cannot change between
-// a preflight probe and the persisted traffic advance.
+// state transaction rechecks the durable lease and configured stage dwell
+// before any persisted traffic advance.
 func (s *server) advanceCanaryByWorker(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.advanceCanaryWithLeasePolicy(w, r, acct, true)
 }
@@ -49,7 +49,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	next, problem := nextCanaryStage(d, req.ExpectedStep)
+	current, next, problem := canaryStagesForAdvance(d, req.ExpectedStep)
 	if problem != nil {
 		if problem.Status >= http.StatusInternalServerError {
 			logCustomerFailure(s.log, "read persisted canary configuration", fmt.Errorf("%s", problem.Detail))
@@ -75,7 +75,10 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	}
 	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
 		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
-		RequireSafeReleaseLease: requireWorkerLease, Audit: audit,
+		RequireSafeReleaseLease:   requireWorkerLease,
+		RequireCanaryStageElapsed: requireWorkerLease,
+		CanaryStageDuration:       current.Duration,
+		Audit:                     audit,
 	})
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
@@ -100,22 +103,26 @@ func (s *server) loadCanaryDeployment(w http.ResponseWriter, r *http.Request, ac
 	return d, app, true
 }
 
-func nextCanaryStage(d state.Deployment, expected int) (canarycatalog.Stage, *api.Problem) {
+func canaryStagesForAdvance(d state.Deployment, expected int) (canarycatalog.Stage, canarycatalog.Stage, *api.Problem) {
 	if expected < 0 || d.CanaryStep != expected {
-		return canarycatalog.Stage{}, api.ErrCanaryStepConflict(expected, d.CanaryStep)
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrCanaryStepConflict(expected, d.CanaryStep)
 	}
 	preset, err := persistedCanaryPreset(d)
 	if err != nil {
-		return canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary", err.Error())
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary", err.Error())
 	}
 	if d.CanaryTotalSteps != preset.TotalSteps() || expected >= preset.TotalSteps()-1 {
-		return canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)
+	}
+	current, ok := preset.StageAt(expected)
+	if !ok {
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)
 	}
 	next, ok := preset.StageAt(expected + 1)
 	if !ok {
-		return canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)
 	}
-	return next, nil
+	return current, next, nil
 }
 
 func persistedCanaryPreset(d state.Deployment) (canarycatalog.Preset, error) {
@@ -165,6 +172,10 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	switch {
 	case errors.Is(err, state.ErrSafeReleaseLeaseUnavailable):
 		api.WriteProblem(w, api.ErrSafeReleaseUnavailable())
+	case errors.Is(err, state.ErrCanaryStageNotElapsed):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Canary stage has not elapsed",
+			"The current stage must run for its configured duration before the worker can advance the rollout."))
 	case errors.Is(err, state.ErrCanaryStepConflict):
 		// The losing request may have loaded the same step as the
 		// winner before the store CAS ran. Re-read for an accurate

@@ -84,6 +84,52 @@ func TestPg_AdvanceCanaryRequiresFreshWorkerLease(t *testing.T) {
 	}
 }
 
+func TestPg_AdvanceCanaryRequiresElapsedStageDuration(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, priorID := seedLiveDeploy(t, s, ctx, "lease-stage-dwell")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stage-dwell",
+		Status: state.DeployPending, Scope: "default", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', rollout_state = 'pending', canary_step = 0, traffic_percent = 1, canary_step_started_at = clock_timestamp() where id = $1`, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set traffic_percent = 99 where id = $1`, priorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	params := state.CanaryAdvanceParams{
+		ExpectedStep: 0, TrafficPercent: 10,
+		RequireSafeReleaseLease: true, RequireCanaryStageElapsed: true,
+		CanaryStageDuration: 2 * time.Minute,
+		Audit:               state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "meterd:canary_progression"},
+	}
+	if _, _, err := s.AdvanceCanary(ctx, candidate.ID, params); !errors.Is(err, state.ErrCanaryStageNotElapsed) {
+		t.Fatalf("advance before stage duration = %v, want ErrCanaryStageNotElapsed", err)
+	}
+	unchanged, err := s.DeploymentByID(ctx, candidate.ID)
+	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
+		t.Fatalf("early advance mutated candidate = %+v, err=%v", unchanged, err)
+	}
+	var auditRows int
+	if err := pool.QueryRow(ctx, `select count(*) from deployment_audit where deployment_id = $1`, candidate.ID).Scan(&auditRows); err != nil || auditRows != 0 {
+		t.Fatalf("audit rows after early advance = %d, err=%v; want none", auditRows, err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set canary_step_started_at = clock_timestamp() - interval '3 minutes' where id = $1`, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	advanced, _, err := s.AdvanceCanary(ctx, candidate.ID, params)
+	if err != nil || advanced.CanaryStep != 1 || advanced.TrafficPercent != 10 {
+		t.Fatalf("advance after stage duration = %+v, err=%v", advanced, err)
+	}
+}
+
 func TestPg_AbortCanaryOnExpiredWorkerLease(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, priorID := seedLiveDeploy(t, s, ctx, "lease-emergency", "lease-emergency")
