@@ -1922,7 +1922,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "secrets",
 		DocSlug: "secrets",
-		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
+		Short:   "Manage env secrets (secrets list|set|unset|list-all|audit|rotate)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__", "gregale secrets list --app my-api --class ephemeral", "gregale secrets list --app my-api --older-than 90d"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
@@ -1948,6 +1948,10 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "page size (1..200; server caps at 200)", Value: "N"},
 				{Name: "class", Short: "filter this page by snapshot-retention class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "older-than", Short: "filter this page to secrets not updated within a duration; unknown timestamps are excluded", Value: "DURATION"},
+			}},
+			{Name: "audit", Short: "Audit secret update age and report unknown timestamps without exposing values", Examples: []string{"gregale secrets audit --older-than 90d", "gregale secrets audit --older-than 90d --fail-on-stale --json"}, Flags: []cliFlag{
+				{Name: "older-than", Short: "required threshold based on when Gregale last updated the value, not provider rotation time (for example 90d or 2160h)", Value: "DURATION", Req: true},
+				{Name: "fail-on-stale", Short: "exit non-zero when any secret exceeds the age threshold"},
 			}},
 			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
