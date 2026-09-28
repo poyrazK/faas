@@ -1,4 +1,4 @@
--- filename: 20260928050408000_platform_tenant_consumer_provisioning_policy.sql
+-- filename: 20260928050408001_platform_tenant_consumer_provisioning_policy.sql
 
 -- +goose Up
 -- +goose StatementBegin
