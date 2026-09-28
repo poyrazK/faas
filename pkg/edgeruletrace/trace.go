@@ -25,7 +25,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Ingress/auth policy, target-app rules after routing, throttle state, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Ingress/auth policy, target-app rules after routing, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const redactedHeaderValue = "[REDACTED]"
@@ -89,6 +89,18 @@ type Input struct {
 	RequestBudgetMS        int64
 	RequestBudgetMaxMS     int64
 	RequestTimeoutS        int
+	// AppThrottleContextLoaded distinguishes known app/account request-rate
+	// ceilings from callers that could not load effective app metadata.
+	AppThrottleContextLoaded bool
+	AppRequestRateRPS        int
+	AppRequestRateBurst      int
+	AccountRequestRateRPM    int
+	// ThrottlePlanLimitsLoaded marks the plan validation ceiling available to
+	// the trace. These limits constrain configured per-route throttle rules but
+	// do not reveal the request's live token-bucket state.
+	ThrottlePlanLimitsLoaded bool
+	ThrottlePlanMaxRPS       int
+	ThrottlePlanMaxBurst     int
 }
 
 type Result struct {
@@ -147,6 +159,7 @@ type SimulationStep struct {
 	ResponseOps       []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
 	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
 	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
+	ThrottlePolicy    *ThrottlePolicyPreview `json:"throttle_policy,omitempty"`
 	Reason            string                 `json:"reason"`
 }
 
@@ -182,6 +195,7 @@ type ActionPreview struct {
 	Body              json.RawMessage        `json:"body,omitempty"`
 	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
 	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
+	ThrottlePolicy    *ThrottlePolicyPreview `json:"throttle_policy,omitempty"`
 }
 
 // CachePolicyPreview contains the deterministic request-side cache policy
@@ -208,6 +222,27 @@ type BudgetPolicyPreview struct {
 	Source         string `json:"source"`
 	OverrideHeader string `json:"override_header,omitempty"`
 	OverrideStatus string `json:"override_status"`
+}
+
+// ThrottlePolicyPreview reports configured per-route throttle behavior and
+// known outer rate ceilings. The trace does not resolve authenticated or
+// trusted-geolocation identities and never consults or consumes a live bucket.
+type ThrottlePolicyPreview struct {
+	RequestsPerSecond float64 `json:"requests_per_second"`
+	Burst             int     `json:"burst"`
+	GatewayRateRPS    float64 `json:"gateway_rate_rps"`
+	GatewayBurst      int     `json:"gateway_burst"`
+	KeyBy             string  `json:"key_by"`
+	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
+	MaxKeysPerRule    int     `json:"max_keys_per_rule"`
+	MaxKeysSource     string  `json:"max_keys_source"`
+	MissingKeyPolicy  string  `json:"missing_key_policy"`
+	PlanCeilingStatus string  `json:"plan_ceiling_status"`
+	PlanMaxRPS        int     `json:"plan_max_rps,omitempty"`
+	PlanMaxBurst      int     `json:"plan_max_burst,omitempty"`
+	AppRequestRPS     int     `json:"app_request_rps,omitempty"`
+	AppRequestBurst   int     `json:"app_request_burst,omitempty"`
+	AccountRequestRPM int     `json:"account_request_rpm,omitempty"`
 }
 
 // NormalizeInput validates user-supplied request context and canonicalizes
@@ -642,6 +677,10 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				budgetPolicy := *preview.BudgetPolicy
 				step.BudgetPolicy = &budgetPolicy
 			}
+			if preview.ThrottlePolicy != nil {
+				throttlePolicy := *preview.ThrottlePolicy
+				step.ThrottlePolicy = &throttlePolicy
+			}
 		}
 
 		switch phase {
@@ -771,6 +810,17 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			default:
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
+		case "throttle":
+			if outcome != "throttle_policy_candidate" || step.ThrottlePolicy == nil {
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "incomplete", "needs_throttle_runtime_context"
+			simulation.StoppedAt = phase
+			simulation.Reason = "the matched route-throttle policy is shown, but authentication/geolocation identity resolution, live token-bucket balance, and app/account live counters are unavailable; admission and HTTP 429 are not predicted"
+			step.Reason = simulation.Reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+			return simulation
 		case "budget":
 			if !hasAppRequestBudget(input) {
 				return stop("incomplete", "needs_app_request_budget", phase, "a matching budget rule was found, but the app's effective request budget and plan ceiling were not loaded", rule)
@@ -1098,6 +1148,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewLimitRule(rule, input)
 	case "cache":
 		return previewCacheRule(rule, input)
+	case "throttle":
+		return previewThrottleRule(rule, input)
 	case "budget":
 		return previewBudgetRule(rule, input)
 	default:
@@ -1168,6 +1220,71 @@ func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, 
 	}
 	policy := resolveBudgetPolicy(input, &rule, input.Headers)
 	return "budget_candidate", budgetPolicyReason(policy), &ActionPreview{Type: "budget", BudgetPolicy: &policy}
+}
+
+func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleThrottleAction](rule.Action, "throttle")
+	if !ok {
+		return "unavailable", "throttle action is missing or invalid; gateway compilation would drop it", nil
+	}
+	policy := &ThrottlePolicyPreview{
+		RequestsPerSecond: action.RequestsPerSecond,
+		Burst:             action.Burst,
+		GatewayRateRPS:    max(action.RequestsPerSecond, 1),
+		GatewayBurst:      max(action.Burst, 1),
+		KeyBy:             action.KeyBy,
+		JWTClaimName:      action.JWTClaimName,
+		MaxKeysPerRule:    action.MaxKeysPerRule,
+		MissingKeyPolicy:  action.MissingKeyPolicy,
+		PlanCeilingStatus: "unavailable",
+	}
+	if policy.KeyBy == "" {
+		policy.KeyBy = api.ThrottleKeyByNone
+	}
+	if policy.MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		policy.MissingKeyPolicy = api.ThrottleMissingKeyShared
+	}
+	if policy.MaxKeysPerRule <= 0 {
+		policy.MaxKeysPerRule = api.ThrottleMaxKeysPerRuleDefault
+		policy.MaxKeysSource = "platform_default"
+	} else if policy.MaxKeysPerRule > api.ThrottleMaxKeysPerRuleDefault*10 {
+		policy.MaxKeysPerRule = api.ThrottleMaxKeysPerRuleDefault * 10
+		policy.MaxKeysSource = "platform_ceiling"
+	} else {
+		policy.MaxKeysSource = "rule"
+	}
+	if input.ThrottlePlanLimitsLoaded && input.ThrottlePlanMaxRPS > 0 && input.ThrottlePlanMaxBurst > 0 {
+		policy.PlanMaxRPS, policy.PlanMaxBurst = input.ThrottlePlanMaxRPS, input.ThrottlePlanMaxBurst
+		policy.PlanCeilingStatus = "within_plan"
+		if action.RequestsPerSecond > float64(input.ThrottlePlanMaxRPS) || action.Burst > input.ThrottlePlanMaxBurst {
+			policy.PlanCeilingStatus = "exceeds_plan"
+		}
+	}
+	if input.AppThrottleContextLoaded {
+		policy.AppRequestRPS = input.AppRequestRateRPS
+		policy.AppRequestBurst = input.AppRequestRateBurst
+		policy.AccountRequestRPM = input.AccountRequestRateRPM
+	}
+	return "throttle_policy_candidate", throttlePolicyReason(*policy), &ActionPreview{Type: "throttle", ThrottlePolicy: policy}
+}
+
+func throttlePolicyReason(policy ThrottlePolicyPreview) string {
+	keying := fmt.Sprintf("key_by=%s", policy.KeyBy)
+	if policy.JWTClaimName != "" {
+		keying += fmt.Sprintf(" claim=%q", policy.JWTClaimName)
+	}
+	maxKeys := fmt.Sprintf("max_keys_per_rule=%d (%s)", policy.MaxKeysPerRule, policy.MaxKeysSource)
+	reason := fmt.Sprintf("matched route-throttle rule has configured %.3g requests/s, burst %d (gateway effective %.3g requests/s and burst %d), %s, missing_key_policy=%s, %s", policy.RequestsPerSecond, policy.Burst, policy.GatewayRateRPS, policy.GatewayBurst, keying, policy.MissingKeyPolicy, maxKeys)
+	if policy.PlanCeilingStatus == "within_plan" || policy.PlanCeilingStatus == "exceeds_plan" {
+		reason += fmt.Sprintf("; plan ceiling is %d requests/s and burst %d (%s)", policy.PlanMaxRPS, policy.PlanMaxBurst, policy.PlanCeilingStatus)
+	}
+	if policy.AppRequestRPS > 0 && policy.AppRequestBurst > 0 {
+		reason += fmt.Sprintf("; the separate app-wide cap is %d requests/s with burst %d", policy.AppRequestRPS, policy.AppRequestBurst)
+	}
+	if policy.AccountRequestRPM > 0 {
+		reason += fmt.Sprintf(" and account-wide cap is %d requests/min", policy.AccountRequestRPM)
+	}
+	return reason + "; identity resolution and current bucket balance are runtime-only, so no admission or HTTP 429 is inferred"
 }
 
 func hasAppRequestBudget(input Input) bool {

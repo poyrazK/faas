@@ -1123,6 +1123,83 @@ func TestSimulateCacheRuleReportsDeterministicBypasses(t *testing.T) {
 	}
 }
 
+func TestSimulateThrottleRuleReportsPolicyWithoutPredictingAdmission(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "route-throttle", Enabled: true, Kind: "throttle", MatchHost: "example.com", MatchPath: "/api/*", Priority: 5,
+		Action: json.RawMessage(`{"throttle":{"requests_per_second":2.5,"burst":8,"key_by":"jwt_claim","jwt_claim_name":"org_id","max_keys_per_rule":250,"missing_key_policy":"reject"}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/api/orders", Method: http.MethodPost,
+		Headers: http.Header{"Authorization": []string{"Bearer secret-token"}}, AppMaintenanceLoaded: true,
+		AppThrottleContextLoaded: true, AppRequestRateRPS: 4, AppRequestRateBurst: 12, AccountRequestRateRPM: 6000,
+		ThrottlePlanLimitsLoaded: true, ThrottlePlanMaxRPS: 20, ThrottlePlanMaxBurst: 100,
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_throttle_runtime_context" || result.Simulation.StoppedAt != "throttle" {
+		t.Fatalf("simulation = %#v; throttle state must not be guessed", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "throttle_policy_candidate" || result.Simulation.Steps[0].RuleID != "route-throttle" {
+		t.Fatalf("throttle step = %#v", result.Simulation.Steps)
+	}
+	policy := result.Simulation.Steps[0].ThrottlePolicy
+	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 8 || policy.KeyBy != api.ThrottleKeyByJWTClaim || policy.JWTClaimName != "org_id" || policy.MaxKeysPerRule != 250 || policy.MaxKeysSource != "rule" || policy.MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		t.Fatalf("route-throttle policy = %#v", policy)
+	}
+	if policy.PlanMaxRPS != 20 || policy.PlanMaxBurst != 100 || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 4 || policy.AppRequestBurst != 12 || policy.AccountRequestRPM != 6000 {
+		t.Fatalf("outer throttle ceilings = %#v", policy)
+	}
+	if result.Rules[0].Outcome != "throttle_policy_candidate" || result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.ThrottlePolicy == nil {
+		t.Fatalf("per-rule throttle preview = %#v", result.Rules[0])
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "secret-token") || !strings.Contains(result.Simulation.Reason, "admission and HTTP 429 are not predicted") {
+		t.Fatalf("throttle trace leaked a credential or overclaimed its result: %s", encoded)
+	}
+}
+
+func TestSimulateThrottleRuleUsesGatewayDefaultsAndMarksUnknownPlan(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "default-throttle", Enabled: true, Kind: "throttle", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"throttle":{"requests_per_second":1,"burst":2}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].ThrottlePolicy
+	if policy == nil || policy.KeyBy != api.ThrottleKeyByNone || policy.MissingKeyPolicy != api.ThrottleMissingKeyShared || policy.MaxKeysPerRule != api.ThrottleMaxKeysPerRuleDefault || policy.MaxKeysSource != "platform_default" || policy.PlanCeilingStatus != "unavailable" {
+		t.Fatalf("gateway default policy = %#v", policy)
+	}
+}
+
+func TestSimulateThrottleRuleShowsGatewayDefensiveClamps(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "clamped-throttle", Enabled: true, Kind: "throttle", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"throttle":{"requests_per_second":0.5,"burst":0,"max_keys_per_rule":50000,"missing_key_policy":"unknown"}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].ThrottlePolicy
+	if policy == nil || policy.RequestsPerSecond != 0.5 || policy.Burst != 0 || policy.GatewayRateRPS != 1 || policy.GatewayBurst != 1 || policy.MaxKeysPerRule != api.ThrottleMaxKeysPerRuleDefault*10 || policy.MaxKeysSource != "platform_ceiling" || policy.MissingKeyPolicy != api.ThrottleMissingKeyShared {
+		t.Fatalf("gateway defensive clamps = %#v", policy)
+	}
+	if !strings.Contains(result.Rules[0].OutcomeReason, "configured 0.5 requests/s, burst 0 (gateway effective 1 requests/s and burst 1)") {
+		t.Fatalf("clamp explanation = %q", result.Rules[0].OutcomeReason)
+	}
+}
+
 func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
 	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{
 		BudgetMs: 4000, AllowOverrideHeader: "X-Tenant-Budget",

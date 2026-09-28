@@ -84,6 +84,15 @@ a predicted timeout: the gateway starts the deadline only after upload, wake,
 routing, and per-VM admission. A possible response-cache lookup still stops the
 trace as incomplete because a runtime cache hit can bypass guest execution.
 
+For a matching `kind=throttle` rule, the trace reports configured and
+gateway-effective requests per second and burst, key dimension, missing-key
+behavior, and effective per-rule key cap. When available, it also shows the
+plan validation ceiling plus the separate app-wide and account-wide limits. It
+never resolves or prints an authenticated identity, consults GeoIP, or
+reads/consumes a token bucket; therefore it does not predict whether this
+request is admitted or receives HTTP 429. Those runtime gates remain explicitly
+incomplete.
+
 ```json
 {
   "version": 1,
