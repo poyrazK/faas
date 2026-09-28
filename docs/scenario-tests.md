@@ -92,6 +92,8 @@ such as `worker.svc` inside the platform. Local commands receive
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40
 characters; plan developer-session quotas apply to every workload.
+The CLI does not pass its `FAAS_TOKEN` account credential to scenario commands;
+use the run-scoped credentials below for customer requests.
 Declared `consumers` are created for the primary app before deployment. Local
 commands receive each consumer's ID and key as
 `GREGALE_TEST_CONSUMER_CUSTOMER_A_ID` and

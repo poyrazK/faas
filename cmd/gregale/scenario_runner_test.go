@@ -437,9 +437,10 @@ func TestSelectedTestProfiles(t *testing.T) {
 func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GREGALE_TEST_URL", "https://production.example")
+	t.Setenv("FAAS_TOKEN", "operator-secret")
 	manifest := filepath.Join(dir, "gregale-test.yaml")
 	report := filepath.Join(dir, "report.json")
-	contents := "version: 1\nscenarios:\n  local-test:\n    project: local-test\n    source: .\n    simulation: [sh, -c, 'test \"$GREGALE_TEST_ENGINE\" = simulated && test -z \"$GREGALE_TEST_URL\"']\n    command: [sh, -c, 'exit 1']\n"
+	contents := "version: 1\nscenarios:\n  local-test:\n    project: local-test\n    source: .\n    simulation: [sh, -c, 'test \"$GREGALE_TEST_ENGINE\" = simulated && test -z \"$GREGALE_TEST_URL\" && test -z \"$FAAS_TOKEN\"']\n    command: [sh, -c, 'exit 1']\n"
 	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
