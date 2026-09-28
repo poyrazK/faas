@@ -1420,6 +1420,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenant)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.applyPlatformTenant)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/reconciliation-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.planPlatformTenantReconciliation))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/offboarding-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.planPlatformTenantOffboarding))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireIdempotency(s.applyPlatformTenantReconciliation)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/reconciliations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantReconciliationReceipts))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantReconciliationReceipt))))

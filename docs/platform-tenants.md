@@ -64,6 +64,16 @@ To apply exactly the previewed plan, send the same desired bundle and `expected_
 
 Every successful apply, including a confirmed no-op, returns a `receipt_id` and `applied_at` and stores an immutable receipt in the same transaction as the resource changes. Use `GET /v1/account/platform-tenants/{id}/reconciliations?page_size=50` to find recent receipts, then `GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}` to recover the exact plan hash and applied change list after a lost response. Follow the opaque `next_page_token` cursor to walk older pages safely while new reconciliations are being recorded. Receipts contain resource identifiers and resulting actions, but never the submitted desired bundle or hostname challenge tokens. Reads require the account's normal read scope and recent MFA. Receipts remain available until the tenant or account is deleted. See [ADR-362](adr/362-platform-tenant-reconciliation-receipts.md).
 
+## Preview platform-tenant offboarding
+
+Before ending a platform customer's relationship, request a read-only impact summary:
+
+```http
+POST /v1/account/platform-tenants/{id}/offboarding-plan
+```
+
+The response includes a stable `plan_hash` and counts for active consumer keys and tenant-bound access tokens to revoke, managed consumers and surfaces to detach, managed hostnames to remove, and unmanaged resources to retain. It also shows which delegated policies would be disabled. The preview does not mutate state or return credential material. Offboarding preserves usage, finalized billing statements, reconciliation history, and webhook subscriptions; tenant and app-local customer records are not hard-deleted. The follow-up apply operation uses the hash to reject a preview that became stale. This owner operation requires deploy-write scope and recent MFA. See [ADR-345](adr/345-platform-tenant-offboarding-plan.md).
+
 Platform owners can configure the domain boundary for downstream hostname self-service:
 
 ```http

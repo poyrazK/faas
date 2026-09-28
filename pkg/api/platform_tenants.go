@@ -141,6 +141,36 @@ type PlatformTenantReconciliationReceiptResponse struct {
 	Changes   []PlatformTenantReconciliationPlanChange `json:"changes"`
 }
 
+// PlatformTenantOffboardingPlanResponse is a read-only summary of the
+// tenant-scoped access and managed-resource changes proposed by offboarding.
+// It deliberately reports counts rather than copying customer or credential
+// metadata into a second inventory API.
+type PlatformTenantOffboardingPlanResponse struct {
+	TenantID string                               `json:"tenant_id"`
+	Status   string                               `json:"status"`
+	PlanHash string                               `json:"plan_hash"`
+	Actions  PlatformTenantOffboardingPlanActions `json:"actions"`
+}
+
+type PlatformTenantOffboardingPlanActions struct {
+	SuspendTenant                 bool `json:"suspend_tenant"`
+	RevokeConsumerKeys            int  `json:"revoke_consumer_keys"`
+	RevokeAccessTokens            int  `json:"revoke_access_tokens"`
+	DetachManagedConsumers        int  `json:"detach_managed_consumers"`
+	RetainUnmanagedConsumers      int  `json:"retain_unmanaged_consumers"`
+	DetachManagedSurfaces         int  `json:"detach_managed_surfaces"`
+	RetainUnmanagedSurfaces       int  `json:"retain_unmanaged_surfaces"`
+	RemoveManagedHostnames        int  `json:"remove_managed_hostnames"`
+	RetainUnmanagedHostnames      int  `json:"retain_unmanaged_hostnames"`
+	DisableCredentialDelegation   bool `json:"disable_credential_delegation"`
+	DisableCustomerProvisioning   bool `json:"disable_customer_provisioning"`
+	DisableHostnameDelegation     bool `json:"disable_hostname_delegation"`
+	PreserveUsageHistory          bool `json:"preserve_usage_history"`
+	PreserveBillingStatements     bool `json:"preserve_billing_statements"`
+	PreserveReconciliationHistory bool `json:"preserve_reconciliation_history"`
+	PreserveWebhookSubscriptions  bool `json:"preserve_webhook_subscriptions"`
+}
+
 type ApplyPlatformTenantConsumerRequest struct {
 	AppID       string `json:"app_id"`
 	ExternalRef string `json:"external_ref"`

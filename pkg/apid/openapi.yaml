@@ -4112,6 +4112,37 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenants/{id}/offboarding-plan:
+    post:
+      tags: [platform-tenants]
+      operationId: planPlatformTenantOffboarding
+      summary: Preview a safe platform-tenant offboarding operation.
+      description: |
+        Returns the tenant status, a stable plan hash, and counts of the
+        proposed access and ownership changes. The plan describes suspending
+        the tenant, revoking linked consumer keys and tenant-bound access
+        tokens, disabling delegated provisioning policies, detaching only
+        platform-managed consumers and surfaces, and removing only
+        platform-managed hostnames. Unmanaged resources are retained. Usage,
+        billing statements, reconciliation receipts, and webhook subscriptions
+        are preserved. This endpoint is read-only; it does not reserve or
+        apply the plan.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing platform tenant UUID to preview for offboarding.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Read-only summary of proposed offboarding actions and stable plan hash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/reconciliation-plan/apply:
     post:
       tags: [platform-tenants]
@@ -24619,6 +24650,36 @@ components:
         changes:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
+
+    PlatformTenantOffboardingPlanResponse:
+      type: object
+      required: [tenant_id, status, plan_hash, actions]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, suspended] }
+        plan_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        actions: { $ref: '#/components/schemas/PlatformTenantOffboardingPlanActions' }
+
+    PlatformTenantOffboardingPlanActions:
+      type: object
+      required: [suspend_tenant, revoke_consumer_keys, revoke_access_tokens, detach_managed_consumers, retain_unmanaged_consumers, detach_managed_surfaces, retain_unmanaged_surfaces, remove_managed_hostnames, retain_unmanaged_hostnames, disable_credential_delegation, disable_customer_provisioning, disable_hostname_delegation, preserve_usage_history, preserve_billing_statements, preserve_reconciliation_history, preserve_webhook_subscriptions]
+      properties:
+        suspend_tenant: { type: boolean }
+        revoke_consumer_keys: { type: integer, minimum: 0 }
+        revoke_access_tokens: { type: integer, minimum: 0 }
+        detach_managed_consumers: { type: integer, minimum: 0 }
+        retain_unmanaged_consumers: { type: integer, minimum: 0 }
+        detach_managed_surfaces: { type: integer, minimum: 0 }
+        retain_unmanaged_surfaces: { type: integer, minimum: 0 }
+        remove_managed_hostnames: { type: integer, minimum: 0 }
+        retain_unmanaged_hostnames: { type: integer, minimum: 0 }
+        disable_credential_delegation: { type: boolean }
+        disable_customer_provisioning: { type: boolean }
+        disable_hostname_delegation: { type: boolean }
+        preserve_usage_history: { type: boolean }
+        preserve_billing_statements: { type: boolean }
+        preserve_reconciliation_history: { type: boolean }
+        preserve_webhook_subscriptions: { type: boolean }
 
     ApplyPlatformTenantReconciliationRequest:
       description: Desired bundle and plan digest returned by the read-only reconciliation-plan endpoint.

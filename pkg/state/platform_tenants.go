@@ -87,6 +87,12 @@ type PlatformTenantReconciliationReceiptStore interface {
 	GetPlatformTenantReconciliationReceipt(context.Context, string, string, string) (api.PlatformTenantReconciliationReceiptResponse, error)
 }
 
+// PlatformTenantOffboardingStore returns a consistent, read-only plan for
+// suspending one platform tenant and removing only resources it owns.
+type PlatformTenantOffboardingStore interface {
+	PlanPlatformTenantOffboarding(context.Context, string, string) (api.PlatformTenantOffboardingPlanResponse, error)
+}
+
 type PlatformTenantReconciliationParams struct {
 	TenantID string
 	ApplyPlatformTenantParams
@@ -163,6 +169,8 @@ var (
 	_ PlatformTenantReconciliationStore        = (*MemStore)(nil)
 	_ PlatformTenantReconciliationReceiptStore = (*PgStore)(nil)
 	_ PlatformTenantReconciliationReceiptStore = (*MemStore)(nil)
+	_ PlatformTenantOffboardingStore           = (*PgStore)(nil)
+	_ PlatformTenantOffboardingStore           = (*MemStore)(nil)
 )
 
 func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {

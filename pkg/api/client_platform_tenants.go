@@ -86,6 +86,12 @@ func (c *Client) GetPlatformTenantReconciliationReceipt(ctx context.Context, ten
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) PlanPlatformTenantOffboarding(ctx context.Context, tenantID string) (PlatformTenantOffboardingPlanResponse, error) {
+	var out PlatformTenantOffboardingPlanResponse
+	err := c.do(ctx, "POST", "/v1/account/platform-tenants/"+url.PathEscape(tenantID)+"/offboarding-plan", struct{}{}, &out)
+	return out, err
+}
+
 func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTenantDetailResponse, error) {
 	var out PlatformTenantDetailResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)
