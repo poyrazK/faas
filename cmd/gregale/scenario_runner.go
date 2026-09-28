@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,16 +36,22 @@ type testManifest struct {
 }
 
 type testScenario struct {
-	Project  string       `yaml:"project"`
-	Source   string       `yaml:"source"`
-	Trigger  []string     `yaml:"trigger"`
-	Command  []string     `yaml:"command"`
-	Setup    [][]string   `yaml:"setup"`
-	Cleanup  [][]string   `yaml:"cleanup"`
-	Postgres bool         `yaml:"postgres"`
-	Buckets  []testBucket `yaml:"buckets"`
-	WaitFor  testWaitFor  `yaml:"wait_for"`
-	Timeout  string       `yaml:"timeout"`
+	Project  string                 `yaml:"project"`
+	Source   string                 `yaml:"source"`
+	Services map[string]testService `yaml:"services"`
+	Trigger  []string               `yaml:"trigger"`
+	Command  []string               `yaml:"command"`
+	Setup    [][]string             `yaml:"setup"`
+	Cleanup  [][]string             `yaml:"cleanup"`
+	Postgres bool                   `yaml:"postgres"`
+	Buckets  []testBucket           `yaml:"buckets"`
+	WaitFor  testWaitFor            `yaml:"wait_for"`
+	Timeout  string                 `yaml:"timeout"`
+}
+
+type testService struct {
+	Source   string `yaml:"source"`
+	Postgres bool   `yaml:"postgres"`
 }
 
 type testWaitFor struct {
@@ -68,9 +75,15 @@ type testOutputEvidence struct {
 
 type testBucket struct {
 	Name       string `yaml:"name"`
+	Service    string `yaml:"service"`
 	Prefix     string `yaml:"prefix"`
 	Region     string `yaml:"region"`
 	Permission string `yaml:"permission"`
+}
+
+type testBucketRef struct {
+	Name    string
+	AppSlug string
 }
 
 var testBucketPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
@@ -90,6 +103,7 @@ type testRunReceipt struct {
 	RunID        string               `json:"run_id"`
 	AppSlug      string               `json:"app_slug,omitempty"`
 	DeploymentID string               `json:"deployment_id,omitempty"`
+	Services     map[string]string    `json:"services,omitempty"`
 	Status       string               `json:"status"`
 	Error        string               `json:"error,omitempty"`
 	CleanupError string               `json:"cleanup_error,omitempty"`
@@ -208,11 +222,20 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		return nil, "", errors.New("scenario manifest version must be 1")
 	}
 	for name, scenario := range manifest.Scenarios {
-		if len(name) < 3 || len(name) > 80 || scenario.Project != sanitizeSlug(scenario.Project) || len(scenario.Project) < 3 || len(scenario.Project) > 40 {
+		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return nil, "", fmt.Errorf("scenario %q needs a valid project slug", name)
 		}
 		if len(scenario.Command) == 0 || scenario.Command[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q needs a command", name)
+		}
+		if len(scenario.Services) > 15 {
+			return nil, "", fmt.Errorf("scenario %q may declare at most 15 services", name)
+		}
+		for service, spec := range scenario.Services {
+			if !api.ValidAppSlug(service) ||
+				len(scenario.Project)+1+len(service) > 40 || service == scenario.Project || spec.Source == "" {
+				return nil, "", fmt.Errorf("scenario %q has an invalid service %q or missing source", name, service)
+			}
 		}
 		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q has an empty trigger command", name)
@@ -239,6 +262,11 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 			seenBuckets[bucket.Name] = true
 			if bucket.Permission != "" && bucket.Permission != "read" && bucket.Permission != "write" && bucket.Permission != "read_write" {
 				return nil, "", fmt.Errorf("scenario %q bucket %q has invalid permission", name, bucket.Name)
+			}
+			if bucket.Service != "" && bucket.Service != scenario.Project {
+				if _, ok := scenario.Services[bucket.Service]; !ok {
+					return nil, "", fmt.Errorf("scenario %q bucket %q names unknown service %q", name, bucket.Name, bucket.Service)
+				}
 			}
 			if bucket.Prefix != "" && !testBucketPrefixPattern.MatchString(bucket.Prefix) {
 				return nil, "", fmt.Errorf("scenario %q bucket %q has invalid secret prefix", name, bucket.Name)
@@ -287,18 +315,77 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	receipt.AppSlug = session.App.Slug
+	type deployedTestService struct {
+		name, project, sourceDir string
+		config                   devSourceConfig
+		session                  api.DevSessionResponse
+	}
+	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
+	registered := false
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		if err := client.DestroyDevSession(cleanupCtx, scenario.Project, receipt.RunID); err != nil {
-			receipt.addCleanupError(fmt.Sprintf("destroy test environment %s: %v", receipt.AppSlug, err))
+		allDestroyed := true
+		for i := len(workloads) - 1; i >= 0; i-- {
+			if err := client.DestroyDevSession(cleanupCtx, workloads[i].project, receipt.RunID); err != nil {
+				receipt.addCleanupError(fmt.Sprintf("destroy test workload %s: %v", workloads[i].name, err))
+				allDestroyed = false
+			}
+		}
+		if registered && allDestroyed {
+			if err := client.DeleteScenarioTest(cleanupCtx, receipt.RunID); err != nil {
+				receipt.addCleanupError(fmt.Sprintf("release test service namespace: %v", err))
+			}
 		}
 	}()
+	serviceNames := make([]string, 0, len(scenario.Services))
+	for name := range scenario.Services {
+		serviceNames = append(serviceNames, name)
+	}
+	sort.Strings(serviceNames)
+	for _, serviceName := range serviceNames {
+		spec := scenario.Services[serviceName]
+		serviceDir, err := resolveDeploySourceDir(manifestDir, spec.Source)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("source directory for %s: %v", serviceName, err)
+			return
+		}
+		serviceConfig, err := resolveDevSourceConfig(serviceDir)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("detect app shape for %s: %v", serviceName, err)
+			return
+		}
+		projectName := scenario.Project + "-" + serviceName
+		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, ""))
+		if err != nil {
+			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
+			return
+		}
+		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
+	}
+	members := make([]api.ScenarioTestWorkload, 0, len(workloads))
+	for _, workload := range workloads {
+		members = append(members, api.ScenarioTestWorkload{Workload: workload.name, AppSlug: workload.session.App.Slug})
+	}
+	if err := client.RegisterScenarioTest(ctx, receipt.RunID, api.RegisterScenarioTestRequest{Members: members}); err != nil {
+		receipt.Error = fmt.Sprintf("register isolated service namespace: %v", err)
+		return
+	}
+	registered = true
 	bucketEnv := make([]string, 0, 2*len(scenario.Buckets))
-	bucketByName := make(map[string]string, len(scenario.Buckets))
+	bucketByName := make(map[string]testBucketRef, len(scenario.Buckets))
 	for _, spec := range scenario.Buckets {
+		owner := workloads[0]
+		if spec.Service != "" {
+			for _, workload := range workloads {
+				if workload.name == spec.Service {
+					owner = workload
+					break
+				}
+			}
+		}
 		bucketName := spec.Name + "-" + receipt.RunID[:8]
-		bucket, err := client.CreateObjectBucket(ctx, session.App.Slug, api.CreateObjectBucketRequest{
+		bucket, err := client.CreateObjectBucket(ctx, owner.session.App.Slug, api.CreateObjectBucketRequest{
 			Name: bucketName, Region: spec.Region,
 		})
 		if err != nil {
@@ -306,38 +393,47 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		receipt.Buckets = append(receipt.Buckets, bucket.Name)
-		bucketByName[spec.Name] = bucket.Name
+		bucketByName[spec.Name] = testBucketRef{Name: bucket.Name, AppSlug: owner.session.App.Slug}
 		permission := spec.Permission
 		if permission == "" {
 			permission = "read_write"
 		}
-		binding, err := client.CreateObjectStorageComputeBinding(ctx, session.App.Slug, bucket.Name, api.CreateObjectStorageComputeBindingRequest{
+		binding, err := client.CreateObjectStorageComputeBinding(ctx, owner.session.App.Slug, bucket.Name, api.CreateObjectStorageComputeBindingRequest{
 			Permission: permission, Prefix: spec.Prefix,
 		})
 		if err != nil {
-			receipt.Error = fmt.Sprintf("bind test bucket %s: %v", spec.Name, err)
+			receipt.Error = fmt.Sprintf("bind test bucket %s to %s: %v", spec.Name, owner.name, err)
 			return
 		}
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+bucket.Name)
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_PREFIX_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+binding.Prefix)
 	}
-	var deploymentID string
-	deployArgs := config.deployArgs(session.App.Slug, sourceDir)
 	// The nested deploy command has its own progress output. Keep --json's
 	// stdout as one machine-readable test receipt.
 	previousStdout := osStdout
 	if jsonOutput {
 		osStdout = osStderr
 	}
-	deployResult := cmdDeployTarballToExisting(ctx, deployArgs, true, deployExecution{
-		onQueued: func(dep api.DeploymentResponse) { deploymentID = dep.ID },
-	})
-	osStdout = previousStdout
-	receipt.DeploymentID = deploymentID
-	if deployResult != 0 || deploymentID == "" {
-		receipt.Error = fmt.Sprintf("source deployment failed (exit %d)", deployResult)
-		return
+	for _, workload := range workloads {
+		var deploymentID string
+		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
+			onQueued: func(dep api.DeploymentResponse) { deploymentID = dep.ID },
+		})
+		if deployResult != 0 || deploymentID == "" {
+			osStdout = previousStdout
+			receipt.Error = fmt.Sprintf("source deployment for %s failed (exit %d)", workload.name, deployResult)
+			return
+		}
+		if workload.name == scenario.Project {
+			receipt.DeploymentID = deploymentID
+		} else {
+			if receipt.Services == nil {
+				receipt.Services = make(map[string]string)
+			}
+			receipt.Services[workload.name] = workload.session.App.Slug
+		}
 	}
+	osStdout = previousStdout
 	target, err := url.Parse(canonicalAppURL(session.App))
 	if err != nil || target.Scheme == "" || target.Host == "" {
 		receipt.Error = "test environment returned an invalid app URL"
@@ -353,6 +449,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		"GREGALE_TEST_ENGINE=real-vm",
 	)
 	env = append(env, bucketEnv...)
+	for _, workload := range workloads[1:] {
+		key := strings.ToUpper(strings.ReplaceAll(workload.name, "-", "_"))
+		env = append(env, "GREGALE_TEST_SERVICE_"+key+"_URL="+canonicalAppURL(workload.session.App))
+		env = append(env, "GREGALE_TEST_SERVICE_"+key+"_APP_SLUG="+workload.session.App.Slug)
+	}
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cleanupCancel()
@@ -368,9 +469,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 	}
-	if err := prepareTestProfile(ctx, client, session.App.Slug, profile); err != nil {
-		receipt.Error = fmt.Sprintf("prepare %s profile: %v", profile, err)
-		return
+	for _, workload := range workloads {
+		if err := prepareTestProfile(ctx, client, workload.session.App.Slug, profile); err != nil {
+			receipt.Error = fmt.Sprintf("prepare %s profile for %s: %v", profile, workload.name, err)
+			return
+		}
 	}
 	recorder.reset()
 	if len(scenario.Trigger) > 0 {
@@ -379,7 +482,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			receipt.Evidence = recorder.snapshot()
 			return
 		}
-		outputs, err := waitForTestOutputs(ctx, client, session.App.Slug, scenario.WaitFor, bucketByName, receipt.RunID)
+		slugs := make([]string, 0, len(workloads))
+		for _, workload := range workloads {
+			slugs = append(slugs, workload.session.App.Slug)
+		}
+		outputs, err := waitForTestOutputs(ctx, client, slugs, scenario.WaitFor, bucketByName, receipt.RunID)
 		receipt.Outputs = outputs
 		if err != nil {
 			receipt.Error = fmt.Sprintf("wait for application output: %v", err)
@@ -510,31 +617,43 @@ type testOutputClient interface {
 	ListBucketObjects(context.Context, string, string, string, string, int) (api.BucketObjectPage, error)
 }
 
-func waitForTestOutputs(ctx context.Context, client testOutputClient, slug string, conditions testWaitFor, buckets map[string]string, runID string) ([]testOutputEvidence, error) {
+func waitForTestOutputs(ctx context.Context, client testOutputClient, slugs []string, conditions testWaitFor, buckets map[string]testBucketRef, runID string) ([]testOutputEvidence, error) {
 	if !conditions.QueueIdle && len(conditions.Objects) == 0 {
 		return nil, nil
 	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	idleSamples := 0
 	for {
 		ready := true
 		if conditions.QueueIdle {
-			state, err := client.QueueState(ctx, slug)
-			if err != nil {
-				return nil, fmt.Errorf("read queue state: %w", err)
+			allIdle := true
+			for _, slug := range slugs {
+				state, err := client.QueueState(ctx, slug)
+				if err != nil {
+					return nil, fmt.Errorf("read queue state for %s: %w", slug, err)
+				}
+				if state.Depth != 0 || state.InFlight != 0 {
+					allIdle = false
+				}
 			}
-			ready = state.Depth == 0 && state.InFlight == 0
+			if allIdle {
+				idleSamples++
+			} else {
+				idleSamples = 0
+			}
+			ready = idleSamples >= 2
 		}
 		observed := make([]testOutputEvidence, 0, len(conditions.Objects))
 		for _, condition := range conditions.Objects {
 			bucket := buckets[condition.Bucket]
 			prefix := strings.ReplaceAll(condition.Prefix, "${GREGALE_TEST_RUN_ID}", runID)
-			output := testOutputEvidence{Bucket: bucket, Prefix: prefix}
+			output := testOutputEvidence{Bucket: bucket.Name, Prefix: prefix}
 			cursor := ""
 			for pages := 0; pages < 100; pages++ {
-				page, err := client.ListBucketObjects(ctx, slug, bucket, prefix, cursor, 100)
+				page, err := client.ListBucketObjects(ctx, bucket.AppSlug, bucket.Name, prefix, cursor, 100)
 				if err != nil {
-					return observed, fmt.Errorf("list bucket %s: %w", bucket, err)
+					return observed, fmt.Errorf("list bucket %s: %w", bucket.Name, err)
 				}
 				for _, object := range page.Items {
 					output.Count++
@@ -544,7 +663,7 @@ func waitForTestOutputs(ctx context.Context, client testOutputClient, slug strin
 					break
 				}
 				if pages == 99 {
-					return observed, fmt.Errorf("bucket %s output listing exceeded 10000 objects", bucket)
+					return observed, fmt.Errorf("bucket %s output listing exceeded 10000 objects", bucket.Name)
 				}
 				cursor = page.NextCursor
 			}

@@ -892,6 +892,16 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// RegisterScenarioTest gives a run's developer sessions a private service
+// namespace before source deployment. Registration is create-only.
+func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
+	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+}
+
+func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
+}
+
 // RecordDevSync stores one safe edit-to-live receipt. Repeating a deployment
 // ID returns the original row, so a CLI retry cannot double-count a sync.
 func (c *Client) RecordDevSync(ctx context.Context, project string, req RecordDevSyncRequest) (DevSyncHistoryItem, error) {

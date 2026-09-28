@@ -330,6 +330,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":                                             "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":                                     "RecoverRollout",
 	"POST /v1/dev/sessions/{project}/syncs":                                     "RecordDevSync",
+	"PUT /v1/dev/test-runs/{run_id}":                                            "RegisterScenarioTest",
+	"DELETE /v1/dev/test-runs/{run_id}":                                         "DeleteScenarioTest",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
 	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":          "ApplyPlatformTenantReconciliation",

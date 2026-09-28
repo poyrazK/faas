@@ -1481,6 +1481,7 @@ from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refund_account_invoice_body import RefundAccountInvoiceBody
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
+from .register_scenario_test_request import RegisterScenarioTestRequest
 from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -1567,6 +1568,7 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_workload import ScenarioTestWorkload
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
@@ -3280,6 +3282,7 @@ __all__ = (
     "RefundAccountInvoiceBody",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
+    "RegisterScenarioTestRequest",
     "RekeyProgress",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -3364,6 +3367,7 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestWorkload",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",

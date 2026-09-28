@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -50,6 +51,33 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		if caller.AccountID == "" || caller.AccountID != target.AccountID {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
+		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
+		}
+		var callerTest, targetTest state.ScenarioTestMember
+		var callerTestErr, targetTestErr error = state.ErrNotFound, state.ErrNotFound
+		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
+			callerTest, callerTestErr = store.ScenarioTestMemberByApp(ctx, caller.ID)
+		}
+		if target.PreviewOfSlug != "" && target.PreviewPrNumber == 0 {
+			targetTest, targetTestErr = store.ScenarioTestMemberByApp(ctx, target.ID)
+		}
+		if callerTestErr != nil && !errors.Is(callerTestErr, state.ErrNotFound) {
+			return gateway.ServiceCaller{}, fmt.Errorf("load test caller membership: %w", callerTestErr)
+		}
+		if targetTestErr != nil && !errors.Is(targetTestErr, state.ErrNotFound) {
+			return gateway.ServiceCaller{}, fmt.Errorf("load test target membership: %w", targetTestErr)
+		}
+		callerIsTest := callerTestErr == nil
+		targetIsTest := targetTestErr == nil
+		if callerIsTest != targetIsTest || (callerIsTest &&
+			(callerTest.AccountID != targetTest.AccountID || callerTest.RunID != targetTest.RunID ||
+				caller.Status == state.AppDeleted || target.Status == state.AppDeleted ||
+				caller.PreviewPrState != state.PreviewPrStateOpen || target.PreviewPrState != state.PreviewPrStateOpen ||
+				caller.PreviewExpiresAt == nil || target.PreviewExpiresAt == nil ||
+				!caller.PreviewExpiresAt.After(time.Now()) || !target.PreviewExpiresAt.After(time.Now()))) {
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
+		}
 		// A project PR preview may only call another preview selected from the
 		// same project and PR. The resolver already enforces this during name
 		// lookup; repeat the invariant here so alternate/out-of-tree resolver
@@ -88,6 +116,9 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			}
 		}
 		bindingTarget := target.Slug
+		if callerIsTest {
+			bindingTarget = targetTest.Workload
+		}
 		if projectPreviewToPreview {
 			// Compose binds the logical workload name, not the generated
 			// pr-N slug. The environment check above makes this alias safe.
@@ -114,7 +145,10 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		}
 		if target.Manifest.AllowedServiceCallers != nil {
 			logicalCaller := caller.Slug
-			if caller.PreviewOfSlug != "" {
+			if callerIsTest {
+				logicalCaller = callerTest.Workload
+			}
+			if caller.PreviewOfSlug != "" && !callerIsTest {
 				logicalCaller = caller.PreviewOfSlug
 			}
 			allowed := false
@@ -135,7 +169,10 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
 			}
 			logicalCaller := caller.Slug
-			if caller.PreviewOfSlug != "" {
+			if callerIsTest {
+				logicalCaller = callerTest.Workload
+			}
+			if caller.PreviewOfSlug != "" && !callerIsTest {
 				logicalCaller = caller.PreviewOfSlug
 			}
 			scope, allowed := scopes[strings.ToLower(strings.TrimSpace(logicalCaller))]

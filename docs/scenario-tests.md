@@ -1,10 +1,13 @@
 # Application scenario tests
 
-`gregale test` deploys source into an expiring developer environment and runs
-the repository's own assertions through its public Gregale URL. Each lifecycle
-profile gets a distinct app and, when requested, a distinct managed PostgreSQL
-database. The CLI destroys the environment after the test, including after an
+`gregale test` deploys source into expiring developer sessions and runs the
+repository's own assertions through its public Gregale URL. Each lifecycle
+profile gets a distinct run and, when requested, isolated managed PostgreSQL
+databases. The CLI destroys the sessions after the test, including after an
 assertion failure. The server lease is a backstop if the CLI process disappears.
+Each run registers a private service namespace. A service call from a test app
+can only resolve a workload in that run; a missing name cannot reach a
+production app.
 
 Create `gregale-test.yaml` at the repository root:
 
@@ -13,10 +16,14 @@ version: 1
 scenarios:
   customer-export:
     project: export-api
-    source: .
+    source: ./gateway
+    services:
+      worker:
+        source: ./worker
     postgres: true
     buckets:
       - name: exports
+        service: worker
         prefix: EXPORT_STORAGE
         permission: read_write
     timeout: 15m
@@ -49,12 +56,18 @@ The assertion command receives `GREGALE_TEST_URL`,
 This lets the CLI record the first request's `X-Faas-Wake` and
 `X-Faas-Wake-ID` without changing the application's request or response.
 The setup and cleanup commands receive the same variables. Commands are
-argument arrays, not shell strings.
+argument arrays, not shell strings. Additional services receive logical names
+such as `worker.svc` inside the platform. Local commands receive
+`GREGALE_TEST_SERVICE_WORKER_URL` and
+`GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
+and developer session. The base project plus service name must fit in 40
+characters; plan developer-session quotas apply to every workload.
 
 `trigger` runs immediately after Gregale prepares the selected lifecycle
 profile. It can submit the authenticated export request through
 `GREGALE_TEST_URL`. When `wait_for` is present, Gregale polls the isolated
-app's queue until both depth and in-flight work reach zero, and polls declared
+workloads' queues until each has zero depth and in-flight work on two consecutive
+polls, and polls declared
 bucket prefixes until the minimum object count and total size are present.
 `${GREGALE_TEST_RUN_ID}` in an object prefix is replaced with the current run
 ID. The assertion `command` then checks application-specific ownership,
@@ -62,7 +75,8 @@ authorization, deduplication, and delivery policy. The overall `timeout`
 includes deployment, trigger, waiting, and assertions.
 
 For each declared bucket, Gregale creates an isolated bucket and a compute
-binding before deploying the app. It exposes the bucket name to local commands
+binding on the selected `service`, or on the primary app when `service` is
+omitted. It exposes the bucket name to local commands
 as `GREGALE_TEST_BUCKET_EXPORTS` and the binding's secret key prefix as
 `GREGALE_TEST_BUCKET_PREFIX_EXPORTS`. The app receives the binding's sealed
 S3 connection settings under that prefix. The runner deletes bucket objects,
@@ -87,9 +101,8 @@ first response status, wake headers, completed method, and cleanup outcome.
 The assertion commands own application-specific identities and expectations.
 For an export test they should create two customers, submit and retry the same
 export request, inspect the produced object through both customers' credentials,
-and check notification delivery. Gregale's test runner currently provisions one HTTP app and optional
-PostgreSQL and buckets; queue bindings, notification failure controls, multi-workload
-profiles, and simulated execution are still being added. Test reports label
+and check notification delivery. Queue bindings, notification failure controls,
+per-workload lifecycle evidence, and simulated execution are still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
 
 `--profile cold` relies on the preview-only `fresh=true` form of

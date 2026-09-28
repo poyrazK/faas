@@ -19,7 +19,7 @@ import (
 func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gregale-test.yaml")
-	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
+	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    services:\n      worker: {source: ./worker}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
@@ -42,6 +42,12 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("invalid bucket binding prefix was accepted")
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "service: worker", "service: missing", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("unknown bucket owner was accepted")
+	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +58,37 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 
 type testOutputFakeClient struct {
 	polls int
+	slugs []string
 }
 
-func (f *testOutputFakeClient) QueueState(_ context.Context, _ string) (api.QueueStateResponse, error) {
+func (f *testOutputFakeClient) QueueState(_ context.Context, slug string) (api.QueueStateResponse, error) {
 	f.polls++
+	f.slugs = append(f.slugs, slug)
 	if f.polls < 2 {
 		return api.QueueStateResponse{Depth: 1}, nil
 	}
 	return api.QueueStateResponse{}, nil
+}
+
+func TestWaitForTestOutputsChecksEveryWorkloadQueue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client := &testOutputFakeClient{}
+	if _, err := waitForTestOutputs(ctx, client, []string{"gateway", "worker"}, testWaitFor{QueueIdle: true}, nil, "run-123"); err != nil {
+		t.Fatal(err)
+	}
+	if client.polls != 6 {
+		t.Fatalf("queue reads = %d, want three samples per workload", client.polls)
+	}
+	for i, slug := range client.slugs {
+		want := "gateway"
+		if i%2 == 1 {
+			want = "worker"
+		}
+		if slug != want {
+			t.Fatalf("queue read %d = %q, want %q", i, slug, want)
+		}
+	}
 }
 
 func (f *testOutputFakeClient) ListBucketObjects(_ context.Context, _, bucket, prefix, cursor string, _ int) (api.BucketObjectPage, error) {
@@ -76,14 +105,14 @@ func TestWaitForTestOutputsPollsQueueAndObjects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	client := &testOutputFakeClient{}
-	outputs, err := waitForTestOutputs(ctx, client, "test-app", testWaitFor{
+	outputs, err := waitForTestOutputs(ctx, client, []string{"test-app"}, testWaitFor{
 		QueueIdle: true,
 		Objects:   []testObjectOutput{{Bucket: "exports", Prefix: "reports/${GREGALE_TEST_RUN_ID}/", MinCount: 1, MinTotalBytes: 1}},
-	}, map[string]string{"exports": "exports-123"}, "run-123")
+	}, map[string]testBucketRef{"exports": {Name: "exports-123", AppSlug: "test-app"}}, "run-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.polls != 2 || len(outputs) != 1 || outputs[0].Count != 1 || outputs[0].TotalBytes != 25 {
+	if client.polls != 3 || len(outputs) != 1 || outputs[0].Count != 1 || outputs[0].TotalBytes != 25 {
 		t.Fatalf("polls=%d outputs=%+v", client.polls, outputs)
 	}
 }
