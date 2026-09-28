@@ -122,17 +122,15 @@ func TestReplayEventFanoutFailure_RequeuesOneRecipient(t *testing.T) {
 		json.RawMessage(`{"id":"evt-replay-api","source":"orders","type":"order.created","data":{"amount":1}}`)); err != nil {
 		t.Fatalf("append event: %v", err)
 	}
-	workStore := e.store.(state.PublishedEventWorkStore)
-	progressStore := e.store.(state.PublishedEventRecipientProgressStore)
-	work, err := workStore.ClaimDuePublishedEvent(context.Background(), time.Now().UTC())
+	work, err := e.store.ClaimDuePublishedEvent(context.Background(), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("claim event: %v", err)
 	}
-	if err := progressStore.RecordPublishedEventRecipientProgress(context.Background(), work.ID, work.ClaimToken, subscription.ID,
+	if err := e.store.RecordPublishedEventRecipientProgress(context.Background(), work.ID, work.ClaimToken, subscription.ID,
 		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1, LastError: "target unavailable", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("record failed recipient: %v", err)
 	}
-	if err := workStore.FinishPublishedEvent(context.Background(), work.ID, work.ClaimToken, nil); err != nil {
+	if err := e.store.FinishPublishedEvent(context.Background(), work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("finish event: %v", err)
 	}
 
