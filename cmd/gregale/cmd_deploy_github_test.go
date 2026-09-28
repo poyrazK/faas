@@ -241,6 +241,27 @@ func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowEmbedsCurrentGithubActionPin(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	for _, want := range []string{
+		`sha=$(bash scripts/ci/resolve-github-action-pin.sh)`,
+		"ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}",
+		"-X main.githubActionDefaultSHA=${action_sha}",
+		`ref=${ACTION_SHA}`,
+	} {
+		if !strings.Contains(string(workflow), want) {
+			t.Errorf("release workflow does not embed the current deploy Action pin; missing %q", want)
+		}
+	}
+}
+
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -260,7 +281,9 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: ${{ github.repository }}",
 				"Ref: ${{ github.sha }}",
 				"app: my-app",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"# Action: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
+				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
+				"uses: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA + " # v0",
 				"https://gregale.dev/docs/deploy-from-github",
 				"id-token: write",
 				"checks: write",
@@ -268,7 +291,6 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"wait: \"true\"",
 			},
 			mustNotLn: []string{
-				"# pin this Action", // no SHA provided → no pin comment
 				"api-key:",
 				"see docs/source-ref.md",
 			},
@@ -407,8 +429,12 @@ func TestRenderGithubSnippet(t *testing.T) {
 	}
 }
 
-func TestRenderGithubSnippetAddsDependabotVersionOnlyForAutoPins(t *testing.T) {
+func TestRenderGithubSnippetAddsDependabotVersionToDefaultAndAutoPins(t *testing.T) {
 	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	defaultPin := renderGithubSnippet(githubSnippetEnv{}, "api", "", false)
+	if !strings.Contains(defaultPin, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
+		t.Fatalf("default workflow is not pinned with Dependabot version metadata: %s", defaultPin)
+	}
 	manual := renderGithubSnippet(githubSnippetEnv{}, "api", sha, false)
 	if strings.Contains(manual, "# v0") {
 		t.Fatalf("manual SHA pin was labeled as v0: %s", manual)

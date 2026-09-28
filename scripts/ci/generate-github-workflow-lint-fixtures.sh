@@ -10,12 +10,14 @@ cd "$repo_root"
 workflow_dir=.github/workflows
 run_id="${GITHUB_RUN_ID:-local-$$}"
 prefix="gregale-generated-check-$run_id"
-setup_tag="$workflow_dir/$prefix-setup-tag.yml"
-setup_pinned="$workflow_dir/$prefix-setup-pinned.yml"
-snippet_tag="$workflow_dir/$prefix-snippet-tag.yml"
-snippet_pinned="$workflow_dir/$prefix-snippet-pinned.yml"
+test_action_sha=f1e2d3c4b5a6987654321098765432109abcdef0
+test_action_ref="poyrazK/faas/.github/actions/deploy@$test_action_sha"
+setup_default="$workflow_dir/$prefix-setup-default.yml"
+setup_override="$workflow_dir/$prefix-setup-override.yml"
+snippet_default="$workflow_dir/$prefix-snippet-default.yml"
+snippet_refresh="$workflow_dir/$prefix-snippet-refresh.yml"
 
-for path in "$setup_tag" "$setup_pinned" "$snippet_tag" "$snippet_pinned"; do
+for path in "$setup_default" "$setup_override" "$snippet_default" "$snippet_refresh"; do
 	if [[ -e "$path" ]]; then
 		printf 'generated workflow fixture already exists: %s\n' "$path" >&2
 		exit 1
@@ -26,7 +28,9 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 cli="$tmpdir/gregale"
-go build -o "$cli" ./cmd/gregale
+go build \
+	-ldflags "-X main.githubActionDefaultSHA=$test_action_sha" \
+	-o "$cli" ./cmd/gregale
 
 generate_setup() {
 	local output_path="$1"
@@ -41,14 +45,25 @@ generate_setup() {
 		"$receipt" > "$output_path"
 }
 
-generate_setup "$setup_tag"
-generate_setup "$setup_pinned" \
-	--pinned-sha f1e2d3c4b5a6987654321098765432109abcdef0 \
+expect_action_ref() {
+	local path="$1"
+	local expected="$2"
+	if ! grep -Fq "uses: $expected" "$path"; then
+		printf 'generated workflow %s does not contain expected Action ref %s\n' "$path" "$expected" >&2
+		exit 1
+	fi
+}
+
+generate_setup "$setup_default"
+expect_action_ref "$setup_default" "$test_action_ref # v0"
+generate_setup "$setup_override" \
+	--pinned-sha 0123456789abcdef0123456789abcdef01234567 \
 	--deploy-branches staging=staging \
 	--rollout safe \
 	--enable-action-updates
 
-"$cli" deploy --github --name actionlint-probe > "$snippet_tag"
+"$cli" deploy --github --name actionlint-probe > "$snippet_default"
+expect_action_ref "$snippet_default" "$test_action_ref # v0"
 
 # Keep the deploy snippet's --pin-action path offline and deterministic while
 # exercising the shared Action tag resolver.
@@ -67,5 +82,6 @@ chmod +x "$fake_bin/git"
 
 PATH="$fake_bin:$PATH" \
 	ACTIONLINT_REAL_GIT="$real_git" \
-	ACTIONLINT_PIN_SHA=f1e2d3c4b5a6987654321098765432109abcdef0 \
-	"$cli" deploy --github --name actionlint-probe --pin-action > "$snippet_pinned"
+	ACTIONLINT_PIN_SHA="$test_action_sha" \
+	"$cli" deploy --github --name actionlint-probe --pin-action > "$snippet_refresh"
+expect_action_ref "$snippet_refresh" "$test_action_ref # v0"

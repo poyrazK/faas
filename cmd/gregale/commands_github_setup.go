@@ -56,7 +56,7 @@ func cmdGithubSetup(args []string) int {
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required for a dry run; otherwise defaults to the current binding)")
 	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or main)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
-	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag)")
+	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
 	enableActionUpdates := fs.Bool("enable-action-updates", false, "add a weekly GitHub Actions Dependabot updater")
 	workflow := fs.String("workflow", defaultGithubSetupWorkflow, "workflow path relative to the repository root")
@@ -521,7 +521,10 @@ func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches
 	if rollout == "" {
 		rollout = githubSetupRolloutStandard
 	}
-	actionRef := githubActionVersion
+	actionRef := githubActionDefaultSHA
+	if pinnedSHA == "" {
+		actionVersionComment = true
+	}
 	if pinnedSHA != "" {
 		actionRef = pinnedSHA
 	}

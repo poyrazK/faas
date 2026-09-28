@@ -944,6 +944,8 @@ jobs:
         run: bash scripts/ci/check-release-assets_test.sh
       - name: release asset upload retry and immutability
         run: bash scripts/ci/upload-release-assets_test.sh
+      - name: GitHub deploy Action pin resolver contract
+        run: bash scripts/ci/resolve-github-action-pin_test.sh
       - name: native builder Go toolchain bundle contract
         run: bash scripts/ci/package-go-toolchain_test.sh
       - name: native metal invocation contract

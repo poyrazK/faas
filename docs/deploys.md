@@ -40,8 +40,10 @@ Print a workflow starter with:
 gregale deploy --github
 ```
 
-The checked-in action can then be pinned to a release. Connect a repository
-with `gregale connect` when pushes should deploy automatically.
+The generated workflow uses an immutable deploy Action SHA from the CLI
+release, and Dependabot can update it from the accompanying `# v0` comment.
+Pass `--pin-action` to resolve the current `v0` tag during generation. Connect
+a repository with `gregale connect` when pushes should deploy automatically.
 
 GitHub Actions OIDC deployments are tied to the repository connected through
 the GitHub App installation. Gregale records GitHub's owner and repository IDs

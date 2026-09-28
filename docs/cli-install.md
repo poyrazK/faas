@@ -117,7 +117,8 @@ Bare `gregale login` requires an interactive terminal. Existing `--token`
 calls continue to work.
 
 GitHub Actions already has a first-class path that needs no install — the
-action vendors the binary:
+action vendors the binary. A direct action reference follows the latest
+public-beta release:
 
 ```yaml
 - uses: poyrazK/faas/.github/actions/deploy@v0
@@ -125,7 +126,9 @@ action vendors the binary:
     app: my-app
 ```
 
-Elsewhere, pin an exact version so a new release cannot change your build:
+CLI-generated workflows use an immutable Action SHA by default and add a
+`# v0` comment so Dependabot can update the pin. Elsewhere, pin an exact CLI
+version so a new release cannot change your build:
 
 ```bash
 curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir /usr/local/bin

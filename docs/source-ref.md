@@ -186,8 +186,9 @@ listener), the first-party `poyrazK/faas/.github/actions/deploy`
 action wraps this same endpoint. The action is a composite that
 vendors the `gregale` CLI per release. The public-beta `@v0` moving tag
 resolves to that release bundle, and the `cli-version` output surfaces the
-exact version for drift detection. Pin the resolved 40-character commit SHA
-when the workflow must be immutable.
+exact version for drift detection. CLI-generated workflows use an immutable
+40-character Action SHA by default; direct Action users can pin the resolved
+SHA when their workflow must be immutable.
 
 ### Generate a starter workflow
 
@@ -205,17 +206,15 @@ and the snippet emits the `${{ github.repository }}` /
 `${{ github.sha }}` expressions so the same file is portable
 across repos.
 
-Both `gregale github setup` and `gregale deploy --github` accept
-`--pinned-sha <SHA>` to put an immutable Action commit directly in the
-generated `uses:` line. For the full workflow, `gregale github setup` can
-resolve the current `v0` commit automatically with `--pin-action`. The smaller
-`gregale deploy --github` snippet supports the same option. Both resolve the
-public tag over the network; `github setup` cannot combine it with `--dry-run`.
-Use `--pinned-sha` for a network-free preview or to pin a chosen commit.
-Generated auto-pins add a same-line `# v0` comment for Dependabot. Add
-`--enable-action-updates` to `gregale github setup <slug>` to merge a weekly
-GitHub Actions entry into `.github/dependabot.yml`; existing ecosystems are
-preserved, and `--dry-run` previews both files.
+Both `gregale github setup` and `gregale deploy --github` generate workflows
+pinned to an immutable Action SHA embedded in the CLI release. Generation stays
+network-free, and the same-line `# v0` comment lets Dependabot update that pin.
+Pass `--pin-action` to resolve the current public `v0` tag when generating the
+workflow; this uses the network, and `github setup` cannot combine it with
+`--dry-run`. Use `--pinned-sha <SHA>` to choose a particular commit or preview
+offline. Add `--enable-action-updates` to `gregale github setup <slug>` to merge
+a weekly GitHub Actions entry into `.github/dependabot.yml`; existing
+ecosystems are preserved, and `--dry-run` previews both files.
 
 ### What goes in the snippet
 

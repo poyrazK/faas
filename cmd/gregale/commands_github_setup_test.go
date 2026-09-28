@@ -24,8 +24,8 @@ func TestRenderGithubSetupWorkflow(t *testing.T) {
 		"name: ${{ 'production' }}",
 		"environment: ${{ '' }}",
 		"tags:\n      - \"v*\"",
-		"poyrazK/faas/.github/actions/deploy@v0",
-		"# Action: poyrazK/faas/.github/actions/deploy@v0",
+		"poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA + " # v0",
+		"# Action: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
 		`wait: "true"`,
 		"concurrency:\n  group: gregale-${{ github.repository }}-api-${{ 'default' }}",
 		"cancel-in-progress: false",
@@ -40,6 +40,12 @@ func TestRenderGithubSetupWorkflow(t *testing.T) {
 	}
 	if strings.Contains(workflow, `rollout: "safe"`) {
 		t.Fatal("standard production workflow must not opt into safe rollout")
+	}
+}
+
+func TestGithubActionDefaultPinIsValidSHA(t *testing.T) {
+	if _, err := normalizeGithubActionSHA(githubActionDefaultSHA); err != nil {
+		t.Fatalf("default Action pin %q is invalid: %v", githubActionDefaultSHA, err)
 	}
 }
 

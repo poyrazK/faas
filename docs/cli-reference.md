@@ -786,7 +786,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
 | `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
 | `--deploy-branches <MAPPINGS>` | comma-separated branch=environment mappings (default or registered environment) |  |
-| `--pinned-sha <SHA>` | pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag) |  |
+| `--pinned-sha <SHA>` | pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release) |  |
 | `--pin-action` | resolve the current v0 deploy Action tag to its commit SHA |  |
 | `--enable-action-updates` | add a weekly GitHub Actions Dependabot updater |  |
 | `--workflow <PATH>` | workflow path relative to repository root |  |

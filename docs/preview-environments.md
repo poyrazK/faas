@@ -217,9 +217,10 @@ projects that do not run setup retain webhook-owned
 production deploys. To opt into production service calls from previews, pass
 `--preview-service-policy allow_marked` explicitly.
 
-The generated workflow uses the maintained `@v0` deploy Action tag by default.
-Pass `--pin-action` to resolve the tag to its current commit and write that
-immutable SHA into the workflow:
+The generated workflow pins the deploy Action to an immutable SHA embedded in
+the CLI release. Its same-line `# v0` version comment lets Dependabot keep the
+pin current. Pass `--pin-action` to resolve the maintained tag at setup time
+and write its current commit into the workflow:
 
 ```bash
 gregale github setup checkout --repo OWNER/NAME --pin-action
@@ -232,9 +233,9 @@ when you need a network-free preview or want to choose a specific release.
 Add `--enable-action-updates` to merge a weekly `github-actions` updater into
 `.github/dependabot.yml`. Existing Dependabot ecosystems and their settings
 are preserved, and an existing root Actions updater is left as configured.
-When `--pin-action` generates the workflow, its same-line `# v0` comment lets
-Dependabot update the immutable SHA to the latest v0 release. With
-`--dry-run --enable-action-updates`, setup previews both generated files.
+The default immutable pin and pins refreshed with `--pin-action` both carry a
+same-line `# v0` comment. With `--dry-run --enable-action-updates`, setup
+previews both generated files.
 
 Generated workflows serialize deployments by app and Gregale target scope.
 Pushes to separate mapped environments can proceed independently, while
