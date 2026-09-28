@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -149,13 +150,36 @@ func TestTierB_SecretsListAll_BadLimitExitsOne(t *testing.T) {
 
 func TestTierB_SecretsListAll_HappyPath(t *testing.T) {
 	resetJSONOut(t)
-	body := `{"secrets":[{"app_id":"a-1","app_slug":"demo","key":"FOO","ciphertext":"cipher","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}],"next_before":"demo|FOO"}`
+	body := `{"secrets":[{"app_id":"a-1","app_slug":"demo","key":"FOO","secret_class":"ephemeral","ciphertext":"cipher","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}],"next_before":"demo|FOO"}`
 	f := authedFakeAPI(t, body, http.StatusOK)
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
 	if code := secretsListAll(nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "GET" || f.sawPath != "/v1/secrets" {
 		t.Errorf("route = %s %s, want GET /v1/secrets", f.sawMethod, f.sawPath)
+	}
+	if !strings.Contains(stdout.String(), "ephemeral") || !strings.Contains(stderr.String(), "next page: --before demo|FOO") {
+		t.Errorf("output should show class and pagination cursor; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestTierB_SecretsListAll_ClassFilterKeepsPagination(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"secrets":[{"app_id":"a-1","app_slug":"demo","key":"FOO","secret_class":"persistent","ciphertext":"cipher","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}],"next_before":"demo|FOO"}`
+	authedFakeAPI(t, body, http.StatusOK)
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	if code := secretsListAll([]string{"--class", "ephemeral"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "no ephemeral secrets on this page") || !strings.Contains(stderr.String(), "next page: --before demo|FOO") {
+		t.Errorf("filtered empty page must remain distinguishable from end-of-list; stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 

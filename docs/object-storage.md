@@ -222,8 +222,19 @@ gregale add bucket assets --app my-api --env production --permission read_write
 
 The command is idempotent for the app, scope, and bucket name. It prints the
 bucket and injected secret names only; access keys and secret values are never
-written to stdout, JSON output, or logs. Use the lower-level API operations
-below when rotating or revoking a binding.
+written to stdout, JSON output, or logs. Manage an existing compute binding
+from the CLI with:
+
+```sh
+gregale bindings object-storage list my-api assets
+gregale bindings object-storage rotate my-api assets BINDING_ID
+gregale bindings object-storage revoke my-api assets BINDING_ID
+```
+
+The bucket argument accepts its name or ID. The list command prints the
+binding ID needed by rotate and revoke; output includes rotation status but
+omits access-key IDs and sealed secret names. Use the API operations below for
+automation that needs direct access to the resource endpoints.
 
 Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
 workload should use the branded S3 endpoint without carrying credentials in

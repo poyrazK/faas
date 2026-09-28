@@ -210,8 +210,8 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		onGet: func() (int, any) {
 			return http.StatusOK, api.AppSecretListResponse{
 				Secrets: []api.AppSecretResponse{
-					{Key: "STRIPE_KEY", DeliveryVersion: 2, DeliveryStatus: "pending", LastRuntimeReloadVersion: 2, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-1"},
-					{Key: "DB_URL", DeliveryVersion: 3, DeliveryStatus: "delivered", LastRuntimeReloadVersion: 1, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-2"},
+					{Key: "STRIPE_KEY", SecretClass: api.SecretClassEphemeral, DeliveryVersion: 2, DeliveryStatus: "pending", LastRuntimeReloadVersion: 2, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-1"},
+					{Key: "DB_URL", SecretClass: api.SecretClassPersistent, DeliveryVersion: 3, DeliveryStatus: "delivered", LastRuntimeReloadVersion: 1, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-2"},
 				},
 				Quota: 25,
 				Count: 2,
@@ -233,10 +233,84 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		t.Fatalf("cmdSecrets list = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "delivery pending", "runtime file updated; signal sent (instance-1)", "DB_URL", "delivery delivered", "runtime status stale (v1) (instance-2)"} {
+	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "ephemeral", "delivery pending", "runtime file updated; signal sent (instance-1)", "DB_URL", "persistent", "delivery delivered", "runtime status stale (v1) (instance-2)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestCmdSecrets_ListFiltersByClass(t *testing.T) {
+	sink := &secretsSink{onGet: func() (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{
+			Secrets: []api.AppSecretResponse{
+				{Key: "EPHEMERAL_KEY", SecretClass: api.SecretClassEphemeral},
+				{Key: "PERSISTENT_KEY", SecretClass: api.SecretClassPersistent},
+				{Key: "LEGACY_KEY"}, // Missing class from an older server defaults to persistent.
+			},
+			Quota: 25,
+			Count: 3,
+		}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"list", "--app", "my-app", "--class", "persistent"}); code != 0 {
+		t.Fatalf("cmdSecrets list = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"2/25 secrets", "PERSISTENT_KEY", "LEGACY_KEY", "persistent"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "EPHEMERAL_KEY") {
+		t.Errorf("filtered output includes ephemeral secret:\n%s", out)
+	}
+}
+
+func TestFilterAppSecretListByClassPreservesNestedShape(t *testing.T) {
+	resp := api.AppSecretListResponse{
+		SecretsByScope: api.SecretByScope{
+			"prod": {
+				{Key: "SESSION", SecretClass: api.SecretClassEphemeral},
+				{Key: "DATABASE", SecretClass: api.SecretClassPersistent},
+			},
+			"staging": {{Key: "OLD_KEY"}},
+			"dev":     {{Key: "TEST_TOKEN", SecretClass: api.SecretClassEphemeral}},
+		},
+		Count: 4,
+		Quota: 25,
+	}
+	filterAppSecretListByClass(&resp, api.SecretClassPersistent)
+	if resp.Count != 2 || len(resp.SecretsByScope) != 3 || len(resp.SecretsByScope["prod"]) != 1 || len(resp.SecretsByScope["staging"]) != 1 || len(resp.SecretsByScope["dev"]) != 0 {
+		t.Fatalf("filtered nested response = %+v", resp)
+	}
+	if resp.SecretsByScope["prod"][0].Key != "DATABASE" || resp.SecretsByScope["staging"][0].Key != "OLD_KEY" {
+		t.Fatalf("filtered rows = %+v", resp.SecretsByScope)
+	}
+	var rendered bytes.Buffer
+	renderSecretsByScope(&rendered, "demo", &resp)
+	if !strings.Contains(rendered.String(), "across 2 scopes") {
+		t.Errorf("filtered scope count includes an empty scope: %q", rendered.String())
+	}
+}
+
+func TestValidSecretClassFilterValues(t *testing.T) {
+	for _, class := range []string{"", api.SecretClassPersistent, api.SecretClassEphemeral} {
+		if !validSecretClass(class) {
+			t.Errorf("validSecretClass(%q) = false", class)
+		}
+	}
+	if validSecretClass("temporary") {
+		t.Fatal("validSecretClass accepted an unknown retention class")
 	}
 }
 

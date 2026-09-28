@@ -37,6 +37,11 @@
   committed infrastructure mutation into an ambiguous HTTP failure. A durable
   projection outbox and reconciliation/backfill pass are required before the
   timeline can be described as complete historical evidence.
+- **Historical seed:** The first backfill imports legacy deployment-intent
+  events only when the surviving app row establishes its organization. It
+  deduplicates on the live deployment-request key and copies a strict safe
+  projection; malformed rows, deleted/unattributed apps, and other audit
+  products remain outside this initial seed.
 - **Consequences:** Customers gain one display-ready workspace history while
   the security audit and deployment forensics products keep their specialized
   schemas. The new table is deliberately FK-free and append-only, so deleting

@@ -6,7 +6,7 @@
 // re-enters the CLI.
 //
 // Operations:
-//   gregale secrets list   --app <slug> [--scope <name>]
+//   gregale secrets list   --app <slug> [--scope <name>] [--class persistent|ephemeral]
 //   gregale secrets set    --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--class persistent|ephemeral]
 //   gregale secrets unset  --app <slug> KEY [--scope <name>] [--wait-for-ack [--timeout 2m]]
 //
@@ -88,14 +88,18 @@ func secretsList(args []string) int {
 	fs := newFlagSet("secrets list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (defaults to linked project environment; '__all__' returns nested secrets_by_scope)")
+	secretClass := fs.String("class", "", "filter by snapshot-retention class (persistent or ephemeral)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if !validSecretClass(*secretClass) {
+		return printErr("Invalid --class", fmt.Errorf("must be %q or %q; got %q", api.SecretClassPersistent, api.SecretClassEphemeral, *secretClass))
+	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__] [--class persistent|ephemeral]", "secrets")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -111,10 +115,15 @@ func secretsList(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	filterAppSecretListByClass(&resp, *secretClass)
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	if resp.Count == 0 {
+		if *secretClass != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s: no %s secrets (0/%d)\n", *app, *secretClass, resp.Quota)
+			return 0
+		}
 		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
 		return 0
 	}
@@ -138,15 +147,17 @@ func secretsList(args []string) int {
 // cmd/gregale/commands_inspect.go — same shape, secrets-flavored.
 func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListResponse) {
 	scopes := make([]string, 0, len(resp.SecretsByScope))
-	for s := range resp.SecretsByScope {
-		scopes = append(scopes, s)
+	for s, rows := range resp.SecretsByScope {
+		if len(rows) > 0 {
+			scopes = append(scopes, s)
+		}
 	}
 	sort.Strings(scopes)
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets (across %d scopes)\n",
 		app, resp.Count, resp.Quota, len(scopes))
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
-			_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", s+"/"+row.Key,
+			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
 				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
 					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete))
@@ -166,11 +177,50 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse) {
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
-		_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", scopeOrDefault(s.Scope)+"/"+s.Key,
+		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
 			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
 				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete))
 	}
+}
+
+func validSecretClass(class string) bool {
+	return class == "" || class == api.SecretClassPersistent || class == api.SecretClassEphemeral
+}
+
+func secretClassLabel(class string) string {
+	if class == "" {
+		return api.SecretClassPersistent
+	}
+	return class
+}
+
+func filterAppSecretListByClass(resp *api.AppSecretListResponse, class string) {
+	if class == "" {
+		return
+	}
+	resp.Count = 0
+	if len(resp.SecretsByScope) > 0 {
+		for scope, rows := range resp.SecretsByScope {
+			filtered := rows[:0]
+			for _, row := range rows {
+				if secretClassLabel(row.SecretClass) == class {
+					filtered = append(filtered, row)
+				}
+			}
+			resp.SecretsByScope[scope] = filtered
+			resp.Count += len(filtered)
+		}
+		return
+	}
+	filtered := resp.Secrets[:0]
+	for _, secret := range resp.Secrets {
+		if secretClassLabel(secret.SecretClass) == class {
+			filtered = append(filtered, secret)
+		}
+	}
+	resp.Secrets = filtered
+	resp.Count = len(filtered)
 }
 
 func secretDeliveryLabel(status string) string {
@@ -702,11 +752,15 @@ func secretsListAll(args []string) int {
 	fs := newFlagSet("secrets list-all", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
 	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
+	secretClass := fs.String("class", "", "filter this page by snapshot-retention class (persistent or ephemeral)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if !validSecretClass(*secretClass) {
+		return printErr("Invalid --class", fmt.Errorf("must be %q or %q; got %q", api.SecretClassPersistent, api.SecretClassEphemeral, *secretClass))
 	}
 	if *limit < 1 || *limit > 200 {
 		return printErr("Invalid --limit", fmt.Errorf("must be in [1,200]; got %d", *limit))
@@ -719,18 +773,34 @@ func secretsListAll(args []string) int {
 	if err != nil {
 		return printErr("List-all failed", err)
 	}
+	if *secretClass != "" {
+		filtered := resp.Secrets[:0]
+		for _, secret := range resp.Secrets {
+			if secretClassLabel(secret.SecretClass) == *secretClass {
+				filtered = append(filtered, secret)
+			}
+		}
+		resp.Secrets = filtered
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Secrets) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "(no secrets)")
+		if *secretClass != "" {
+			_, _ = fmt.Fprintf(osStdout, "(no %s secrets on this page)\n", *secretClass)
+		} else {
+			_, _ = fmt.Fprintln(osStdout, "(no secrets)")
+		}
+		if resp.NextBefore != "" {
+			_, _ = fmt.Fprintf(osStderr, "next page: --before %s\n", resp.NextBefore)
+		}
 		return 0
 	}
 	for _, s := range resp.Secrets {
-		fmt.Printf("%-32s %-32s %s\n", s.AppSlug, s.Key, s.UpdatedAt)
+		_, _ = fmt.Fprintf(osStdout, "%-32s %-32s %-10s %s\n", s.AppSlug, s.Key, secretClassLabel(s.SecretClass), s.UpdatedAt)
 	}
 	if resp.NextBefore != "" {
-		fmt.Fprintf(os.Stderr, "next page: --before %s\n", resp.NextBefore)
+		_, _ = fmt.Fprintf(osStderr, "next page: --before %s\n", resp.NextBefore)
 	}
 	return 0
 }
