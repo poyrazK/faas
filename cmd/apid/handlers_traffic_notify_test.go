@@ -302,6 +302,55 @@ func TestPatchDeploymentTraffic_NonLiveReportsConflict(t *testing.T) {
 	}
 }
 
+func TestPatchDeploymentTrafficRejectsActiveCanary(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	stable := mustSeedDeployment(t, e, "traffic-active-canary-api")
+	if err := e.store.MarkDeploymentLive(t.Context(), stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(t.Context(), "traffic-active-canary-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:active-canary",
+		Status: state.DeployPending, Scope: "canary", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, CanaryStep: 0, RolloutState: "pending", TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	notifier := &captureNotifier{}
+	e.s.notif = notifier
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "candidate", id: candidate.ID, want: 100},
+		{name: "stable sibling", id: stable.ID, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(t, http.MethodPatch, "/v1/deployments/"+tc.id+"/traffic",
+				api.UpdateDeploymentTrafficRequest{TrafficPercent: tc.want}, nil)
+			assertProblem(t, rec, http.StatusConflict, api.CodeTrafficChangeDuringCanary)
+		})
+	}
+	if got := notifier.byChannel(db.NotifyDeploymentChanged); len(got) != 0 {
+		t.Fatalf("blocked PATCH sent %d notifications, want none", len(got))
+	}
+	stableAfter, _ := e.store.DeploymentByID(t.Context(), stable.ID)
+	candidateAfter, _ := e.store.DeploymentByID(t.Context(), candidate.ID)
+	if stableAfter.TrafficPercent != 99 || candidateAfter.TrafficPercent != 1 ||
+		candidateAfter.CanaryStep != 0 || candidateAfter.RolloutState != "rolling_out" {
+		t.Fatalf("blocked PATCH mutated state: stable=%+v candidate=%+v", stableAfter, candidateAfter)
+	}
+}
+
 func TestPatchDeploymentTraffic_ExpectedServingIsAtomic(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	notifier := &captureNotifier{}

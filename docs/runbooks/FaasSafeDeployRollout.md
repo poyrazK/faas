@@ -202,6 +202,11 @@ slice. Watch these signals for at least one full rollout window:
 - `faas_safe_release_worker_lease_seconds_until_expiry` and `faas_safe_release_worker_lease_last_check_timestamp_seconds`
 - `faas_safe_release_serving_canaries`
 
+The `safedeploy_orchestrator_*_total` counters count rollout outcomes, so an
+idle tick leaves them unchanged. `safedeploy_in_flight_rollouts` keeps its last
+successful count if meterd cannot list rollouts; check meterd tick health and
+the worker lease before treating that count as current.
+
 The default stage and orchestrator cadence is 30 seconds. The default stuck
 threshold is 30 minutes. Once a rollout exceeds that threshold, meterd makes
 one idempotent APID `abort` request so traffic is redistributed to the last
