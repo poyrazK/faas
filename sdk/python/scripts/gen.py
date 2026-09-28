@@ -137,7 +137,8 @@ def regen(overwrite: bool = True) -> None:
     # the spec (e.g. a route that was removed between regens).
     # Stash hand-written wrapper modules before `rmtree` wipes them.
     # The wrapper (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`) lives INSIDE `faas_sdk/`
+    # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`,
+    # `pre_auth_target.py`) lives INSIDE `faas_sdk/`
     # because it imports the generated service classes, but the
     # regen deletes the whole tree. We copy them to a temp dir,
     # rmtree, run the generator, then copy them back so the
@@ -155,6 +156,7 @@ def regen(overwrite: bool = True) -> None:
             "executions.py",
             "release_context.py",
             "webhook.py",
+            "pre_auth_target.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -618,6 +620,8 @@ Public surface:
   request's project release to managed service calls.
 * `verify_webhook` - verify signed outbound deliveries against their raw body
   and return the stable delivery ID for receiver-side deduplication.
+* `pre_auth_target_digest` - opaque login-target signal for selected failed
+  responses on opt-in pre-auth routes.
 """
 
 from ._rfc7807 import (
@@ -644,6 +648,7 @@ from .idempotency import (
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -691,6 +696,8 @@ __all__ = (
     "WEBHOOK_TIMESTAMP_HEADER",
     "WEBHOOK_DELIVERY_ID_HEADER",
     "DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE",
+    "PRE_AUTH_TARGET_HEADER",
+    "pre_auth_target_digest",
     "Problem",
     "FaasError",
     "FaasProblemError",
@@ -742,7 +749,7 @@ def _canonicalise_to_head(
 
     Wrapper files (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
     `_transport.py`, `idempotency.py`, `executions.py`,
-    `release_context.py`, `webhook.py`, `__init__.py`) are
+    `release_context.py`, `webhook.py`, `pre_auth_target.py`, `__init__.py`) are
     unaffected: they are restored from `wrapper_stash` /
     overwritten by `_rewrite_init_py` to equal HEAD bytes, so their
     regen SHA matches HEAD's and the loop's `continue` fires.

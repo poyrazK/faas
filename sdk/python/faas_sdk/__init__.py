@@ -22,6 +22,8 @@ Public surface:
   request's project release to managed service calls.
 * `verify_webhook` - verify signed outbound deliveries against their raw body
   and return the stable delivery ID for receiver-side deduplication.
+* `pre_auth_target_digest` - opaque login-target signal for selected failed
+  responses on opt-in pre-auth routes.
 """
 
 from ._rfc7807 import (
