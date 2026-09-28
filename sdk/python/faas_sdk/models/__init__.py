@@ -1,6 +1,7 @@
 """Contains all the data models used in inputs/outputs"""
 
 from .account_app_secret_response import AccountAppSecretResponse
+from .account_app_secret_response_secret_class import AccountAppSecretResponseSecretClass
 from .account_credit_response import AccountCreditResponse
 from .account_dead_letter_events_response import AccountDeadLetterEventsResponse
 from .account_dead_letter_purge_response import AccountDeadLetterPurgeResponse
@@ -179,6 +180,7 @@ from .app_secret_response_last_delivery_error_code import AppSecretResponseLastD
 from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
 from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
 from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
+from .app_secret_response_secret_class import AppSecretResponseSecretClass
 from .app_secret_revocation_response import AppSecretRevocationResponse
 from .app_secret_revocation_response_status import AppSecretRevocationResponseStatus
 from .app_security_finding import AppSecurityFinding
@@ -1363,6 +1365,7 @@ from .publish_project_release_set_request_deployments import PublishProjectRelea
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
+from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
@@ -1491,6 +1494,7 @@ from .scoped_app_secret_response_last_runtime_reload_projection import (
     ScopedAppSecretResponseLastRuntimeReloadProjection,
 )
 from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecretResponseLastRuntimeReloadSignal
+from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1769,6 +1773,7 @@ from .workload_port_protocol import WorkloadPortProtocol
 
 __all__ = (
     "AccountAppSecretResponse",
+    "AccountAppSecretResponseSecretClass",
     "AccountCreditResponse",
     "AccountDeadLetterEventsResponse",
     "AccountDeadLetterPurgeResponse",
@@ -1969,6 +1974,7 @@ __all__ = (
     "AppSecretResponseLastRuntimeReloadErrorCode",
     "AppSecretResponseLastRuntimeReloadProjection",
     "AppSecretResponseLastRuntimeReloadSignal",
+    "AppSecretResponseSecretClass",
     "AppSecretRevocationResponse",
     "AppSecretRevocationResponseStatus",
     "AppSecurityFinding",
@@ -3079,6 +3085,7 @@ __all__ = (
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",
+    "PutAppSecretRequestSecretClass",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
@@ -3203,6 +3210,7 @@ __all__ = (
     "ScopedAppSecretResponseLastRuntimeReloadErrorCode",
     "ScopedAppSecretResponseLastRuntimeReloadProjection",
     "ScopedAppSecretResponseLastRuntimeReloadSignal",
+    "ScopedAppSecretResponseSecretClass",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
