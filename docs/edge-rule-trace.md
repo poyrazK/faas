@@ -64,6 +64,14 @@ Scenario files are plain text. Keep credentials and sensitive body data out of
 public repositories even though the resulting trace redacts credential-like
 headers and withholds the body.
 
+For `kind=cache` rules, the trace includes the configured fresh, stale-while-
+revalidate, and stale-if-error windows, along with the method and `vary_on`
+policy. It can identify deterministic method and credential bypasses. When a
+request passes those checks, the simulation stops as incomplete: authentication,
+async or pinned-deployment context, and live cache contents determine whether
+runtime serves a fresh hit, refreshes stale content, falls through on a miss, or
+serves stale content on an error. The trace never predicts one of those results.
+
 ```json
 {
   "version": 1,

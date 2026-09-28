@@ -24,7 +24,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Ingress/auth policy, target-app rules after routing, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. Ingress/auth policy, target-app rules after routing, throttle state, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const redactedHeaderValue = "[REDACTED]"
@@ -136,6 +136,7 @@ type SimulationStep struct {
 	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	RequestOps        []api.EdgeRuleHeaderOp `json:"request_header_ops,omitempty"`
 	ResponseOps       []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
+	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
 	Reason            string                 `json:"reason"`
 }
 
@@ -169,6 +170,20 @@ type ActionPreview struct {
 	ValidationField   string                 `json:"validation_field,omitempty"`
 	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	Body              json.RawMessage        `json:"body,omitempty"`
+	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
+}
+
+// CachePolicyPreview contains the deterministic request-side cache policy
+// that can be shown without consulting gateway cache state. A lookup
+// candidate is not a predicted hit: authentication, async/pinned-deployment
+// context, and the live cache store can still alter runtime behavior.
+type CachePolicyPreview struct {
+	Methods                     []string `json:"methods"`
+	MaxAgeSeconds               int      `json:"max_age_seconds"`
+	StaleWhileRevalidateSeconds int      `json:"stale_while_revalidate_seconds"`
+	StaleIfErrorSeconds         int      `json:"stale_if_error_seconds"`
+	VaryOn                      []string `json:"vary_on,omitempty"`
+	RequestGate                 string   `json:"request_gate"`
 }
 
 // NormalizeInput validates user-supplied request context and canonicalizes
@@ -476,7 +491,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "cache"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -575,6 +590,12 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			step.ValidationField, step.ValidationKeyword = preview.ValidationField, preview.ValidationKeyword
 			step.RequestOps = append([]api.EdgeRuleHeaderOp(nil), preview.RequestHeaderOps...)
 			step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), preview.ResponseHeaderOps...)
+			if preview.CachePolicy != nil {
+				cachePolicy := *preview.CachePolicy
+				cachePolicy.Methods = append([]string(nil), preview.CachePolicy.Methods...)
+				cachePolicy.VaryOn = append([]string(nil), preview.CachePolicy.VaryOn...)
+				step.CachePolicy = &cachePolicy
+			}
 		}
 
 		switch phase {
@@ -688,6 +709,22 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			simulation.Steps = append(simulation.Steps, step)
 			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 			return simulation
+		case "cache":
+			switch outcome {
+			case "cache_bypassed_method", "cache_bypassed_credentials":
+				step.PathAfter = requestPath
+				simulation.Steps = append(simulation.Steps, step)
+			case "cache_lookup_candidate":
+				simulation.Status, simulation.Outcome = "incomplete", "needs_cache_runtime_context"
+				simulation.StoppedAt = phase
+				simulation.Reason = "the request passes the deterministic cache method and credential checks, but app authentication, async/pinned-deployment context, and live cache contents are unavailable; hit, miss, and stale outcomes are not inferred"
+				step.Reason = simulation.Reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
 		case "validate":
 			switch outcome {
 			case "validated", "validation_failed_observe", "validation_failed_warn":
@@ -999,9 +1036,66 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewValidateRule(rule, input)
 	case "limit":
 		return previewLimitRule(rule, input)
+	case "cache":
+		return previewCacheRule(rule, input)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
+}
+
+func previewCacheRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleCacheAction](rule.Action, "cache")
+	if !ok {
+		return "unavailable", "cache action is missing or invalid; gateway compilation would drop it", nil
+	}
+	methods := append([]string(nil), action.Methods...)
+	if len(methods) == 0 {
+		methods = []string{http.MethodGet, http.MethodHead}
+	}
+	effectiveMethods := make([]string, 0, len(methods))
+	for _, method := range methods {
+		if (method == http.MethodGet || method == http.MethodHead) && ruleMethodMatches(rule.Kind, rule.MatchMethods, method) {
+			effectiveMethods = append(effectiveMethods, method)
+		}
+	}
+	methods = effectiveMethods
+	varyOn := append([]string(nil), action.VaryOn...)
+	sort.Strings(varyOn)
+	policy := &CachePolicyPreview{
+		Methods: methods, MaxAgeSeconds: action.MaxAgeSeconds,
+		StaleWhileRevalidateSeconds: action.StaleWhileRevalidateSeconds,
+		StaleIfErrorSeconds:         action.StaleIfErrorSeconds,
+		VaryOn:                      varyOn,
+	}
+	preview := &ActionPreview{Type: "cache", CachePolicy: policy}
+
+	methodAllowed := false
+	for _, method := range methods {
+		if method == input.Method {
+			methodAllowed = true
+			break
+		}
+	}
+	if !methodAllowed || (input.Method != http.MethodGet && input.Method != http.MethodHead) {
+		policy.RequestGate = "bypassed_method"
+		return "cache_bypassed_method", fmt.Sprintf("request method %q is outside the cacheable method set %s; cache lookup is skipped", input.Method, strings.Join(methods, ", ")), preview
+	}
+	if input.Headers.Get("Authorization") != "" || requestHasCookie(input.Headers) {
+		policy.RequestGate = "bypassed_credentials"
+		return "cache_bypassed_credentials", "request carries Authorization or Cookie; credentialed requests bypass the cache", preview
+	}
+	policy.RequestGate = "lookup_candidate"
+	return "cache_lookup_candidate", "request passes the deterministic cache method and credential checks; this is only a lookup candidate, not a predicted hit", preview
+}
+
+func requestHasCookie(headers http.Header) bool {
+	request := &http.Request{Header: headers}
+	for _, cookie := range request.Cookies() {
+		if cookie.Name != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // corsMatchMethod mirrors applyEdgeRuleCORS: browser preflights match a CORS
