@@ -1,4 +1,4 @@
--- filename: 20260927154848310_platform_tenant_self_activation.sql
+-- filename: 20260928021020711_platform_tenant_self_activation.sql
 
 -- +goose Up
 -- +goose StatementBegin

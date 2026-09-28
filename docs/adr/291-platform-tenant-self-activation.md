@@ -1,4 +1,4 @@
-# ADR-286 · Tenant-bound self-service activation snapshot
+# ADR-291 · Tenant-bound self-service activation snapshot
 
 - **Status:** accepted
 - **Date:** 2026-09-27
