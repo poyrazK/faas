@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdEvents_NoArgs(t *testing.T) {
@@ -241,5 +243,50 @@ func TestCmdEventsDeliveries_JSONOutput(t *testing.T) {
 	}
 	if got.AppSlug != "invoice-worker" || got.Deliveries == nil {
 		t.Fatalf("output=%s", stdout.String())
+	}
+}
+
+func TestCmdEventsReplayRetryable_UsesBoundedBatchAPI(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","replayed_count":3,"has_more":true}`, http.StatusAccepted)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-source", "orders.us", "--event-id", "evt-1", "--limit", "3", "--yes"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/invoice-worker/event-deliveries:replay-retryable-fanout-failures" {
+		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	}
+	var request api.ReplayRetryableEventFanoutFailuresRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if request.EventSource != "orders.us" || request.EventID != "evt-1" || request.Limit != 3 {
+		t.Fatalf("request = %+v", request)
+	}
+	for _, want := range []string{"Queued 3 retryable event recipient(s)", "More retryable failures remain"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestCmdEventsReplayRetryable_RequiresCompleteEventIdentity(t *testing.T) {
+	resetJSONOut(t)
+	code, captured := runWithStderr(t, func() int {
+		return cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-id", "evt-1", "--yes"})
+	})
+	if code != 1 || !strings.Contains(captured, "--event-source SOURCE --event-id ID") {
+		t.Fatalf("exit=%d stderr=%q", code, captured)
+	}
+}
+
+func TestCmdEventsReplayRetryable_RequiresConfirmation(t *testing.T) {
+	resetJSONOut(t)
+	code, captured := runWithStderr(t, func() int {
+		return cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker"})
+	})
+	if code != 1 || !strings.Contains(captured, "--yes") {
+		t.Fatalf("exit=%d stderr=%q", code, captured)
 	}
 }

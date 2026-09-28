@@ -14,12 +14,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+const eventFanoutReplayBatchMax = 100
+
 // cmdEvents exposes the customer-facing internal event fabric. Preview
 // simulates account-wide routing; publishing is the producer path, while
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|replay>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -33,10 +35,50 @@ func cmdEvents(args []string) int {
 		return cmdEventsDeliveries(args[1:])
 	case "replay":
 		return cmdEventsReplayFanoutFailure(args[1:])
+	case "replay-retryable":
+		return cmdEventsReplayRetryableFanoutFailures(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown events subcommand: %s", args[0]), "events")
 		return 1
 	}
+}
+
+// cmdEventsReplayRetryableFanoutFailures retries a bounded set of terminal
+// pre-invocation recipients that were classified as retryable.
+func cmdEventsReplayRetryableFanoutFailures(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("events replay-retryable", flag.ContinueOnError)
+	eventSource := fs.String("event-source", "", "limit replay to one published event source")
+	eventID := fs.String("event-id", "", "limit replay to one published event")
+	limit := fs.Int("limit", eventFanoutReplayBatchMax, "max recipients to requeue (1..100)")
+	yes := fs.Bool("yes", false, "confirm requeueing retryable event recipients")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes ||
+		(strings.TrimSpace(*eventSource) == "") != (strings.TrimSpace(*eventID) == "") ||
+		validateCLILimit("limit", *limit, eventFanoutReplayBatchMax) != nil {
+		PrintUsage(os.Stderr, "usage: gregale events replay-retryable <app> [--event-source SOURCE --event-id ID] [--limit N] --yes", "events")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ReplayRetryableEventFanoutFailures(context.Background(), positional[0], api.ReplayRetryableEventFanoutFailuresRequest{
+		EventSource: strings.TrimSpace(*eventSource), EventID: strings.TrimSpace(*eventID), Limit: *limit,
+	})
+	if err != nil {
+		return printErr("Retryable event fanout replay failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	PrintOK(osStdout, "Queued %d retryable event recipient(s) for %s.", resp.ReplayedCount, resp.AppSlug)
+	if resp.HasMore {
+		_, _ = fmt.Fprintln(osStdout, "More retryable failures remain; run the command again to queue the next bounded batch.")
+	}
+	return 0
 }
 
 // cmdEventsReplayFanoutFailure retries one terminal pre-invocation recipient.

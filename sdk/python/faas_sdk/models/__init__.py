@@ -1437,6 +1437,8 @@ from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
 from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailureResponseState
+from .replay_retryable_event_fanout_failures_request import ReplayRetryableEventFanoutFailuresRequest
+from .replay_retryable_event_fanout_failures_response import ReplayRetryableEventFanoutFailuresResponse
 from .repo_response import RepoResponse
 from .request_analytics_compute_cost import RequestAnalyticsComputeCost
 from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
@@ -3187,6 +3189,8 @@ __all__ = (
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",
     "ReplayEventFanoutFailureResponseState",
+    "ReplayRetryableEventFanoutFailuresRequest",
+    "ReplayRetryableEventFanoutFailuresResponse",
     "RepoResponse",
     "RequestAnalyticsComputeCost",
     "RequestAnalyticsComputeCostAllocationMethod",

@@ -164,6 +164,88 @@ func TestReplayEventFanoutFailure_RequeuesOneRecipient(t *testing.T) {
 	}
 }
 
+func TestReplayRetryableEventFanoutFailures_RequeuesBoundedRetryableRows(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "replay-retryable-event-app")
+	retryable, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID, appID, "orders.us", "order.created", nil)
+	if err != nil {
+		t.Fatalf("seed retryable subscription: %v", err)
+	}
+	permanent, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID, appID, "orders.*", "order.created", nil)
+	if err != nil {
+		t.Fatalf("seed permanent subscription: %v", err)
+	}
+	if err := e.store.AppendEvent(context.Background(), "apid", "event.published", &e.acct.ID,
+		json.RawMessage(`{"id":"evt-replay-retryable","source":"orders.us","type":"order.created","data":{}}`)); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	work, err := e.store.ClaimDuePublishedEvent(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim event: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, outcome := range []struct {
+		subscription state.EventSubscription
+		code         string
+		retryable    bool
+	}{
+		{retryable, state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{permanent, state.EventFanoutFailureCodeTargetUnavailable, false},
+	} {
+		if err := e.store.RecordPublishedEventRecipientProgress(context.Background(), work.ID, work.ClaimToken, outcome.subscription.ID,
+			state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 12,
+				FailureCode: outcome.code, Retryable: outcome.retryable, LastError: "route failed", UpdatedAt: now}); err != nil {
+			t.Fatalf("record failed recipient %s (snapshot=%+v): %v", outcome.subscription.ID, work.RecipientSnapshot, err)
+		}
+	}
+	if err := e.store.FinishPublishedEvent(context.Background(), work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatalf("finish event: %v", err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/replay-retryable-event-app/event-deliveries:replay-retryable-fanout-failures",
+		api.ReplayRetryableEventFanoutFailuresRequest{EventSource: "orders.us", EventID: "evt-replay-retryable", Limit: 1}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.ReplayRetryableEventFanoutFailuresResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.AppSlug != "replay-retryable-event-app" || response.ReplayedCount != 1 || response.HasMore {
+		t.Fatalf("response = %+v, want one retryable row and no more", response)
+	}
+	replayed, err := e.store.ClaimDuePublishedEvent(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim replay: %v", err)
+	}
+	if got := replayed.RecipientProgress[retryable.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+		t.Fatalf("retryable progress = %+v, want cleared pending", got)
+	}
+	if got := replayed.RecipientProgress[permanent.ID]; got.State != state.PublishedEventRecipientFailed || got.Retryable {
+		t.Fatalf("permanent progress = %+v, want unchanged failed", got)
+	}
+}
+
+func TestReplayRetryableEventFanoutFailuresRejectsInvalidLimit(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "replay-retryable-invalid-limit")
+	rec := e.do(t, http.MethodPost, "/v1/apps/replay-retryable-invalid-limit/event-deliveries:replay-retryable-fanout-failures",
+		api.ReplayRetryableEventFanoutFailuresRequest{Limit: state.EventFanoutReplayBatchMax + 1}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReplayRetryableEventFanoutFailuresRequiresCompleteEventIdentity(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "replay-retryable-incomplete-identity")
+	rec := e.do(t, http.MethodPost, "/v1/apps/replay-retryable-incomplete-identity/event-deliveries:replay-retryable-fanout-failures",
+		api.ReplayRetryableEventFanoutFailuresRequest{EventID: "evt-only"}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListEventSubscriptions_ReturnsReconciledManifestRows(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "events-app")

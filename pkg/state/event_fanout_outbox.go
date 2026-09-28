@@ -79,6 +79,13 @@ type EventFanoutFailureCursor struct {
 	SubscriptionID string
 }
 
+// EventFanoutReplayBatch reports a bounded operator replay. HasMore means
+// additional retryable terminal recipients remain eligible for a later call.
+type EventFanoutReplayBatch struct {
+	Replayed int
+	HasMore  bool
+}
+
 const (
 	PublishedEventRecipientPending  = "pending"
 	PublishedEventRecipientFiltered = "filtered"
@@ -120,8 +127,17 @@ type EventFanoutReplayStore interface {
 	ReplayFailedPublishedEventRecipientForApp(context.Context, string, string, string, string, string) error
 }
 
+// EventFanoutReplayBatchStore requeues a bounded set of terminal recipients
+// classified as retryable. Empty eventSource and eventID search the app's
+// retained failure history; when either is non-empty, both scope the replay
+// to one published event identity.
+type EventFanoutReplayBatchStore interface {
+	ReplayRetryablePublishedEventRecipientsForApp(context.Context, string, string, string, string, int) (EventFanoutReplayBatch, error)
+}
+
 const PublishedEventLease = 5 * time.Minute
 const PublishedEventIdentityRetention = 30 * 24 * time.Hour
+const EventFanoutReplayBatchMax = 100
 
 type PublishedEventRetentionStore interface {
 	PruneDeliveredPublishedEvents(context.Context, time.Time, int) (int64, error)
@@ -338,6 +354,92 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 		return ErrConflict
 	}
 	return ErrNotFound
+}
+
+// ReplayRetryablePublishedEventRecipientsForApp requeues the oldest bounded
+// set of retryable terminal recipients. Candidates are tied to the app's
+// immutable recipient snapshot, and only settled outbox receipts are selected.
+func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Context, accountID, appID, eventSource, eventID string, limit int) (EventFanoutReplayBatch, error) {
+	limit = normalizeEventFanoutReplayLimit(limit)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return EventFanoutReplayBatch{}, fmt.Errorf("begin event fanout replay batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `SELECT o.id, p.key
+		FROM event_fanout_outbox AS o
+		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
+		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
+		WHERE o.account_id = $1::uuid AND o.state = 'delivered'
+		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
+		  AND p.outcome->>'state' = 'failed'
+		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
+		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
+		ORDER BY COALESCE(NULLIF(p.outcome->>'updated_at', '')::timestamptz, o.created_at), o.id, p.key
+		LIMIT $5 FOR UPDATE OF o SKIP LOCKED`, accountID, appID, eventSource, eventID, limit+1)
+	if err != nil {
+		return EventFanoutReplayBatch{}, fmt.Errorf("list retryable event fanout failures: %w", err)
+	}
+	type candidate struct {
+		outboxID       int64
+		subscriptionID string
+	}
+	candidates := make([]candidate, 0, limit+1)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.outboxID, &item.subscriptionID); err != nil {
+			rows.Close()
+			return EventFanoutReplayBatch{}, fmt.Errorf("scan retryable event fanout failure: %w", err)
+		}
+		candidates = append(candidates, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return EventFanoutReplayBatch{}, fmt.Errorf("read retryable event fanout failures: %w", err)
+	}
+	result := EventFanoutReplayBatch{}
+	if len(candidates) > limit {
+		result.HasMore = true
+		candidates = candidates[:limit]
+	}
+	now := time.Now().UTC()
+	for _, item := range candidates {
+		_, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
+			SET state = 'pending', available_at = $3, delivered_at = NULL,
+			    claim_token = NULL, lease_until = NULL,
+			    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$2::text],
+			        ((o.recipient_progress -> $2) - 'failure_code' - 'retryable' - 'last_error') ||
+			            jsonb_build_object('state', 'pending', 'updated_at', $3), false),
+			    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
+			        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
+			        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
+			        WHERE progress.key <> $2 AND progress.outcome->>'state' = 'failed'
+			        ORDER BY progress.key LIMIT 1)
+			WHERE o.id = $1 AND o.state IN ('delivered', 'pending')
+			  AND (o.recipient_progress -> $2)->>'state' = 'failed'
+			  AND COALESCE(NULLIF((o.recipient_progress -> $2)->>'retryable', '')::boolean, false)`,
+			item.outboxID, item.subscriptionID, now)
+		if err != nil {
+			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, err)
+		}
+		result.Replayed++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EventFanoutReplayBatch{}, fmt.Errorf("commit event fanout replay batch: %w", err)
+	}
+	return result, nil
+}
+
+func normalizeEventFanoutReplayLimit(limit int) int {
+	if limit <= 0 {
+		return EventFanoutReplayBatchMax
+	}
+	if limit > EventFanoutReplayBatchMax {
+		return EventFanoutReplayBatchMax
+	}
+	return limit
 }
 
 type publishedEventIdentity struct {
@@ -611,4 +713,66 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		return nil
 	}
 	return ErrNotFound
+}
+
+func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Context, accountID, appID, eventSource, eventID string, limit int) (EventFanoutReplayBatch, error) {
+	limit = normalizeEventFanoutReplayLimit(limit)
+	type candidate struct {
+		work           *PublishedEventWork
+		subscriptionID string
+		failedAt       time.Time
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	candidates := make([]candidate, 0)
+	for _, work := range m.eventFanout {
+		if !work.Delivered {
+			continue
+		}
+		var event publishedEventIdentity
+		if json.Unmarshal(work.Payload, &event) != nil ||
+			((eventSource != "" || eventID != "") && (event.Source != eventSource || event.ID != eventID)) {
+			continue
+		}
+		for _, recipient := range work.RecipientSnapshot {
+			if !sameMemUUID(recipient.AccountID, accountID) || !sameMemUUID(recipient.AppID, appID) {
+				continue
+			}
+			progress, ok := work.RecipientProgress[recipient.ID]
+			if !ok || progress.State != PublishedEventRecipientFailed || !progress.Retryable {
+				continue
+			}
+			candidates = append(candidates, candidate{work: work, subscriptionID: recipient.ID, failedAt: progress.UpdatedAt})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].failedAt.Equal(candidates[j].failedAt) {
+			return candidates[i].failedAt.Before(candidates[j].failedAt)
+		}
+		if candidates[i].work.ID != candidates[j].work.ID {
+			return candidates[i].work.ID < candidates[j].work.ID
+		}
+		return candidates[i].subscriptionID < candidates[j].subscriptionID
+	})
+	result := EventFanoutReplayBatch{HasMore: len(candidates) > limit}
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	now := time.Now().UTC()
+	for _, item := range candidates {
+		progress := item.work.RecipientProgress[item.subscriptionID]
+		progress.State = PublishedEventRecipientPending
+		progress.FailureCode = ""
+		progress.Retryable = false
+		progress.LastError = ""
+		progress.UpdatedAt = now
+		item.work.RecipientProgress[item.subscriptionID] = progress
+		item.work.Delivered = false
+		item.work.DeliveredAt = time.Time{}
+		item.work.AvailableAt = now
+		item.work.ClaimToken = ""
+		item.work.LeaseUntil = time.Time{}
+		result.Replayed++
+	}
+	return result, nil
 }

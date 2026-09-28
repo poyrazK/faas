@@ -286,6 +286,22 @@ type ReplayEventFanoutFailureResponse struct {
 	State          string `json:"state"`
 }
 
+// ReplayRetryableEventFanoutFailuresRequest requeues up to Limit terminal
+// fanout recipients for one app. Empty EventSource and EventID search the
+// retained app failure history; otherwise they identify one published event.
+type ReplayRetryableEventFanoutFailuresRequest struct {
+	EventSource string `json:"event_source,omitempty"`
+	EventID     string `json:"event_id,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+
+// ReplayRetryableEventFanoutFailuresResponse reports a bounded fanout replay.
+type ReplayRetryableEventFanoutFailuresResponse struct {
+	AppSlug       string `json:"app_slug"`
+	ReplayedCount int    `json:"replayed_count"`
+	HasMore       bool   `json:"has_more"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.

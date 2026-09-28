@@ -192,3 +192,44 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		State: state.PublishedEventRecipientPending,
 	})
 }
+
+// replayRetryableEventFanoutFailures requeues a bounded app-scoped batch of
+// terminal recipients whose persisted classification marks them retryable.
+func (s *server) replayRetryableEventFanoutFailures(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req api.ReplayRetryableEventFanoutFailuresRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrValidation("request must be valid JSON"))
+		return
+	}
+	req.EventSource = strings.TrimSpace(req.EventSource)
+	req.EventID = strings.TrimSpace(req.EventID)
+	if (req.EventSource == "") != (req.EventID == "") {
+		api.WriteProblem(w, api.ErrValidation("event_source and event_id must be provided together"))
+		return
+	}
+	if req.Limit < 0 || req.Limit > state.EventFanoutReplayBatchMax {
+		api.WriteProblem(w, api.ErrValidation("limit must be 0 (the default) or between 1 and 100"))
+		return
+	}
+	limit := req.Limit
+	if limit == 0 {
+		limit = state.EventFanoutReplayBatchMax
+	}
+	store, ok := s.store.(state.EventFanoutReplayBatchStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event fanout replay batch"))
+		return
+	}
+	result, err := store.ReplayRetryablePublishedEventRecipientsForApp(r.Context(), acct.ID, app.ID, req.EventSource, req.EventID, limit)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("event fanout replay batch"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.ReplayRetryableEventFanoutFailuresResponse{
+		AppSlug: app.Slug, ReplayedCount: result.Replayed, HasMore: result.HasMore,
+	})
+}

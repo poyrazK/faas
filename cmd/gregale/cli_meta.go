@@ -416,7 +416,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "events",
 		DocSlug: "events",
-		Short:   "Preview routing, publish events, inspect delivery failures and replay one failed recipient",
+		Short:   "Preview routing, publish events, inspect delivery failures and replay failed recipients",
 		Subcommands: []cliSub{
 			{Name: "preview", Short: "Preview account-wide event routing without publishing", Flags: []cliFlag{
 				{Name: "id", Short: "event id to use when filters inspect the CloudEvents id", Value: "ID"},
@@ -444,6 +444,12 @@ var cliCommands = []cliCommand{
 				{Name: "event-id", Short: "published event id", Req: true, Value: "ID"},
 				{Name: "event-source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "subscription-id", Short: "failed subscription id", Req: true, Value: "ID"},
+			}},
+			{Name: "replay-retryable", Short: "Retry a bounded batch of terminal failures classified as retryable; pass --event-source and --event-id together to filter", Positionals: []string{"<app>"}, Flags: []cliFlag{
+				{Name: "event-source", Short: "limit replay to one published event source", Value: "SOURCE"},
+				{Name: "event-id", Short: "limit replay to one published event", Value: "ID"},
+				{Name: "limit", Short: "max recipients to requeue (1..100)", Value: "N"},
+				{Name: "yes", Short: "confirm requeueing retryable event recipients", Req: true},
 			}},
 		},
 	},

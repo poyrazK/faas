@@ -154,6 +154,12 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			})
 			return err
 		}},
+		{"ReplayRetryableEventFanoutFailures", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ReplayRetryableEventFanoutFailures(ctx, "app", ReplayRetryableEventFanoutFailuresRequest{
+				EventSource: "orders", EventID: "evt", Limit: 10,
+			})
+			return err
+		}},
 		{"GetInvocation", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.GetInvocation(ctx, "inv")
 			return err

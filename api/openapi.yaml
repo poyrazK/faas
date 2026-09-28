@@ -17916,6 +17916,38 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries:replay-retryable-fanout-failures:
+    post:
+      tags: [events]
+      operationId: replayRetryableEventFanoutFailures
+      summary: Replay a bounded batch of retryable event recipient failures.
+      description: |
+        Requeues up to 100 terminal recipients for the app whose stable failure
+        classification marks them retryable. Optional event_source and event_id
+        narrow the action to one published event and must be supplied together.
+        Only settled event receipts are selected; non-retryable and
+        still-processing recipients are left alone. Repeat the request while
+        has_more is true to drain a larger batch.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplayRetryableEventFanoutFailuresRequest' }
+      responses:
+        '202':
+          description: Bounded replay accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplayRetryableEventFanoutFailuresResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -28625,6 +28657,26 @@ components:
         event_source: { type: string }
         subscription_id: { type: string, format: uuid }
         state: { type: string, enum: [pending] }
+
+    ReplayRetryableEventFanoutFailuresRequest:
+      description: Bounded app-scoped replay of failures classified as retryable.
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        event_source: { type: string, description: Optional exact event source filter; must be paired with event_id. }
+        event_id: { type: string, description: Optional exact event ID filter; must be paired with event_source. }
+        limit: { type: integer, minimum: 1, maximum: 100, default: 100, description: Maximum recipients to requeue in this call. }
+
+    ReplayRetryableEventFanoutFailuresResponse:
+      description: Summary of one bounded app-scoped replay request.
+      type: object
+      additionalProperties: false
+      required: [app_slug, replayed_count, has_more]
+      properties:
+        app_slug: { type: string }
+        replayed_count: { type: integer, minimum: 0 }
+        has_more: { type: boolean, description: True when more retryable failures remain for a later request. }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."

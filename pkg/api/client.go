@@ -6678,6 +6678,15 @@ func (c *Client) ReplayEventFanoutFailure(ctx context.Context, slug string, req 
 	return out, c.do(ctx, "POST", path, req, &out)
 }
 
+// ReplayRetryableEventFanoutFailures requeues a bounded batch of terminal
+// recipients classified as retryable. The mutation carries the SDK's standard
+// Idempotency-Key.
+func (c *Client) ReplayRetryableEventFanoutFailures(ctx context.Context, slug string, req ReplayRetryableEventFanoutFailuresRequest) (ReplayRetryableEventFanoutFailuresResponse, error) {
+	var out ReplayRetryableEventFanoutFailuresResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries:replay-retryable-fanout-failures"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse

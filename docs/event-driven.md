@@ -640,6 +640,21 @@ captured when the event was accepted. A replay therefore uses the same filter
 and target app; fix persistent routing or app problems before retrying. Other
 recipients that already succeeded or failed are not rerun.
 
+After a transient outage, replay retryable failures for an app in bounded
+batches:
+
+```bash
+gregale events replay-retryable APP --limit 100 --yes
+```
+
+This command requeues only terminal failures classified as retryable, oldest
+first, and never more than 100 recipients per call. Add both `--event-source`
+and `--event-id` to scope it to one published event. `--yes` confirms the
+batch; repeat the command when the response reports `has_more: true`.
+Configuration failures such as an invalid
+subscription or unavailable target remain untouched for explicit repair and
+single-recipient replay.
+
 The machine-readable event contract is published in
 [`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated
 `POST /v1/events:publish` ingress.

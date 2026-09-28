@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Preview routing, publish events, inspect delivery failures and replay one failed recipient |
+| [`events`](#events) | Preview routing, publish events, inspect delivery failures and replay failed recipients |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -324,7 +324,7 @@ Show one audit event
 
 ## events
 
-Preview routing, publish events, inspect delivery failures and replay one failed recipient
+Preview routing, publish events, inspect delivery failures and replay failed recipients
 
 `gregale events [<subcommand>]`
 
@@ -379,6 +379,19 @@ Retry one terminal pre-invocation recipient failure using its event identity and
 | `--event-id <ID>` | published event id | required |
 | `--event-source <SOURCE>` | published event source | required |
 | `--subscription-id <ID>` | failed subscription id | required |
+
+### events replay-retryable
+
+Retry a bounded batch of terminal failures classified as retryable; pass --event-source and --event-id together to filter
+
+`gregale events replay-retryable <app> [--event-source <SOURCE>] [--event-id <ID>] [--limit <N>] --yes <value>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--event-source <SOURCE>` | limit replay to one published event source |  |
+| `--event-id <ID>` | limit replay to one published event |  |
+| `--limit <N>` | max recipients to requeue (1..100) |  |
+| `--yes <value>` | confirm requeueing retryable event recipients | required |
 
 
 ## send
