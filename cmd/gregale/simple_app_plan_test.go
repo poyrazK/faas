@@ -174,7 +174,7 @@ func TestRenderSimpleAppPlanShowsTCPListenerReadinessForImage(t *testing.T) {
 	if code := renderSimpleAppPlan(&out, plan, false); code != 0 {
 		t.Fatalf("renderSimpleAppPlan exit = %d", code)
 	}
-	if !strings.Contains(out.String(), "listener:           :3000 · TCP listener readiness") {
+	if !strings.Contains(out.String(), "listener:           :8080 · TCP listener readiness") {
 		t.Fatalf("plan did not explain TCP listener readiness:\n%s", out.String())
 	}
 }

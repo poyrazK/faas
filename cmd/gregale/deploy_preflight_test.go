@@ -97,7 +97,7 @@ func TestDeployPreflightListenerShowsTCPReadinessForImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := deployPreflightListener(nil, &plan), ":3000 · TCP listener readiness"; got != want {
+	if got, want := deployPreflightListener(nil, &plan), ":8080 · TCP listener readiness"; got != want {
 		t.Fatalf("listener = %q, want %q", got, want)
 	}
 }
