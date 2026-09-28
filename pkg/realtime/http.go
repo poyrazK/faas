@@ -112,11 +112,11 @@ func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return true, nil
 	}
-	status, err := h.deliver(ctx, event)
+	response, err := h.deliver(ctx, event)
 	if err != nil {
 		return false, err
 	}
-	return status >= http.StatusOK && status < http.StatusMultipleChoices, nil
+	return response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices, nil
 }
 
 func (h HTTPHooks) Message(ctx context.Context, event Event) error {
@@ -140,7 +140,7 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				h.DurableQueue.Release(event.ID)
-			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+			} else if failErr := h.DurableQueue.FailWithRetryAfter(event.ID, callbackRetryAfter(err)); failErr != nil {
 				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
 			}
 			return err
@@ -159,12 +159,12 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 }
 
 func (h HTTPHooks) deliverMessage(ctx context.Context, event Event) error {
-	status, err := h.deliver(ctx, event)
+	response, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
 	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return fmt.Errorf("realtime: message callback returned HTTP %d", status)
+	if response.statusCode < http.StatusOK || response.statusCode >= http.StatusMultipleChoices {
+		return &CallbackHTTPError{StatusCode: response.statusCode, RetryAfter: response.retryAfter}
 	}
 	return nil
 }
@@ -190,7 +190,7 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				h.DurableQueue.Release(event.ID)
-			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+			} else if failErr := h.DurableQueue.FailWithRetryAfter(event.ID, callbackRetryAfter(err)); failErr != nil {
 				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
 			}
 			return err
@@ -209,12 +209,12 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 }
 
 func (h HTTPHooks) deliverDisconnect(ctx context.Context, event Event) error {
-	status, err := h.deliver(ctx, event)
+	response, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
 	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return fmt.Errorf("realtime: disconnect callback returned HTTP %d", status)
+	if response.statusCode < http.StatusOK || response.statusCode >= http.StatusMultipleChoices {
+		return &CallbackHTTPError{StatusCode: response.statusCode, RetryAfter: response.retryAfter}
 	}
 	return nil
 }
@@ -225,20 +225,26 @@ func (h HTTPHooks) Deliver(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil
 	}
-	status, err := h.deliver(ctx, event)
+	response, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
 	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return &CallbackHTTPError{StatusCode: status}
+	if response.statusCode < http.StatusOK || response.statusCode >= http.StatusMultipleChoices {
+		return &CallbackHTTPError{StatusCode: response.statusCode, RetryAfter: response.retryAfter}
 	}
 	return nil
 }
 
+type callbackResponse struct {
+	statusCode int
+	retryAfter time.Duration
+}
+
 // CallbackHTTPError reports a non-2xx callback response to the durable
-// replay loop while preserving the status for diagnostics.
+// replay loop while preserving the status and bounded Retry-After hint.
 type CallbackHTTPError struct {
 	StatusCode int
+	RetryAfter time.Duration
 }
 
 func (e *CallbackHTTPError) Error() string {
@@ -248,10 +254,18 @@ func (e *CallbackHTTPError) Error() string {
 	return fmt.Sprintf("realtime: callback returned HTTP %d", e.StatusCode)
 }
 
-func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
+func callbackRetryAfter(err error) time.Duration {
+	var callbackErr *CallbackHTTPError
+	if errors.As(err, &callbackErr) && callbackErr != nil {
+		return callbackErr.RetryAfter
+	}
+	return 0
+}
+
+func (h HTTPHooks) deliver(ctx context.Context, event Event) (callbackResponse, error) {
 	base, err := url.Parse(event.CallbackURL)
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return 0, fmt.Errorf("realtime: invalid callback URL: %q", event.CallbackURL)
+		return callbackResponse{}, fmt.Errorf("realtime: invalid callback URL: %q", event.CallbackURL)
 	}
 	path := event.CallbackPath
 	if !strings.HasPrefix(path, "/") {
@@ -260,7 +274,7 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 	base.Path = strings.TrimRight(base.Path, "/") + path
 	body, err := json.Marshal(event)
 	if err != nil {
-		return 0, fmt.Errorf("realtime: encode callback: %w", err)
+		return callbackResponse{}, fmt.Errorf("realtime: encode callback: %w", err)
 	}
 	target := base.String()
 	headers := make(http.Header)
@@ -295,40 +309,91 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 	if backoff <= 0 {
 		backoff = defaultCallbackRetryBackoff
 	}
-	var status int
+	var response callbackResponse
+	var retryAfter time.Duration
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if attempt > 1 {
-			if err := waitCallbackRetry(ctx, backoff, attempt-2); err != nil {
-				return 0, fmt.Errorf("realtime: callback request: %w", err)
+			if err := waitCallbackRetry(ctx, backoff, attempt-2, retryAfter); err != nil {
+				return callbackResponse{}, fmt.Errorf("realtime: callback request: %w", err)
 			}
+			retryAfter = 0
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 		if err != nil {
-			return 0, fmt.Errorf("realtime: build callback request: %w", err)
+			return callbackResponse{}, fmt.Errorf("realtime: build callback request: %w", err)
 		}
 		req.Header = headers.Clone()
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil || attempt == attempts {
-				return 0, fmt.Errorf("realtime: callback request: %w", err)
+				return callbackResponse{}, fmt.Errorf("realtime: callback request: %w", err)
 			}
 			continue
 		}
-		status = resp.StatusCode
+		response = callbackResponse{
+			statusCode: resp.StatusCode,
+			retryAfter: parseCallbackRetryAfter(resp.StatusCode, resp.Header.Get("Retry-After"), time.Now()),
+		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()
-		if !retryableCallbackStatus(status) || attempt == attempts {
-			return status, nil
+		if !retryableCallbackStatus(response.statusCode) || attempt == attempts {
+			return response, nil
 		}
+		// Keep long Retry-After hints in the durable schedule instead of
+		// retrying inline after the shorter in-process wait cap.
+		if response.retryAfter > maxCallbackRetryBackoff {
+			return response, nil
+		}
+		retryAfter = response.retryAfter
 	}
-	return status, nil
+	return response, nil
 }
 
 func retryableCallbackStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
 }
 
-func waitCallbackRetry(ctx context.Context, base time.Duration, retry int) error {
+func parseCallbackRetryAfter(status int, value string, now time.Time) time.Duration {
+	if status != http.StatusTooManyRequests && status != http.StatusServiceUnavailable {
+		return 0
+	}
+	maximum := MaxCallbackOutboxMaxRetryInterval
+	value = strings.TrimSpace(value)
+	var parseErr *strconv.NumError
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds == 0 {
+			return 0
+		}
+		if seconds < 0 {
+			return 0
+		}
+		if seconds >= int64(maximum/time.Second) {
+			return maximum
+		}
+		return time.Duration(seconds) * time.Second
+	} else if errors.As(err, &parseErr) && errors.Is(parseErr.Err, strconv.ErrRange) {
+		// A delta-seconds value outside int64 still represents a delay longer
+		// than the maximum we honor. Clamp it without narrowing an unsigned value.
+		if strings.HasPrefix(value, "-") {
+			return 0
+		}
+		return maximum
+	}
+	date, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	delay := date.Sub(now)
+	if delay <= 0 {
+		return 0
+	}
+	if delay > maximum {
+		return maximum
+	}
+	return delay
+}
+
+func waitCallbackRetry(ctx context.Context, base time.Duration, retry int, retryAfter time.Duration) error {
 	delay := base
 	for i := 0; i < retry && delay < maxCallbackRetryBackoff; i++ {
 		if delay > maxCallbackRetryBackoff/2 {
@@ -336,6 +401,12 @@ func waitCallbackRetry(ctx context.Context, base time.Duration, retry int) error
 			break
 		}
 		delay *= 2
+	}
+	if delay > maxCallbackRetryBackoff {
+		delay = maxCallbackRetryBackoff
+	}
+	if retryAfter > delay {
+		delay = retryAfter
 	}
 	if delay > maxCallbackRetryBackoff {
 		delay = maxCallbackRetryBackoff

@@ -2,14 +2,16 @@
 
 ## Symptom
 
-`FaasRealtimeCallbackReplayStalled` means the node has pending callbacks older
-than five minutes and replay has delivered none for five minutes. Check
-`realtimed_callback_pending`, `realtimed_callback_oldest_pending_age_seconds`,
-and `realtimed_callback_replay_deliveries_total`, then inspect the `realtimed`
-logs for outbox or receiver errors. The replay supervisor retries unexpected
-outbox failures with a delay capped at 30 seconds. Confirm the node-local
-outbox is writable and has free space; replay resumes after the underlying
-storage problem clears.
+`FaasRealtimeCallbackReplayStalled` means one or more callback connection heads
+are eligible for replay, but replay has made no delivery attempt for ten
+minutes. Check `realtimed_callback_replay_ready`,
+`realtimed_callback_replay_attempts_total`, and
+`realtimed_callback_replay_delayed`. A delayed head is honoring its persisted
+retry schedule and does not count as ready work. Inspect `realtimed` logs for
+replay supervisor, outbox, or receiver errors. The replay supervisor retries
+unexpected outbox failures with a delay capped at 30 seconds. Confirm the
+node-local outbox is writable and has free space; replay resumes after the
+underlying storage problem clears.
 
 `FaasRealtimeCallbackReplayRestarting` means the replay supervisor restarted
 at least three times in 15 minutes and the condition persisted for five
@@ -107,3 +109,10 @@ Pending callback recovery uses eight workers by default. Set
 above 32 are capped. Events from one connection remain ordered, while callbacks
 from different connections can run at the same time. Account for this
 concurrency when sizing callback receivers across the fleet.
+
+Failed durable callbacks use persisted, jittered exponential backoff starting
+at one second and capped at one minute by default. Set
+`FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` to raise the cap, up to one hour.
+The daemon honors valid `Retry-After` hints on HTTP 429 and 503 responses, but
+never waits beyond the configured cap. The default retry budget is ten failed
+delivery passes before an event is dead-lettered.
