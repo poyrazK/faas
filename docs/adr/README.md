@@ -54,10 +54,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 291 | [Shared outbound provider cooldown](291-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
-| 290 | [Shared outbound retry budget](290-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
-| 289 | [Per-integration outbound circuit breaker](289-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
-| 288 | [Opt-in outbound HTTP response cache](288-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
+| 292 | [Shared outbound provider cooldown](292-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
+| 291 | [Shared outbound retry budget](291-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
+| 290 | [Per-integration outbound circuit breaker](290-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
+| 289 | [Opt-in outbound HTTP response cache](289-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
 | 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |

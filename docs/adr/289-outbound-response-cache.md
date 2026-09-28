@@ -1,4 +1,4 @@
-# ADR-288: Opt-in outbound HTTP response cache
+# ADR-289: Opt-in outbound HTTP response cache
 
 - **Status:** accepted
 - **Date:** 2026-09-27
