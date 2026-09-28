@@ -2400,6 +2400,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	retryBudget := gateway.NewRetryBudget(0, nil)
+	budgetURL, budgetConfigErr := retryBudgetRedisURL(osGetenv)
+	if budgetConfigErr != nil {
+		return fmt.Errorf("gatewayd-internal: %w", budgetConfigErr)
+	}
+	if budgetURL != "" {
+		sharedBudget, budgetErr := gateway.NewRedisRetryBudget(ctx, budgetURL, 0)
+		if budgetErr != nil {
+			return fmt.Errorf("gatewayd-internal: connect shared retry budget: %w", budgetErr)
+		}
+		retryBudget = sharedBudget
+		deps.metrics.SetRetryBudgetShared(true)
+		deps.metrics.SetRetryBudgetBackendID(sharedBudget.BackendID())
+		log.Info("gatewayd-internal: shared retry budget enabled")
+	}
+	retryBudget.WithObserver(deps.metrics)
+	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)

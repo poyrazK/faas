@@ -233,6 +233,32 @@ retain their persisted policy on reapply. For an intentional same-account
 escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
 reports declared service bindings as `enforced`.
 
+Each declared outbound dependency can carry a request deadline and retry
+policy. For a project workload, put it beside `depends_on`:
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      billing:
+        timeout_ms: 1500
+        max_attempts: 2
+        min_remaining_ms: 200
+        retry_budget_percent: 10
+```
+
+The timeout covers routing, a cold wake, forwarding, and any retry after caller
+authorization. An earlier caller deadline takes precedence. `max_attempts: 1`
+disables proxy replay for that dependency; omitted settings keep platform
+defaults. Retries still require a safe method or an explicit
+`allow_non_idempotent: true`, a replayable body, enough remaining time, and an
+available aggregate retry token. Only transport-stale attempts are retried.
+Policies can name only services in `depends_on`; on reapply, an omitted extension
+retains stored policies and removing a binding removes its policy. A WebSocket
+handshake uses the deadline, but an established session is not cut off by it.
+
 The target can independently restrict who calls it with
 `x-gregale-allow-callers`. In the example, `billing` admits `public-api` but
 not other same-account apps, even if they declare a dependency on `billing`.
@@ -284,7 +310,10 @@ Standalone callers can declare outbound targets without a Compose project:
 ```json
 {
   "service_binding_targets": ["billing", "identity", "email"],
-  "service_binding_policy": "declared"
+  "service_binding_policy": "declared",
+  "service_reliability": {
+    "billing": {"timeout_ms": 1500, "max_attempts": 1}
+  }
 }
 ```
 
@@ -302,6 +331,10 @@ exists. Authorization changes take effect at the gateway immediately; new URL
 environment variables appear when the caller next starts or redeploys, while
 already-running instances retain their current environment. The generated
 `GREGALE_SERVICE_*_URL` namespace is platform-owned.
+For `service_reliability`, PATCH omission retains the map, `null` or `{}`
+clears it, and an object replaces it. A policy must name one of the app's
+declared `service_binding_targets`. Removing a binding also removes its
+stored policy when the reliability map is omitted from the same PATCH.
 Project-managed and preview apps reject changes to these fields on PATCH; edit the
 project source instead. Binding declarations do not expose services publicly.
 

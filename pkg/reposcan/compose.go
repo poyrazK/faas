@@ -39,11 +39,12 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
-	ServiceBindingPolicy      string                   `yaml:"x-gregale-service-policy"`
-	ServiceBindingTransport   string                   `yaml:"x-gregale-service-transport"`
-	PreviewServiceCallsPolicy string                   `yaml:"x-gregale-preview-calls"`
-	AllowedServiceCallers     *[]string                `yaml:"x-gregale-allow-callers"`
-	AllowedServiceCallScopes  *api.ServiceCallerScopes `yaml:"x-gregale-allow-call-scopes"`
+	ServiceBindingPolicy      string                                  `yaml:"x-gregale-service-policy"`
+	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
+	ServiceReliability        map[string]api.ServiceReliabilityPolicy `yaml:"x-gregale-service-reliability"`
+	PreviewServiceCallsPolicy string                                  `yaml:"x-gregale-preview-calls"`
+	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
+	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -189,6 +190,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && serviceBindingTransport != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a build workload", src, name)
 		}
+		reliability, reliabilityErr := api.NormalizeServiceReliabilityPolicies(s.ServiceReliability, api.ServiceBindingsForTargets(dependencyNames(s.DependsOn)))
+		if reliabilityErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, reliabilityErr)
+		}
+		if !hasBuild && len(reliability) > 0 {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-reliability requires a build workload", src, name)
+		}
 		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
 		if previewPolicyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
@@ -262,6 +270,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 
 			serviceBindingPolicy:      serviceBindingPolicy,
 			serviceBindingTransport:   serviceBindingTransport,
+			serviceReliability:        reliability,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,

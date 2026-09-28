@@ -1605,6 +1605,9 @@ type AppManifest struct {
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceReliability is caller-owned policy keyed by a declared target name.
+	// It lives in the existing manifest JSONB, so no app-row migration is needed.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
@@ -1686,7 +1689,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1700,6 +1703,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	existing.ServiceBindingTransport = desired.ServiceBindingTransport
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy

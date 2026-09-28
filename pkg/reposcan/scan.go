@@ -128,6 +128,9 @@ type Workload struct {
 	// ServiceBindingTransport selects the canonical URL scheme injected for
 	// internal service bindings. Empty preserves the established HTTP contract.
 	ServiceBindingTransport ServiceBindingTransport
+	// ServiceReliability is caller-owned timeout and retry policy for declared
+	// depends_on targets.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy

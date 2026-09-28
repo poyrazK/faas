@@ -1463,6 +1463,8 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_reliability_policies import ServiceReliabilityPolicies
+from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -3115,6 +3117,8 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceReliabilityPolicies",
+    "ServiceReliabilityPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",

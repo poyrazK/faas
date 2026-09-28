@@ -762,6 +762,8 @@ export type { ServiceCallScope } from './ServiceCallScope.js';
 export type { ServiceCallerJWK } from './ServiceCallerJWK.js';
 export type { ServiceCallerJWKSet } from './ServiceCallerJWKSet.js';
 export type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+export type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+export type { ServiceReliabilityPolicy } from './ServiceReliabilityPolicy.js';
 export type { ServiceReplicas } from './ServiceReplicas.js';
 export type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 export type { SessionInfo } from './SessionInfo.js';

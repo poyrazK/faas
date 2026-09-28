@@ -124,6 +124,7 @@ if TYPE_CHECKING:
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -153,6 +154,9 @@ class UpdateAppRequest:
     service_binding_targets: list[str] | None | Unset = UNSET
     """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
     bindings. Project-managed and preview apps reject non-null changes."""
+    service_reliability: None | ServiceReliabilityPolicies | Unset = UNSET
+    """Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears.
+    Project-managed and preview apps reject this PATCH."""
     service_binding_policy: (
         None
         | Unset
@@ -352,6 +356,7 @@ class UpdateAppRequest:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -390,6 +395,14 @@ class UpdateAppRequest:
 
         else:
             service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | None | Unset
+        if isinstance(self.service_reliability, Unset):
+            service_reliability = UNSET
+        elif isinstance(self.service_reliability, ServiceReliabilityPolicies):
+            service_reliability = self.service_reliability.to_dict()
+        else:
+            service_reliability = self.service_reliability
 
         service_binding_policy: None | str | Unset
         if isinstance(self.service_binding_policy, Unset):
@@ -779,6 +792,8 @@ class UpdateAppRequest:
             field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if service_binding_targets is not UNSET:
             field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_binding_transport is not UNSET:
@@ -897,6 +912,7 @@ class UpdateAppRequest:
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -1001,6 +1017,23 @@ class UpdateAppRequest:
             return cast(list[str] | None | Unset, data)
 
         service_binding_targets = _parse_service_binding_targets(d.pop("service_binding_targets", UNSET))
+
+        def _parse_service_reliability(data: object) -> None | ServiceReliabilityPolicies | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                service_reliability_type_0 = ServiceReliabilityPolicies.from_dict(data)
+
+                return service_reliability_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceReliabilityPolicies | Unset, data)
+
+        service_reliability = _parse_service_reliability(d.pop("service_reliability", UNSET))
 
         def _parse_service_binding_policy(
             data: object,
@@ -1840,6 +1873,7 @@ class UpdateAppRequest:
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
             service_binding_policy=service_binding_policy,
             service_binding_transport=service_binding_transport,
             ram_mb=ram_mb,
