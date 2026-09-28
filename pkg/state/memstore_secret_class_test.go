@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -34,7 +35,7 @@ func TestMemStoreAppSecretClassDefaultsAndSurvivesLegacyWrites(t *testing.T) {
 
 func TestMemStoreAppSecretClassRejectsUnknownValue(t *testing.T) {
 	store, ctx, account, app := memValueHashFixture(t)
-	if err := store.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, "default", "TOKEN", "kid", "hash", "temporary", []byte("sealed")); err != state.ErrInvalidArgument {
+	if err := store.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, "default", "TOKEN", "kid", "hash", "temporary", []byte("sealed")); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("unknown class error = %v, want ErrInvalidArgument", err)
 	}
 }

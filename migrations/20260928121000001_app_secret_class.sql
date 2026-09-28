@@ -4,6 +4,7 @@
 ALTER TABLE app_secrets
     ADD COLUMN IF NOT EXISTS secret_class text NOT NULL DEFAULT 'persistent';
 
+-- +goose StatementBegin
 DO $body$
 BEGIN
     IF NOT EXISTS (
@@ -15,7 +16,9 @@ BEGIN
             ADD CONSTRAINT app_secrets_secret_class_shape
             CHECK (secret_class IN ('persistent', 'ephemeral'));
     END IF;
-END$body$;
+END;
+$body$;
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE app_secrets
