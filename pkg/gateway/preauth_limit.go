@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"container/list"
+	"net"
 	"net/http"
+	"net/netip"
 	"path"
 	"strings"
 	"sync"
@@ -182,7 +184,8 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return true
 	}
-	allowed := h.preAuthLimiter.Allow(app.ID, ip.String(), rps, burst)
+	source := preAuthSourceKey(ip)
+	allowed := h.preAuthLimiter.Allow(app.ID, source, rps, burst)
 	scope := "pre-auth"
 	if allowed && len(config.Routes) > 0 {
 		// Match the decoded public path before edge rewrites. Cleaning covers
@@ -194,7 +197,7 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 				continue
 			}
 			policyID := app.ID + "\x00" + route.Method + " " + route.Path
-			allowed = h.preAuthLimiter.Allow(policyID, ip.String(), min(route.RequestsPerSecond, rps), min(route.Burst, burst))
+			allowed = h.preAuthLimiter.Allow(policyID, source, min(route.RequestsPerSecond, rps), min(route.Burst, burst))
 			scope = "pre-auth-route"
 			break
 		}
@@ -233,4 +236,25 @@ func (h *Handler) ForgetPreAuthRateLimits() int {
 		return 0
 	}
 	return h.preAuthLimiter.ForgetAll()
+}
+
+// preAuthSourceKey buckets IPv6 sources by /64. A subscriber is usually
+// delegated a whole /64, so keying on the full address let one client
+// rotate interface IDs for a fresh bucket per request (defeating the
+// per-source login protection) and fill the shared source table, pushing
+// every other app's new sources into its overflow bucket.
+func preAuthSourceKey(ip net.IP) string {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return ip.String()
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return addr.String()
+	}
+	return prefix.String()
 }

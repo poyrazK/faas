@@ -7,6 +7,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -264,5 +265,40 @@ func TestPreAuthRouteLimitObserve(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "route_would_block")); got != 1 {
 		t.Fatalf("route observe metric = %v, want 1", got)
+	}
+}
+
+// A subscriber is usually delegated a whole IPv6 /64; keying the pre-auth
+// source bucket on the full address let one client rotate interface IDs
+// for a fresh bucket on every request.
+func TestPreAuthRateLimitBucketsIPv6By64(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 1}
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	request := func(source string) int {
+		req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := request("2001:db8:1:2::1"); code != http.StatusOK {
+		t.Fatalf("first request = %d", code)
+	}
+	if code := request("2001:db8:1:2:ffff::9"); code != http.StatusTooManyRequests {
+		t.Fatalf("same /64 with a rotated interface ID = %d, want 429", code)
+	}
+	if code := request("2001:db8:1:3::1"); code != http.StatusOK {
+		t.Fatalf("different /64 = %d, want its own bucket", code)
+	}
+	for in, want := range map[string]string{
+		"192.0.2.7":         "192.0.2.7",
+		"::ffff:192.0.2.7":  "192.0.2.7",
+		"2001:db8:1:2::abc": "2001:db8:1:2::/64",
+	} {
+		if got := preAuthSourceKey(net.ParseIP(in)); got != want {
+			t.Errorf("preAuthSourceKey(%s) = %s, want %s", in, got, want)
+		}
 	}
 }
