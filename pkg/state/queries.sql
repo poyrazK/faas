@@ -1909,21 +1909,20 @@ order by created_at desc;
 
 -- name: AccountByOIDCIssuerSubject :one
 -- Resolves an OIDC (issuer, subject) pair to the platform
--- account it's bound to. The binding is implicit: any trust
--- policy row with matching issuer_url + subject_pattern that
--- matches the subject claim. Empty subject_pattern = permissive
--- (accept any subject). PR-A matches on issuer_url only with
--- permissive subject semantics; PR-C will refine the per-issuer
--- subject index.
+-- account it's bound to: a trust policy row with matching
+-- issuer_url whose subject_pattern matches the subject claim.
+-- An empty subject_pattern binds nothing. The legacy first-use
+-- policies were written that way (any subject, any audience);
+-- treating them as "accept any subject" routed every foreign
+-- GitHub Actions subject to such an account.
 select a.id, a.email, a.plan, a.status,
        coalesce(a.provider_customer_id, ''), a.created_at
 from accounts a
 join oidc_trust_policies p on p.account_id = a.id
 where p.issuer_url = $1
-  and (p.subject_pattern is null or p.subject_pattern = ''
-       or $2 ~ p.subject_pattern)
-order by (p.subject_pattern is null or p.subject_pattern = '') asc,
-         length(coalesce(p.subject_pattern, '')) desc,
+  and coalesce(p.subject_pattern, '') <> ''
+  and $2 ~ p.subject_pattern
+order by length(p.subject_pattern) desc,
          a.id
 limit 1;
 

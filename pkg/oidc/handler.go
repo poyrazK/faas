@@ -248,6 +248,13 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		}
 		policy = defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
 		createPolicy = true
+	} else if strings.TrimSpace(policy.SubjectPattern) == "" || len(policy.Audience) == 0 {
+		// A legacy first-use policy (empty subject pattern, empty
+		// audience) admits any token from the issuer. Treat it like a
+		// missing policy: verify against the exact subject and audience
+		// and replace the row with that pinned policy.
+		policy = defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
+		createPolicy = true
 	}
 	claims, err := deps.Verifier.Verify(r.Context(), req.Token, policy)
 	if err != nil || claims.Subject != subject || !containsAudience(claims.Aud, req.Audience) {

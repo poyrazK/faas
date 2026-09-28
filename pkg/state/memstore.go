@@ -1529,13 +1529,10 @@ func (m *MemStore) AccountByOIDCSubject(_ context.Context, issuerURL, subject st
 		if policy.IssuerURL != issuerURL {
 			continue
 		}
-		// Empty subject_pattern = accept any subject. Real
-		// pattern = regex match.
-		matched := policy.SubjectPattern == ""
-		if !matched {
-			matched = regexpMatch(policy.SubjectPattern, subject)
-		}
-		if !matched {
+		// An empty subject_pattern binds nothing (the legacy
+		// permissive first-use policies); only a real pattern that
+		// matches the subject resolves the account.
+		if policy.SubjectPattern == "" || !regexpMatch(policy.SubjectPattern, subject) {
 			continue
 		}
 		_, ok := m.accounts[policy.AccountID]

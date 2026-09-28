@@ -18,12 +18,12 @@ type Querier interface {
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
 	AccountByKeyHash(ctx context.Context, db DBTX, keySha256 []byte) (AccountByKeyHashRow, error)
 	// Resolves an OIDC (issuer, subject) pair to the platform
-	// account it's bound to. The binding is implicit: any trust
-	// policy row with matching issuer_url + subject_pattern that
-	// matches the subject claim. Empty subject_pattern = permissive
-	// (accept any subject). PR-A matches on issuer_url only with
-	// permissive subject semantics; PR-C will refine the per-issuer
-	// subject index.
+	// account it's bound to: a trust policy row with matching
+	// issuer_url whose subject_pattern matches the subject claim.
+	// An empty subject_pattern binds nothing. The legacy first-use
+	// policies were written that way (any subject, any audience);
+	// treating them as "accept any subject" routed every foreign
+	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)

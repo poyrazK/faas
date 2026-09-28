@@ -78,6 +78,7 @@ type Account struct {
 	KeyGraceWindowDays     pgtype.Int4
 	EgressAllowlistExtra   int32
 	EmailVerifiedAt        pgtype.Timestamptz
+	SuspendedReason        pgtype.Text
 }
 
 type AccountAsyncQuotum struct {

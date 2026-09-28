@@ -324,3 +324,34 @@ func testAppSecretScopeAndClass(t *testing.T, fx *Fixture) {
 		t.Fatalf("secret class after a class-less update = %q, want it kept ephemeral", after.SecretClass)
 	}
 }
+
+// testOIDCEmptySubjectPatternBindsNothing pins OIDC account resolution.
+// First-use policies written before 2026-09-05 carried an empty
+// subject_pattern (and audience), and both stores treated an empty pattern
+// as "matches every subject": any GitHub Actions workflow, in any
+// repository, resolved to that account and could mint its deploy bearer.
+func testOIDCEmptySubjectPatternBindsNothing(t *testing.T, fx *Fixture) {
+	const issuer = "https://token.actions.githubusercontent.com"
+	if _, err := fx.Store.UpsertOIDCTrustPolicy(fx.Ctx, &state.OIDCTrustPolicy{
+		AccountID: fx.Account.ID, IssuerURL: issuer, JWKSURL: issuer + "/.well-known/jwks",
+		Audience: []string{}, Algorithms: []string{"RS256"}, AuditLogin: "auto",
+	}); err != nil {
+		t.Fatalf("UpsertOIDCTrustPolicy(legacy permissive): %v", err)
+	}
+	if acct, err := fx.Store.AccountByOIDCSubject(fx.Ctx, issuer, "repo:attacker/anything:ref:refs/heads/main"); err == nil {
+		t.Fatalf("an empty subject_pattern bound a foreign subject to account %s", acct.ID)
+	}
+	pinned := "^repo:acme/app:ref:refs/heads/main$"
+	if _, err := fx.Store.UpsertOIDCTrustPolicy(fx.Ctx, &state.OIDCTrustPolicy{
+		AccountID: fx.Account.ID, IssuerURL: issuer, JWKSURL: issuer + "/.well-known/jwks",
+		Audience: []string{"gregale"}, SubjectPattern: pinned, Algorithms: []string{"RS256"}, AuditLogin: "auto",
+	}); err != nil {
+		t.Fatalf("UpsertOIDCTrustPolicy(pinned): %v", err)
+	}
+	if acct, err := fx.Store.AccountByOIDCSubject(fx.Ctx, issuer, "repo:acme/app:ref:refs/heads/main"); err != nil || acct.ID != fx.Account.ID {
+		t.Fatalf("pinned subject resolved to %q, %v; want the account", acct.ID, err)
+	}
+	if _, err := fx.Store.AccountByOIDCSubject(fx.Ctx, issuer, "repo:attacker/anything:ref:refs/heads/main"); err == nil {
+		t.Fatal("a pinned policy bound a foreign subject")
+	}
+}

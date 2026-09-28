@@ -14,7 +14,6 @@ AbortMigratingInstance
 AbortServiceRollout
 AccountByEmail
 AccountByKeyHash
-AccountByOIDCSubject
 AccountByProviderCustomerID
 AccountPasswordByAccountID
 AccountsByIDs
@@ -640,7 +639,6 @@ UpsertGithubInstallBinding
 UpsertGithubWebhookSecret
 UpsertNodeKey
 UpsertOAuthLink
-UpsertOIDCTrustPolicy
 UpsertRegressionObservation
 UpsertRuntimeConfig
 UsageByAccount

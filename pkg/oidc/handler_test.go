@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -299,12 +300,13 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 
 	// Pre-seed a real policy so the auto-create path is skipped.
 	_, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
-		AccountID:  testAcctID,
-		IssuerURL:  testIssuer,
-		JWKSURL:    testIssuer + ".well-known/jwks",
-		Audience:   []string{"faas.example.com"},
-		Algorithms: []string{"RS256"},
-		AuditLogin: "octo@example.com",
+		AccountID:      testAcctID,
+		IssuerURL:      testIssuer,
+		JWKSURL:        testIssuer + ".well-known/jwks",
+		Audience:       []string{"faas.example.com"},
+		SubjectPattern: "^" + regexp.QuoteMeta(testSub) + "$",
+		Algorithms:     []string{"RS256"},
+		AuditLogin:     "octo@example.com",
 	})
 	if err != nil {
 		t.Fatalf("seed policy: %v", err)
@@ -747,4 +749,36 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return out
+}
+
+// A legacy first-use policy (empty subject pattern, empty audience) admits
+// any token from the issuer. The exchange must verify against the exact
+// subject and audience instead, and replace the row with that pinned policy.
+func TestServeHTTP_LegacyPermissivePolicyIsPinned(t *testing.T) {
+	t.Parallel()
+	h, policies, _, _, v := newHarness(t, nil)
+	if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+		AccountID: testAcctID, IssuerURL: testIssuer, JWKSURL: testIssuer + "/.well-known/jwks",
+		Audience: []string{}, Algorithms: []string{"RS256"}, AuditLogin: "auto",
+	}); err != nil {
+		t.Fatalf("seed legacy policy: %v", err)
+	}
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github",
+		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	want := "^" + regexp.QuoteMeta(testSub) + "$"
+	if v.lastPolicy == nil || v.lastPolicy.SubjectPattern != want || len(v.lastPolicy.Audience) != 1 {
+		t.Fatalf("verified against %+v, want the pinned subject and audience", v.lastPolicy)
+	}
+	stored, err := policies.Get(context.Background(), testAcctID, testIssuer)
+	if err != nil || stored.SubjectPattern != want || len(stored.Audience) != 1 || stored.Audience[0] != "faas.example.com" {
+		t.Fatalf("stored policy = %+v, %v; want it pinned", stored, err)
+	}
 }

@@ -401,15 +401,11 @@ func TestAccountByOIDCSubject_TrustPolicyMatch(t *testing.T) {
 		t.Errorf("regex-match resolved.ID = %q, want %q (acctA)", resolved.ID, acctA.ID)
 	}
 
-	// Subject pattern mismatch (regex no-match) → acctB's
-	// empty pattern catches it. We can distinguish by asking
-	// for a subject the regex rejects.
-	resolved2, err := m.AccountByOIDCSubject(ctx, "https://idp1.example.com", "user@gregale.dev")
-	if err != nil {
-		t.Fatalf("AccountByOIDCSubject(empty-pattern catch): %v", err)
-	}
-	if resolved2.ID != acctB.ID {
-		t.Errorf("empty-pattern resolved.ID = %q, want %q (acctB)", resolved2.ID, acctB.ID)
+	// Subject pattern mismatch (regex no-match): acctB's empty
+	// pattern binds nothing — it used to catch every subject, so
+	// any workflow resolved to acctB.
+	if resolved2, err := m.AccountByOIDCSubject(ctx, "https://idp1.example.com", "user@gregale.dev"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AccountByOIDCSubject(empty pattern) = %q, %v; want ErrNotFound", resolved2.ID, err)
 	}
 
 	// Dangling policy: insert a policy whose AccountID doesn't
