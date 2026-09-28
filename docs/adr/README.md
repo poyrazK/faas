@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 299 | [Backoff-aware realtime callback replay monitoring](299-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
 | 298 | [Realtime callback replay scheduling index](298-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
 | 297 | [Realtime callback retry backoff](297-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
 | 296 | [Realtime callback dead-letter inspection and replay](296-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |

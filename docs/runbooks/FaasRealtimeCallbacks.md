@@ -2,14 +2,16 @@
 
 ## Symptom
 
-`FaasRealtimeCallbackReplayStalled` means the node has pending callbacks older
-than five minutes and replay has delivered none for five minutes. Check
-`realtimed_callback_pending`, `realtimed_callback_oldest_pending_age_seconds`,
-and `realtimed_callback_replay_deliveries_total`, then inspect the `realtimed`
-logs for outbox or receiver errors. The replay supervisor retries unexpected
-outbox failures with a delay capped at 30 seconds. Confirm the node-local
-outbox is writable and has free space; replay resumes after the underlying
-storage problem clears.
+`FaasRealtimeCallbackReplayStalled` means one or more callback connection heads
+are eligible for replay, but replay has made no delivery attempt for ten
+minutes. Check `realtimed_callback_replay_ready`,
+`realtimed_callback_replay_attempts_total`, and
+`realtimed_callback_replay_delayed`. A delayed head is honoring its persisted
+retry schedule and does not count as ready work. Inspect `realtimed` logs for
+replay supervisor, outbox, or receiver errors. The replay supervisor retries
+unexpected outbox failures with a delay capped at 30 seconds. Confirm the
+node-local outbox is writable and has free space; replay resumes after the
+underlying storage problem clears.
 
 `FaasRealtimeCallbackReplayRestarting` means the replay supervisor restarted
 at least three times in 15 minutes and the condition persisted for five
