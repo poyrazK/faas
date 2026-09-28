@@ -3193,6 +3193,22 @@ func ErrPlanCorsPresetQuotaReached(plan Plan, scope string, limit, observed int)
 		WithDocs(docsBase + "/plans#cors-presets")
 }
 
+// CodeCorsPresetTooLarge is returned when a CORS preset lists more
+// origins or methods than the plan's CorsPresetMaxOrigins /
+// CorsPresetMaxAllowMethods allow.
+const CodeCorsPresetTooLarge = "cors_preset_too_large"
+
+// ErrCorsPresetTooLarge reports a preset whose list exceeds the plan cap.
+// The gateway walks allow_origins on every matching request, so the cap is
+// what keeps one tenant's preset from costing the shared edge.
+func ErrCorsPresetTooLarge(plan Plan, field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeCorsPresetTooLarge,
+		"CORS preset too large",
+		fmt.Sprintf("%s plan allows at most %d %s per CORS preset; this preset has %d.", plan, limit, field, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#cors-presets")
+}
+
 // CodePlanOpenAPIDocQuotaReached is the RFC 7807 stable code
 // returned when the per-deployment or per-account deployment_openapi_docs
 // quota is exhausted (ADR-122 / issue #975 item #1). The apid PATCH

@@ -72,6 +72,10 @@ func (s *server) createCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := corsPresetWithinPlan(acct.Plan, limits, req.AllowOrigins, req.AllowMethods); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.gateCorsPresetApp(r.Context(), acct, req.AppID); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -178,6 +182,12 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 	}
 	merged, prob := mergeCorsPresetUpdate(existing, req)
 	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	// Check only the lists this PATCH replaces, so a preset created
+	// before the cap was enforced can still be renamed or re-scoped.
+	if prob := corsPresetWithinPlan(acct.Plan, api.MustLimitsFor(acct.Plan), req.AllowOrigins, req.AllowMethods); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -424,4 +434,19 @@ func corsPresetResponsesFromRows(rows []state.CorsPreset) []api.CorsPresetRespon
 		out = append(out, corsPresetResponseFromRow(row))
 	}
 	return out
+}
+
+// corsPresetWithinPlan enforces CorsPresetMaxOrigins and
+// CorsPresetMaxAllowMethods, which limits.go documents as enforced at
+// this write boundary but nothing checked: a preset could carry as many
+// origins as the request body held, and the gateway walks them on every
+// matching request.
+func corsPresetWithinPlan(plan api.Plan, limits api.Limits, origins, methods []string) *api.Problem {
+	if len(origins) > limits.CorsPresetMaxOrigins {
+		return api.ErrCorsPresetTooLarge(plan, "allow_origins", limits.CorsPresetMaxOrigins, len(origins))
+	}
+	if len(methods) > limits.CorsPresetMaxAllowMethods {
+		return api.ErrCorsPresetTooLarge(plan, "allow_methods", limits.CorsPresetMaxAllowMethods, len(methods))
+	}
+	return nil
 }
