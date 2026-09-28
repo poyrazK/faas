@@ -32,6 +32,51 @@ func TestPgKeyedInvocationLifecycle(t *testing.T) {
 	assertKeyedInvocationLifecycle(t, ctx, store, appID, accountID)
 }
 
+func TestMemPendingQueueWorkInLane(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "queue-lane-"+uuid.NewString()+"@example.test", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), Slug: "queue-lane", AccountID: account.ID, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPendingQueueWorkInLane(t, ctx, store, app.ID, account.ID)
+}
+
+func TestPgPendingQueueWorkInLane(t *testing.T) {
+	store, ctx, appID, accountID := seedInvocationPg(t)
+	assertPendingQueueWorkInLane(t, ctx, store, appID, accountID)
+}
+
+func assertPendingQueueWorkInLane(t *testing.T, ctx context.Context, store state.Store, appID, accountID string) {
+	t.Helper()
+	policy := workpolicy.Policy{Name: "latest", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingKeepLatest}
+	queue, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{
+		AppID: appID, AccountID: accountID, Source: state.InvocationQueue,
+		DueAt: time.Now().Add(time.Hour),
+	}, policy, "s:doc-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.(state.PendingQueueWorkCounter).PendingQueueWorkInLane(ctx, appID, policy.Name, queue.WorkKeyDigest)
+	if err != nil || count != 1 {
+		t.Fatalf("pending queue lane count = %d, err=%v", count, err)
+	}
+	if _, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{
+		AppID: appID, AccountID: accountID, Source: state.InvocationAsyncInvoke,
+		DueAt: time.Now().Add(time.Hour),
+	}, policy, "s:doc-1"); err != nil {
+		t.Fatal(err)
+	}
+	count, err = store.(state.PendingQueueWorkCounter).PendingQueueWorkInLane(ctx, appID, policy.Name, queue.WorkKeyDigest)
+	if err != nil || count != 0 {
+		t.Fatalf("superseded queue lane count = %d, err=%v", count, err)
+	}
+}
+
 func assertKeyedInvocationLifecycle(t *testing.T, ctx context.Context, store state.Store, appID, accountID string) {
 	t.Helper()
 	all := workpolicy.Policy{Name: "order-updates", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}

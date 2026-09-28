@@ -169,3 +169,43 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	}, nil)
 	assertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
 }
+
+func TestWorkPolicyQueueReplacementAtDepthCap(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "queue-cap")
+	policy := e.do(t, http.MethodPut, "/v1/apps/queue-cap/work-policies/latest", api.UpsertWorkPolicyRequest{
+		MaxRunningPerKey: 1, PendingUpdates: "keep_latest", DebounceMS: 3000,
+	}, nil)
+	if policy.Code != http.StatusOK {
+		t.Fatalf("policy = %d %s", policy.Code, policy.Body.String())
+	}
+	for i := 0; i < 4; i++ {
+		response := e.do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{}, nil)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("fill queue %d = %d %s", i, response.Code, response.Body.String())
+		}
+	}
+	send := func(key string) (int, string) {
+		t.Helper()
+		response := e.do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{
+			Work: &api.InvokeWork{Policy: "latest", Key: json.RawMessage(key)},
+		}, nil)
+		var receipt api.QueueSendResponse
+		_ = json.Unmarshal(response.Body.Bytes(), &receipt)
+		return response.Code, receipt.ID
+	}
+	if code, _ := send(`"doc-1"`); code != http.StatusCreated {
+		t.Fatalf("first keyed send = %d", code)
+	}
+	if code, _ := send(`"doc-2"`); code != http.StatusForbidden {
+		t.Fatalf("unrelated keyed send at cap = %d", code)
+	}
+	code, replacementID := send(`"doc-1"`)
+	if code != http.StatusCreated || replacementID == "" {
+		t.Fatalf("same-key replacement at cap = %d, id=%q", code, replacementID)
+	}
+	depth, err := e.store.CountPendingInvocations(context.Background(), appID, state.InvocationQueue)
+	if err != nil || depth != api.MustLimitsFor(api.PlanHobby).MaxQueueDepth {
+		t.Fatalf("queue depth after replacement = %d, err=%v", depth, err)
+	}
+}

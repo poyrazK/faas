@@ -44,6 +44,34 @@ func workFairnessDigest(policy workpolicy.Policy, canonicalKey string, fairnessK
 	return digest[:], nil
 }
 
+// PendingQueueWorkInLane counts queue rows that keep_latest would replace.
+// Callers use this to avoid rejecting a replacement at the queue depth cap.
+type PendingQueueWorkCounter interface {
+	PendingQueueWorkInLane(ctx context.Context, appID, policyName string, keyDigest []byte) (int, error)
+}
+
+func (s *PgStore) PendingQueueWorkInLane(ctx context.Context, appID, policyName string, keyDigest []byte) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		select count(*) from invocations
+		where app_id = $1 and source = 'queue' and state = 'pending'
+		  and work_policy_name = $2 and work_key_digest = $3`, appID, policyName, keyDigest).Scan(&n)
+	return n, err
+}
+
+func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName string, keyDigest []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, inv := range m.invocations {
+		if inv.AppID == appID && inv.Source == InvocationQueue && inv.State == InvocationPending &&
+			inv.WorkPolicyName == policyName && bytes.Equal(inv.WorkKeyDigest, keyDigest) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // ExpirePendingKeyedInvocations makes pending TTLs effective even when a
 // source due time is later than the expiry and no later row enters the lane.
 func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Time, limit int) (int, error) {

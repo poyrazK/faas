@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // --- decodeJSONLimit --------------------------------------------------------
@@ -415,7 +416,13 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		return state.Invocation{}, "", api.ErrCapacity("count queue")
 	}
 	if n >= limits.MaxQueueDepth {
-		return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
+		replaceable, problem := s.replaceableQueueWorkCount(ctx, app, work)
+		if problem != nil {
+			return state.Invocation{}, "", problem
+		}
+		if n-replaceable >= limits.MaxQueueDepth {
+			return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
+		}
 	}
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
 		return state.Invocation{}, "", problem
@@ -447,6 +454,43 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
 	return inv, traceHeaderValues[api.TraceIDHeader], nil
+}
+
+func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {
+	if work == nil {
+		return 0, nil
+	}
+	policies, ok := s.store.(state.AppWorkPolicyStore)
+	if !ok {
+		return 0, api.ErrCapacity("work policy store unavailable")
+	}
+	record, err := policies.AppWorkPolicyByName(ctx, app.ID, work.Policy)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrValidation("unknown work policy")
+	}
+	if err != nil {
+		return 0, api.ErrCapacity("lookup work policy")
+	}
+	if record.Policy.PendingUpdates != workpolicy.PendingKeepLatest {
+		return 0, nil
+	}
+	key, err := workpolicy.CanonicalScalar(work.Key)
+	if err != nil {
+		return 0, api.ErrValidation("work key must be a bounded string, number, or boolean")
+	}
+	digest, err := workpolicy.DigestKey(key)
+	if err != nil {
+		return 0, api.ErrValidation("invalid work key")
+	}
+	counter, ok := s.store.(state.PendingQueueWorkCounter)
+	if !ok {
+		return 0, api.ErrCapacity("queue work counter unavailable")
+	}
+	n, err := counter.PendingQueueWorkInLane(ctx, app.ID, record.Policy.Name, digest[:])
+	if err != nil {
+		return 0, api.ErrCapacity("count replaceable queue work")
+	}
+	return n, nil
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when
