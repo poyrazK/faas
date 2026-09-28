@@ -382,12 +382,13 @@ type CreateAppRequest struct {
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
 	// an omitted max_concurrency defaults to the requested desired replicas.
-	ExecutionMode    string `json:"execution_mode,omitempty"`
-	RestartPolicy    string `json:"restart_policy,omitempty"`
-	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int    `json:"max_retries,omitempty"`
-	StopGracePeriodS int    `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string `json:"stop_signal,omitempty"`
+	ExecutionMode    string            `json:"execution_mode,omitempty"`
+	RestartPolicy    string            `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook `json:"after_restore,omitempty"`
+	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int               `json:"max_retries,omitempty"`
+	StopGracePeriodS int               `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string            `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app's request wall-clock budget in
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
@@ -678,12 +679,13 @@ type UpdateAppRequest struct {
 	// zero. desired must fit the app's max_concurrency; include both fields
 	// when raising the target. Switching away from service clears the old
 	// replica policy and drains live service replicas.
-	ExecutionMode    *string `json:"execution_mode,omitempty"`
-	RestartPolicy    *string `json:"restart_policy,omitempty"`
-	StartupDeadlineS *int    `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int    `json:"max_retries,omitempty"`
-	StopGracePeriodS *int    `json:"stop_grace_period_s,omitempty"`
-	StopSignal       *string `json:"stop_signal,omitempty"`
+	ExecutionMode    *string           `json:"execution_mode,omitempty"`
+	RestartPolicy    *string           `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook `json:"after_restore,omitempty"`
+	StartupDeadlineS *int              `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int              `json:"max_retries,omitempty"`
+	StopGracePeriodS *int              `json:"stop_grace_period_s,omitempty"`
+	StopSignal       *string           `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app request wall-clock budget in
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.

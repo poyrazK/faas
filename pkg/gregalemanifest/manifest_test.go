@@ -59,6 +59,23 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 }
 
+func TestAfterRestoreLifecycleYAML(t *testing.T) {
+	m, err := ParseBytes([]byte("lifecycle:\n  after_restore:\n    path: /internal/restore\n    timeout_ms: 750\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.Lifecycle == nil || m.Lifecycle.AfterRestore == nil {
+		t.Fatalf("missing hook: %+v", m.Lifecycle)
+	}
+	if err := m.Lifecycle.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	got := m.Lifecycle.ToAPI().AfterRestore
+	if got == nil || got.Path != "/internal/restore" || got.TimeoutMS != 750 {
+		t.Fatalf("API hook = %+v", got)
+	}
+}
+
 func TestManifestMainWorkloadDependencies(t *testing.T) {
 	manifest, err := ParseBytes([]byte(`main_depends_on:
   - name: proxy

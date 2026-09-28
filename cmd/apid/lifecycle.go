@@ -89,6 +89,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 	return api.AppManifest{
 		ExecutionMode:                req.ExecutionMode,
 		RestartPolicy:                req.RestartPolicy,
+		AfterRestore:                 req.AfterRestore,
 		StartupDeadlineS:             req.StartupDeadlineS,
 		MaxRetries:                   req.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -133,6 +134,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 	return state.AppManifest{
 		ExecutionMode:                manifest.ExecutionMode,
 		RestartPolicy:                manifest.RestartPolicy,
+		AfterRestore:                 manifest.AfterRestore,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriodS:             stopGracePeriodS,
@@ -177,6 +179,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 	return api.AppManifest{
 		ExecutionMode:                manifest.ExecutionMode,
 		RestartPolicy:                manifest.RestartPolicy,
+		AfterRestore:                 manifest.AfterRestore,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -202,6 +205,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
+		req.AfterRestore != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
@@ -214,6 +218,13 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	}
 	if req.RestartPolicy != nil {
 		manifest.RestartPolicy = *req.RestartPolicy
+	}
+	if req.AfterRestore != nil {
+		if req.AfterRestore.Path == "" && req.AfterRestore.TimeoutMS == 0 {
+			manifest.AfterRestore = nil
+		} else {
+			manifest.AfterRestore = req.AfterRestore
+		}
 	}
 	if req.StartupDeadlineS != nil {
 		manifest.StartupDeadlineS = *req.StartupDeadlineS
@@ -290,6 +301,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated := app.Manifest
 	updated.ExecutionMode = manifest.ExecutionMode
 	updated.RestartPolicy = manifest.RestartPolicy
+	updated.AfterRestore = manifest.AfterRestore
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
 	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS

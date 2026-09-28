@@ -20,6 +20,13 @@ import (
 	"time"
 )
 
+// A restore hook is on the wake critical path. Keep its customer timeout
+// below the host's five-second resume deadline, including transport overhead.
+const (
+	AfterRestoreHookDefaultTimeoutMS = 500
+	AfterRestoreHookMaxTimeoutMS     = 2000
+)
+
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
 // below are at or below this value. See ADR-257.

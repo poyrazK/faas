@@ -46,6 +46,40 @@ const (
 	DefaultAppUID  = 1000
 )
 
+// AfterRestoreHook is an opt-in, guest-local HTTP callback. It runs after
+// entropy and clock repair and before a restored instance can be published.
+// The callback must be idempotent: a failed restore may be retried.
+type AfterRestoreHook struct {
+	Path      string `json:"path" yaml:"path"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+}
+
+func (h *AfterRestoreHook) Validate() error {
+	if h == nil {
+		return nil
+	}
+	if !strings.HasPrefix(h.Path, "/") || strings.HasPrefix(h.Path, "//") ||
+		strings.ContainsAny(h.Path, "?#%") {
+		return fmt.Errorf("after_restore.path must be an absolute path without query, fragment, or percent escapes")
+	}
+	for _, r := range h.Path {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("after_restore.path must not contain control characters")
+		}
+	}
+	if h.TimeoutMS < 0 || h.TimeoutMS > AfterRestoreHookMaxTimeoutMS {
+		return fmt.Errorf("after_restore.timeout_ms must be between 0 and %d", AfterRestoreHookMaxTimeoutMS)
+	}
+	return nil
+}
+
+func (h *AfterRestoreHook) EffectiveTimeout() time.Duration {
+	if h == nil || h.TimeoutMS == 0 {
+		return time.Duration(AfterRestoreHookDefaultTimeoutMS) * time.Millisecond
+	}
+	return time.Duration(h.TimeoutMS) * time.Millisecond
+}
+
 // ExecutionMode is the customer-controlled lifecycle axis for an app
 // (issue #1186 §D, ADR-137). Default is ExecutionModeRequest which
 // preserves the M-1 / pre-M-2 behaviour. Runtime wiring of the four
@@ -149,7 +183,8 @@ type AppManifest struct {
 	// RestartPolicy governs the supervisor's restart-on-exit decision
 	// (ADR-137 §Decision 2). Empty defers to per-mode default
 	// (request: on-failure, service: always, worker: always, job: no).
-	RestartPolicy string `json:"restart_policy,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
+	AfterRestore  *AfterRestoreHook `json:"after_restore,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -583,6 +618,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.Entrypoint[0] == "" {
 		return fmt.Errorf("app manifest: empty entrypoint[0]")
+	}
+	if err := m.AfterRestore.Validate(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.AfterRestore != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
+		return fmt.Errorf("app manifest: after_restore requires request or service execution mode")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)

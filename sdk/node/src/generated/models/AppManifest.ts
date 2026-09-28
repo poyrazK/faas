@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
@@ -46,6 +47,7 @@ export type AppManifest = {
    * Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for worker/service, no for job, on-failure for request.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
   /**
    * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
    */

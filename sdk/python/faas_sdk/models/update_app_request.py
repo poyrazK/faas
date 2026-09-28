@@ -119,6 +119,7 @@ from ..models.update_app_request_visibility_type_3_type_1 import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.public_auth_block import PublicAuthBlock
@@ -208,6 +209,8 @@ class UpdateAppRequest:
         | UpdateAppRequestRestartPolicyType3Type1
     ) = UNSET
     """Restart behavior for the workload. Omit for no change."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
     stop_grace_period_s: int | None | Unset = UNSET
@@ -493,6 +496,10 @@ class UpdateAppRequest:
             restart_policy = self.restart_policy
         else:
             restart_policy = self.restart_policy
+
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
 
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
@@ -824,6 +831,8 @@ class UpdateAppRequest:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -921,6 +930,7 @@ class UpdateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.public_auth_block import PublicAuthBlock
@@ -1341,6 +1351,13 @@ class UpdateAppRequest:
             )
 
         restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
+
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
 
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
@@ -1915,6 +1932,7 @@ class UpdateAppRequest:
             max_concurrency=max_concurrency,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,

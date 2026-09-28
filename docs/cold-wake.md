@@ -14,6 +14,32 @@ trade-off is that the **first request to a parked app pays the
 wake cost**. Subsequent requests hit the warm instance at normal
 latency.
 
+## Refresh application state after restore
+
+If your app needs to reconnect a client or refresh an in-memory resource after
+snapshot restore, configure an `after_restore` hook in `gregale.yaml`:
+
+```yaml
+lifecycle:
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 500
+```
+
+Gregale sends one `POST` to that path on the restored app's loopback listener
+after repairing the guest clock and entropy. Return any 2xx status to allow
+readiness. A timeout or other status rejects that restored instance and falls
+back to a fresh cold boot. The hook runs only on restore, not on cold boot.
+The path must start with `/`; timeout defaults to 500 ms and can be at most
+2 seconds. This feature applies to request and service apps.
+
+Make the handler idempotent and require both a loopback peer address and the
+`X-Faas-After-Restore: 1` request header. Gregale strips inbound `x-faas-*`
+headers at the public proxy, preventing a public caller from supplying that
+marker. The hook's work adds to wake latency, so keep it short. Redeploy after
+changing the lifecycle configuration; existing snapshots retain the manifest
+from their deployment.
+
 You can detect the wake tier on every routed response:
 
 - `x-faas-wake: hot` means an already-running instance served the request.

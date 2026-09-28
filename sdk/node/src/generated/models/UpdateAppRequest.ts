@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
@@ -63,6 +64,10 @@ export type UpdateAppRequest = {
    * Restart behavior for the workload. Omit for no change.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  /**
+   * Set a restore callback for request or service apps. Omit to preserve; an empty object clears it.
+   */
+  after_restore?: AfterRestoreHook;
   /**
    * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
    */

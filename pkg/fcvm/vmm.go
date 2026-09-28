@@ -2190,6 +2190,10 @@ const resumeHookDialStep = 20 * time.Millisecond
 // depending on it produced EOF-mid-ack in the V6 metal test.
 const resumeHookMsgResume uint32 = 1
 
+// Keep in sync with guest/init/listen_resume_linux.go. This NACK indicates
+// application recovery failed after the platform resume work succeeded.
+const resumeHookAckAfterRestore byte = 13
+
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
@@ -2411,6 +2415,9 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
 	if ack[0] != 0 {
+		if ack[0] == resumeHookAckAfterRestore {
+			return fmt.Errorf("vmm: application after_restore failed (ack=%d)", ack[0])
+		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}
 	// Keep host transport setup separate from waiting for the guest hook.

@@ -38,6 +38,12 @@ type ServiceReplicas struct {
 	Desired int `json:"desired"`
 }
 
+// AfterRestoreHook is a loopback callback required before a restored app is ready.
+type AfterRestoreHook struct {
+	Path      string `json:"path"`
+	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the
 // build/imaging side (imaged) to the guest side (guest-init). imaged writes it
 // into the app layer; guest-init applies env, execs the entrypoint as the app
@@ -69,7 +75,8 @@ type AppManifest struct {
 	ExecutionMode string `json:"execution_mode,omitempty"`
 	// RestartPolicy controls supervisor restarts. Empty defers to the
 	// execution-mode default.
-	RestartPolicy string `json:"restart_policy,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
+	AfterRestore  *AfterRestoreHook `json:"after_restore,omitempty"`
 	// StartupDeadlineS is the time-to-ready bound. Zero uses the plan default.
 	StartupDeadlineS int `json:"startup_deadline_s,omitempty"`
 	// MaxRetries is the consecutive restart-attempt bound. Zero uses the plan

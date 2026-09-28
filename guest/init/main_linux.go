@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -104,6 +105,7 @@ func boot() error {
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
 	var extensionHooks *extensionLifecycle
+	var afterRestore atomic.Pointer[afterRestoreRuntime]
 	if mode == modeApp {
 		// Extension hooks are optional observability/control callbacks. Keep
 		// them outside the workload supervisor so a missing or slow extension
@@ -203,6 +205,13 @@ func boot() error {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
 			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			func() error {
+				cfg := afterRestore.Load()
+				if cfg == nil {
+					return nil
+				}
+				return callAfterRestoreHook(cfg.hook, cfg.port)
+			},
 			updateMainWorkloadCPULimit,
 		); err != nil {
 			slog.Default().Warn("vsock resume listener unavailable", "err", err)
@@ -276,6 +285,9 @@ func boot() error {
 	_ = f.Close()
 	if err != nil {
 		return err
+	}
+	if manifest.AfterRestore != nil {
+		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
 	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.

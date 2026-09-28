@@ -51,6 +51,8 @@ const (
 	VsockResumeAckJSON          = 10
 	VsockResumeAckEntropyBase64 = 11
 	VsockResumeAckEntropyLength = 12
+	// A configured application after_restore callback failed or timed out.
+	VsockResumeAckAfterRestore = 13
 	// VsockResumeMaxEntropyBytes is the upper bound on the entropy payload
 	// the guest will accept. Mirrors pkg/fcvm/vmm.go::resumeHookEntropyBytes
 	// (256); we keep the host's constant in sync via the V6 metal test. If
@@ -136,10 +138,10 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 				break
 			}
 		}
-	}, nil)
+	}, nil, nil)
 }
 
-func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) error {
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -153,10 +155,10 @@ func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtensio
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	if onExtension == nil && len(onCPULimit) == 0 {
+	if onExtension == nil && onCritical == nil && len(onCPULimit) == 0 {
 		go acceptResumeConns(fd, log, onResume)
 	} else {
-		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension, onCPULimit...)
+		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension, onCritical, onCPULimit...)
 	}
 	return nil
 }
@@ -186,7 +188,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 	}
 }
 
-func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) {
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -198,7 +200,7 @@ func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, i
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConnWithExtension(f, log, onResume, onExtension, onCPULimit...)
+		go handleResumeConnWithExtension(f, log, onResume, onExtension, onCritical, onCPULimit...)
 	}
 }
 
@@ -217,10 +219,10 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 				break
 			}
 		}
-	}, nil)
+	}, nil, nil)
 }
 
-func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCPULimit ...func(int) error) {
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -317,6 +319,13 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
 	SetResumeTraceparent(req.Traceparent)
+	if onCritical != nil {
+		if err := onCritical(); err != nil {
+			log.Warn("application after_restore hook failed", "err", err)
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+	}
 	_, _ = f.Write([]byte{VsockResumeAckOK})
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()

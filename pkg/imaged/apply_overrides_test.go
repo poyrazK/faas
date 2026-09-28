@@ -291,6 +291,7 @@ func TestApplyAppLifecycle(t *testing.T) {
 	app := state.App{Manifest: state.AppManifest{
 		ExecutionMode:    api.ExecutionModeService,
 		RestartPolicy:    api.RestartPolicyAlways,
+		AfterRestore:     &api.AfterRestoreHook{Path: "/internal/restore", TimeoutMS: 750},
 		StartupDeadlineS: 30,
 		MaxRetries:       5,
 		ServiceReplicas:  &state.ServiceReplicas{Min: 1, Max: 3, Desired: 2},
@@ -298,12 +299,16 @@ func TestApplyAppLifecycle(t *testing.T) {
 	}}
 	got := applyAppLifecycle(manifest, app)
 	if got.ExecutionMode != api.ExecutionModeService || got.RestartPolicy != api.RestartPolicyAlways ||
-		got.StartupDeadlineS != 30 || got.MaxRetries != 5 || got.ServiceReplicas == nil ||
+		got.StartupDeadlineS != 30 || got.MaxRetries != 5 || got.AfterRestore == nil || got.AfterRestore.Path != "/internal/restore" || got.ServiceReplicas == nil ||
 		got.ServiceReplicas.Desired != 2 || len(got.Ports) != 1 || got.Ports[0].Port != 9100 {
 		t.Fatalf("lifecycle overlay = %+v", got)
 	}
 	got.ServiceReplicas.Desired = 3
+	got.AfterRestore.Path = "/changed"
 	if app.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatal("lifecycle overlay retained the state pointer")
+	}
+	if app.Manifest.AfterRestore.Path != "/internal/restore" {
+		t.Fatal("after_restore overlay retained the state pointer")
 	}
 }

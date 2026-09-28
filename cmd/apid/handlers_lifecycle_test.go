@@ -44,6 +44,58 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAppAfterRestoreLifecycleRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	hook := &api.AfterRestoreHook{Path: "/internal/restore", TimeoutMS: 750}
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "restore-app", AfterRestore: hook}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Manifest.AfterRestore == nil || *out.Manifest.AfterRestore != *hook {
+		t.Fatalf("create response hook = %+v", out.Manifest.AfterRestore)
+	}
+	updated := &api.AfterRestoreHook{Path: "/internal/reconnect"}
+	rec = e.do(t, "PATCH", "/v1/apps/restore-app", api.UpdateAppRequest{AfterRestore: updated}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "restore-app")
+	if err != nil || stored.Manifest.AfterRestore == nil || *stored.Manifest.AfterRestore != *updated {
+		t.Fatalf("stored hook = %+v, err=%v", stored.Manifest.AfterRestore, err)
+	}
+	rec = e.do(t, "PATCH", "/v1/apps/restore-app", api.UpdateAppRequest{AfterRestore: &api.AfterRestoreHook{}}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("clear: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "restore-app")
+	if err != nil || stored.Manifest.AfterRestore != nil {
+		t.Fatalf("cleared hook = %+v, err=%v", stored.Manifest.AfterRestore, err)
+	}
+}
+
+func TestAppAfterRestoreRejectsUnsupportedModeAndPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	for _, tc := range []struct {
+		name string
+		req  api.CreateAppRequest
+	}{
+		{name: "worker", req: api.CreateAppRequest{Slug: "restore-worker", ExecutionMode: api.ExecutionModeWorker, AfterRestore: &api.AfterRestoreHook{Path: "/restore"}}},
+		{name: "invalid path", req: api.CreateAppRequest{Slug: "restore-path", AfterRestore: &api.AfterRestoreHook{Path: "http://example.com/restore"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(t, "POST", "/v1/apps", tc.req, nil)
+			if rec.Code != 400 {
+				t.Fatalf("create: %d %s", rec.Code, rec.Body)
+			}
+			assertProblem(t, rec, 400, api.CodeValidation)
+		})
+	}
+}
+
 func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 31}, nil)

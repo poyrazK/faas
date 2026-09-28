@@ -46,6 +46,7 @@ from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
     from ..models.app_manifest_env import AppManifestEnv
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
@@ -121,6 +122,8 @@ class AppManifest:
     ) = UNSET
     """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
     worker/service, no for job, on-failure for request."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
     means 'use plan default'."""
@@ -257,6 +260,10 @@ class AppManifest:
         else:
             restart_policy = self.restart_policy
 
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
             startup_deadline_s = UNSET
@@ -350,6 +357,8 @@ class AppManifest:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
@@ -387,6 +396,7 @@ class AppManifest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
         from ..models.app_manifest_env import AppManifestEnv
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
@@ -626,6 +636,13 @@ class AppManifest:
 
         restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
 
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -728,6 +745,7 @@ class AppManifest:
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,

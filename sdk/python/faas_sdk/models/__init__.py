@@ -61,6 +61,7 @@ from .admin_status_maintenance_create_request_kind import AdminStatusMaintenance
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
 from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .advance_canary_request import AdvanceCanaryRequest
+from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
@@ -1881,6 +1882,7 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestState",
     "AdminStatusUpdateEditRequest",
     "AdvanceCanaryRequest",
+    "AfterRestoreHook",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseStatus",
     "AlertPresetResponse",

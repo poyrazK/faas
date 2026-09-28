@@ -872,6 +872,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			User:                         a.Manifest.User,
 			ExecutionMode:                a.Manifest.ExecutionMode,
 			RestartPolicy:                a.Manifest.RestartPolicy,
+			AfterRestore:                 a.Manifest.AfterRestore,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
 			MaxRetries:                   a.Manifest.MaxRetries,
 			RequestTimeoutS:              a.Manifest.RequestTimeoutS,

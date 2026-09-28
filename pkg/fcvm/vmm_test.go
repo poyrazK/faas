@@ -1746,6 +1746,21 @@ func TestTriggerResumeHookAckPropagatesError(t *testing.T) {
 	}
 }
 
+func TestTriggerResumeHookAfterRestoreFailure(t *testing.T) {
+	chrootBase := shortChrootBase(t, "apphook")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeVsockUDSServer(t, filepath.Join(root, VsockUDSSocketName), resumeHookAckAfterRestore, nil)
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	err := v.TriggerResumeHook(context.Background(), Lease{Instance: instance, Slot: 0}, 1)
+	if err == nil || !strings.Contains(err.Error(), "application after_restore failed (ack=13)") {
+		t.Fatalf("resume error = %v", err)
+	}
+}
+
 // TestTriggerResumeHookContextCancel: a cancelled ctx surfaces immediately
 // instead of burning the dial budget.
 func TestTriggerResumeHookContextCancel(t *testing.T) {

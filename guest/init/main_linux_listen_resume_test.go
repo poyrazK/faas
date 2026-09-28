@@ -138,7 +138,7 @@ func TestHandleResumeConnExtension(t *testing.T) {
 	}()
 	handleResumeConnWithExtension(readEnd, slog.Default(), nil, func(req extensionHookRequest) {
 		called <- req
-	})
+	}, nil)
 	ack := []byte{0}
 	if _, err := writeEnd.Read(ack); err != nil {
 		t.Fatalf("read ack: %v", err)
@@ -178,7 +178,7 @@ func TestHandleResumeConnWithAppCPULimit(t *testing.T) {
 	go func() { _, _ = hostEnd.Write(msg) }()
 
 	var applied int
-	handleResumeConnWithExtension(guestEnd, slog.Default(), nil, nil, func(cpu int) error {
+	handleResumeConnWithExtension(guestEnd, slog.Default(), nil, nil, nil, func(cpu int) error {
 		applied = cpu
 		return nil
 	})

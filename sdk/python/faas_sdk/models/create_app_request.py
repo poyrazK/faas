@@ -39,6 +39,7 @@ from ..models.service_binding_transport import ServiceBindingTransport, check_se
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
@@ -101,6 +102,8 @@ class CreateAppRequest:
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
     """Restart behavior for the workload. Omitted uses the execution-mode default."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
@@ -261,6 +264,10 @@ class CreateAppRequest:
         if not isinstance(self.restart_policy, Unset):
             restart_policy = self.restart_policy
 
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
         startup_deadline_s = self.startup_deadline_s
 
         stop_grace_period_s = self.stop_grace_period_s
@@ -393,6 +400,8 @@ class CreateAppRequest:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -460,6 +469,7 @@ class CreateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
@@ -561,6 +571,13 @@ class CreateAppRequest:
             restart_policy = UNSET
         else:
             restart_policy = check_create_app_request_restart_policy(_restart_policy)
+
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
 
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
@@ -700,6 +717,7 @@ class CreateAppRequest:
             request_timeout_s=request_timeout_s,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,

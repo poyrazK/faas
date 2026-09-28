@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
@@ -76,6 +77,7 @@ export type CreateAppRequest = {
    * Restart behavior for the workload. Omitted uses the execution-mode default.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
   /**
    * Upper bound on time-to-ready in seconds. 0 uses the plan default.
    */

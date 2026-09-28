@@ -49,6 +49,7 @@ export type { AdminStatusIncidentCreateRequest } from './AdminStatusIncidentCrea
 export type { AdminStatusMaintenanceCreateRequest } from './AdminStatusMaintenanceCreateRequest.js';
 export type { AdminStatusUpdateEditRequest } from './AdminStatusUpdateEditRequest.js';
 export type { AdvanceCanaryRequest } from './AdvanceCanaryRequest.js';
+export type { AfterRestoreHook } from './AfterRestoreHook.js';
 export type { AlertDeliveryResponse } from './AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './AlertPresetResponse.js';
 export type { AlertRuleResponse } from './AlertRuleResponse.js';
