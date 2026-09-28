@@ -98,21 +98,27 @@ type testWakeEvidence struct {
 	Requests int    `json:"requests"`
 }
 
+type testServiceWakeEvidence struct {
+	WakeID string `json:"wake_id"`
+	Method string `json:"method"`
+}
+
 type testRunReceipt struct {
-	Scenario     string               `json:"scenario"`
-	Profile      string               `json:"profile"`
-	Engine       string               `json:"engine"`
-	RunID        string               `json:"run_id"`
-	AppSlug      string               `json:"app_slug,omitempty"`
-	DeploymentID string               `json:"deployment_id,omitempty"`
-	Services     map[string]string    `json:"services,omitempty"`
-	Status       string               `json:"status"`
-	Error        string               `json:"error,omitempty"`
-	CleanupError string               `json:"cleanup_error,omitempty"`
-	Buckets      []string             `json:"buckets,omitempty"`
-	Evidence     testWakeEvidence     `json:"evidence"`
-	Outputs      []testOutputEvidence `json:"outputs,omitempty"`
-	QueueIdle    bool                 `json:"queue_idle,omitempty"`
+	Scenario     string                             `json:"scenario"`
+	Profile      string                             `json:"profile"`
+	Engine       string                             `json:"engine"`
+	RunID        string                             `json:"run_id"`
+	AppSlug      string                             `json:"app_slug,omitempty"`
+	DeploymentID string                             `json:"deployment_id,omitempty"`
+	Services     map[string]string                  `json:"services,omitempty"`
+	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
+	Status       string                             `json:"status"`
+	Error        string                             `json:"error,omitempty"`
+	CleanupError string                             `json:"cleanup_error,omitempty"`
+	Buckets      []string                           `json:"buckets,omitempty"`
+	Evidence     testWakeEvidence                   `json:"evidence"`
+	Outputs      []testOutputEvidence               `json:"outputs,omitempty"`
+	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -578,6 +584,23 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 	}
+	serviceWakeBaseline := make(map[string]map[string]bool, len(workloads)-1)
+	if profile != "warm" {
+		for _, workload := range workloads[1:] {
+			timeline, err := client.GetAppWakeTimeline(ctx, workload.session.App.Slug, api.AppWakeTimelineOptions{})
+			if err != nil {
+				receipt.Error = fmt.Sprintf("read wake baseline for %s: %v", workload.name, err)
+				return
+			}
+			seen := make(map[string]bool, len(timeline.Rows))
+			for _, row := range timeline.Rows {
+				if row.WakeID != "" {
+					seen[row.WakeID] = true
+				}
+			}
+			serviceWakeBaseline[workload.name] = seen
+		}
+	}
 	recorder.reset()
 	if len(scenario.Trigger) > 0 {
 		if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
@@ -607,6 +630,21 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			receipt.Error += "; "
 		}
 		receipt.Error += fmt.Sprintf("lifecycle evidence: %v", err)
+	}
+	if profile != "warm" {
+		receipt.ServiceWake = make(map[string]testServiceWakeEvidence, len(workloads)-1)
+		for _, workload := range workloads[1:] {
+			evidence, err := verifyTestServiceWake(ctx, client, workload.session.App.Slug, profile, serviceWakeBaseline[workload.name])
+			if err != nil {
+				if receipt.Error != "" {
+					receipt.Error += "; "
+				}
+				receipt.Error += fmt.Sprintf("service %s lifecycle evidence: %v", workload.name, err)
+			}
+			if evidence.WakeID != "" {
+				receipt.ServiceWake[workload.name] = evidence
+			}
+		}
 	}
 	if receipt.Error == "" {
 		receipt.Status = "passed"
@@ -646,7 +684,16 @@ func prepareTestProfile(ctx context.Context, client *Client, slug, profile strin
 	}
 }
 
-func verifyTestProfile(ctx context.Context, client *Client, slug, profile string, evidence *testWakeEvidence) error {
+type testWakeBootClient interface {
+	ListWakeTimeline(context.Context, string, string, string, int) (api.WakeTimelineResponse, error)
+}
+
+type testServiceWakeClient interface {
+	testWakeBootClient
+	GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error)
+}
+
+func verifyTestProfile(ctx context.Context, client testWakeBootClient, slug, profile string, evidence *testWakeEvidence) error {
 	if evidence.Requests == 0 {
 		return errors.New("assertion command sent no requests through GREGALE_TEST_URL")
 	}
@@ -668,14 +715,61 @@ func verifyTestProfile(ctx context.Context, client *Client, slug, profile string
 	if evidence.Header != wantHeader {
 		return fmt.Errorf("first request observed wake=%q; expected %q", evidence.Header, wantHeader)
 	}
+	method, err := verifyWakeBootMethod(ctx, client, slug, evidence.WakeID, want)
+	evidence.Method = method
+	return err
+}
+
+func verifyTestServiceWake(ctx context.Context, client testServiceWakeClient, slug, profile string, baseline map[string]bool) (testServiceWakeEvidence, error) {
+	want := "restore"
+	if profile == "cold" {
+		want = "cold_boot"
+	}
 	deadline := time.NewTimer(15 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		timeline, err := client.ListWakeTimeline(ctx, slug, evidence.WakeID, "", 100)
+		timeline, err := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{})
 		if err != nil {
-			return err
+			return testServiceWakeEvidence{}, err
+		}
+		if wakeID := firstNewTestWakeID(timeline.Rows, baseline); wakeID != "" {
+			evidence := testServiceWakeEvidence{WakeID: wakeID}
+			evidence.Method, err = verifyWakeBootMethod(ctx, client, slug, wakeID, want)
+			return evidence, err
+		}
+		select {
+		case <-ctx.Done():
+			return testServiceWakeEvidence{}, ctx.Err()
+		case <-deadline.C:
+			return testServiceWakeEvidence{}, fmt.Errorf("no %s wake observed after scenario trigger", profile)
+		case <-ticker.C:
+		}
+	}
+}
+
+func firstNewTestWakeID(rows []api.WakeTimelineJSONRow, baseline map[string]bool) string {
+	// The API returns newest first. Verify the first post-trigger wake, not
+	// a later successful retry that could conceal a failed restore.
+	for i := len(rows) - 1; i >= 0; i-- {
+		if id := rows[i].WakeID; id != "" && !baseline[id] {
+			return id
+		}
+	}
+	return ""
+}
+
+func verifyWakeBootMethod(ctx context.Context, client testWakeBootClient, slug, wakeID, want string) (string, error) {
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	observed := ""
+	for {
+		timeline, err := client.ListWakeTimeline(ctx, slug, wakeID, "", 100)
+		if err != nil {
+			return observed, err
 		}
 		for _, event := range timeline.Events {
 			if event.Kind != "wake.boot_completed" {
@@ -683,18 +777,17 @@ func verifyTestProfile(ctx context.Context, client *Client, slug, profile string
 			}
 			method, _ := event.Data["method"].(string)
 			if method == want {
-				evidence.Method = method
-				return nil
+				return method, nil
 			}
 			if method != "" {
-				evidence.Method = method
+				observed = method
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return observed, ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("expected %s boot; observed %q for wake %s", want, evidence.Method, evidence.WakeID)
+			return observed, fmt.Errorf("expected %s boot; observed %q for wake %s", want, observed, wakeID)
 		case <-ticker.C:
 		}
 	}

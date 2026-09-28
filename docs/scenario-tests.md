@@ -112,13 +112,19 @@ through the proxy, or when the completed wake method differs from the requested
 profile. A restore that falls back to cold boot is recorded as cold boot and
 fails the restored profile. Reports include the run ID, app slug, deployment ID,
 first response status, wake headers, completed method, and cleanup outcome.
+For cold and restored profiles, Gregale also compares each declared service's
+wake timeline before and after the trigger. Every service must show a new wake
+whose completed boot method matches the requested profile; the report records
+these in `service_wake`. The warm profile explicitly wakes all workloads before
+the trigger and verifies the primary app's first request is hot.
 
 The assertion commands own application-specific identities and expectations.
 For an export test they should create two customers, submit and retry the same
 export request, inspect the produced object through both customers' credentials,
 and check notification delivery. A declared notification sink can return
 failures to exercise the application's retry policy. Built-in fault controls,
-per-workload lifecycle evidence, and simulated execution are still being added. Test reports label
+warm first-request evidence for sibling workloads, and simulated execution are
+still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
 
 `--profile cold` relies on the preview-only `fresh=true` form of

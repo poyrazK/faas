@@ -76,6 +76,32 @@ func TestExpandTestSecretValue(t *testing.T) {
 	}
 }
 
+type testServiceWakeFakeClient struct {
+	rows     []api.WakeTimelineJSONRow
+	selected string
+	method   string
+}
+
+func (f *testServiceWakeFakeClient) GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error) {
+	return api.AppWakeTimelineResponse{Rows: f.rows}, nil
+}
+
+func (f *testServiceWakeFakeClient) ListWakeTimeline(_ context.Context, _, wakeID, _ string, _ int) (api.WakeTimelineResponse, error) {
+	f.selected = wakeID
+	return api.WakeTimelineResponse{Events: []api.WakeTimelineEvent{{Kind: "wake.boot_completed", Data: map[string]any{"method": f.method}}}}, nil
+}
+
+func TestVerifyTestServiceWakeChecksFirstNewCompletedBoot(t *testing.T) {
+	client := &testServiceWakeFakeClient{
+		rows:   []api.WakeTimelineJSONRow{{WakeID: "later"}, {WakeID: "first"}, {WakeID: "baseline"}},
+		method: "cold_boot",
+	}
+	evidence, err := verifyTestServiceWake(context.Background(), client, "worker-app", "cold", map[string]bool{"baseline": true})
+	if err != nil || evidence.WakeID != "first" || evidence.Method != "cold_boot" || client.selected != "first" {
+		t.Fatalf("service evidence = (%+v, %v), selected %q", evidence, err, client.selected)
+	}
+}
+
 type testOutputFakeClient struct {
 	polls int
 	slugs []string
