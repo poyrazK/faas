@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | Inspect app bindings, manage storage credentials, or verify private services |
+| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify private services |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -171,7 +171,7 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-Inspect app bindings, manage storage credentials, or verify private services
+Inspect app bindings and rotation status, manage storage credentials, or verify private services
 
 `gregale bindings [<subcommand>] <app>`
 

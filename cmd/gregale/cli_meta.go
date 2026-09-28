@@ -315,7 +315,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "Inspect app bindings, manage storage credentials, or verify private services",
+		Short:       "Inspect app bindings and rotation status, manage storage credentials, or verify private services",
 		Positionals: []string{"<app>"},
 		Subcommands: []cliSub{
 			{
