@@ -218,6 +218,9 @@ type cliFlag struct {
 	// "slug" or "PATH"). Empty means the flag is boolean unless Req or
 	// ClosedSet says otherwise.
 	Value string
+	// Repeatable marks flags that may be supplied multiple times; synopsis
+	// renderers append an ellipsis to make that contract visible.
+	Repeatable bool
 	// ClosedSet enumerates the allowed literal values, when the
 	// flag is a closed enum (plan, metric, comparison, window-spec,
 	// etc.). When non-empty, completion offers these as the flag's
@@ -514,6 +517,8 @@ var cliCommands = []cliCommand{
 			{Name: "ip-allowlist", Short: "repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist", Value: "CIDR"},
 			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
 			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
+			{Name: "public-auth", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
+			{Name: "ip-allowlist", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
@@ -1057,10 +1062,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
-			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
+			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status; exits nonzero while pending"},
 			{Name: subDomainsShow, Short: "Show a domain's cert details"},
 			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
-			{Name: subDomainsDoctor, Short: "5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)"},
+			{Name: subDomainsDoctor, Short: "5-check readiness report; exits nonzero when unhealthy, including in JSON mode"},
 		},
 	},
 	{

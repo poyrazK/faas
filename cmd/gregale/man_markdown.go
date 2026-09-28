@@ -136,7 +136,10 @@ func mdFlagSyntax(f cliFlag) string {
 		label += " <" + value + ">"
 	}
 	if !f.Req {
-		return "[" + label + "]"
+		label = "[" + label + "]"
+	}
+	if f.Repeatable {
+		label += "..."
 	}
 	return label
 }

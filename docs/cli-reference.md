@@ -408,7 +408,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -430,6 +430,8 @@ Get/update one app or run a deployment-attached command
 | `--ip-allowlist <CIDR>` | repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist |  |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
+| `--public-auth <open|bearer|basic|ip_allowlist|internal_only>` | set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+ | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
+| `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
 
 ### app scale
 
@@ -1407,7 +1409,7 @@ Set a verified domain as the app default
 
 ### domains verify
 
-Re-verify DNS + cert for a domain
+Check DNS and certificate verification status; exits nonzero while pending
 
 ### domains show
 
@@ -1419,7 +1421,7 @@ Show durable TLS status for all domains
 
 ### domains doctor
 
-5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)
+5-check readiness report; exits nonzero when unhealthy, including in JSON mode
 
 
 ## dev
