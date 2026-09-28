@@ -57,7 +57,7 @@ func TestApplyPlatformTenantReconciliationClient(t *testing.T) {
 			t.Errorf("expected plan hash = %q", req.ExpectedPlanHash)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tenant_id":"` + tenantID + `","plan_hash":"` + req.ExpectedPlanHash + `","applied":true,"changes":[{"resource_type":"consumer","action":"detached"}]}`))
+		_, _ = w.Write([]byte(`{"tenant_id":"` + tenantID + `","receipt_id":"33333333-3333-4333-8333-333333333333","plan_hash":"` + req.ExpectedPlanHash + `","applied_at":"2026-09-28T12:00:00Z","applied":true,"changes":[{"resource_type":"consumer","action":"detached"}]}`))
 	}))
 	defer srv.Close()
 
@@ -66,7 +66,46 @@ func TestApplyPlatformTenantReconciliationClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.TenantID != tenantID || !result.Applied || len(result.Changes) != 1 || result.Changes[0].Action != "detached" {
+	if result.TenantID != tenantID || result.ReceiptID != "33333333-3333-4333-8333-333333333333" || !result.Applied || len(result.Changes) != 1 || result.Changes[0].Action != "detached" {
 		t.Fatalf("apply = %+v", result)
+	}
+}
+
+func TestPlatformTenantReconciliationReceiptClient(t *testing.T) {
+	tenantID := "11111111-1111-4111-8111-111111111111"
+	receiptID := "33333333-3333-4333-8333-333333333333"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/account/platform-tenants/" + tenantID + "/reconciliations":
+			if r.Method != http.MethodGet || r.URL.Query().Get("page_size") != "2" || r.URL.Query().Get("page_token") != "opaque-cursor" {
+				t.Errorf("list request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"receipts":[{"receipt_id":"` + receiptID + `","plan_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","applied_at":"2026-09-28T12:00:00Z","change_count":1}],"next_page_token":"next-cursor"}`))
+		case "/v1/account/platform-tenants/" + tenantID + "/reconciliations/" + receiptID:
+			if r.Method != http.MethodGet {
+				t.Errorf("get request = %s %s", r.Method, r.URL.Path)
+			}
+			_, _ = w.Write([]byte(`{"tenant_id":"` + tenantID + `","receipt_id":"` + receiptID + `","plan_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","applied_at":"2026-09-28T12:00:00Z","changes":[{"resource_type":"consumer","action":"created"}]}`))
+		default:
+			t.Errorf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-token")
+	list, err := client.ListPlatformTenantReconciliationReceipts(context.Background(), tenantID, ListPlatformTenantReconciliationReceiptsOptions{PageSize: 2, PageToken: "opaque-cursor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Receipts) != 1 || list.Receipts[0].ReceiptID != receiptID || list.NextPageToken != "next-cursor" {
+		t.Fatalf("receipt list = %+v", list)
+	}
+	receipt, err := client.GetPlatformTenantReconciliationReceipt(context.Background(), tenantID, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.TenantID != tenantID || receipt.ReceiptID != receiptID || len(receipt.Changes) != 1 || receipt.Changes[0].Action != "created" {
+		t.Fatalf("receipt = %+v", receipt)
 	}
 }

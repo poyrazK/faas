@@ -1,0 +1,8 @@
+# ADR-343 · Durable platform-tenant reconciliation receipts
+
+- **Status:** accepted
+- **Date:** 2026-09-28
+- **Decision:** Persist an immutable receipt for every successful confirmed reconciliation apply, including no-op applies, in the same transaction as the resource changes. Return its UUID and applied timestamp in the synchronous response. Expose a bounded, newest-first history listing with compact summaries and a tenant-scoped detail read that returns the exact plan hash and applied change list. Receipts store neither the requested desired bundle nor hostname challenge tokens.
+- **Why:** A platform can lose a successful response after the database commits. The idempotency cache helps for retries but expires; a durable receipt listing lets automation recover the operation result and gives support and operators a stable audit reference without replaying a potentially stale request.
+- **Consequences:** A receipt is committed if and only if the apply commits, so it cannot report a partial reconciliation. Every write remains gated by the existing deploy-write scope, recent MFA, and expected plan hash; receipt reads require the normal account read scope and recent MFA. History is newest-first, paginated, and retained until the tenant or account is deleted. Receipt payloads contain only the plan digest and secret-free changes.
+- **Rejected alternatives:** Relying only on the idempotency response cache loses recoverability after its retention window. Reconstructing a receipt from current tenant resources is not reliable because subsequent operations may have changed them. Persisting the entire desired bundle would unnecessarily retain client inputs and secret-like challenge material.

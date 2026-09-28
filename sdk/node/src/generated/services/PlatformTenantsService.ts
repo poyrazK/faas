@@ -40,6 +40,8 @@ import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenan
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
 import type { PlatformTenantReconciliationPlanResponse } from '../models/PlatformTenantReconciliationPlanResponse.js';
+import type { PlatformTenantReconciliationReceiptListResponse } from '../models/PlatformTenantReconciliationReceiptListResponse.js';
+import type { PlatformTenantReconciliationReceiptResponse } from '../models/PlatformTenantReconciliationReceiptResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
@@ -218,6 +220,79 @@ export class PlatformTenantsService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List durable receipts for successful reconciliation applies.
+   * Returns compact summaries newest first. Use a receipt_id to fetch the complete secret-free applied change list.
+   * @returns PlatformTenantReconciliationReceiptListResponse Reconciliation receipt summaries.
+   * @throws ApiError
+   */
+  public static listPlatformTenantReconciliationReceipts({
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Existing tenant UUID whose reconciliation history is being read.
+     */
+    id: string,
+    /**
+     * Maximum number of receipt summaries to return, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the preceding page; omit it for the newest receipts.
+     */
+    pageToken?: string,
+  }): CancelablePromise<PlatformTenantReconciliationReceiptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/reconciliations',
+      path: {
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read one immutable reconciliation receipt.
+   * Returns the exact applied plan hash, timestamp, and change list. Desired request bodies and hostname challenge tokens are never persisted in receipts.
+   * @returns PlatformTenantReconciliationReceiptResponse Immutable successful apply result.
+   * @throws ApiError
+   */
+  public static getPlatformTenantReconciliationReceipt({
+    id,
+    receiptId,
+  }: {
+    /**
+     * Existing tenant UUID that owns the receipt.
+     */
+    id: string,
+    /**
+     * Receipt UUID returned by the apply response or history listing.
+     */
+    receiptId: string,
+  }): CancelablePromise<PlatformTenantReconciliationReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/reconciliations/{receipt_id}',
+      path: {
+        'id': id,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

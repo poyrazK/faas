@@ -332,14 +332,15 @@ var dtoExclude = map[string]bool{
 	// etc.; the *Row types are the typed counterparts at the
 	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions is a
 	// client-only query bag and never appears in the wire spec.
-	"AppWebhookRow":                         true,
-	"AppWebhookDeliveryRow":                 true,
-	"ListAppWebhookDeliveriesOptions":       true,
-	"ListAppWebhookDeliveryAttemptsOptions": true,
-	"PlatformTenantActivityOptions":         true, // client-only query parameters; the response DTOs are in the public spec
-	"InboundWebhookEndpointRow":             true,
-	"AppLogDrainRow":                        true,
-	"QueueBindingRow":                       true,
+	"AppWebhookRow":                                   true,
+	"AppWebhookDeliveryRow":                           true,
+	"ListAppWebhookDeliveriesOptions":                 true,
+	"ListAppWebhookDeliveryAttemptsOptions":           true,
+	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
+	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
+	"InboundWebhookEndpointRow":                       true,
+	"AppLogDrainRow":                                  true,
+	"QueueBindingRow":                                 true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)

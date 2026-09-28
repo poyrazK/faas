@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -49,8 +51,86 @@ func (m *MemStore) ApplyPlatformTenantReconciliation(ctx context.Context, in Pla
 	if err := m.applyManagedTenantRemovalsLocked(in.TenantID, snapshot.changes); err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
-	return api.PlatformTenantReconciliationApplyResponse{TenantID: result.Tenant.ID, PlanHash: snapshot.planHash,
-		Applied: true, Changes: platformTenantAppliedReconciliationChanges(snapshot.changes, result)}, nil
+	changes := platformTenantAppliedReconciliationChanges(snapshot.changes, result)
+	response := api.PlatformTenantReconciliationApplyResponse{TenantID: result.Tenant.ID, ReceiptID: uuid.NewString(),
+		PlanHash: snapshot.planHash, AppliedAt: m.clock().UTC(), Applied: true, Changes: changes}
+	m.platformTenantReconciliationReceipts[response.ReceiptID] = api.PlatformTenantReconciliationReceiptResponse{
+		TenantID: response.TenantID, ReceiptID: response.ReceiptID, PlanHash: response.PlanHash,
+		AppliedAt: response.AppliedAt, Changes: append([]api.PlatformTenantReconciliationPlanChange(nil), changes...),
+	}
+	return response, nil
+}
+
+func (m *MemStore) ListPlatformTenantReconciliationReceipts(_ context.Context, accountID, tenantID string, pageSize int, pageToken string) ([]api.PlatformTenantReconciliationReceiptSummary, string, error) {
+	if pageSize < 1 || pageSize > 100 {
+		return nil, "", ErrInvalidArgument
+	}
+	var tokenTime time.Time
+	var tokenID string
+	if pageToken != "" {
+		var valid bool
+		tokenTime, tokenID, valid = decodePageToken(pageToken)
+		if _, err := uuid.Parse(tokenID); !valid || err != nil {
+			return nil, "", ErrInvalidArgument
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenant, ok := m.platformTenants[tenantID]
+	if !ok || tenant.AccountID != accountID {
+		return nil, "", ErrNotFound
+	}
+	rows := make([]api.PlatformTenantReconciliationReceiptResponse, 0)
+	for _, receipt := range m.platformTenantReconciliationReceipts {
+		if receipt.TenantID == tenantID {
+			rows = append(rows, receipt)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].AppliedAt.Equal(rows[j].AppliedAt) {
+			return rows[i].ReceiptID > rows[j].ReceiptID
+		}
+		return rows[i].AppliedAt.After(rows[j].AppliedAt)
+	})
+	if pageToken != "" {
+		filtered := rows[:0]
+		for _, receipt := range rows {
+			if receipt.AppliedAt.Before(tokenTime) || (receipt.AppliedAt.Equal(tokenTime) && receipt.ReceiptID < tokenID) {
+				filtered = append(filtered, receipt)
+			}
+		}
+		rows = filtered
+	}
+	var nextToken string
+	if len(rows) > pageSize {
+		last := rows[pageSize-1]
+		nextToken = encodePageToken(last.AppliedAt, last.ReceiptID)
+		rows = rows[:pageSize]
+	}
+	out := make([]api.PlatformTenantReconciliationReceiptSummary, 0, len(rows))
+	for _, receipt := range rows {
+		out = append(out, api.PlatformTenantReconciliationReceiptSummary{ReceiptID: receipt.ReceiptID,
+			PlanHash: receipt.PlanHash, AppliedAt: receipt.AppliedAt, ChangeCount: len(receipt.Changes)})
+	}
+	return out, nextToken, nil
+}
+
+func (m *MemStore) GetPlatformTenantReconciliationReceipt(_ context.Context, accountID, tenantID, receiptID string) (api.PlatformTenantReconciliationReceiptResponse, error) {
+	if _, err := uuid.Parse(receiptID); err != nil {
+		return api.PlatformTenantReconciliationReceiptResponse{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenant, ok := m.platformTenants[tenantID]
+	if !ok || tenant.AccountID != accountID {
+		return api.PlatformTenantReconciliationReceiptResponse{}, ErrNotFound
+	}
+	receipt, ok := m.platformTenantReconciliationReceipts[receiptID]
+	if !ok || receipt.TenantID != tenantID {
+		return api.PlatformTenantReconciliationReceiptResponse{}, ErrNotFound
+	}
+	receipt.Changes = append([]api.PlatformTenantReconciliationPlanChange(nil), receipt.Changes...)
+	return receipt, nil
 }
 
 func (m *MemStore) planPlatformTenantReconciliationLocked(ctx context.Context, in PlatformTenantReconciliationParams) (platformTenantReconciliationSnapshot, error) {

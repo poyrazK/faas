@@ -104,10 +104,41 @@ type PlatformTenantReconciliationPlanResponse struct {
 // from a confirmed plan. Consumers and surfaces are detached, not deleted;
 // omitted managed hostnames are removed from their surface.
 type PlatformTenantReconciliationApplyResponse struct {
-	TenantID string                                   `json:"tenant_id"`
-	PlanHash string                                   `json:"plan_hash"`
-	Applied  bool                                     `json:"applied"`
-	Changes  []PlatformTenantReconciliationPlanChange `json:"changes"`
+	TenantID  string                                   `json:"tenant_id"`
+	ReceiptID string                                   `json:"receipt_id"`
+	PlanHash  string                                   `json:"plan_hash"`
+	AppliedAt time.Time                                `json:"applied_at"`
+	Applied   bool                                     `json:"applied"`
+	Changes   []PlatformTenantReconciliationPlanChange `json:"changes"`
+}
+
+// PlatformTenantReconciliationReceiptSummary is a compact immutable record in
+// a tenant's reconciliation history. Fetch the receipt by ID for its changes.
+type PlatformTenantReconciliationReceiptSummary struct {
+	ReceiptID   string    `json:"receipt_id"`
+	PlanHash    string    `json:"plan_hash"`
+	AppliedAt   time.Time `json:"applied_at"`
+	ChangeCount int       `json:"change_count"`
+}
+
+type PlatformTenantReconciliationReceiptListResponse struct {
+	Receipts      []PlatformTenantReconciliationReceiptSummary `json:"receipts"`
+	NextPageToken string                                       `json:"next_page_token,omitempty"`
+}
+
+type ListPlatformTenantReconciliationReceiptsOptions struct {
+	PageSize  int
+	PageToken string
+}
+
+// PlatformTenantReconciliationReceiptResponse is the durable, secret-free
+// result of one successful confirmed apply.
+type PlatformTenantReconciliationReceiptResponse struct {
+	TenantID  string                                   `json:"tenant_id"`
+	ReceiptID string                                   `json:"receipt_id"`
+	PlanHash  string                                   `json:"plan_hash"`
+	AppliedAt time.Time                                `json:"applied_at"`
+	Changes   []PlatformTenantReconciliationPlanChange `json:"changes"`
 }
 
 type ApplyPlatformTenantConsumerRequest struct {

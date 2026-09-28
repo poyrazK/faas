@@ -199,16 +199,17 @@ type MemStore struct {
 	consumerKeys map[string]ConsumerKey
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
-	apiConsumers                     map[string]APIConsumer
-	platformTenants                  map[string]PlatformTenant
-	platformTenantAccessTokens       map[string]PlatformTenantAccessToken
-	platformTenantAccessTokenByHash  map[string]string
-	platformTenantBudgets            map[string]platformTenantBudgetRow
-	platformTenantHostnamePolicies   map[string]PlatformTenantHostnamePolicy
-	platformTenantCredentialPolicies map[string]PlatformTenantCredentialPolicy
-	platformTenantConsumerPolicies   map[string]PlatformTenantConsumerProvisioningPolicy
-	platformTenantByConsumer         map[string]string
-	platformTenantBySurface          map[string]string
+	apiConsumers                         map[string]APIConsumer
+	platformTenants                      map[string]PlatformTenant
+	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
+	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
+	platformTenantAccessTokenByHash      map[string]string
+	platformTenantBudgets                map[string]platformTenantBudgetRow
+	platformTenantHostnamePolicies       map[string]PlatformTenantHostnamePolicy
+	platformTenantCredentialPolicies     map[string]PlatformTenantCredentialPolicy
+	platformTenantConsumerPolicies       map[string]PlatformTenantConsumerProvisioningPolicy
+	platformTenantByConsumer             map[string]string
+	platformTenantBySurface              map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
@@ -1128,18 +1129,19 @@ func NewMemStore() *MemStore {
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
-		consumerKeys:                     map[string]ConsumerKey{},
-		apiConsumers:                     map[string]APIConsumer{},
-		platformTenants:                  map[string]PlatformTenant{},
-		platformTenantAccessTokens:       map[string]PlatformTenantAccessToken{},
-		platformTenantAccessTokenByHash:  map[string]string{},
-		platformTenantBudgets:            map[string]platformTenantBudgetRow{},
-		platformTenantHostnamePolicies:   map[string]PlatformTenantHostnamePolicy{},
-		platformTenantCredentialPolicies: map[string]PlatformTenantCredentialPolicy{},
-		platformTenantConsumerPolicies:   map[string]PlatformTenantConsumerProvisioningPolicy{},
-		platformTenantByConsumer:         map[string]string{},
-		platformTenantBySurface:          map[string]string{},
-		openAPISnapshots:                 map[string]OpenAPISnapshot{},
+		consumerKeys:                         map[string]ConsumerKey{},
+		apiConsumers:                         map[string]APIConsumer{},
+		platformTenants:                      map[string]PlatformTenant{},
+		platformTenantReconciliationReceipts: map[string]api.PlatformTenantReconciliationReceiptResponse{},
+		platformTenantAccessTokens:           map[string]PlatformTenantAccessToken{},
+		platformTenantAccessTokenByHash:      map[string]string{},
+		platformTenantBudgets:                map[string]platformTenantBudgetRow{},
+		platformTenantHostnamePolicies:       map[string]PlatformTenantHostnamePolicy{},
+		platformTenantCredentialPolicies:     map[string]PlatformTenantCredentialPolicy{},
+		platformTenantConsumerPolicies:       map[string]PlatformTenantConsumerProvisioningPolicy{},
+		platformTenantByConsumer:             map[string]string{},
+		platformTenantBySurface:              map[string]string{},
+		openAPISnapshots:                     map[string]OpenAPISnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
 		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},

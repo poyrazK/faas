@@ -105,7 +105,7 @@ func (s *server) applyPlatformTenantReconciliation(w http.ResponseWriter, r *htt
 	}
 	if detached+removed > 0 || platformTenantReconciliationAppliedAdditions(result.Changes) {
 		s.audit.Emit(r.Context(), "platform_tenant.reconciled", &acct.ID, map[string]any{
-			"tenant_id": result.TenantID, "plan_hash": result.PlanHash,
+			"tenant_id": result.TenantID, "receipt_id": result.ReceiptID, "plan_hash": result.PlanHash,
 			"detached_resources": detached, "removed_hostnames": removed,
 		})
 	}

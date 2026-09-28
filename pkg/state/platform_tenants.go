@@ -78,6 +78,14 @@ type PlatformTenantReconciliationStore interface {
 	ApplyPlatformTenantReconciliation(context.Context, PlatformTenantReconciliationParams, string) (api.PlatformTenantReconciliationApplyResponse, error)
 }
 
+// PlatformTenantReconciliationReceiptStore exposes immutable outcomes of
+// confirmed applies. It is separate from the write interface so read-only
+// consumers and focused test stores need not implement reconciliation writes.
+type PlatformTenantReconciliationReceiptStore interface {
+	ListPlatformTenantReconciliationReceipts(context.Context, string, string, int, string) ([]api.PlatformTenantReconciliationReceiptSummary, string, error)
+	GetPlatformTenantReconciliationReceipt(context.Context, string, string, string) (api.PlatformTenantReconciliationReceiptResponse, error)
+}
+
 type PlatformTenantReconciliationParams struct {
 	TenantID string
 	ApplyPlatformTenantParams
@@ -146,12 +154,14 @@ func (e *PlatformTenantQuotaError) Error() string {
 }
 
 var (
-	_ PlatformTenantStore               = (*PgStore)(nil)
-	_ PlatformTenantStore               = (*MemStore)(nil)
-	_ PlatformTenantApplyStore          = (*PgStore)(nil)
-	_ PlatformTenantApplyStore          = (*MemStore)(nil)
-	_ PlatformTenantReconciliationStore = (*PgStore)(nil)
-	_ PlatformTenantReconciliationStore = (*MemStore)(nil)
+	_ PlatformTenantStore                      = (*PgStore)(nil)
+	_ PlatformTenantStore                      = (*MemStore)(nil)
+	_ PlatformTenantApplyStore                 = (*PgStore)(nil)
+	_ PlatformTenantApplyStore                 = (*MemStore)(nil)
+	_ PlatformTenantReconciliationStore        = (*PgStore)(nil)
+	_ PlatformTenantReconciliationStore        = (*MemStore)(nil)
+	_ PlatformTenantReconciliationReceiptStore = (*PgStore)(nil)
+	_ PlatformTenantReconciliationReceiptStore = (*MemStore)(nil)
 )
 
 func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {

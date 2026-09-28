@@ -54,10 +54,38 @@ func TestPgPlatformTenantReconciliationApplyRemovesOnlyManagedResources(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !applied.Applied || applied.PlanHash != plan.PlanHash ||
+	if !applied.Applied || applied.ReceiptID == "" || applied.AppliedAt.IsZero() || applied.PlanHash != plan.PlanHash ||
 		!hasPlatformTenantReconciliationChange(applied.Changes, "consumer", "detached", "remove", "") ||
 		!hasPlatformTenantReconciliationChange(applied.Changes, "hostname", "removed", "", removeHostname) {
 		t.Fatalf("applied = %+v", applied)
+	}
+	receipts, nextToken, err := store.ListPlatformTenantReconciliationReceipts(ctx, accountID, created.Tenant.ID, 10, "")
+	if err != nil || len(receipts) != 1 || nextToken != "" || receipts[0].ReceiptID != applied.ReceiptID || receipts[0].ChangeCount != len(applied.Changes) {
+		t.Fatalf("reconciliation receipts = %+v, next=%q, %v", receipts, nextToken, err)
+	}
+	receipt, err := store.GetPlatformTenantReconciliationReceipt(ctx, accountID, created.Tenant.ID, applied.ReceiptID)
+	if err != nil || receipt.PlanHash != plan.PlanHash || len(receipt.Changes) != len(applied.Changes) {
+		t.Fatalf("reconciliation receipt = %+v, %v", receipt, err)
+	}
+	foreign, err := store.GetPlatformTenantReconciliationReceipt(ctx, accountID, uuid.NewString(), applied.ReceiptID)
+	if !errors.Is(err, state.ErrNotFound) || foreign.ReceiptID != "" {
+		t.Fatalf("foreign tenant receipt = %+v, %v; want not found", foreign, err)
+	}
+	planAgain, err := store.PlanPlatformTenantReconciliation(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appliedAgain, err := store.ApplyPlatformTenantReconciliation(ctx, in, planAgain.PlanHash)
+	if err != nil || appliedAgain.ReceiptID == applied.ReceiptID {
+		t.Fatalf("second reconciliation = %+v, %v", appliedAgain, err)
+	}
+	latest, next, err := store.ListPlatformTenantReconciliationReceipts(ctx, accountID, created.Tenant.ID, 1, "")
+	if err != nil || len(latest) != 1 || latest[0].ReceiptID != appliedAgain.ReceiptID || next == "" {
+		t.Fatalf("latest receipt page = %+v, next=%q, %v", latest, next, err)
+	}
+	previous, next, err := store.ListPlatformTenantReconciliationReceipts(ctx, accountID, created.Tenant.ID, 1, next)
+	if err != nil || len(previous) != 1 || previous[0].ReceiptID != applied.ReceiptID || next != "" {
+		t.Fatalf("previous receipt page = %+v, next=%q, %v", previous, next, err)
 	}
 	consumers, err := store.ListPlatformTenantConsumers(ctx, accountID, created.Tenant.ID)
 	if err != nil || len(consumers) != 1 || consumers[0].ExternalRef != "keep" {

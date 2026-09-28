@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -85,8 +86,34 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	if err := json.Unmarshal(applyResp.Body.Bytes(), &applied); err != nil {
 		t.Fatal(err)
 	}
-	if !applied.Applied || applied.PlanHash != plan.PlanHash || applied.TenantID != tenantID {
+	if !applied.Applied || applied.ReceiptID == "" || applied.AppliedAt.IsZero() || applied.PlanHash != plan.PlanHash || applied.TenantID != tenantID {
 		t.Fatalf("apply response = %+v", applied)
+	}
+	historyPath := "/v1/account/platform-tenants/" + tenantID + "/reconciliations"
+	historyResp := e.do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
+	if historyResp.Code != http.StatusOK {
+		t.Fatalf("list reconciliation history = %d %s", historyResp.Code, historyResp.Body.String())
+	}
+	var history api.PlatformTenantReconciliationReceiptListResponse
+	if err := json.Unmarshal(historyResp.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Receipts) != 1 || history.Receipts[0].ReceiptID != applied.ReceiptID || history.Receipts[0].ChangeCount != len(applied.Changes) {
+		t.Fatalf("reconciliation history = %+v, apply = %+v", history, applied)
+	}
+	receiptResp := e.do(t, http.MethodGet, historyPath+"/"+applied.ReceiptID, nil, nil)
+	if receiptResp.Code != http.StatusOK {
+		t.Fatalf("get reconciliation receipt = %d %s", receiptResp.Code, receiptResp.Body.String())
+	}
+	var receipt api.PlatformTenantReconciliationReceiptResponse
+	if err := json.Unmarshal(receiptResp.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.TenantID != tenantID || receipt.ReceiptID != applied.ReceiptID || receipt.PlanHash != plan.PlanHash || len(receipt.Changes) != len(applied.Changes) {
+		t.Fatalf("reconciliation receipt = %+v", receipt)
+	}
+	if strings.Contains(receiptResp.Body.String(), "challenge_token") || strings.Contains(receiptResp.Body.String(), "keep-token") {
+		t.Fatalf("receipt leaked secret material: %s", receiptResp.Body.String())
 	}
 	assertAppliedChange := func(resourceType, action, externalRef, hostname, name string) api.PlatformTenantReconciliationPlanChange {
 		t.Helper()
@@ -141,6 +168,52 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	replay := e.do(t, http.MethodPost, applyPath, applyReq, key)
 	if replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replayed") != "true" || replay.Body.String() != applyResp.Body.String() {
 		t.Fatalf("idempotent replay = %d replay=%q body=%s", replay.Code, replay.Header().Get("Idempotent-Replayed"), replay.Body.String())
+	}
+
+	// A later confirmed no-op gets its own durable receipt; cursor pagination
+	// still lets the caller recover the earlier result without offset drift.
+	secondPlanResp := e.do(t, http.MethodPost, planPath, desired, nil)
+	if secondPlanResp.Code != http.StatusOK {
+		t.Fatalf("second plan = %d %s", secondPlanResp.Code, secondPlanResp.Body.String())
+	}
+	var secondPlan api.PlatformTenantReconciliationPlanResponse
+	if err := json.Unmarshal(secondPlanResp.Body.Bytes(), &secondPlan); err != nil {
+		t.Fatal(err)
+	}
+	secondApplyReq := applyReq
+	secondApplyReq.ExpectedPlanHash = secondPlan.PlanHash
+	secondApply := e.do(t, http.MethodPost, applyPath, secondApplyReq, map[string]string{"Idempotency-Key": "apply-reconcile-2"})
+	if secondApply.Code != http.StatusOK {
+		t.Fatalf("second apply = %d %s", secondApply.Code, secondApply.Body.String())
+	}
+	var secondApplied api.PlatformTenantReconciliationApplyResponse
+	if err := json.Unmarshal(secondApply.Body.Bytes(), &secondApplied); err != nil {
+		t.Fatal(err)
+	}
+	if secondApplied.ReceiptID == applied.ReceiptID {
+		t.Fatalf("distinct apply reused receipt ID %q", applied.ReceiptID)
+	}
+	latestResp := e.do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
+	if latestResp.Code != http.StatusOK {
+		t.Fatalf("list latest receipts = %d %s", latestResp.Code, latestResp.Body.String())
+	}
+	var latest api.PlatformTenantReconciliationReceiptListResponse
+	if err := json.Unmarshal(latestResp.Body.Bytes(), &latest); err != nil {
+		t.Fatal(err)
+	}
+	if len(latest.Receipts) != 1 || latest.Receipts[0].ReceiptID != secondApplied.ReceiptID || latest.NextPageToken == "" {
+		t.Fatalf("latest reconciliation page = %+v", latest)
+	}
+	previousResp := e.do(t, http.MethodGet, historyPath+"?page_size=1&page_token="+url.QueryEscape(latest.NextPageToken), nil, nil)
+	if previousResp.Code != http.StatusOK {
+		t.Fatalf("list previous receipts = %d %s", previousResp.Code, previousResp.Body.String())
+	}
+	var previous api.PlatformTenantReconciliationReceiptListResponse
+	if err := json.Unmarshal(previousResp.Body.Bytes(), &previous); err != nil {
+		t.Fatal(err)
+	}
+	if len(previous.Receipts) != 1 || previous.Receipts[0].ReceiptID != applied.ReceiptID || previous.NextPageToken != "" {
+		t.Fatalf("previous reconciliation page = %+v", previous)
 	}
 }
 

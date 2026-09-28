@@ -4147,6 +4147,62 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenants/{id}/reconciliations:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantReconciliationReceipts
+      summary: List durable receipts for successful reconciliation applies.
+      description: Returns compact summaries newest first. Use a receipt_id to fetch the complete secret-free applied change list.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing tenant UUID whose reconciliation history is being read.
+          schema: { type: string, format: uuid }
+        - name: page_size
+          in: query
+          description: Maximum number of receipt summaries to return, from 1 to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: page_token
+          in: query
+          description: Opaque cursor returned by the preceding page; omit it for the newest receipts.
+          schema: { type: string, description: Opaque cursor returned as next_page_token by the preceding page. }
+      responses:
+        '200':
+          description: Reconciliation receipt summaries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantReconciliationReceiptListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantReconciliationReceipt
+      summary: Read one immutable reconciliation receipt.
+      description: Returns the exact applied plan hash, timestamp, and change list. Desired request bodies and hostname challenge tokens are never persisted in receipts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing tenant UUID that owns the receipt.
+          schema: { type: string, format: uuid }
+        - name: receipt_id
+          in: path
+          required: true
+          description: Receipt UUID returned by the apply response or history listing.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Immutable successful apply result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantReconciliationReceiptResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}:
     parameters:
       - name: id
@@ -24569,13 +24625,48 @@ components:
         expected_plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
 
     PlatformTenantReconciliationApplyResponse:
-      description: The confirmed changes applied in one transaction. Consumers and surfaces are detached, not deleted.
+      description: The confirmed changes applied in one transaction. Consumers and surfaces are detached, not deleted. receipt_id can be used to recover the result later.
       type: object
-      required: [tenant_id, plan_hash, applied, changes]
+      required: [tenant_id, receipt_id, plan_hash, applied_at, applied, changes]
       properties:
         tenant_id: { type: string, format: uuid }
+        receipt_id: { type: string, format: uuid, description: Durable identifier for this successful apply. }
         plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
         applied: { type: boolean, description: True when the confirmed plan completed, including an already-converged no-op. }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
+
+    PlatformTenantReconciliationReceiptSummary:
+      description: Compact entry in a tenant's immutable reconciliation history.
+      type: object
+      required: [receipt_id, plan_hash, applied_at, change_count]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
+        change_count: { type: integer, minimum: 0 }
+
+    PlatformTenantReconciliationReceiptListResponse:
+      description: One page of reconciliation receipt summaries and an optional cursor for older receipts.
+      type: object
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantReconciliationReceiptSummary' }
+        next_page_token: { type: string, description: Opaque cursor for the next page. }
+
+    PlatformTenantReconciliationReceiptResponse:
+      description: Immutable, secret-free result of one successfully applied reconciliation plan.
+      type: object
+      required: [tenant_id, receipt_id, plan_hash, applied_at, changes]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        receipt_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        applied_at: { type: string, format: date-time }
         changes:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }

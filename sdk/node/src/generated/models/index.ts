@@ -591,6 +591,9 @@ export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardRes
 export type { PlatformTenantReconciliationApplyResponse } from './PlatformTenantReconciliationApplyResponse.js';
 export type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
 export type { PlatformTenantReconciliationPlanResponse } from './PlatformTenantReconciliationPlanResponse.js';
+export type { PlatformTenantReconciliationReceiptListResponse } from './PlatformTenantReconciliationReceiptListResponse.js';
+export type { PlatformTenantReconciliationReceiptResponse } from './PlatformTenantReconciliationReceiptResponse.js';
+export type { PlatformTenantReconciliationReceiptSummary } from './PlatformTenantReconciliationReceiptSummary.js';
 export type { PlatformTenantRequestBudgetResponse } from './PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './PlatformTenantResponse.js';
 export type { PlatformTenantSelfActivationHostnameResponse } from './PlatformTenantSelfActivationHostnameResponse.js';

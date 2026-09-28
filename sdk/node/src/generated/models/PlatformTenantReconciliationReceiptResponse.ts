@@ -4,20 +4,13 @@
 /* eslint-disable */
 import type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
 /**
- * The confirmed changes applied in one transaction. Consumers and surfaces are detached, not deleted. receipt_id can be used to recover the result later.
+ * Immutable, secret-free result of one successfully applied reconciliation plan.
  */
-export type PlatformTenantReconciliationApplyResponse = {
+export type PlatformTenantReconciliationReceiptResponse = {
   tenant_id: string;
-  /**
-   * Durable identifier for this successful apply.
-   */
   receipt_id: string;
   plan_hash: string;
   applied_at: string;
-  /**
-   * True when the confirmed plan completed
-   */
-  applied: boolean;
   changes: Array<PlatformTenantReconciliationPlanChange>;
 };
 

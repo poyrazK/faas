@@ -46,6 +46,28 @@ func (c *Client) ApplyPlatformTenantReconciliation(ctx context.Context, tenantID
 	return out, err
 }
 
+func (c *Client) ListPlatformTenantReconciliationReceipts(ctx context.Context, tenantID string, opts ListPlatformTenantReconciliationReceiptsOptions) (PlatformTenantReconciliationReceiptListResponse, error) {
+	var out PlatformTenantReconciliationReceiptListResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/reconciliations"
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("page_size", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("page_token", opts.PageToken)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) GetPlatformTenantReconciliationReceipt(ctx context.Context, tenantID, receiptID string) (PlatformTenantReconciliationReceiptResponse, error) {
+	var out PlatformTenantReconciliationReceiptResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/reconciliations/" + url.PathEscape(receiptID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTenantDetailResponse, error) {
 	var out PlatformTenantDetailResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)
