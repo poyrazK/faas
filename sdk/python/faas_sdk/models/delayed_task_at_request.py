@@ -27,7 +27,7 @@ class DelayedTaskAtRequest:
     scheduled_at: datetime.datetime
     payload: DelayedTaskAtRequestPayload | Unset = UNSET
     work: InvokeWork | Unset = UNSET
-    """Named policy and typed application key for one async invocation."""
+    """Named policy and typed application key for one durable invocation."""
     headers: DelayedTaskAtRequestHeaders | Unset = UNSET
     method: str | Unset = "POST"
     path: str | Unset = "/"

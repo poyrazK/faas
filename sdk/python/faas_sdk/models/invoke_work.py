@@ -12,7 +12,7 @@ T = TypeVar("T", bound="InvokeWork")
 
 @_attrs_define
 class InvokeWork:
-    """Named policy and typed application key for one async invocation."""
+    """Named policy and typed application key for one durable invocation."""
 
     policy: str
     key: Any

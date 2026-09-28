@@ -161,7 +161,7 @@ channels:
         $ref: '#/components/messages/WorkflowExternalEvent'
   queueSend:
     address: /v1/apps/{slug}/queues/send
-    description: Enqueue a JSON payload on an app's per-app FIFO queue.
+    description: Enqueue a JSON payload on an app's queue; an optional work policy uses per-key ordering.
     parameters:
       slug:
         description: App slug whose queue receives the payload.
@@ -410,8 +410,8 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/queueSend'
-    summary: Enqueue a payload on an app's FIFO queue.
-    description: The request returns the newly-created queue invocation identifier.
+    summary: Enqueue a payload on an app's queue.
+    description: Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering. The request returns the newly-created queue invocation identifier.
     messages:
       - $ref: '#/channels/queueSend/messages/queueSend'
     security:
@@ -669,7 +669,7 @@ components:
     QueueSend:
       name: queue.send
       title: Queue send
-      summary: A JSON payload enqueued on an app's FIFO queue.
+      summary: A JSON payload enqueued on an app's queue.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/QueueSendPayload'
@@ -816,6 +816,9 @@ components:
           type: object
           additionalProperties: true
           description: JSON object delivered to the queue invocation.
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        work:
+          $ref: '#/components/schemas/InvocationWork'
     ApplicationInboxPayload:
       type: object
       additionalProperties: false
@@ -829,6 +832,8 @@ components:
         data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value. }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        work:
+          $ref: '#/components/schemas/InvocationWork'
         retry_policy:
           type: object
           additionalProperties: false
@@ -837,6 +842,15 @@ components:
             base_seconds: { type: number }
             max_seconds: { type: number }
             jitter_seconds: { type: number }
+    InvocationWork:
+      type: object
+      additionalProperties: false
+      description: Application-keyed policy for an unnamed queue without an active queue consumer.
+      required: [policy, key]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key: { description: Bounded JSON string, number, or boolean. }
+        fairness_key: { description: Optional bounded scalar grouping related keys. }
     ApplicationOutboxPayload:
       type: object
       additionalProperties: false

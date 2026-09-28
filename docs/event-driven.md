@@ -346,6 +346,10 @@ envelope on the target's durable invocation queue. The normal queue depth,
 wake, retry, trace, dead-letter, and replay behavior applies. Use `--id` for a
 stable logical event id and `--idempotency-key` (or the API's
 `Idempotency-Key` header) when retrying an uncertain request.
+For an app without an active named queue consumer, `--work-policy` and
+`--work-key` (plus optional `--work-fairness-key`) apply an application work
+policy to the message. The API equivalent is the `work` field. These messages
+use the keyed invocation dispatcher; see [Application work policies](work-policies.md).
 
 Delivery is at least once. The receiver must deduplicate the envelope's `id`
 before applying non-idempotent side effects. This is an application inbox for

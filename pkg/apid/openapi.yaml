@@ -29349,6 +29349,9 @@ components:
         data: { description: Any valid JSON value delivered inside the CloudEvents envelope. }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        work:
+          allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
+          description: "Optional application-keyed policy for an unnamed queue without an active queue consumer."
 
     SendAppMessageResponse:
       description: Durable receipt for a queued app-to-app message.
@@ -38873,7 +38876,7 @@ components:
           description: "Async invocation only. Assigns a named policy and application key."
 
     InvokeWork:
-      description: Named policy and typed application key for one async invocation.
+      description: Named policy and typed application key for one durable invocation.
       type: object
       additionalProperties: false
       required: [policy, key]
@@ -38938,7 +38941,7 @@ components:
         cancelled_count: { type: integer, minimum: 0 }
 
     QueueSendRequest:
-      description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."
+      description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
@@ -38947,6 +38950,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
           description: Optional per-message retry curve override.
+        work:
+          allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
+          description: "Optional policy for an unnamed queue send when the app has no active queue consumer."
 
     QueueWorkloadProfileRequest:
       description: |

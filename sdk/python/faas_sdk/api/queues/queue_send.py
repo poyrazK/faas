@@ -107,7 +107,8 @@ def sync_detailed(
         x_gregale_revision (UUID | Unset):
         x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,7 +154,8 @@ def sync(
         x_gregale_revision (UUID | Unset):
         x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +196,8 @@ async def asyncio_detailed(
         x_gregale_revision (UUID | Unset):
         x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,7 +241,8 @@ async def asyncio(
         x_gregale_revision (UUID | Unset):
         x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

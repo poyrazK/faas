@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.invoke_work import InvokeWork
     from ..models.queue_send_request_payload import QueueSendRequestPayload
     from ..models.retry_policy_dto import RetryPolicyDTO
 
@@ -18,7 +19,10 @@ T = TypeVar("T", bound="QueueSendRequest")
 
 @_attrs_define
 class QueueSendRequest:
-    """Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."""
+    """Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO
+    dispatch; keyed messages use per-key ordering.
+
+    """
 
     payload: QueueSendRequestPayload | Unset = UNSET
     queue_name: str | Unset = UNSET
@@ -32,6 +36,8 @@ class QueueSendRequest:
     downgrades. Lives in pkg/api so the SDK can type the policy
     without importing pkg/dispatch directly.
     """
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +51,10 @@ class QueueSendRequest:
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
 
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -54,11 +64,14 @@ class QueueSendRequest:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if work is not UNSET:
+            field_dict["work"] = work
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.invoke_work import InvokeWork
         from ..models.queue_send_request_payload import QueueSendRequestPayload
         from ..models.retry_policy_dto import RetryPolicyDTO
 
@@ -79,10 +92,18 @@ class QueueSendRequest:
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
+
         queue_send_request = cls(
             payload=payload,
             queue_name=queue_name,
             retry_policy=retry_policy,
+            work=work,
         )
 
         queue_send_request.additional_properties = d

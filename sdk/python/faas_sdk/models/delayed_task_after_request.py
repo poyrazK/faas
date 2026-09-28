@@ -26,7 +26,7 @@ class DelayedTaskAfterRequest:
     delay_seconds: int
     payload: DelayedTaskAfterRequestPayload | Unset = UNSET
     work: InvokeWork | Unset = UNSET
-    """Named policy and typed application key for one async invocation."""
+    """Named policy and typed application key for one durable invocation."""
     headers: DelayedTaskAfterRequestHeaders | Unset = UNSET
     method: str | Unset = "POST"
     path: str | Unset = "/"

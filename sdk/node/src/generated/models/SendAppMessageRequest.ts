@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { InvokeWork } from './InvokeWork.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 /**
  * A CloudEvents-compatible application-inbox message.
@@ -28,5 +29,9 @@ export type SendAppMessageRequest = {
   data: any;
   queue_name?: string;
   retry_policy?: RetryPolicyDTO;
+  /**
+   * Optional application-keyed policy for an unnamed queue without an active queue consumer.
+   */
+  work?: InvokeWork;
 };
 

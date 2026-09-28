@@ -315,7 +315,8 @@ func (s *server) resolveInvocationDestinations(ctx context.Context, appID, accou
 
 // --- queues -----------------------------------------------------------------
 
-// queueSend enqueues a single FIFO row on the per-app queue. The
+// queueSend enqueues one row on the per-app queue. Unkeyed rows retain
+// legacy FIFO dispatch; keyed rows use the shared work-lane claim gate. The
 // per-app MaxQueueDepth cap is re-checked here (the apid gate; the
 // drain re-checks at dispatch tick).
 func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -332,7 +333,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -388,7 +389,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("encode application message"))
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -404,7 +405,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
@@ -423,6 +424,9 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
+	if work != nil && resolvedQueueName != "" {
+		return state.Invocation{}, "", api.ErrValidation("work policies require an unnamed queue without an active queue consumer")
+	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)
 	if err != nil {
 		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
@@ -436,7 +440,7 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		Headers:         traceHeaders,
 		DueAt:           time.Now().UTC(),
 		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
-	}, "enqueue application message")
+	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem
 	}

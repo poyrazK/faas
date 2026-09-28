@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/secretscan"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // `gregale app` subcommand names — lifted to constants so goconst stops
@@ -1290,13 +1291,20 @@ func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
+	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
+	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
+	}
+	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
+	if err != nil {
+		return printErr("Invalid queue work", err)
 	}
 	slug := pos[0]
 	body, err := resolveQueuePayload(*payload)
@@ -1307,7 +1315,7 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName, Work: work})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}
@@ -1316,6 +1324,26 @@ func cmdQueueSend(args []string) int {
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
 	return 0
+}
+
+func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error) {
+	if policy == "" && key == "" && fairnessKey == "" {
+		return nil, nil
+	}
+	if policy == "" || key == "" {
+		return nil, errors.New("--work-policy and a JSON --work-key must be used together")
+	}
+	if _, err := workpolicy.CanonicalScalar(json.RawMessage(key)); err != nil {
+		return nil, fmt.Errorf("invalid --work-key: %w", err)
+	}
+	work := &api.InvokeWork{Policy: policy, Key: json.RawMessage(key)}
+	if fairnessKey != "" {
+		if _, err := workpolicy.CanonicalScalar(json.RawMessage(fairnessKey)); err != nil {
+			return nil, fmt.Errorf("invalid --work-fairness-key: %w", err)
+		}
+		work.FairnessKey = json.RawMessage(fairnessKey)
+	}
+	return work, nil
 }
 
 // cmdQueueReceive drains the next row. The server long-polls up to

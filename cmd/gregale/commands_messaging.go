@@ -23,13 +23,20 @@ func cmdSend(args []string) int {
 	source := fs.String("source", "", "event source (defaults to gregale.send)")
 	eventTime := fs.String("time", "", "event time (RFC3339; defaults to server time)")
 	queueName := fs.String("queue-name", "", "target logical queue name")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
+	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
+	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying an uncertain send")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--idempotency-key KEY]", "send")
+		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--idempotency-key KEY]", "send")
 		return 1
+	}
+	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
+	if err != nil {
+		return printErr("Invalid application work", err)
 	}
 	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
 		return printErr("Invalid --idempotency-key", err)
@@ -64,6 +71,7 @@ func cmdSend(args []string) int {
 		Time:      occurredAt,
 		Data:      json.RawMessage(body),
 		QueueName: strings.TrimSpace(*queueName),
+		Work:      work,
 	})
 	if err != nil {
 		return printErr("Application send failed", err)

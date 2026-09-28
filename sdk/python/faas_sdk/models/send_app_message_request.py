@@ -17,6 +17,7 @@ from ..models.send_app_message_request_datacontenttype import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.invoke_work import InvokeWork
     from ..models.retry_policy_dto import RetryPolicyDTO
 
 
@@ -47,6 +48,8 @@ class SendAppMessageRequest:
     downgrades. Lives in pkg/api so the SDK can type the policy
     without importing pkg/dispatch directly.
     """
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
 
     def to_dict(self) -> dict[str, Any]:
         type_ = self.type_
@@ -75,6 +78,10 @@ class SendAppMessageRequest:
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
 
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -97,11 +104,14 @@ class SendAppMessageRequest:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if work is not UNSET:
+            field_dict["work"] = work
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.invoke_work import InvokeWork
         from ..models.retry_policy_dto import RetryPolicyDTO
 
         d = dict(src_dict)
@@ -143,6 +153,13 @@ class SendAppMessageRequest:
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
+
         send_app_message_request = cls(
             type_=type_,
             data=data,
@@ -153,6 +170,7 @@ class SendAppMessageRequest:
             data_content_type=data_content_type,
             queue_name=queue_name,
             retry_policy=retry_policy,
+            work=work,
         )
 
         return send_app_message_request

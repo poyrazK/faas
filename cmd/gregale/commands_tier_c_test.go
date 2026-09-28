@@ -428,6 +428,19 @@ func TestTierC_QueueSend_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierC_QueueSend_WorkPolicy(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"q-2"}`, http.StatusCreated)
+	if code := cmdQueueSend([]string{"demo", "--payload", `{}`, "--work-policy", "documents", "--work-key", `"d1"`,
+		"--work-fairness-key", `"tenant-1"`}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got api.QueueSendRequest
+	if err := json.Unmarshal(f.sawBody, &got); err != nil || got.Work == nil || got.Work.Policy != "documents" || string(got.Work.Key) != `"d1"` || string(got.Work.FairnessKey) != `"tenant-1"` {
+		t.Fatalf("queued work = %+v, err=%v", got, err)
+	}
+}
+
 func TestTierC_QueueState_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	body := `{"depth":0,"in_flight":0}`

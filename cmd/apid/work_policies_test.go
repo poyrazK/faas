@@ -111,6 +111,59 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if bytes.Equal(delayedRow.WorkFairnessDigest, second.WorkFairnessDigest) {
 		t.Fatal("delayed task should use its selected fairness group")
 	}
+	queue := e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+		Payload: json.RawMessage(`{"document_id":"d4"}`),
+		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d4"`),
+			FairnessKey: json.RawMessage(`"tenant-2"`)},
+	}, nil)
+	if queue.Code != http.StatusCreated {
+		t.Fatalf("queue send = %d %s", queue.Code, queue.Body.String())
+	}
+	var queued api.QueueSendResponse
+	if err := json.Unmarshal(queue.Body.Bytes(), &queued); err != nil {
+		t.Fatal(err)
+	}
+	queuedRow, err := e.store.InvocationByID(context.Background(), queued.ID)
+	if err != nil || queuedRow.Source != state.InvocationQueue || queuedRow.QueueName != "" || queuedRow.WorkPolicyName != "document-index" {
+		t.Fatalf("queued policy row = %+v, err=%v", queuedRow, err)
+	}
+	inbox := e.do(t, http.MethodPost, "/v1/apps/work-api/inbox", api.SendAppMessageRequest{
+		Type: "document.edited", Data: json.RawMessage(`{"document_id":"d4"}`),
+		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d4"`)},
+	}, nil)
+	if inbox.Code != http.StatusAccepted {
+		t.Fatalf("inbox send = %d %s", inbox.Code, inbox.Body.String())
+	}
+	var inboxReceipt api.SendAppMessageResponse
+	if err := json.Unmarshal(inbox.Body.Bytes(), &inboxReceipt); err != nil {
+		t.Fatal(err)
+	}
+	inboxRow, err := e.store.InvocationByID(context.Background(), inboxReceipt.ID)
+	if err != nil || inboxRow.Source != state.InvocationQueue || inboxRow.WorkSequence != queuedRow.WorkSequence+1 {
+		t.Fatalf("inbox policy row = %+v, err=%v", inboxRow, err)
+	}
+	queuedRow, _ = e.store.InvocationByID(context.Background(), queued.ID)
+	if queuedRow.State != state.InvocationSuperseded || inboxRow.State != state.InvocationPending {
+		t.Fatalf("queue replacement states = %s, %s", queuedRow.State, inboxRow.State)
+	}
+	for _, path := range []string{"/v1/apps/work-api/queues/send", "/v1/apps/work-api/inbox"} {
+		var body any = api.QueueSendRequest{QueueName: "named", Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d5"`)}}
+		if path == "/v1/apps/work-api/inbox" {
+			body = api.SendAppMessageRequest{Type: "document.edited", Data: json.RawMessage(`{}`), QueueName: "named",
+				Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d5"`)}}
+		}
+		assertProblem(t, e.do(t, http.MethodPost, path, body, nil), http.StatusBadRequest, api.CodeValidation)
+	}
+	if _, err := e.store.CreateQueueBinding(context.Background(), state.QueueBinding{
+		AccountID: e.acct.ID, AppID: app, Name: "documents", QueueName: "documents",
+		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bound := e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d6"`)},
+	}, nil)
+	assertProblem(t, bound, http.StatusBadRequest, api.CodeValidation)
 	bad := e.do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`{"not":"scalar"}`)},
 	}, nil)

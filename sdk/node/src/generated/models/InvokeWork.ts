@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Named policy and typed application key for one async invocation.
+ * Named policy and typed application key for one durable invocation.
  */
 export type InvokeWork = {
   policy: string;

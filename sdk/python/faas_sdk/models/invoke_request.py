@@ -39,7 +39,7 @@ class InvokeRequest:
     destinations: InvocationDestinations | None | Unset = UNSET
     """EPIC #1278. Optional terminal callbacks."""
     work: InvokeWork | Unset = UNSET
-    """Named policy and typed application key for one async invocation."""
+    """Named policy and typed application key for one durable invocation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

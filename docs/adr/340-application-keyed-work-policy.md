@@ -1,6 +1,6 @@
 # ADR-340 · Application-keyed background work policies
 
-- **Status:** accepted; invocation and event producers implemented, trigger adapters pending
+- **Status:** accepted; invocation, event, and unnamed queue producers implemented; trigger adapters pending
 - **Date:** 2026-09-28
 - **Decision:** Define one named, app-scoped work policy for durable invocation
   producers. Producers resolve an application key at admission and persist the
@@ -106,10 +106,17 @@ Policy-tagged delayed tasks use the invocation drain, including when a queue
 trigger is bound to delayed tasks. The queue poller excludes these rows, so it
 cannot bypass the keyed claim gate. These tasks are delivered individually.
 
-Queue-send messages and external broker records need a shared work-item claim
-ledger before policy fields can be exposed on those producers. Their current
-trigger path claims `trigger_records` and acknowledges broker handles outside
-the invocation transaction. The adapter must resolve keys at durable record
+Unnamed queue-send and application-inbox messages now enter the keyed
+invocation ledger and use its claim gate. The API rejects a work policy when
+a named queue is requested or an active queue consumer selects a named queue.
+Those messages retain their existing trigger and batch contracts. An active
+consumer added after a keyed message is admitted does not take over that row;
+the invocation drain continues to own it.
+
+Named queue-trigger messages and external broker records need a shared
+work-item claim ledger before policy fields can be exposed on those producers.
+Their current trigger path claims `trigger_records` and acknowledges broker
+handles outside the invocation transaction. The adapter must resolve keys at durable record
 admission, reserve lane and fairness slots across both ledgers, carry a claim
 generation through the gateway result, and release reservations on retry,
 terminal outcome, and lease recovery. A late broker acknowledgement must not

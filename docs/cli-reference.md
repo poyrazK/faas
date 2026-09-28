@@ -428,7 +428,7 @@ Retry a bounded batch of terminal failures classified as retryable; pass --event
 
 Reliably send work to another Gregale application
 
-`gregale send <target-app> --type <TYPE> --data <J|@file|-> [--id <ID>] [--source <SOURCE>] [--time <RFC3339>] [--queue-name <QUEUE>] [--idempotency-key <KEY>]`
+`gregale send <target-app> --type <TYPE> --data <J|@file|-> [--id <ID>] [--source <SOURCE>] [--time <RFC3339>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [--idempotency-key <KEY>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -438,6 +438,9 @@ Reliably send work to another Gregale application
 | `--source <SOURCE>` | event source |  |
 | `--time <RFC3339>` | event time |  |
 | `--queue-name <QUEUE>` | target logical queue name |  |
+| `--work-policy <NAME>` | named work policy for an unnamed queue |  |
+| `--work-key <JSON>` | JSON scalar identifying related work |  |
+| `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
 | `--idempotency-key <KEY>` | stable key for retrying an uncertain send |  |
 
 
@@ -2555,6 +2558,9 @@ Enqueue a wake request
 |---|---|---|
 | `--payload <J>` | JSON payload (inline \| @file \| -) |  |
 | `--queue-name <QUEUE>` | logical queue name |  |
+| `--work-policy <NAME>` | named work policy for an unnamed queue |  |
+| `--work-key <JSON>` | JSON scalar identifying related work |  |
+| `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
 
 ### queue receive
 

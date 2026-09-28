@@ -170,6 +170,7 @@ type SendAppMessageRequest struct {
 	Data            json.RawMessage `json:"data"`
 	QueueName       string          `json:"queue_name,omitempty"`
 	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work            *InvokeWork     `json:"work,omitempty"`
 }
 
 func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
@@ -5220,6 +5221,7 @@ type QueueSendRequest struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.
