@@ -1098,6 +1098,17 @@ Soft-delete one job
 
 Dispatch a new run (fan-out N tasks)
 
+| Flag | Meaning | |
+|---|---|---|
+| `--input <ID=REF>` | repeatable input binding |  |
+| `--input-manifest-uri <URI>` | account-readable input manifest object |  |
+| `--input-manifest-sha256 <DIGEST>` | SHA-256 of exact manifest bytes |  |
+| `--parallelism <N>` | maximum concurrent tasks |  |
+| `--flexible` | use spare capacity within a start window |  |
+| `--eligible-at <RFC3339>` | earliest task start |  |
+| `--latest-start-at <RFC3339>` | latest task start |  |
+| `--fail-fast` | cancel unstarted tasks after permanent failure |  |
+
 ### jobs runs
 
 List runs for one job
@@ -1110,9 +1121,21 @@ Cancel a run
 
 List tasks for one run
 
+### jobs attempts
+
+List retained attempts for one task
+
 ### jobs retry
 
 Retry one failed task
+
+### jobs replay-failed
+
+Replay unsuccessful tasks in a linked run
+
+### jobs artifact-url
+
+Verify a managed result and get a signed URL
 
 ### jobs logs
 
