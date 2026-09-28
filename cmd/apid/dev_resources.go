@@ -72,7 +72,7 @@ func (s *server) cleanupDevSessionBucket(ctx context.Context, store state.Object
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if err := emptyEnvironmentCloneBucket(callCtx, backend.Provider, bucket.PhysicalName); err != nil && !errors.Is(err, objectstorage.ErrNotFound) {
+	if err := emptyOwnedObjectBucket(callCtx, backend.Provider, bucket.PhysicalName); err != nil && !errors.Is(err, objectstorage.ErrNotFound) {
 		return err
 	}
 	token := uuid.NewString()

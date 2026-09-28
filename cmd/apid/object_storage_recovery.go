@@ -50,7 +50,7 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 		}
 	} else {
 		if b.EnvironmentCloneSourceBucketID != "" {
-			err = emptyEnvironmentCloneBucket(callCtx, backend.Provider, b.PhysicalName)
+			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName)
 		}
 		if err == nil {
 			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
@@ -76,7 +76,9 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 	return err
 }
 
-func emptyEnvironmentCloneBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
+// emptyOwnedObjectBucket removes objects only after the caller has identified
+// an app-owned physical bucket from its durable placement record.
+func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
 	for range api.ObjectStorageInventoryMaxPages {
 		page, err := provider.ListObjects(ctx, physicalName, "", "", 1000)
 		if err != nil {
