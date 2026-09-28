@@ -41,6 +41,7 @@ type testScenario struct {
 	Secrets          map[string]string      `yaml:"secrets"`
 	Consumers        []testConsumer         `yaml:"consumers"`
 	ConsumerAuthMode string                 `yaml:"consumer_auth_mode"`
+	Simulation       []string               `yaml:"simulation"`
 	Services         map[string]testService `yaml:"services"`
 	Trigger          []string               `yaml:"trigger"`
 	Command          []string               `yaml:"command"`
@@ -129,7 +130,7 @@ type testRunReceipt struct {
 	Scenario     string                             `json:"scenario"`
 	Profile      string                             `json:"profile"`
 	Engine       string                             `json:"engine"`
-	RunID        string                             `json:"run_id"`
+	RunID        string                             `json:"run_id,omitempty"`
 	AppSlug      string                             `json:"app_slug,omitempty"`
 	DeploymentID string                             `json:"deployment_id,omitempty"`
 	Services     map[string]string                  `json:"services,omitempty"`
@@ -138,7 +139,7 @@ type testRunReceipt struct {
 	Error        string                             `json:"error,omitempty"`
 	CleanupError string                             `json:"cleanup_error,omitempty"`
 	Buckets      []string                           `json:"buckets,omitempty"`
-	Evidence     testWakeEvidence                   `json:"evidence"`
+	Evidence     *testWakeEvidence                  `json:"evidence,omitempty"`
 	Outputs      []testOutputEvidence               `json:"outputs,omitempty"`
 	Deliveries   []testDeliveryEvidence             `json:"deliveries,omitempty"`
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
@@ -147,6 +148,7 @@ type testRunReceipt struct {
 func cmdTest(args []string) int {
 	fs := newFlagSet("test", flag.ContinueOnError)
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
+	engine := fs.String("engine", "real-vm", "real-vm or simulated")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest path")
 	reportPath := fs.String("report", "", "write a JSON report to this path")
@@ -154,15 +156,28 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test --scenario NAME [--profile warm|cold|restored|all] [--manifest PATH] [--report PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test --scenario NAME [--engine real-vm|simulated] [--profile warm|cold|restored|all] [--manifest PATH] [--report PATH]", "test")
 		return 1
 	}
 	if *scenarioName == "" {
 		return printErr("Scenario required", errors.New("pass --scenario NAME"))
 	}
-	profiles, err := selectedTestProfiles(*profile)
-	if err != nil {
-		return printErr("Invalid profile", err)
+	var profiles []string
+	switch *engine {
+	case "real-vm":
+		var err error
+		profiles, err = selectedTestProfiles(*profile)
+		if err != nil {
+			return printErr("Invalid profile", err)
+		}
+	case "simulated":
+		explicitProfile := false
+		fs.Visit(func(selected *flag.Flag) { explicitProfile = explicitProfile || selected.Name == "profile" })
+		if explicitProfile {
+			return printErr("Invalid profile", errors.New("--profile applies only to real-vm tests"))
+		}
+	default:
+		return printErr("Invalid engine", fmt.Errorf("engine %q is invalid; use real-vm or simulated", *engine))
 	}
 	scenarios, sourceDir, err := readTestManifest(*manifestPath)
 	if err != nil {
@@ -172,14 +187,30 @@ func cmdTest(args []string) int {
 	if !ok {
 		return printErr("Unknown scenario", fmt.Errorf("%q is not declared in %s", *scenarioName, *manifestPath))
 	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
+	var client *Client
+	if *engine == "real-vm" {
+		client, err = authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+	} else if len(scenario.Simulation) == 0 {
+		return printErr("No simulation", fmt.Errorf("scenario %q has no simulation command", *scenarioName))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	results := make([]testRunReceipt, 0, len(profiles))
+	results := make([]testRunReceipt, 0, len(profiles)+1)
 	failed := false
+	if *engine == "simulated" {
+		receipt := runSimulatedTest(ctx, *scenarioName, scenario, sourceDir)
+		results = append(results, receipt)
+		failed = receipt.Status != "passed"
+		if !jsonOutput {
+			fmt.Fprintf(osStdout, "%s: %s (simulated)\n", receipt.Scenario, receipt.Status)
+			if receipt.Error != "" {
+				fmt.Fprintln(osStderr, receipt.Error)
+			}
+		}
+	}
 	for _, selected := range profiles {
 		if ctx.Err() != nil {
 			failed = true
@@ -258,6 +289,9 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		}
 		if len(scenario.Command) == 0 || scenario.Command[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q needs a command", name)
+		}
+		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {
+			return nil, "", fmt.Errorf("scenario %q has an empty simulation command", name)
 		}
 		if len(scenario.Services) > 15 {
 			return nil, "", fmt.Errorf("scenario %q may declare at most 15 services", name)
@@ -481,8 +515,38 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 	return env, ids, nil
 }
 
+func runSimulatedTest(parent context.Context, name string, scenario testScenario, manifestDir string) testRunReceipt {
+	receipt := testRunReceipt{Scenario: name, Profile: "simulated", Engine: "simulated", Status: "failed"}
+	if len(scenario.Simulation) == 0 || scenario.Simulation[0] == "" {
+		receipt.Error = "scenario has no simulation command"
+		return receipt
+	}
+	timeout := 15 * time.Minute
+	if scenario.Timeout != "" {
+		timeout, _ = time.ParseDuration(scenario.Timeout)
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	source := scenario.Source
+	if source == "" {
+		source = "."
+	}
+	sourceDir, err := resolveDeploySourceDir(manifestDir, source)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("simulation source directory: %v", err)
+		return receipt
+	}
+	env := append(testCommandBaseEnv(), "GREGALE_TEST_ENGINE=simulated", "GREGALE_TEST_PROFILE=simulated", "GREGALE_TEST_SCENARIO="+name)
+	if err := runTestCommand(ctx, sourceDir, env, scenario.Simulation); err != nil {
+		receipt.Error = fmt.Sprintf("simulation command: %v", err)
+		return receipt
+	}
+	receipt.Status = "passed"
+	return receipt
+}
+
 func runTestProfile(parent context.Context, client *Client, name string, scenario testScenario, manifestDir, profile string) (receipt testRunReceipt) {
-	receipt = testRunReceipt{Scenario: name, Profile: profile, Engine: "real-vm", Status: "failed"}
+	receipt = testRunReceipt{Scenario: name, Profile: profile, Engine: "real-vm", Status: "failed", Evidence: &testWakeEvidence{}}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		receipt.Error = fmt.Sprintf("create test run identity: %v", err)
@@ -729,7 +793,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	proxy, recorder := newTestProxy(target)
 	defer proxy.Close()
-	env := append(os.Environ(),
+	env := append(testCommandBaseEnv(),
 		"GREGALE_TEST_URL="+proxy.URL,
 		"GREGALE_TEST_APP_SLUG="+session.App.Slug,
 		"GREGALE_TEST_RUN_ID="+receipt.RunID,
@@ -788,7 +852,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	if len(scenario.Trigger) > 0 {
 		if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
 			receipt.Error = fmt.Sprintf("application trigger command: %v", err)
-			receipt.Evidence = recorder.snapshot()
+			receipt.captureWakeEvidence(recorder)
 			return
 		}
 		slugs := make([]string, 0, len(workloads))
@@ -799,7 +863,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Outputs = outputs
 		if err != nil {
 			receipt.Error = fmt.Sprintf("wait for application output: %v", err)
-			receipt.Evidence = recorder.snapshot()
+			receipt.captureWakeEvidence(recorder)
 			return
 		}
 		receipt.QueueIdle = scenario.WaitFor.QueueIdle
@@ -811,7 +875,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			receipt.Deliveries = append(receipt.Deliveries, evidence)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("wait for delivery sink %s: %v", condition.Service, err)
-				receipt.Evidence = recorder.snapshot()
+				receipt.captureWakeEvidence(recorder)
 				return
 			}
 		}
@@ -819,8 +883,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
 		receipt.Error = fmt.Sprintf("application assertion command: %v", err)
 	}
-	receipt.Evidence = recorder.snapshot()
-	if err := verifyTestProfile(ctx, client, session.App.Slug, profile, &receipt.Evidence); err != nil {
+	receipt.captureWakeEvidence(recorder)
+	if err := verifyTestProfile(ctx, client, session.App.Slug, profile, receipt.Evidence); err != nil {
 		if receipt.Error != "" {
 			receipt.Error += "; "
 		}
@@ -853,6 +917,11 @@ func (r *testRunReceipt) addCleanupError(message string) {
 	}
 	r.CleanupError += message
 	r.Status = "failed"
+}
+
+func (r *testRunReceipt) captureWakeEvidence(recorder *testProxyRecorder) {
+	evidence := recorder.snapshot()
+	r.Evidence = &evidence
 }
 
 func prepareTestProfile(ctx context.Context, client *Client, slug, profile string) error {
@@ -1001,6 +1070,18 @@ func runTestCommand(ctx context.Context, dir string, env, argv []string) error {
 		return fmt.Errorf("%s: %w", argv[0], err)
 	}
 	return nil
+}
+
+func testCommandBaseEnv() []string {
+	base := os.Environ()
+	clean := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "GREGALE_TEST_") {
+			clean = append(clean, entry)
+		}
+	}
+	return clean
 }
 
 type testOutputClient interface {

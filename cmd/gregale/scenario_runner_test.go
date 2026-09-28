@@ -24,6 +24,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	content = strings.Replace(content, "    consumers:", "    consumer_auth_mode: required\n    consumers:", 1)
 	content = strings.Replace(content, "notifications: {source: ./notifications}", "notifications: {fixture: delivery-sink, fail_first: 1}", 1)
 	content = strings.Replace(content, "      queue_idle: true", "      queue_idle: true\n      deliveries: [{service: notifications, min_attempts: 2, last_status: 200}]", 1)
+	content = strings.Replace(content, "    command:", "    simulation: [sh, -c, 'exit 0']\n    command:", 1)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || scenarios["customer-export"].Services["notifications"].Fixture != testDeliverySinkFixture || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired || len(scenarios["customer-export"].WaitFor.Deliveries) != 1 {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || len(scenarios["customer-export"].Simulation) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || scenarios["customer-export"].Services["notifications"].Fixture != testDeliverySinkFixture || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired || len(scenarios["customer-export"].WaitFor.Deliveries) != 1 {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
@@ -370,6 +371,30 @@ func TestSelectedTestProfiles(t *testing.T) {
 	}
 	if _, err := selectedTestProfiles("coldish"); err == nil {
 		t.Fatal("invalid profile accepted")
+	}
+}
+
+func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GREGALE_TEST_URL", "https://production.example")
+	manifest := filepath.Join(dir, "gregale-test.yaml")
+	report := filepath.Join(dir, "report.json")
+	contents := "version: 1\nscenarios:\n  local-test:\n    project: local-test\n    source: .\n    simulation: [sh, -c, 'test \"$GREGALE_TEST_ENGINE\" = simulated && test -z \"$GREGALE_TEST_URL\"']\n    command: [sh, -c, 'exit 1']\n"
+	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--manifest", manifest, "--report", report}); code != 0 {
+		t.Fatalf("simulated test exit = %d, want 0", code)
+	}
+	body, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"engine": "simulated"`) || strings.Contains(string(body), `"evidence"`) || strings.Contains(string(body), `"app_slug"`) {
+		t.Fatalf("simulated report mislabels platform evidence: %s", body)
+	}
+	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--profile", "cold", "--manifest", manifest}); code == 0 {
+		t.Fatal("simulated run accepted a VM lifecycle profile")
 	}
 }
 

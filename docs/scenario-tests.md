@@ -57,6 +57,7 @@ scenarios:
           min_count: 1
           min_total_bytes: 1
     command: [node, --test, test/customer-export.test.mjs]
+    simulation: [node, --test, test/customer-export.simulated.test.mjs]
     cleanup:
       - [node, test/fixtures/cleanup.mjs]
 ```
@@ -66,7 +67,17 @@ Run all three profiles, or select one:
 ```sh
 gregale test --scenario customer-export --report test-results.json
 gregale test --scenario customer-export --profile restored
+gregale test --scenario customer-export --engine simulated
 ```
+
+`real-vm` is the default engine. `--engine simulated` runs the separate
+`simulation` command locally, once, without platform provisioning or login.
+It receives `GREGALE_TEST_ENGINE=simulated`,
+`GREGALE_TEST_PROFILE=simulated`, and `GREGALE_TEST_SCENARIO`. The report omits
+VM wake evidence and labels its engine `simulated`. VM lifecycle profiles only
+apply to `real-vm`, and passing `--profile` with `--engine simulated` is an
+error. A simulation can test application logic quickly, while the real-VM runs
+prove the platform lifecycle path.
 
 The assertion command receives `GREGALE_TEST_URL`,
 `GREGALE_TEST_APP_SLUG`, `GREGALE_TEST_RUN_ID`, `GREGALE_TEST_PROFILE`, and
@@ -177,8 +188,8 @@ For an export test they should submit and retry the same
 export request, inspect the produced object through both customers' credentials,
 and check notification delivery. The delivery sink records each attempt's
 status and body for retry assertions. Warm first-request evidence for sibling
-workloads and simulated execution are still being added. Test reports label
-this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
+workloads is still being added. Real platform reports label this path
+`real-vm`; simulated runs never count as lifecycle proof.
 
 `--profile cold` relies on the preview-only `fresh=true` form of
 `POST /v1/apps/{slug}/park`. The API rejects that option for a production app.

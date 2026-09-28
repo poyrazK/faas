@@ -1209,10 +1209,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "test",
 		DocSlug:  "test",
-		Short:    "Run an application scenario on isolated Gregale infrastructure",
-		Examples: []string{"gregale test --scenario customer-export", "gregale test --scenario customer-export --profile restored --report test-results.json"},
+		Short:    "Run an application scenario with real VMs or a local simulation",
+		Examples: []string{"gregale test --scenario customer-export", "gregale test --scenario customer-export --profile restored --report test-results.json", "gregale test --scenario customer-export --engine simulated"},
 		Flags: []cliFlag{
 			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Req: true, Value: "NAME"},
+			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "simulated"}},
 			{Name: "profile", Short: "required lifecycle (default all)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
 			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
 			{Name: "report", Short: "write a JSON report", Value: "PATH"},
