@@ -22,17 +22,18 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // githubActionVersion is the moving major Action tag maintained by the
 // release workflow. Gregale is pre-1.0, so public beta releases publish v0.
-// The snippet also emits a `# pin:`
-// comment line pointing at the immutable SHA so customers who want
-// hard reproducibility can copy-paste it. The bundled CLI version is surfaced
-// as `cli-version`; the SHA pin is the reproducibility escape hatch.
+// The snippet defaults to the moving major tag. Passing --pinned-sha makes
+// the generated `uses:` reference immutable and leaves a comment with the pin
+// for review. The bundled CLI version is surfaced as `cli-version`.
 const githubActionVersion = "v0"
 
 // githubActionPath is the monorepo path to the composite action. ADR-093
@@ -119,17 +120,21 @@ func renderGithubSnippet(env githubSnippetEnv, app, pinnedSHA string) string {
 	}
 
 	// Action reference + pin comment. The `uses:` line picks the maintained
-	// moving major by default; the `# pin:`
-	// comment shows the immutable SHA for customers who want repro.
+	// moving major by default; when the caller supplies a SHA, both the actual
+	// reference and review comment use that immutable commit.
 	// Monorepo shape: ADR-093 — the action lives at
 	// poyrazK/faas/.github/actions/deploy, no separate repo.
-	usesRef := fmt.Sprintf("%s/%s@%s", githubActionRepo, githubActionPath, githubActionVersion)
+	actionRef := githubActionVersion
+	if pinnedSHA != "" {
+		actionRef = strings.ToLower(strings.TrimSpace(pinnedSHA))
+	}
+	usesRef := fmt.Sprintf("%s/%s@%s", githubActionRepo, githubActionPath, actionRef)
 	pinLine := ""
 	if pinnedSHA != "" {
-		pinLine = fmt.Sprintf("# pin this Action for reproducibility: %s/%s@%s\n", githubActionRepo, githubActionPath, pinnedSHA)
+		pinLine = fmt.Sprintf("# pin this Action for reproducibility: %s/%s@%s\n", githubActionRepo, githubActionPath, actionRef)
 	} else {
-		// No SHA → drop the pin line; the README covers the
-		// "first release, no SHA yet" case explicitly.
+		// No SHA → drop the pin line; the moving-major ref remains the
+		// public-beta default.
 		pinLine = ""
 	}
 
@@ -194,7 +199,7 @@ func cmdDeployGithubSnippet(args []string) int {
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")
-	pinnedSHA := fs.String("pinned-sha", "", "optional Action commit SHA for the `# pin:` comment line")
+	pinnedSHA := fs.String("pinned-sha", "", "pin the generated Action to this full 40-character commit SHA")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA]", "deploy")
 		return 1
@@ -205,6 +210,13 @@ func cmdDeployGithubSnippet(args []string) int {
 	if *app == "" {
 		PrintFail(osStderr, "missing --app (the snippet generator needs a slug to embed)")
 		return 1
+	}
+	if *pinnedSHA != "" {
+		sha, err := normalizeGithubActionSHA(*pinnedSHA)
+		if err != nil {
+			return printErr("Invalid --pinned-sha", err)
+		}
+		*pinnedSHA = sha
 	}
 	env := detectGithubSnippetEnv()
 	// CLI overrides beat env detection on a field-by-field basis so a
@@ -221,4 +233,17 @@ func cmdDeployGithubSnippet(args []string) int {
 	}
 	_, _ = fmt.Fprint(osStdout, renderGithubSnippet(env, *app, *pinnedSHA))
 	return 0
+}
+
+func normalizeGithubActionSHA(raw string) (string, error) {
+	sha := strings.TrimSpace(raw)
+	if len(sha) != 40 {
+		return "", errors.New("expected a full 40-character Git commit SHA")
+	}
+	for _, r := range sha {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return "", errors.New("expected a full 40-character Git commit SHA")
+		}
+	}
+	return strings.ToLower(sha), nil
 }

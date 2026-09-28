@@ -205,6 +205,12 @@ and the snippet emits the `${{ github.repository }}` /
 `${{ github.sha }}` expressions so the same file is portable
 across repos.
 
+Both `gregale github setup` and `gregale deploy --github` accept
+`--pinned-sha <SHA>` to put an immutable Action commit directly in the
+generated `uses:` line. Resolve the moving `v0` tag with
+`git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0` when you want
+to pin the current release.
+
 ### What goes in the snippet
 
 - `api-key: ${{ secrets.GREGALE_API_KEY }}` — never a literal.

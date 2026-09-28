@@ -293,13 +293,13 @@ func TestRenderGithubSnippet(t *testing.T) {
 			},
 		},
 		{
-			name:      "pinned SHA emits # pin: <sha> comment line",
+			name:      "pinned SHA emits an immutable uses reference and comment",
 			env:       githubSnippetEnv{Runner: false},
 			app:       "my-app",
 			pinnedSHA: "f1e2d3c4b5a6987654321098765432109abcdef0",
 			mustLines: []string{
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"uses: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 			},
 		},
 		{
@@ -315,7 +315,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: onebox-faas/hello",
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 				"app: hello",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"uses: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 			},
 		},
 		{
@@ -402,6 +402,22 @@ func TestRenderGithubSnippet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNormalizeGithubActionSHA(t *testing.T) {
+	valid := "F1E2D3C4B5A6987654321098765432109ABCDEF0"
+	got, err := normalizeGithubActionSHA("  " + valid + "\n")
+	if err != nil {
+		t.Fatalf("normalize valid SHA: %v", err)
+	}
+	if want := strings.ToLower(valid); got != want {
+		t.Fatalf("normalized SHA = %q, want %q", got, want)
+	}
+	for _, invalid := range []string{"", "f1e2", strings.Repeat("z", 40), strings.Repeat("a", 41)} {
+		if _, err := normalizeGithubActionSHA(invalid); err == nil {
+			t.Errorf("normalizeGithubActionSHA(%q) succeeded, want error", invalid)
+		}
 	}
 }
 

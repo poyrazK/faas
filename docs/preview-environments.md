@@ -217,6 +217,17 @@ projects that do not run setup retain webhook-owned
 production deploys. To opt into production service calls from previews, pass
 `--preview-service-policy allow_marked` explicitly.
 
+The generated workflow uses the maintained `@v0` deploy Action tag by default.
+For an immutable reference, resolve the tag to its current commit and pass it
+to setup with `--pinned-sha`:
+
+```bash
+set -euo pipefail
+ACTION_SHA="$(git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0 | cut -f1)"
+test "${#ACTION_SHA}" -eq 40
+gregale github setup checkout --repo OWNER/NAME --pinned-sha "$ACTION_SHA"
+```
+
 Generated workflows serialize deployments by app and Gregale target scope.
 Pushes to separate mapped environments can proceed independently, while
 branches and tags targeting the same scope share a deployment queue.

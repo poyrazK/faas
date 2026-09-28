@@ -2306,6 +2306,15 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 		t.Errorf("snippet path should not write to stderr; got %q", stderr.String())
 	}
 
+	stdout.Reset()
+	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pinned-sha", sha}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pinned-sha: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not use immutable Action SHA %q; got:\n%s", sha, got)
+	}
+
 	// No HTTP server is set up — the flag must NOT have hit the network.
 	// The test would fail with a different error if it had tried to
 	// auth or call the API (authedClient would return an error and

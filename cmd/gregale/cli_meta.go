@@ -671,6 +671,7 @@ var cliCommands = []cliCommand{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "comma-separated branch=environment mappings (default or registered environment)", Value: "MAPPINGS"},
+				{Name: "pinned-sha", Short: "pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag)", Value: "SHA"},
 				{Name: "workflow", Short: "workflow path relative to repository root", Value: "PATH"},
 				{Name: "preview", Short: "enable pull-request previews"},
 				{Name: "no-preview", Short: "disable pull-request previews"},
@@ -1038,6 +1039,7 @@ var cliCommands = []cliCommand{
 			// snippet for the Gregale deploy action. No auth, no side effects.
 			// The snippet uses --name / cwd as the app slug.
 			{Name: "github", Short: "emit a GitHub Actions workflow snippet for the Gregale deploy action"},
+			{Name: "pinned-sha", Short: "with --github only, pin the generated Action to this full 40-character commit SHA", Value: "SHA"},
 			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
 			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},

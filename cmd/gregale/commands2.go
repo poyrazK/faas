@@ -2147,6 +2147,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
 	// See cmd_deploy_github.go for the snippet body.
 	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
+	pinnedActionSHA := fs.String("pinned-sha", "", "with --github only, pin the generated deploy Action to this full 40-character commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -2737,7 +2738,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *noTraffic {
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
-		return cmdDeployGithubSnippet([]string{"--app", slug})
+		return cmdDeployGithubSnippet([]string{"--app", slug, "--pinned-sha", *pinnedActionSHA})
+	}
+	if *pinnedActionSHA != "" {
+		return printErr("Invalid flags", fmt.Errorf("--pinned-sha requires --github"))
 	}
 
 	// --repo is the headless source-ref deploy path (issue #739 /
