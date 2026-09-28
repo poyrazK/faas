@@ -350,7 +350,7 @@ func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connect
 				// this node's snapshot complete.
 				return fmt.Errorf("realtime: record channel route before subscribe: %w", err)
 			}
-			o.publishTargetCache.invalidate()
+			o.publishTargetCache.invalidateKey(managedRealtimePublishTargetCacheKey{endpointID: endpointID, channel: channel})
 		}
 		return op.Subscribe(ctx, endpointID, connectionID, channel)
 	})
@@ -398,7 +398,7 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 			}
 			logger.WarnContext(ctx, "failed to remove empty realtime channel route; retaining route hint", "node_id", lease.NodeID, "error", err)
 		} else {
-			o.publishTargetCache.invalidate()
+			o.publishTargetCache.invalidateKey(managedRealtimePublishTargetCacheKey{endpointID: endpointID, channel: channel})
 		}
 		return nil
 	})

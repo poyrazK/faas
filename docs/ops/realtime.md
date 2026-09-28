@@ -111,10 +111,13 @@ recovery tooling.
 
 When channel routing is enabled, each apid keeps a bounded cache of publish
 targets while its PostgreSQL route-change listener is connected. Committed
-route, snapshot, overflow, or active-node changes invalidate cached targets.
-The cache is cleared and disabled when the listener disconnects, then enabled
-with an empty cache after it reconnects. Cold lookups continue through the
-shared route directory.
+route changes invalidate their endpoint/channel entry; endpoint overflow
+changes invalidate that endpoint's entries. Snapshot generation, readiness,
+and active-node changes invalidate the full cache. If the listener falls
+behind, it collapses pending notifications into a full invalidation. The cache
+is cleared and disabled when the listener disconnects, then enabled with an
+empty cache after it reconnects. Cold lookups continue through the shared route
+directory.
 
 Apid exports bounded-cardinality route-directory metrics in its operations
 registry. `apid_realtime_channel_route_publish_decisions_total` counts

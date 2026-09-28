@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -12,18 +13,27 @@ const managedRealtimeChannelRouteTargetChangeChannel = "managed_realtime_channel
 // directory changes. It marks the listener unavailable on disconnect so
 // callers can stop serving cached target sets until LISTEN is re-established.
 func (s *PgStore) WatchManagedRealtimeChannelRouteTargetChanges(ctx context.Context) <-chan ManagedRealtimeChannelRouteTargetCacheEvent {
-	events := make(chan ManagedRealtimeChannelRouteTargetCacheEvent, 1)
+	events := make(chan ManagedRealtimeChannelRouteTargetCacheEvent, 32)
 	emit := func(event ManagedRealtimeChannelRouteTargetCacheEvent) {
 		select {
 		case events <- event:
+			return
 		default:
+		}
+		// Scoped events may not be dropped: if the consumer falls behind,
+		// collapse the backlog into one full invalidation instead.
+		for {
 			select {
 			case <-events:
 			default:
-			}
-			select {
-			case events <- event:
-			case <-ctx.Done():
+				event.EndpointID = ""
+				event.Channel = ""
+				event.InvalidateAll = true
+				select {
+				case events <- event:
+				case <-ctx.Done():
+				}
+				return
 			}
 		}
 	}
@@ -53,7 +63,7 @@ func (s *PgStore) WatchManagedRealtimeChannelRouteTargetChanges(ctx context.Cont
 			}
 
 			retryDelay = time.Second
-			emit(ManagedRealtimeChannelRouteTargetCacheEvent{Listening: true})
+			emit(ManagedRealtimeChannelRouteTargetCacheEvent{Listening: true, InvalidateAll: true})
 			for ctx.Err() == nil {
 				notification, waitErr := conn.Conn().WaitForNotification(ctx)
 				if waitErr != nil {
@@ -61,14 +71,14 @@ func (s *PgStore) WatchManagedRealtimeChannelRouteTargetChanges(ctx context.Cont
 					break
 				}
 				if notification != nil && notification.Channel == managedRealtimeChannelRouteTargetChangeChannel {
-					emit(ManagedRealtimeChannelRouteTargetCacheEvent{Listening: true})
+					emit(managedRealtimeChannelRouteTargetCacheEvent(notification.Payload))
 				}
 			}
 			conn.Release()
 			if ctx.Err() != nil {
 				return
 			}
-			emit(ManagedRealtimeChannelRouteTargetCacheEvent{Err: err})
+			emit(ManagedRealtimeChannelRouteTargetCacheEvent{InvalidateAll: true, Err: err})
 			if !waitManagedRealtimeChannelRouteListenerRetry(ctx, retryDelay) {
 				return
 			}
@@ -76,6 +86,21 @@ func (s *PgStore) WatchManagedRealtimeChannelRouteTargetChanges(ctx context.Cont
 		}
 	}()
 	return events
+}
+
+func managedRealtimeChannelRouteTargetCacheEvent(payload string) ManagedRealtimeChannelRouteTargetCacheEvent {
+	event := ManagedRealtimeChannelRouteTargetCacheEvent{Listening: true}
+	var scope struct {
+		EndpointID string `json:"endpoint_id"`
+		Channel    string `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(payload), &scope); err != nil || scope.EndpointID == "" {
+		event.InvalidateAll = true
+		return event
+	}
+	event.EndpointID = scope.EndpointID
+	event.Channel = scope.Channel
+	return event
 }
 
 func waitManagedRealtimeChannelRouteListenerRetry(ctx context.Context, delay time.Duration) bool {

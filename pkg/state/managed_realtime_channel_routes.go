@@ -96,12 +96,14 @@ type ManagedRealtimeChannelRouteSnapshotRevisionStore interface {
 	ReplaceManagedRealtimeChannelRoutesWithRevision(context.Context, string, int64, []ManagedRealtimeChannelRoute, *ManagedRealtimeChannelRouteSnapshotRevision) error
 }
 
-// ManagedRealtimeChannelRouteTargetCacheEvent reports that the route-change
-// listener is ready or unavailable. Every event also requires cached targets
-// to be invalidated.
+// ManagedRealtimeChannelRouteTargetCacheEvent reports listener readiness and
+// the cache scope to invalidate. An empty scope invalidates every cached key.
 type ManagedRealtimeChannelRouteTargetCacheEvent struct {
-	Listening bool
-	Err       error
+	Listening     bool
+	InvalidateAll bool
+	EndpointID    string
+	Channel       string
+	Err           error
 }
 
 // ManagedRealtimeChannelRouteTargetCacheListener streams route-directory
