@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -124,9 +125,37 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 type authLimiter struct {
 	cfg AuthLimitConfig
 	mu  sync.Mutex
-	// failures is keyed by client IP. Each value is a slice of failure
-	// timestamps in arrival order.
+	// failures is keyed by limiterKey(client IP). Each value is a slice
+	// of failure timestamps in arrival order.
 	failures map[string][]time.Time
+	// lastSweep bounds how often recordFailure walks the map to drop
+	// keys whose failures all expired.
+	lastSweep time.Time
+}
+
+// limiterSweepThreshold is the tracked-key count past which
+// recordFailure prunes expired keys (at most once per window).
+const limiterSweepThreshold = 4096
+
+// limiterKey buckets IPv6 clients by /64. A single subscriber is
+// routinely delegated a whole /64, so keying on the full address gave
+// them 2^64 fresh budgets: rotating the interface ID bypassed the
+// per-IP auth limit (and grew the failure map without bound). IPv4
+// and IPv4-mapped addresses keep their exact address.
+func limiterKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.WithZone("").Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
 }
 
 // Limiter is the exported handle on an authLimiter. Use NewLimiter to
@@ -286,7 +315,8 @@ func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := cfg.ClientIPFn(r)
-			if lim.inner.isLimited(ip, cfg.Now()) {
+			key := limiterKey(ip)
+			if lim.inner.isLimited(key, cfg.Now()) {
 				if cfg.OnLimited != nil {
 					cfg.OnLimited(w, r)
 					return
@@ -307,7 +337,7 @@ func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) 
 			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rw, r)
 			if countFn(rw.status) {
-				lim.inner.recordFailure(ip, cfg.Now())
+				lim.inner.recordFailure(key, cfg.Now())
 			}
 		})
 	}
@@ -320,6 +350,17 @@ func (l *authLimiter) recordFailure(ip string, now time.Time) {
 		l.failures = make(map[string][]time.Time)
 	}
 	cutoff := now.Add(-l.cfg.Window)
+	if len(l.failures) >= limiterSweepThreshold && now.Sub(l.lastSweep) >= l.cfg.Window {
+		// Keys are otherwise pruned only when the same client comes
+		// back; one-shot failures from many addresses accumulated
+		// forever.
+		for key, times := range l.failures {
+			if len(times) == 0 || times[len(times)-1].Before(cutoff) {
+				delete(l.failures, key)
+			}
+		}
+		l.lastSweep = now
+	}
 	fs := l.failures[ip]
 	// Drop expired entries from the front.
 	i := 0
