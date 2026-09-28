@@ -70,6 +70,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Root:               outboxRoot,
 		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
 		ReplayWorkers:      envInt("FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", realtime.DefaultCallbackOutboxReplayWorkers),
+		MaxRetryInterval:   envDuration("FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", realtime.DefaultCallbackOutboxMaxRetryInterval),
 	})
 	if err != nil {
 		return err

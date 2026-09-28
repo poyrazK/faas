@@ -1,5 +1,8 @@
 package realtime
 
+// adr: 296
+// adr: 297
+
 import (
 	"context"
 	"encoding/json"
@@ -7,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -89,6 +94,73 @@ func TestHTTPHooksRetriesTransientCallbackFailures(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 3 {
 		t.Fatalf("callback attempts = %d, want 3", got)
+	}
+}
+
+func TestCallbackRetryAfterParsesOnlyBoundedRetryableResponses(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	if got := parseCallbackRetryAfter(http.StatusTooManyRequests, "12", now); got != 12*time.Second {
+		t.Errorf("Retry-After seconds = %s, want 12s", got)
+	}
+	date := now.Add(30 * time.Second).Format(http.TimeFormat)
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, date, now); got != 30*time.Second {
+		t.Errorf("Retry-After date = %s, want 30s", got)
+	}
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "999999999", now); got != MaxCallbackOutboxMaxRetryInterval {
+		t.Errorf("oversized Retry-After = %s, want cap %s", got, MaxCallbackOutboxMaxRetryInterval)
+	}
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "18446744073709551615", now); got != MaxCallbackOutboxMaxRetryInterval {
+		t.Errorf("Retry-After above int64 range = %s, want cap %s", got, MaxCallbackOutboxMaxRetryInterval)
+	}
+	if got := parseCallbackRetryAfter(http.StatusServiceUnavailable, "-999999999", now); got != 0 {
+		t.Errorf("negative Retry-After = %s, want 0", got)
+	}
+	if got := parseCallbackRetryAfter(http.StatusBadGateway, "12", now); got != 0 {
+		t.Errorf("Retry-After on 502 = %s, want ignored", got)
+	}
+	if got := parseCallbackRetryAfter(http.StatusTooManyRequests, "invalid", now); got != 0 {
+		t.Errorf("invalid Retry-After = %s, want ignored", got)
+	}
+}
+
+func TestHTTPHooksPersistsBoundedRetryAfterOnDurableFailure(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{
+		Root: root, RetryInterval: time.Millisecond, MaxRetryInterval: 20 * time.Second,
+	})
+	hooks := HTTPHooks{Client: server.Client(), DurableQueue: queue, MaxAttempts: 3}
+	event := testCallbackEvent()
+	event.CallbackURL = server.URL
+	started := time.Now()
+	err := hooks.Message(context.Background(), event)
+	var callbackErr *CallbackHTTPError
+	if !errors.As(err, &callbackErr) || callbackErr.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Message error = %v, want CallbackHTTPError(503)", err)
+	}
+	if callbackErr.RetryAfter != 60*time.Second {
+		t.Fatalf("Retry-After hint = %s, want 60s before queue cap", callbackErr.RetryAfter)
+	}
+	payload, err := os.ReadFile(filepath.Join(root, event.ID+".json"))
+	if err != nil {
+		t.Fatalf("read pending callback: %v", err)
+	}
+	var record callbackOutboxRecord
+	if err := json.Unmarshal(payload, &record); err != nil {
+		t.Fatalf("decode pending callback: %v", err)
+	}
+	remaining := record.NextAttemptAt.Sub(started)
+	if record.Attempts != 1 || remaining < 19*time.Second || remaining > 21*time.Second {
+		t.Fatalf("pending retry = attempts %d, remaining %s, want 20s configured cap", record.Attempts, remaining)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("callback requests = %d, want one because 60s Retry-After exceeds inline cap", got)
 	}
 }
 
@@ -246,6 +318,29 @@ func TestHTTPHooksMarksOutboxPersistenceFailureAsAdmissionFailure(t *testing.T) 
 	}
 }
 
+func TestHTTPHooksMarksNonDurableMessageAndDisconnectFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	hooks := HTTPHooks{Client: server.Client(), MaxAttempts: 1}
+
+	message := testCallbackEvent()
+	message.CallbackURL = server.URL
+	message.CallbackPath = "/message"
+	if err := hooks.Message(context.Background(), message); !errors.Is(err, ErrCallbackNotPersisted) {
+		t.Fatalf("Message error = %v, want ErrCallbackNotPersisted", err)
+	}
+
+	disconnect := message
+	disconnect.ID = "evt_disconnect"
+	disconnect.Type = EventDisconnect
+	disconnect.CallbackPath = "/disconnect"
+	if err := hooks.Disconnect(context.Background(), disconnect); !errors.Is(err, ErrCallbackNotPersisted) {
+		t.Fatalf("Disconnect error = %v, want ErrCallbackNotPersisted", err)
+	}
+}
+
 func TestHTTPHooksRetryBackoffHonorsContext(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -283,7 +378,7 @@ func TestHealthHandlerDoesNotExposeManagementRoutes(t *testing.T) {
 		t.Fatalf("health status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 
-	for _, path := range []string{"/internal/stats", "/internal/connections", "/internal/endpoints"} {
+	for _, path := range []string{"/internal/stats", "/internal/connections", "/internal/endpoints", "/internal/callbacks/dead-letters"} {
 		request = httptest.NewRequest(http.MethodGet, path, nil)
 		recorder = httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)

@@ -48,13 +48,14 @@ const (
 )
 
 var (
-	ErrEndpointNotFound   = errors.New("realtime: endpoint not found")
-	ErrConnectionNotFound = errors.New("realtime: connection not found")
-	ErrTooManyConnections = errors.New("realtime: connection limit reached")
-	ErrOutboundQueueFull  = errors.New("realtime: outbound queue full")
-	ErrConnectionClosed   = errors.New("realtime: connection closed")
-	ErrUnauthorized       = errors.New("realtime: connection unauthorized")
-	ErrInvalidChannel     = errors.New("realtime: invalid channel")
+	ErrEndpointNotFound     = errors.New("realtime: endpoint not found")
+	ErrConnectionNotFound   = errors.New("realtime: connection not found")
+	ErrTooManyConnections   = errors.New("realtime: connection limit reached")
+	ErrOutboundQueueFull    = errors.New("realtime: outbound queue full")
+	ErrConnectionClosed     = errors.New("realtime: connection closed")
+	ErrUnauthorized         = errors.New("realtime: connection unauthorized")
+	ErrInvalidChannel       = errors.New("realtime: invalid channel")
+	ErrCallbackNotPersisted = errors.New("realtime: callback was not persisted")
 )
 
 // EventType is the callback event discriminator delivered to an application.
@@ -252,9 +253,13 @@ type Stats struct {
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
+	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
 	CallbackPending                    uint64  `json:"callback_pending"`
 	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
 	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
+	CallbackReplayReady                uint64  `json:"callback_replay_ready"`
+	CallbackReplayDelayed              uint64  `json:"callback_replay_delayed"`
+	CallbackReplayAttempts             uint64  `json:"callback_replay_attempts"`
 	CallbackReplayDeliveries           uint64  `json:"callback_replay_deliveries"`
 	CallbackOldestPendingAgeSeconds    float64 `json:"callback_oldest_pending_age_seconds"`
 	CallbackDeadLetters                uint64  `json:"callback_dead_letters"`
@@ -327,6 +332,7 @@ type Manager struct {
 	callbackErrors                atomic.Uint64
 	callbackOutboxFull            atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
+	callbackUnpersistedFailures   atomic.Uint64
 	authOutcomes                  authOutcomeCounters
 }
 
@@ -796,13 +802,16 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		cancel()
 		if callbackErr != nil {
 			m.callbackErrors.Add(1)
-			if errors.Is(callbackErr, ErrCallbackOutboxAdmission) {
+			if errors.Is(callbackErr, ErrCallbackNotPersisted) {
 				if errors.Is(callbackErr, ErrCallbackOutboxFull) {
 					m.callbackOutboxFull.Add(1)
 					_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
-				} else {
+				} else if errors.Is(callbackErr, ErrCallbackOutboxAdmission) {
 					m.callbackOutboxAdmissionErrors.Add(1)
 					_ = c.close(websocket.CloseTryAgainLater, "callback could not be persisted")
+				} else {
+					m.callbackUnpersistedFailures.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback delivery unavailable")
 				}
 				return
 			}
@@ -892,11 +901,13 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
-		if errors.Is(err, ErrCallbackOutboxAdmission) {
+		if errors.Is(err, ErrCallbackNotPersisted) {
 			if errors.Is(err, ErrCallbackOutboxFull) {
 				m.callbackOutboxFull.Add(1)
-			} else {
+			} else if errors.Is(err, ErrCallbackOutboxAdmission) {
 				m.callbackOutboxAdmissionErrors.Add(1)
+			} else {
+				m.callbackUnpersistedFailures.Add(1)
 			}
 		}
 	}
@@ -1122,12 +1133,16 @@ func (m *Manager) Stats() Stats {
 		CallbackErrors:                m.callbackErrors.Load(),
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
+		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()
 		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
 		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
 		stats.CallbackPendingCapacityBytes = uint64(maxInt64(outbox.CapacityBytes, 0))
+		stats.CallbackReplayReady = uint64(maxInt(outbox.ReplayReady, 0))
+		stats.CallbackReplayDelayed = uint64(maxInt(outbox.ReplayDelayed, 0))
+		stats.CallbackReplayAttempts = outbox.ReplayAttempts
 		stats.CallbackReplayDeliveries = outbox.ReplayDeliveries
 		stats.CallbackOldestPendingAgeSeconds = outbox.OldestPendingAgeSeconds
 		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))
