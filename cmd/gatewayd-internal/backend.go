@@ -1299,6 +1299,14 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			// deployment dimension is currently empty. Fence rollout and
 			// traffic changes with an app-wide cache purge.
 			inv.InvalidateResponseCacheByApp(p.AppID)
+			// A traffic update can give a previously cold deployment a positive
+			// weight. Re-read running instances before publishing that weight so
+			// a missed instance_changed notification cannot leave the picker
+			// falling back to a sibling with a different traffic share.
+			if err := inv.RefreshLiveTargets(ctx, p.AppID); err != nil {
+				log.Warn("gatewayd: refresh deployment targets failed", "app", p.AppID, "err", err)
+				return
+			}
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)
 			}

@@ -697,6 +697,12 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	if f.refreshed[0] != "app-7" {
 		t.Errorf("refreshed[0] = %q, want app-7", f.refreshed[0])
 	}
+	if len(f.liveRefreshed) != 1 || f.liveRefreshed[0] != "app-7" {
+		t.Errorf("target refreshes = %v, want [app-7]", f.liveRefreshed)
+	}
+	if got := strings.Join(f.refreshOrder, ","); got != "targets,weights" {
+		t.Errorf("refresh order = %q, want targets,weights", got)
+	}
 	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
 		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)
 	}
@@ -705,6 +711,26 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 	if len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != "app-7" {
 		t.Errorf("routeInvalidations = %v, want [app-7]", f.routeInvalidations)
+	}
+}
+
+func TestHandleInvalidation_DeploymentChangedDoesNotPublishWeightsWhenTargetRefreshFails(t *testing.T) {
+	f := &fakeInvalidator{liveRefreshErr: errors.New("target refresh failed")}
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"kind":"traffic","app_id":"app-7","deployment_id":"dep-3"}`,
+	}, testLogger())
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.liveRefreshed) != 1 || f.liveRefreshed[0] != "app-7" {
+		t.Fatalf("target refreshes = %v, want [app-7]", f.liveRefreshed)
+	}
+	if len(f.refreshed) != 0 {
+		t.Fatalf("weight refreshes = %v, want none after target refresh failure", f.refreshed)
+	}
+	if got := strings.Join(f.refreshOrder, ","); got != "targets" {
+		t.Fatalf("refresh order = %q, want targets", got)
 	}
 }
 
