@@ -249,18 +249,52 @@ entitlement or storage pricing. `POST /v1/apps/{slug}/realtime/endpoints/{id}/ch
 commits a payload and returns its channel sequence. `GET` on the same path
 with `after=<last sequence>` returns a page and the current retention bounds;
 an expired cursor returns `410 history_unavailable` so a caller can rebuild its
-state. Retained writes currently do **not** reach WebSocket clients. Do not use
-this API as a reconnect contract until the versioned subscription protocol,
-channel authorization, acknowledgements, and replay/live handoff are shipped.
+state. Retained writes reach only opt-in v2 WebSocket subscriptions when the
+resume preview is enabled; existing raw-frame clients and `:publish` remain
+live-only. Do not use the preview as a production reconnect contract until
+plan entitlements, usage metrics, and fleet qualification are complete.
 The storage window is capped at 1,024 messages of 4 KiB each per channel and
 32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
 only deduplicate while their messages remain retained.
 
-The private `RealtimeHistory.ReadChannelHistory` RPC lets a future realtimed
-subscriber fetch the same bounded page from apid. On a single box it shares
+The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
+same bounded page from apid. On a single box it shares
 `/run/faas/request_telemetry.sock`; split-box apid registers it on the private
-AppErrors mTLS listener. It is not exposed by the public gateway. Realtime
-clients cannot call it until the versioned protocol enforces channel grants.
+AppErrors mTLS listener. It is not exposed by the public gateway.
+
+For a controlled v2 preview, enable `FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1` on
+realtimed and point `FAAS_REALTIME_HISTORY_TARGET` at apid's private listener.
+Single-box defaults to the Unix socket above. A split-box `tcp://` or `dns://`
+target requires `FAAS_REALTIME_HISTORY_TLS_CERT_PATH`, `_KEY_PATH`, and
+`_CA_PATH`. The endpoint must use `oidc_jwt` authentication. Its application
+must implement `POST <callback_url>/realtime/authorize-channel`: Gregale sends
+`realtime.authorize_channel` with the verified principal, endpoint, channel,
+and `permission: "read"`, using the configured callback bearer credential.
+Any 2xx grants that channel for this connection; all other responses and
+callback failures deny it. To revoke a grant already in use, close the
+matching connection through the management API.
+
+A v2 client requests the `gregale.realtime.v2` WebSocket subprotocol and sends
+JSON text frames:
+
+```json
+{"type":"subscribe","channel":"updates","after":812}
+{"type":"ack","channel":"updates","sequence":820}
+{"type":"unsubscribe","channel":"updates"}
+```
+
+After the channel callback grants access, Gregale returns `subscribed`, then
+ordered `message` frames with `channel`, `sequence`, `message_id`,
+`data_base64`, and `binary`. An `acknowledged` frame confirms an ack for a
+sequence sent on this connection. The client must persist its last processed
+cursor and include it as `after` on reconnect. A lost acknowledgement can
+cause redelivery; processing is at least once, not exactly once. An expired
+cursor returns `resync_required` with `oldest_sequence` and `latest_sequence`
+and leaves the channel unsubscribed. While connected, realtimed polls the
+durable log every five seconds; retained writes may therefore arrive with
+that delay. The preview caps a node at 256 v2 subscriptions and a connection
+at eight. If history becomes unavailable, the v2 connection closes with a
+retryable reason rather than silently switching to live-only delivery.
 
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,

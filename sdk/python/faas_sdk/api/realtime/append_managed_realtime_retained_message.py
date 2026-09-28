@@ -108,9 +108,11 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeRetainedMessageResponse | Problem]:
     """Append one ordered message to retained channel history.
 
-     This storage preview does not deliver to WebSocket clients. The sequence is committed before the
-    response; idempotency applies while the message remains retained. At most 32 channels and 1024
-    messages per channel are retained per endpoint, for up to 24 hours.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained
+    writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is
+    enabled. The sequence is committed before the response; idempotency applies while the message
+    remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for
+    up to 24 hours.
 
     Args:
         slug (str):
@@ -151,9 +153,11 @@ def sync(
 ) -> ManagedRealtimeRetainedMessageResponse | Problem | None:
     """Append one ordered message to retained channel history.
 
-     This storage preview does not deliver to WebSocket clients. The sequence is committed before the
-    response; idempotency applies while the message remains retained. At most 32 channels and 1024
-    messages per channel are retained per endpoint, for up to 24 hours.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained
+    writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is
+    enabled. The sequence is committed before the response; idempotency applies while the message
+    remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for
+    up to 24 hours.
 
     Args:
         slug (str):
@@ -189,9 +193,11 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeRetainedMessageResponse | Problem]:
     """Append one ordered message to retained channel history.
 
-     This storage preview does not deliver to WebSocket clients. The sequence is committed before the
-    response; idempotency applies while the message remains retained. At most 32 channels and 1024
-    messages per channel are retained per endpoint, for up to 24 hours.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained
+    writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is
+    enabled. The sequence is committed before the response; idempotency applies while the message
+    remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for
+    up to 24 hours.
 
     Args:
         slug (str):
@@ -230,9 +236,11 @@ async def asyncio(
 ) -> ManagedRealtimeRetainedMessageResponse | Problem | None:
     """Append one ordered message to retained channel history.
 
-     This storage preview does not deliver to WebSocket clients. The sequence is committed before the
-    response; idempotency applies while the message remains retained. At most 32 channels and 1024
-    messages per channel are retained per endpoint, for up to 24 hours.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained
+    writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is
+    enabled. The sequence is committed before the response; idempotency applies while the message
+    remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for
+    up to 24 hours.
 
     Args:
         slug (str):

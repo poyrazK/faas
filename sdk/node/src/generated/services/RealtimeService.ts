@@ -699,7 +699,7 @@ export class RealtimeService {
   }
   /**
    * Append one ordered message to retained channel history.
-   * This storage preview does not deliver to WebSocket clients. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is enabled. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
    * @returns ManagedRealtimeRetainedMessageResponse Message committed to the channel log.
    * @throws ApiError
    */
@@ -749,7 +749,7 @@ export class RealtimeService {
   }
   /**
    * Read a page of retained channel history after a sequence.
-   * A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
    * @returns ManagedRealtimeRetainedHistoryResponse A consistent page of retained messages.
    * @throws ApiError
    */
