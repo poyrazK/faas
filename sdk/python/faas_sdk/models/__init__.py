@@ -179,6 +179,8 @@ from .app_secret_response_last_delivery_error_code import AppSecretResponseLastD
 from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
 from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
 from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
+from .app_secret_revocation_response import AppSecretRevocationResponse
+from .app_secret_revocation_response_status import AppSecretRevocationResponseStatus
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -539,6 +541,7 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
@@ -1431,6 +1434,10 @@ from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
+from .secret_revocation_target import SecretRevocationTarget
+from .secret_revocation_target_error_code import SecretRevocationTargetErrorCode
+from .secret_revocation_target_reload_support import SecretRevocationTargetReloadSupport
+from .secret_revocation_target_status import SecretRevocationTargetStatus
 from .secret_runtime_reload_observation import SecretRuntimeReloadObservation
 from .secret_runtime_reload_observation_application_ack import SecretRuntimeReloadObservationApplicationAck
 from .secret_runtime_reload_observation_application_ack_error_code import (
@@ -1891,6 +1898,8 @@ __all__ = (
     "AppSecretResponseLastRuntimeReloadErrorCode",
     "AppSecretResponseLastRuntimeReloadProjection",
     "AppSecretResponseLastRuntimeReloadSignal",
+    "AppSecretRevocationResponse",
+    "AppSecretRevocationResponseStatus",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -2221,6 +2230,7 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeleteSecretPrefer",
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
     "DeliverAppEventResponseStatus",
@@ -3081,6 +3091,10 @@ __all__ = (
     "SeatUsageResponsePlan",
     "SecretFinding",
     "SecretFindingSeverity",
+    "SecretRevocationTarget",
+    "SecretRevocationTargetErrorCode",
+    "SecretRevocationTargetReloadSupport",
+    "SecretRevocationTargetStatus",
     "SecretRuntimeReloadObservation",
     "SecretRuntimeReloadObservationApplicationAck",
     "SecretRuntimeReloadObservationApplicationAckErrorCode",

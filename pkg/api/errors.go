@@ -4571,6 +4571,15 @@ func ErrSecretNotFound(key string) *Problem {
 		WithDocs(docsBase + "/secrets")
 }
 
+// ErrSecretRevocationNotFound is returned when a deletion status id does not
+// belong to the requested account/app.
+func ErrSecretRevocationNotFound(id string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeNotFound,
+		"Secret revocation not found",
+		fmt.Sprintf("no secret revocation %q on this app.", id)).
+		WithDocs(docsBase + "/secrets")
+}
+
 // ErrManagedSecretConflict protects an environment key owned by an active
 // managed PostgreSQL binding. CodeConflict is intentional until the managed
 // database API introduces its own stable public error vocabulary.

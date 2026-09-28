@@ -96,9 +96,10 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing
-    FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222).
-   """
+    """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
+    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this
+    remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must
+    differ from stop_signal (ADR-222)."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""

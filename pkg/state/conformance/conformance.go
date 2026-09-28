@@ -52,6 +52,7 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
+		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -2934,6 +2935,48 @@ func testSidecarSecretReloadSignal(t *testing.T, fx *Fixture) {
 	targets, err = fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(targets) != 1 || targets[0].WorkloadName != "worker" || targets[0].ReloadSupport != "enabled" {
 		t.Fatalf("sidecar targets with reload enabled = %+v, %v; want one enabled worker target", targets, err)
+	}
+}
+
+func testAppSecretRevocationAckSurvivesDeletion(t *testing.T, fx *Fixture) {
+	t.Helper()
+	scope, key := api.DefaultEnvScope, "DATABASE_URL"
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("sealed-secret")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope: %v", err)
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	revocation, err := fx.Store.DeleteAppSecretInScopeWithRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("DeleteAppSecretInScopeWithRevocation: %v", err)
+	}
+	if revocation.ID == "" || len(revocation.Targets) != 1 || revocation.Targets[0].InstanceID != instance.ID {
+		t.Fatalf("revocation = %+v; want one target for active instance %s", revocation, instance.ID)
+	}
+	if _, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("GetAppSecretInScope(after delete) error = %v, want ErrNotFound", err)
+	}
+	status, err := fx.Store.GetAppSecretRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, revocation.ID)
+	if err != nil || len(status.Targets) != 1 || status.Targets[0].Status != "pending" {
+		t.Fatalf("GetAppSecretRevocation(pending) = %+v, %v; want one pending target", status, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: strings.Repeat("c", 64), Status: state.SecretApplicationReloadAckApplied,
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(after delete): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	status, err = fx.Store.GetAppSecretRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, revocation.ID)
+	if err != nil || len(status.Targets) != 1 || status.Targets[0].Status != "applied" {
+		t.Fatalf("GetAppSecretRevocation(applied) = %+v, %v; want applied target", status, err)
+	}
+	progress, acknowledged, pending := status.Progress()
+	if progress != "complete" || acknowledged != 1 || pending != 0 {
+		t.Fatalf("revocation progress = %q, acknowledged=%d pending=%d; want complete/1/0", progress, acknowledged, pending)
 	}
 }
 

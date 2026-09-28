@@ -11,8 +11,9 @@ T = TypeVar("T", bound="SidecarEnvSecrets")
 
 @_attrs_define
 class SidecarEnvSecrets:
-    """Per-sidecar positive allowlist of same-named app secrets, resolved at wake in the deployment scope. Values refresh
-    on restart; sidecars do not inherit main secrets.
+    """Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh on
+    restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery through
+    their image metadata. Sidecars never inherit main secrets.
 
     """
 

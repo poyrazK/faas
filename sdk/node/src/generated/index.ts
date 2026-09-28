@@ -105,6 +105,7 @@ export type { AppRoutesResponse } from './models/AppRoutesResponse.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretResponse } from './models/AppSecretResponse.js';
+export type { AppSecretRevocationResponse } from './models/AppSecretRevocationResponse.js';
 export type { AppSecurityFinding } from './models/AppSecurityFinding.js';
 export type { AppSecurityPostureResponse } from './models/AppSecurityPostureResponse.js';
 export type { AppSecurityQuarantine } from './models/AppSecurityQuarantine.js';
@@ -752,6 +753,7 @@ export type { ScopedAppSecretResponse } from './models/ScopedAppSecretResponse.j
 export type { SeatUsageResponse } from './models/SeatUsageResponse.js';
 export type { SecretFinding } from './models/SecretFinding.js';
 export type { SecretKey } from './models/SecretKey.js';
+export type { SecretRevocationTarget } from './models/SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './models/SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarantineRecoveryRequest.js';

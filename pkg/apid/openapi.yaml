@@ -9079,6 +9079,29 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/secret-revocations/{revocation_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: revocation_id
+        in: path
+        required: true
+        description: "Identifier returned by DELETE with Prefer: return=representation."
+        schema: { type: string, format: uuid }
+    get:
+      tags: [secrets]
+      operationId: getSecretRevocation
+      summary: Read runtime acknowledgements for a deleted secret.
+      description: "Returns the value-free runtime roster captured at deletion and its latest application acknowledgement state."
+      responses:
+        '200':
+          description: Durable secret revocation progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretRevocationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/secrets:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -9155,8 +9178,20 @@ paths:
       tags: [secrets]
       operationId: deleteSecret
       summary: Delete a sealed secret.
+      description: "Deletes the sealed value. The legacy default is 204 No Content; send `Prefer: return=representation` to receive the durable, value-free acknowledgement record for the active authorized runtime roster."
+      parameters:
+        - name: Prefer
+          in: header
+          required: false
+          description: Request the revocation receipt instead of the legacy empty response.
+          schema: { type: string, enum: [return=representation] }
       responses:
-        '204': { description: No body. The sealed-secret envelope was removed. }
+        '200':
+          description: "The sealed value was removed; returned when `Prefer: return=representation` is sent."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretRevocationResponse' }
+        '204': { description: The sealed value was removed. Returned when no Prefer header is sent. }
         # ADR-092 PR-B: 400 carries one of {secret_invalid_key,
         # secret_not_found, env_scope_invalid, env_scope_reserved}.
         # secret_not_found uses its own envelope (legacy 400 on
@@ -33296,6 +33331,37 @@ components:
             items: { $ref: '#/components/schemas/ScopedAppSecretResponse' }
         quota_max: { type: integer }
         count: { type: integer }
+
+    AppSecretRevocationResponse:
+      description: "Value-free deletion status plus the exact active authorized runtime roster captured when deletion committed."
+      type: object
+      required: [id, scope, key, created_at, status, target_count, acknowledged_count, pending_count, targets]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string }
+        key: { type: string }
+        created_at: { type: string, format: date-time }
+        status: { type: string, enum: [complete, pending, failed, blocked] }
+        target_count: { type: integer, minimum: 0 }
+        acknowledged_count: { type: integer, minimum: 0 }
+        pending_count: { type: integer, minimum: 0 }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/SecretRevocationTarget' }
+
+    SecretRevocationTarget:
+      description: "Non-sensitive snapshot of one authorized workload's deletion acknowledgement state."
+      type: object
+      required: [instance_id, runtime_state, reload_support, status]
+      properties:
+        instance_id: { type: string, format: uuid }
+        workload_name: { type: string }
+        runtime_state: { type: string }
+        reload_support: { type: string, enum: [enabled, disabled, unknown] }
+        status: { type: string, enum: [pending, applied, failed] }
+        ack_revision: { type: string, pattern: '^[0-9a-f]{64}$' }
+        ack_at: { type: string, format: date-time }
+        error_code: { type: string, enum: [application_reload_failed] }
 
     # ─── Private-registry credentials (issue #461 / ADR-062) ──────────────
 

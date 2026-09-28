@@ -2490,6 +2490,8 @@ Remove a sealed secret
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
+| `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements |  |
 
 ### secrets list-all
 

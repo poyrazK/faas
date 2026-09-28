@@ -87,6 +87,31 @@ its own clients or connection pools. Refresh is checked every 10 seconds; use
 `--restart` when the app cannot implement that contract or when a rolling
 replacement is preferred.
 
+For an opted-in running workload, `secrets unset` is delivered as a replacement
+projection with the deleted key omitted, followed by the configured reload
+signal. The application must remove the old credential from its own clients;
+removing the key from the file cannot erase values already held in process
+memory. Restart-only workloads keep their existing value until the process is
+replaced by a deployment that no longer grants the key. A cold wake that still
+references the deleted key fails closed; remove the grant before replacing
+that workload.
+
+Deletion also writes a durable, value-free revocation record containing the
+authorized runtime roster captured in the same transaction. The record keeps
+its target history after the secret and runtime are removed; it stores only
+the app, scope, key name, opaque revision, timestamps, closed status/error
+codes, and runtime correlation IDs—never secret material. A runtime is counted
+as acknowledged only after its application reports that the deleted key is no
+longer in use. `gregale secrets unset --wait-for-ack --timeout 2m` waits for
+that proof and exits non-zero on timeout, application failure, or a target
+that cannot live-reload. Without the wait flag, unset returns the revocation
+ID immediately; query its progress with
+`GET /v1/apps/{slug}/secret-revocations/{id}`. The API preserves its legacy
+`204 No Content` response unless the caller sends
+`Prefer: return=representation`. A blocked target needs a
+restart/redeployment path, and removing the projected file alone cannot erase
+a credential already held by process memory.
+
 The main image's reload opt-in still supports single-workload deployments only;
 a main image declaring the reload label is rejected when that deployment has
 sidecars. Independently, each long-running sidecar image may declare the same

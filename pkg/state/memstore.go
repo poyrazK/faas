@@ -696,6 +696,7 @@ type MemStore struct {
 	// secretRuntimeReloadObservations mirrors the per-instance latest-status
 	// table, keyed by (app, scope, key, instance).
 	secretRuntimeReloadObservations map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation
+	secretRevocations               map[string]AppSecretRevocation
 	// registryCreds mirrors app_registry_credentials (issue #461 /
 	// ADR-062). Same composite-key shape as secrets/envs. Value
 	// carries account_id for the ownership check on delete and the
@@ -1196,6 +1197,7 @@ func NewMemStore() *MemStore {
 		secrets:                         map[secretKey]AppSecret{},
 		sidecarSecretReloadSignals:      map[string]string{},
 		secretRuntimeReloadObservations: map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation{},
+		secretRevocations:               map[string]AppSecretRevocation{},
 		registryCreds:                   map[registryCredKey]AppRegistryCredential{},
 		envs:                            map[envKey]AppEnv{},
 		trustedSigners:                  map[trustedSignerKey]AppTrustedSigner{},
@@ -6734,6 +6736,24 @@ func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(_ context.Context, dep
 		}
 	}
 	return ErrNotFound
+}
+
+// DeploymentSidecarSecretReloadSignal returns the persisted image opt-in for
+// one long-running sidecar. A missing row means the image did not opt in.
+func (m *MemStore) DeploymentSidecarSecretReloadSignal(_ context.Context, deploymentID, sidecarName string) (string, error) {
+	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) {
+		return "", ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.deployments[deploymentID]; !ok {
+		return "", ErrNotFound
+	}
+	signal, ok := m.sidecarSecretReloadSignals[deploymentID+"\x00"+sidecarName]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return signal, nil
 }
 
 func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentID string, receipt []byte) (Deployment, error) {
@@ -18624,24 +18644,175 @@ func (m *MemStore) GetAppSecretInScope(_ context.Context, accountID, appID, scop
 
 // DeleteAppSecretInScope is the scope-aware sibling of
 // DeleteAppSecret (ADR-092 PR-A).
-func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, scope, key string) error {
+func (m *MemStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error {
+	_, err := m.DeleteAppSecretInScopeWithRevocation(ctx, accountID, appID, scope, key)
+	return err
+}
+
+func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
-		return ErrNotFound
+		return AppSecretRevocation{}, ErrNotFound
 	}
 	if row.ManagedPostgresBindingID != "" || row.ManagedObjectStorageCredentialID != "" {
-		return ErrConflict
+		return AppSecretRevocation{}, ErrConflict
 	}
+	revocation := AppSecretRevocation{
+		ID: uuid.NewString(), AccountID: accountID, AppID: appID,
+		Scope: scope, Key: key, CreatedAt: time.Now().UTC(),
+	}
+	targets, err := m.secretRevocationTargetsLocked(row)
+	if err != nil {
+		return AppSecretRevocation{}, err
+	}
+	revocation.Targets = targets
 	delete(m.secrets, k)
 	for observationKey := range m.secretRuntimeReloadObservations {
 		if observationKey.AppID == appID && observationKey.Scope == scope && observationKey.Key == key {
 			delete(m.secretRuntimeReloadObservations, observationKey)
 		}
 	}
-	return nil
+	m.secretRevocations[revocation.ID] = cloneAppSecretRevocation(revocation)
+	return revocation, nil
+}
+
+func (m *MemStore) secretRevocationTargetsLocked(secret AppSecret) ([]AppSecretRevocationTarget, error) {
+	var out []AppSecretRevocationTarget
+	for _, instance := range m.instances {
+		if instance.AppID != secret.AppID || !State(instance.State).CountsForRAM() {
+			continue
+		}
+		targets, err := m.secretRevocationTargetsForInstanceLocked(secret, instance)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, targets...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].InstanceID != out[j].InstanceID {
+			return out[i].InstanceID < out[j].InstanceID
+		}
+		return out[i].WorkloadName < out[j].WorkloadName
+	})
+	return out, nil
+}
+
+func (m *MemStore) secretRevocationTargetsForInstanceLocked(secret AppSecret, instance Instance) ([]AppSecretRevocationTarget, error) {
+	deployment, ok := m.deployments[instance.DeploymentID]
+	if !ok || deployment.AppID != secret.AppID {
+		return nil, nil
+	}
+	scope := deployment.Scope
+	if scope == "" {
+		scope = api.DefaultEnvScope
+	}
+	if scope != secret.Scope {
+		return nil, nil
+	}
+	mainAllowlist, sidecars, err := secretRevocationWorkloadConfig(deployment)
+	if err != nil {
+		return nil, err
+	}
+	var out []AppSecretRevocationTarget
+	if secretMainWorkloadAuthorized(secret.Key, mainAllowlist, len(sidecars)) {
+		support := secretMainWorkloadReloadSupport(deployment)
+		out = append(out, newSecretRevocationTarget(instance, "", support))
+	}
+	for _, sidecar := range sidecars {
+		if sidecar.Type != api.SidecarTypeSidecar || sidecar.EnvSecrets[secret.Key] != api.SecretRefPrefix+secret.Key {
+			continue
+		}
+		signal, known := m.sidecarSecretReloadSignals[instance.DeploymentID+"\x00"+sidecar.Name]
+		support := secretReloadSupport(signal, known)
+		out = append(out, newSecretRevocationTarget(instance, sidecar.Name, support))
+	}
+	return out, nil
+}
+
+func secretRevocationWorkloadConfig(deployment Deployment) (map[string]string, api.Sidecars, error) {
+	var allowlist map[string]string
+	if len(deployment.OverrideEnvSecrets) > 0 {
+		var decoded map[string]string
+		if err := json.Unmarshal(deployment.OverrideEnvSecrets, &decoded); err != nil {
+			return nil, nil, ErrInvalidArgument
+		}
+		if len(decoded) > 0 {
+			allowlist = decoded
+		}
+	}
+	var sidecars api.Sidecars
+	if len(deployment.Sidecars) > 0 {
+		if err := json.Unmarshal(deployment.Sidecars, &sidecars); err != nil {
+			return nil, nil, ErrInvalidArgument
+		}
+	}
+	return allowlist, sidecars, nil
+}
+
+func secretMainWorkloadAuthorized(key string, allowlist map[string]string, sidecarCount int) bool {
+	if allowlist == nil {
+		return sidecarCount == 0
+	}
+	_, ok := allowlist[key]
+	return ok
+}
+
+func secretMainWorkloadReloadSupport(deployment Deployment) string {
+	if !deployment.SecretReloadSignalKnown {
+		return "unknown"
+	}
+	if deployment.SecretReloadSignal == "" || len(deployment.Sidecars) > 0 {
+		return "disabled"
+	}
+	return "enabled"
+}
+
+func secretReloadSupport(signal string, known bool) string {
+	if !known {
+		return "unknown"
+	}
+	if signal == "" {
+		return "disabled"
+	}
+	return "enabled"
+}
+
+func newSecretRevocationTarget(instance Instance, workloadName, reloadSupport string) AppSecretRevocationTarget {
+	return AppSecretRevocationTarget{
+		InstanceID: instance.ID, WorkloadName: workloadName, RuntimeState: instance.State,
+		ReloadSupport: reloadSupport, Status: "pending",
+	}
+}
+
+func cloneAppSecretRevocation(revocation AppSecretRevocation) AppSecretRevocation {
+	copy := revocation
+	copy.Targets = append([]AppSecretRevocationTarget(nil), revocation.Targets...)
+	for i := range copy.Targets {
+		if copy.Targets[i].AckAt != nil {
+			at := *copy.Targets[i].AckAt
+			copy.Targets[i].AckAt = &at
+		}
+	}
+	return copy
+}
+
+func (m *MemStore) GetAppSecretRevocation(_ context.Context, accountID, appID, revocationID string) (AppSecretRevocation, error) {
+	if accountID == "" || appID == "" {
+		return AppSecretRevocation{}, ErrInvalidArgument
+	}
+	if _, err := uuid.Parse(revocationID); err != nil {
+		return AppSecretRevocation{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	revocation, ok := m.secretRevocations[revocationID]
+	if !ok || revocation.AccountID != accountID || revocation.AppID != appID {
+		return AppSecretRevocation{}, ErrNotFound
+	}
+	return cloneAppSecretRevocation(revocation), nil
 }
 
 // ListAppSecretsForRekey is the global paginated walk consumed by
@@ -18948,9 +19119,6 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 	if !validAppSecretRuntimeReloadAckResult(result) {
 		return 0, ErrInvalidArgument
 	}
-	if len(result.Candidates) == 0 {
-		return 0, nil
-	}
 	at := result.AttemptedAt.UTC()
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -18980,7 +19148,28 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 		observation.ApplicationAckErrorCode = result.ErrorCode
 		m.secretRuntimeReloadObservations[key] = observation
 	}
-	return len(result.Candidates), nil
+	updated := len(result.Candidates)
+	for id, revocation := range m.secretRevocations {
+		if revocation.AccountID != result.AccountID || revocation.AppID != result.AppID || revocation.CreatedAt.After(at) {
+			continue
+		}
+		if secret, present := m.secrets[secretKey{AppID: revocation.AppID, Scope: revocation.Scope, Key: revocation.Key}]; present && secret.AccountID == revocation.AccountID {
+			continue
+		}
+		for i := range revocation.Targets {
+			target := &revocation.Targets[i]
+			if target.InstanceID != result.InstanceID || target.WorkloadName != result.WorkloadName || target.Status == "applied" {
+				continue
+			}
+			target.Status = string(result.Status)
+			target.AckRevision = result.Revision
+			target.AckAt = &at
+			target.ErrorCode = result.ErrorCode
+			updated++
+		}
+		m.secretRevocations[id] = revocation
+	}
+	return updated, nil
 }
 
 func (m *MemStore) ListAppSecretRuntimeReloadObservations(_ context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error) {

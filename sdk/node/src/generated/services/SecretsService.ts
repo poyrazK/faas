@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AppSecretListResponse } from '../models/AppSecretListResponse.js';
 import type { AppSecretResponse } from '../models/AppSecretResponse.js';
+import type { AppSecretRevocationResponse } from '../models/AppSecretRevocationResponse.js';
 import type { ListSecretsForAccountResponse } from '../models/ListSecretsForAccountResponse.js';
 import type { PutAppSecretRequest } from '../models/PutAppSecretRequest.js';
 import type { RotateAppSecretRequest } from '../models/RotateAppSecretRequest.js';
@@ -12,6 +13,42 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class SecretsService {
+  /**
+   * Read runtime acknowledgements for a deleted secret.
+   * Returns the value-free runtime roster captured at deletion and its latest application acknowledgement state.
+   * @returns AppSecretRevocationResponse Durable secret revocation progress.
+   * @throws ApiError
+   */
+  public static getSecretRevocation({
+    slug,
+    revocationId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Identifier returned by DELETE with Prefer: return=representation.
+     */
+    revocationId: string,
+  }): CancelablePromise<AppSecretRevocationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/secret-revocations/{revocation_id}',
+      path: {
+        'slug': slug,
+        'revocation_id': revocationId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List sealed secrets on an app.
    * @returns AppSecretListResponse Sealed-secret envelopes on the app (plaintext never returned).
@@ -120,13 +157,15 @@ export class SecretsService {
   }
   /**
    * Delete a sealed secret.
-   * @returns void
+   * Deletes the sealed value. The legacy default is 204 No Content; send `Prefer: return=representation` to receive the durable, value-free acknowledgement record for the active authorized runtime roster.
+   * @returns AppSecretRevocationResponse The sealed value was removed; returned when `Prefer: return=representation` is sent.
    * @throws ApiError
    */
   public static deleteSecret({
     slug,
     key,
     scope,
+    prefer,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -146,13 +185,20 @@ export class SecretsService {
      *
      */
     scope?: string,
-  }): CancelablePromise<void> {
+    /**
+     * Request the revocation receipt instead of the legacy empty response.
+     */
+    prefer?: 'return=representation',
+  }): CancelablePromise<AppSecretRevocationResponse> {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/secrets/{key}',
       path: {
         'slug': slug,
         'key': key,
+      },
+      headers: {
+        'Prefer': prefer,
       },
       query: {
         'scope': scope,

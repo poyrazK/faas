@@ -101,6 +101,38 @@ func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	}
 }
 
+func TestRuntimeSecretsStatePublishesRevokedKeyRemoval(t *testing.T) {
+	dir := t.TempDir()
+	projectionPath := filepath.Join(dir, "projection", "secrets.json")
+	revisionPath := filepath.Join(dir, "projection", "revision")
+	uid, gid := os.Getuid(), os.Getgid()
+	secrets := newRuntimeSecretsState(map[string]string{"DB_URL": "old-credential"})
+	if runtimeSecretsEqual(secrets.snapshot(), map[string]string{}) {
+		t.Fatal("removing a granted key was treated as an unchanged projection")
+	}
+	revision := strings.Repeat("b", 64)
+	if err := secrets.publishForOwner(projectionPath, revisionPath, uid, uid, gid, map[string]string{}, revision); err != nil {
+		t.Fatalf("publish revoked projection: %v", err)
+	}
+	if got := secrets.snapshot(); len(got) != 0 {
+		t.Fatalf("in-memory projection = %#v, want empty map", got)
+	}
+	body, err := os.ReadFile(projectionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("on-disk projection = %#v, want empty map", got)
+	}
+	if gotRevision, err := os.ReadFile(revisionPath); err != nil || string(gotRevision) != revision {
+		t.Fatalf("revision projection = %q, err=%v", gotRevision, err)
+	}
+}
+
 func TestWriteRuntimeSecretRevisionProjectionIsAtomicAndPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "projection", "revision")
 	uid, gid := os.Getuid(), os.Getgid()

@@ -65,6 +65,10 @@ type runtimeSecretsStore interface {
 	ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error)
 }
 
+type runtimeSidecarSecretReloadSignalStore interface {
+	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
+}
+
 type runtimeSecretReloadStore interface {
 	RecordAppSecretRuntimeReload(context.Context, state.AppSecretRuntimeReloadResult) (int, error)
 }
@@ -482,6 +486,10 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 		entries = append(entries, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
 		foundKeys[row.Key] = struct{}{}
 	}
+	// A missing grant must remain an error for restart-only workloads, since
+	// they cannot receive a live projection update. For a workload that opted
+	// into reload, an absent granted key is a revocation: return the current
+	// projection so guest-init removes the key and signals that workload.
 	if allowedKeys != nil {
 		var missing []string
 		for key := range allowedKeys {
@@ -491,11 +499,35 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 		}
 		if len(missing) > 0 {
 			sort.Strings(missing)
-			return runtimeSecretSelection{}, fmt.Errorf("deployment references missing secrets: %s", strings.Join(missing, ", "))
+			enabled, signalErr := runtimeSecretReloadEnabled(ctx, store, deployment, workloadName)
+			if signalErr != nil {
+				return runtimeSecretSelection{}, fmt.Errorf("load runtime secret reload opt-in: %w", signalErr)
+			}
+			if !enabled {
+				return runtimeSecretSelection{}, fmt.Errorf("deployment references missing secrets: %s", strings.Join(missing, ", "))
+			}
 		}
 	}
 	revision := runtimeSecretRevision(scope, selected)
 	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision}, nil
+}
+
+func runtimeSecretReloadEnabled(ctx context.Context, store runtimeSecretsStore, deployment state.Deployment, workloadName string) (bool, error) {
+	if workloadName == "" {
+		return deployment.SecretReloadSignal != "", nil
+	}
+	signalStore, ok := store.(runtimeSidecarSecretReloadSignalStore)
+	if !ok {
+		return false, nil
+	}
+	signal, err := signalStore.DeploymentSidecarSecretReloadSignal(ctx, deployment.ID, workloadName)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return signal != "", nil
 }
 
 func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName string) (map[string]struct{}, error) {
@@ -593,7 +625,12 @@ func runtimeSecretRevision(scope string, rows []state.AppSecret) string {
 	h := sha256.New()
 	_, _ = io.WriteString(h, scope+"\x00")
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", row.Key, row.DeliveryVersion)
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00", row.Key, row.DeliveryVersion, len(row.Ciphertext))
+		// DeliveryVersion is scoped to the lifetime of an app_secrets row.
+		// Including the sealed envelope also fences delete-and-recreate, where
+		// the new row can legitimately start at the same delivery version.
+		_, _ = h.Write(row.Ciphertext)
+		_, _ = h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
