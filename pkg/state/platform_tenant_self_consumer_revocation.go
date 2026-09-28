@@ -88,10 +88,14 @@ func (m *MemStore) RevokePlatformTenantSelfConsumers(_ context.Context, in Revok
 	for i, consumer := range consumers {
 		consumerIDs[consumer.ID] = struct{}{}
 		if consumer.Status != APIConsumerStatusRevoked || consumer.RevokedAt == nil {
+			wasActive := consumer.Active()
 			consumer.Status = APIConsumerStatusRevoked
 			consumer.RevokedAt = &now
 			consumer.UpdatedAt = now
 			m.apiConsumers[consumer.ID] = consumer
+			if wasActive {
+				m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(consumer, PlatformTenantCustomerOffboardedEvent, now)
+			}
 			result.Changed = true
 		}
 		result.Consumers[i] = consumer

@@ -116,5 +116,6 @@ func (m *MemStore) CreatePlatformTenantSelfConsumer(_ context.Context, in Create
 		Status: APIConsumerStatusActive, CreatedAt: now, UpdatedAt: now}
 	m.apiConsumers[consumer.ID] = consumer
 	m.platformTenantByConsumer[consumer.ID] = in.TenantID
+	m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(consumer, PlatformTenantCustomerLinkedEvent, now)
 	return consumer, true, nil
 }

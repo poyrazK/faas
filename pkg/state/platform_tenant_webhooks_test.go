@@ -23,13 +23,21 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 		{name: "hostname verified", events: []string{state.PlatformTenantHostnameVerifiedEvent}, valid: true},
 		{name: "certificate changed", events: []string{state.PlatformTenantSurfaceCertificateChangedEvent}, valid: true},
 		{name: "deployment changed", events: []string{state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
+		{name: "customer linked", events: []string{state.PlatformTenantCustomerLinkedEvent}, valid: true},
+		{name: "customer offboarded", events: []string{state.PlatformTenantCustomerOffboardedEvent}, valid: true},
 		{name: "both events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: true},
 		{name: "all events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent}, valid: true},
 		{name: "all four events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
+		{name: "all six events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
+			state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent,
+			state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent}, valid: true},
 		{name: "empty", events: []string{}, valid: false},
 		{name: "unknown", events: []string{"platform_tenant.hostname.failed"}, valid: false},
 		{name: "duplicate", events: []string{state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: false},
-		{name: "too many", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent, state.PlatformTenantStatementFinalizedEvent}, valid: false},
+		{name: "too many", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
+			state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent,
+			state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent,
+			state.PlatformTenantStatementFinalizedEvent}, valid: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,6 +54,98 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 	}
 	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantSurfaceDeploymentChangedEvent)) {
 		t.Fatal("tenant-owned deployment event must not enter the app webhook vocabulary")
+	}
+	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantCustomerLinkedEvent)) ||
+		state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantCustomerOffboardedEvent)) {
+		t.Fatal("tenant-owned customer events must not enter the app webhook vocabulary")
+	}
+}
+
+type platformTenantCustomerLifecycleWebhookFixture interface {
+	state.Store
+	state.PlatformTenantStore
+	state.PlatformTenantWebhookStore
+}
+
+func TestMemPlatformTenantCustomerLifecycleWebhooks(t *testing.T) {
+	testPlatformTenantCustomerLifecycleWebhooks(t, state.NewMemStore(), context.Background())
+}
+
+func TestPgPlatformTenantCustomerLifecycleWebhooks(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	testPlatformTenantCustomerLifecycleWebhooks(t, store, ctx)
+}
+
+func testPlatformTenantCustomerLifecycleWebhooks(t *testing.T, store platformTenantCustomerLifecycleWebhookFixture, ctx context.Context) {
+	t.Helper()
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	tenant, _, err := store.CreatePlatformTenant(ctx, accountID, "customer-events-"+uuid.NewString()[:8], "Customer events", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreatePlatformTenantWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: accountID, PlatformTenantID: tenant.ID, Scope: state.AppWebhookScopePlatformTenant,
+		TargetURL: "https://example.test/customer-events", SecretSealed: []byte("sealed"),
+		EventFilter: []string{state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent}, Enabled: true,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, accountID, appID, "customer-42", "Customer 42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries, _, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, ""); err != nil || len(deliveries) != 0 {
+		t.Fatalf("unlinked consumer deliveries = %d, err=%v; want none", len(deliveries), err)
+	}
+	if _, err := store.LinkPlatformTenantConsumer(ctx, accountID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Repeating a link is a no-op, not a second lifecycle event.
+	if _, err := store.LinkPlatformTenantConsumer(ctx, accountID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeAPIConsumer(ctx, accountID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	// An idempotent revoke is likewise not a new transition.
+	if _, err := store.RevokeAPIConsumer(ctx, accountID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, next, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != "" || len(deliveries) != 2 {
+		t.Fatalf("deliveries = %d, next=%q; want one linked and one offboarded delivery", len(deliveries), next)
+	}
+	seen := map[state.AppWebhookEvent]bool{}
+	for _, delivery := range deliveries {
+		if delivery.AppID != "" || delivery.AccountID != accountID || seen[delivery.Event] {
+			t.Fatalf("unexpected delivery metadata or duplicate event: %+v", delivery)
+		}
+		seen[delivery.Event] = true
+		var payload api.PlatformTenantCustomerLifecycleWebhookPayload
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.PlatformTenantID != tenant.ID || payload.ExternalRef != tenant.ExternalRef ||
+			payload.ConsumerID != consumer.ID || payload.AppID != appID ||
+			payload.CustomerExternalRef != consumer.ExternalRef || payload.CustomerName != consumer.Name || payload.ChangedAt.IsZero() {
+			t.Fatalf("event %q payload = %+v", delivery.Event, payload)
+		}
+		switch delivery.Event {
+		case state.AppWebhookEvent(state.PlatformTenantCustomerLinkedEvent):
+			if payload.CustomerStatus != string(state.APIConsumerStatusActive) {
+				t.Fatalf("linked customer_status = %q", payload.CustomerStatus)
+			}
+		case state.AppWebhookEvent(state.PlatformTenantCustomerOffboardedEvent):
+			if payload.CustomerStatus != string(state.APIConsumerStatusRevoked) {
+				t.Fatalf("offboarded customer_status = %q", payload.CustomerStatus)
+			}
+		default:
+			t.Fatalf("unexpected event %q", delivery.Event)
+		}
 	}
 }
 
