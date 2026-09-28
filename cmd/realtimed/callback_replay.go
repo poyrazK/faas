@@ -15,7 +15,7 @@ const (
 // superviseCallbackReplay keeps durable callback replay available when an
 // unexpected outbox or filesystem error stops a replay pass. Run normally
 // returns only when the process context is canceled.
-func superviseCallbackReplay(ctx context.Context, log *slog.Logger, initialDelay, maxDelay time.Duration, run func(context.Context) error) {
+func superviseCallbackReplay(ctx context.Context, log *slog.Logger, initialDelay, maxDelay time.Duration, run func(context.Context) error, recordRestart func()) {
 	if initialDelay <= 0 {
 		initialDelay = callbackReplayRetryInitial
 	}
@@ -24,10 +24,15 @@ func superviseCallbackReplay(ctx context.Context, log *slog.Logger, initialDelay
 	}
 
 	retryDelay := initialDelay
+	firstAttempt := true
 	for {
 		if ctx.Err() != nil {
 			return
 		}
+		if !firstAttempt {
+			recordRestart()
+		}
+		firstAttempt = false
 
 		err := run(ctx)
 		if ctx.Err() != nil {

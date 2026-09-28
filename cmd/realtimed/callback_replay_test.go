@@ -15,6 +15,7 @@ func TestCallbackReplaySupervisorRetriesAfterUnexpectedExit(t *testing.T) {
 	defer cancel()
 
 	var attempts atomic.Int32
+	var restarts atomic.Int32
 	restarted := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -26,7 +27,7 @@ func TestCallbackReplaySupervisorRetriesAfterUnexpectedExit(t *testing.T) {
 			close(restarted)
 			<-runCtx.Done()
 			return runCtx.Err()
-		})
+		}, func() { restarts.Add(1) })
 	}()
 
 	select {
@@ -43,11 +44,15 @@ func TestCallbackReplaySupervisorRetriesAfterUnexpectedExit(t *testing.T) {
 	if got := attempts.Load(); got != 2 {
 		t.Fatalf("replay attempts = %d, want 2", got)
 	}
+	if got := restarts.Load(); got != 1 {
+		t.Fatalf("replay restarts = %d, want 1", got)
+	}
 }
 
 func TestCallbackReplaySupervisorStopsDuringBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var attempts atomic.Int32
+	var restarts atomic.Int32
 	failed := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -56,7 +61,7 @@ func TestCallbackReplaySupervisorStopsDuringBackoff(t *testing.T) {
 			attempts.Add(1)
 			close(failed)
 			return errors.New("temporary outbox failure")
-		})
+		}, func() { restarts.Add(1) })
 	}()
 
 	select {
@@ -73,6 +78,9 @@ func TestCallbackReplaySupervisorStopsDuringBackoff(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("replay attempts = %d, want 1", got)
+	}
+	if got := restarts.Load(); got != 0 {
+		t.Fatalf("replay restarts during canceled backoff = %d, want 0", got)
 	}
 }
 
