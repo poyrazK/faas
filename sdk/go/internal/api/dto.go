@@ -71,16 +71,20 @@ type SendAppMessageResponse struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug            string `json:"slug"`
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`  // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile string `json:"resource_profile,omitempty"`
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	Slug string `json:"slug"`
+	// Outbound service bindings and per-binding reliability policy.
+	ServiceBindingTargets *[]string                           `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy  *ServiceBindingPolicy               `json:"service_binding_policy,omitempty"`
+	ServiceReliability    map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	Visibility            string                              `json:"visibility,omitempty"`
+	Type                  string                              `json:"type,omitempty"`    // "app" (default) | "function"
+	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
+	RAMMB                 int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
+	VCPU                  int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
+	CPUMillicores         int                                 `json:"cpu_millicores,omitempty"`
+	ResourceProfile       string                              `json:"resource_profile,omitempty"`
+	MaxConcurrency        int                                 `json:"max_concurrency,omitempty"`
+	IdleTimeoutS          int                                 `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
 	// request-driven default; service_replicas is valid only for service mode.
 	ExecutionMode    string           `json:"execution_mode,omitempty"`
@@ -108,12 +112,17 @@ type CreateAppRequest struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"`
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	Visibility *string `json:"visibility,omitempty"`
+	// ServiceReliability is a full replacement: omit to retain, null or {}
+	// to clear. ServiceBindingTargets controls which names may be present.
+	ServiceBindingTargets *[]string             `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy  *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	ServiceReliability    json.RawMessage       `json:"service_reliability,omitempty"`
+	RAMMB                 *int                  `json:"ram_mb,omitempty"`
+	CPUMillicores         *int                  `json:"cpu_millicores,omitempty"`
+	ResourceProfile       *string               `json:"resource_profile,omitempty"`
+	IdleTimeoutS          *int                  `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency        *int                  `json:"max_concurrency,omitempty"`
 	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
 	// service_replicas replaces the complete replica policy when present.
 	ExecutionMode    *string          `json:"execution_mode,omitempty"`
@@ -418,6 +427,14 @@ type AppServiceBinding struct {
 	Service string `json:"service"`
 }
 
+type ServiceReliabilityPolicy struct {
+	TimeoutMS          int  `json:"timeout_ms,omitempty"`
+	MaxAttempts        int  `json:"max_attempts,omitempty"`
+	MinRemainingMS     int  `json:"min_remaining_ms,omitempty"`
+	RetryBudgetPercent int  `json:"retry_budget_percent,omitempty"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
+}
+
 type ServiceBindingPolicy string
 
 const (
@@ -521,7 +538,8 @@ type AppResponse struct {
 	// ServiceBindings are repository-declared discovery edges. They do not
 	// change authorization under the account policy and become the outbound
 	// allowlist under the declared policy.
-	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side internal-service authorization
 	// policy returned by the API.
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
@@ -730,6 +748,7 @@ type CreateKeyRequest struct {
 type CustomDomainResponse struct {
 	Domain         string `json:"domain"`
 	AppID          string `json:"app_id"`
+	Environment    string `json:"environment,omitempty"`
 	ChallengeToken string `json:"challenge_token,omitempty"`
 	Verified       bool   `json:"verified"`
 	VerifiedAt     string `json:"verified_at,omitempty"`
@@ -738,8 +757,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for

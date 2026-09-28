@@ -61,9 +61,13 @@ nixpkgs, and the distro archives.
   installer exits 1 with a named reason, and npm refuses to install via the
   root package's `os` field. Cutting that import is a prerequisite for a
   Windows channel (and for Scoop/WinGet later).
-- The npm job needs an `NPM_TOKEN` repository secret and a `gregale` npm
-  org. Absent the secret the publish steps **skip** rather than fail, so a
-  release is never blocked on registry credentials.
+- The npm job needs an `NPM_TOKEN` repository secret and access to publish
+  the `gregale` and `@gregale` packages. The original workflow skipped npm
+  publication when the secret was absent. As of 2026-09-27, the release job
+  fails when the secret is absent and verifies that the published CLI installs
+  from the public registry. A documented install channel cannot silently
+  miss a release. Until the first successful publication, the installation
+  guide directs users to the curl installer.
 - `get.gregale.dev` is a proxied Cloudflare hostname with a redirect rule to
   the maintained `scripts/install.sh` on the default branch. The release
   pipeline also attaches that script to each immutable release.

@@ -22,8 +22,9 @@ func (e *PlatformTenantAccessTokenQuotaError) Error() string {
 	return "platform tenant access token quota reached"
 }
 
-// PlatformTenantAccessToken is the stored, hashed read-only capability for a
-// single downstream platform tenant. Plaintext is never part of state.
+// PlatformTenantAccessToken is the stored, hashed, explicitly scoped
+// self-service capability for one downstream platform tenant. Plaintext is
+// never part of state.
 type PlatformTenantAccessToken struct {
 	ID         string
 	AccountID  string
@@ -81,7 +82,10 @@ func validatePlatformTenantAccessTokenInput(in PlatformTenantAccessTokenInput) e
 	}
 	seen := map[string]bool{}
 	for _, scope := range in.Scopes {
-		if (scope != api.ScopePlatformTenantUsageRead && scope != api.ScopePlatformTenantStatementsRead) || seen[scope] {
+		if (scope != api.ScopePlatformTenantUsageRead && scope != api.ScopePlatformTenantStatementsRead &&
+			scope != api.ScopePlatformTenantActivationRead && scope != api.ScopePlatformTenantHostnamesManage &&
+			scope != api.ScopePlatformTenantCredentialsRead && scope != api.ScopePlatformTenantCredentialsManage &&
+			scope != api.ScopePlatformTenantConsumersManage) || seen[scope] {
 			return ErrInvalidArgument
 		}
 		seen[scope] = true

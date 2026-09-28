@@ -19,6 +19,10 @@ export type GitHubInstallStatus = {
   default_branch?: string;
   repo_full_name?: string;
   production_branch?: string;
+  /**
+   * Configured GitHub branch-to-deployment-scope mappings for the project.
+   */
+  deploy_branches?: Record<string, string>;
   binding_id?: string;
   linked_at?: string | null;
   last_reconciled_at?: string | null;

@@ -88,6 +88,8 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		Handler:                src.Handler,
 		SourceURL:              src.SourceURL,
 		CommitSHA:              src.CommitSHA,
+		GitHubSourceRef:        src.GitHubSourceRef,
+		GitHubInstallationID:   src.GitHubInstallationID,
 		OverrideEntrypoint:     append([]string(nil), src.OverrideEntrypoint...),
 		OverrideCmd:            append([]string(nil), src.OverrideCmd...),
 		OverrideEnv:            append(json.RawMessage(nil), src.OverrideEnv...),

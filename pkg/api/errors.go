@@ -468,6 +468,7 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	CodeSourceRefStale       = "source_ref_stale"
 	CodeAppLayerTooBig       = "app_layer_too_large"
 	CodeBuildUndetected      = "build_undetected"
 	CodeBuildOOM             = "build_oom"
@@ -502,8 +503,9 @@ const (
 	// CodeForbidden / CodeValidation so the dashboard / CLI can
 	// surface "switch providers to use this surface" instead of a
 	// generic error. Maps to HTTP 501.
-	CodeBillingNotImplemented = "billing_not_implemented"
-	CodeCapacity              = "capacity_unavailable"
+	CodeBillingNotImplemented  = "billing_not_implemented"
+	CodeCapacity               = "capacity_unavailable"
+	CodeSafeReleaseUnavailable = "safe_release_unavailable"
 	// CodeWakeInProgress is a successful asynchronous admission response from
 	// the public gateway. It is returned with HTTP 202 when a cold fallback
 	// outlives the function request budget but the coalesced wake is still
@@ -1067,6 +1069,9 @@ const (
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
 	CodeTrafficServingChanged = "traffic_serving_changed"
+	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
+	// would change the serving weights owned by an in-flight canary rollout.
+	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1846,7 +1851,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1891,7 +1896,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2433,6 +2438,12 @@ func ErrAppConcurrencyReachedAt(l Limits, effectiveMax, observed int) *Problem {
 func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
+		WithDocs("https://gregale.dev/status")
+}
+
+func ErrSafeReleaseUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSafeReleaseUnavailable,
+		"Safe release unavailable", "Canary progression or rollout recovery is not ready. Retry shortly or contact your operator.").
 		WithDocs("https://gregale.dev/status")
 }
 
@@ -5008,6 +5019,15 @@ func ErrTrafficServingChanged() *Problem {
 		"Production revision changed",
 		"the expected revision is no longer the sole 100% serving deployment; run gregale traffic status before promoting again.").
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficChangeDuringCanary explains why the generic traffic-split route
+// cannot modify weights while the canary state machine owns them.
+func ErrTrafficChangeDuringCanary() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
+		"Canary rollout controls traffic",
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		WithDocs(docsBase + "/deployments#canary")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring

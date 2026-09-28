@@ -54,6 +54,19 @@ class FirstH1(html.parser.HTMLParser):
         return normalize(" ".join(self.parts))
 
 
+class PageText(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    @property
+    def text(self) -> str:
+        return normalize(" ".join(self.parts))
+
+
 def get(url: str) -> tuple[int, str]:
     request = urllib.request.Request(url, headers={"User-Agent": "gregale-docs-contract/1"})
     try:
@@ -83,6 +96,12 @@ def check(base_url: str, selected: set[str] | None = None) -> list[str]:
             failures.append(
                 f"{route['path'] or '/'}: first h1 is {parser.heading!r}, expected {expected!r}"
             )
+        if status == 200:
+            page = PageText()
+            page.feed(body)
+            for fragment in route.get("required_text", []):
+                if normalize(fragment) not in page.text:
+                    failures.append(f"{route['path'] or '/'}: missing contract text {fragment!r}")
 
     missing_url = f"{base_url.rstrip('/')}/__gregale_missing_contract_probe__"
     missing_status, _ = get(missing_url)

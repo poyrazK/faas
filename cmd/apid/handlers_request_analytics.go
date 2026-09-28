@@ -46,6 +46,7 @@ const requestAnalyticsDeploymentCPURegressionThresholdPct = 25.0
 const requestAnalyticsDependencyRegressionMinSamples = int64(20)
 const requestAnalyticsDependencyP95RegressionThresholdPct = 25.0
 const requestAnalyticsDependencyErrorRateRegressionThresholdPct = 2.0
+const requestAnalyticsRouteDeploymentLimit = 5
 
 const requestAnalyticsRouteMaxLength = 256
 
@@ -60,6 +61,10 @@ var requestAnalyticsGroupBys = map[string]struct{}{
 
 type requestAnalyticsDeploymentReader interface {
 	RequestTelemetryAnalyticsByDeployment(context.Context, sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error)
+}
+
+type requestAnalyticsRouteDeploymentReader interface {
+	RequestTelemetryAnalyticsByRouteDeployment(context.Context, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error)
 }
 
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
@@ -459,6 +464,21 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				Deployments:           deployments,
 			}
 		}
+
+		if routeDeploymentStore, ok := s.store.(requestAnalyticsRouteDeploymentReader); ok && len(routes) > 0 {
+			routeDeploymentRows, err := routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+				AppID:           params.AppID,
+				AccountID:       params.AccountID,
+				ReceivedAt:      params.ReceivedAt,
+				ReceivedAt_2:    params.ReceivedAt_2,
+				DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
+				RouteLimit:      requestAnalyticsRouteLimit,
+			})
+			if err != nil {
+				return api.RequestAnalyticsResponse{}, err
+			}
+			attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
+		}
 	}
 
 	return api.RequestAnalyticsResponse{
@@ -555,6 +575,143 @@ func requestAnalyticsDeploymentRevision(deployment api.RequestAnalyticsDeploymen
 		return deployment.CommitSHA
 	}
 	return deployment.DeploymentID
+}
+
+// attachRequestAnalyticsRouteDeploymentObservations projects the bounded
+// route/deployment query onto the already allocated route rows. Each route's
+// estimated value is split across its visible top-five deployments and an
+// explicit other-deployments bucket so per-cell rounding preserves that
+// route's allocation exactly.
+func attachRequestAnalyticsRouteDeploymentObservations(routes []api.RequestAnalyticsRoute, rows []sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, totalRequests int64) {
+	routeIndexes := make(map[requestAnalyticsRouteKey]int, len(routes))
+	for i := range routes {
+		routeIndexes[requestAnalyticsRouteKey{route: routes[i].Route, method: routes[i].Method}] = i
+	}
+	otherRequests := make([]int64, len(routes))
+	for _, row := range rows {
+		key := requestAnalyticsRouteKey{route: row.Route, method: row.Method}
+		index, ok := routeIndexes[key]
+		if !ok {
+			continue
+		}
+		if row.DeploymentID == "__other__" {
+			otherRequests[index] = row.Requests
+			continue
+		}
+		var cpuAvgMS *int
+		if row.GuestCpuMeasuredRequests > 0 {
+			value := int(row.GuestCpuAvgMs)
+			cpuAvgMS = &value
+		}
+		routes[index].DeploymentObservations = append(routes[index].DeploymentObservations, api.RequestAnalyticsRouteDeploymentObservation{
+			DeploymentID:             row.DeploymentID,
+			CommitSHA:                row.CommitSha,
+			DeploymentTag:            row.DeploymentTag,
+			DeploymentCreatedAt:      row.DeploymentCreatedAt,
+			Requests:                 row.Requests,
+			GuestCPUAvgMS:            cpuAvgMS,
+			GuestCPUMeasuredRequests: row.GuestCpuMeasuredRequests,
+		})
+	}
+
+	for i := range routes {
+		route := &routes[i]
+		var listedRequests int64
+		counts := make([]int64, len(route.DeploymentObservations)+1)
+		for j := range route.DeploymentObservations {
+			counts[j] = route.DeploymentObservations[j].Requests
+			listedRequests += counts[j]
+		}
+		remainingRequests := otherRequests[i]
+		if remainingRequests != route.Requests-listedRequests {
+			remainingRequests = route.Requests - listedRequests
+			if remainingRequests < 0 {
+				remainingRequests = 0
+			}
+		}
+		// The route query uses the same window and route ranking, so its
+		// __other__ row and this residual should agree. Fall back to the route
+		// total to keep the public split internally consistent if either query
+		// ever changes its top-N policy independently.
+		counts[len(counts)-1] = remainingRequests
+		allocations, _, _ := allocateRequestShareMillicents(counts, route.EstimatedComputeCostMillicents)
+		for j := range route.DeploymentObservations {
+			observation := &route.DeploymentObservations[j]
+			observation.EstimatedComputeCostMillicents = allocations[j]
+			if totalRequests > 0 {
+				observation.RequestSharePct = float64(observation.Requests) * 100 / float64(totalRequests)
+			}
+		}
+		route.OtherDeploymentRequests = remainingRequests
+		route.OtherDeploymentEstimatedComputeCostMillicents = allocations[len(allocations)-1]
+		annotateRouteDeploymentCPURegressions(route.DeploymentObservations)
+	}
+}
+
+// annotateRouteDeploymentCPURegressions compares CPU/request only between
+// deployments of the same route/method. Ambiguous timestamps and small or
+// unsupported samples are omitted rather than turning traffic-mix changes
+// into a misleading regression warning.
+func annotateRouteDeploymentCPURegressions(observations []api.RequestAnalyticsRouteDeploymentObservation) {
+	type measuredDeployment struct {
+		index     int
+		createdAt time.Time
+	}
+	measured := make([]measuredDeployment, 0, len(observations))
+	for i := range observations {
+		observation := &observations[i]
+		if observation.GuestCPUAvgMS == nil || observation.GuestCPUMeasuredRequests < requestAnalyticsDeploymentCPURegressionMinRequests {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, observation.DeploymentCreatedAt)
+		if err != nil {
+			continue
+		}
+		measured = append(measured, measuredDeployment{index: i, createdAt: createdAt})
+	}
+	sort.Slice(measured, func(i, j int) bool {
+		if measured[i].createdAt.Equal(measured[j].createdAt) {
+			return observations[measured[i].index].DeploymentID < observations[measured[j].index].DeploymentID
+		}
+		return measured[i].createdAt.Before(measured[j].createdAt)
+	})
+
+	var previous *measuredDeployment
+	for i := 0; i < len(measured); {
+		groupEnd := i + 1
+		for groupEnd < len(measured) && measured[groupEnd].createdAt.Equal(measured[i].createdAt) {
+			groupEnd++
+		}
+		if groupEnd-i != 1 {
+			previous = nil
+			i = groupEnd
+			continue
+		}
+		current := measured[i]
+		currentObservation := &observations[current.index]
+		if previous != nil {
+			previousObservation := observations[previous.index]
+			baselineMS := *previousObservation.GuestCPUAvgMS
+			if baselineMS > 0 {
+				changePct := (float64(*currentObservation.GuestCPUAvgMS-baselineMS) / float64(baselineMS)) * 100
+				currentObservation.GuestCPUChangePct = &changePct
+				currentObservation.GuestCPUComparedTo = requestAnalyticsRouteDeploymentRevision(previousObservation)
+				currentObservation.GuestCPURegression = changePct >= requestAnalyticsDeploymentCPURegressionThresholdPct
+			}
+		}
+		previous = &measured[i]
+		i++
+	}
+}
+
+func requestAnalyticsRouteDeploymentRevision(observation api.RequestAnalyticsRouteDeploymentObservation) string {
+	if observation.DeploymentTag != "" {
+		return observation.DeploymentTag
+	}
+	if observation.CommitSHA != "" {
+		return observation.CommitSHA
+	}
+	return observation.DeploymentID
 }
 
 type requestAnalyticsRouteKey struct {
@@ -1052,6 +1209,34 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		debugQuery := url.Values{}
 		debugQuery.Set("since", response.Since)
 		debugQuery.Set("route", route.Route)
+		deploymentObservations := make([]dashboard.RequestAnalyticsRouteDeploymentView, 0, len(route.DeploymentObservations))
+		for _, observation := range route.DeploymentObservations {
+			revision := observation.CommitSHA
+			if revision == "" {
+				revision = observation.DeploymentID
+			}
+			deploymentView := dashboard.RequestAnalyticsRouteDeploymentView{
+				DeploymentID:             observation.DeploymentID,
+				Revision:                 revision,
+				Tag:                      observation.DeploymentTag,
+				CreatedAt:                observation.DeploymentCreatedAt,
+				Requests:                 observation.Requests,
+				RequestSharePct:          observation.RequestSharePct,
+				EstimatedComputeEUR:      millicentsAsEUR(observation.EstimatedComputeCostMillicents),
+				GuestCPUAvailable:        observation.GuestCPUAvgMS != nil,
+				GuestCPUMeasuredRequests: observation.GuestCPUMeasuredRequests,
+				GuestCPUChangeAvailable:  observation.GuestCPUChangePct != nil,
+				GuestCPUComparedTo:       observation.GuestCPUComparedTo,
+				GuestCPURegression:       observation.GuestCPURegression,
+			}
+			if observation.GuestCPUAvgMS != nil {
+				deploymentView.GuestCPUAvgMS = *observation.GuestCPUAvgMS
+			}
+			if observation.GuestCPUChangePct != nil {
+				deploymentView.GuestCPUChangePct = *observation.GuestCPUChangePct
+			}
+			deploymentObservations = append(deploymentObservations, deploymentView)
+		}
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
 			Route:                       route.Route,
 			Method:                      route.Method,
@@ -1076,6 +1261,9 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 			DependencySamples:           route.DependencySamples,
 			DependencyRequests:          route.DependencyRequests,
 			Dependencies:                route.Dependencies,
+			DeploymentObservations:      deploymentObservations,
+			OtherDeploymentRequests:     route.OtherDeploymentRequests,
+			OtherDeploymentComputeEUR:   millicentsAsEUR(route.OtherDeploymentEstimatedComputeCostMillicents),
 			EstimatedComputeCostEUR:     millicentsAsEUR(route.EstimatedComputeCostMillicents),
 			RequestSharePct:             route.RequestSharePct,
 			TrendURL:                    "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),

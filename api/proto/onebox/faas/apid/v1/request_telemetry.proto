@@ -52,6 +52,27 @@ service RequestTelemetry {
   // RecordConsumerUsage is independent of the optional debugger. A gateway
   // replays the same event_id until apid acknowledges the ledger transaction.
   rpc RecordConsumerUsage(ConsumerUsageEvent) returns (ConsumerUsageReceipt);
+
+  // RecordRequestIDJournal synchronously commits the public request ID before
+  // gatewayd-internal forwards an admitted request to a guest. Unlike
+  // request telemetry, this identity mapping is not sampled or rate-limited.
+  // Apid applies the account's request-time debugger retention window.
+  rpc RecordRequestIDJournal(RecordRequestIDJournalRequest) returns (RecordRequestIDJournalResponse);
+}
+
+message RecordRequestIDJournalRequest {
+  string record_id = 1; // gateway-generated idempotency key for this HTTP attempt
+  string account_id = 2;
+  string app_id = 3;
+  string request_id = 4; // public x-faas-request-id; bounded to 128 bytes
+  string trace_id = 5; // W3C trace id, separate from request_id
+  int64 received_at_unix_ms = 6;
+}
+
+message RecordRequestIDJournalResponse {
+  // False only when the account plan has no debugger entitlement. Storage or
+  // validation failures are gRPC errors and must prevent guest forwarding.
+  bool recorded = 1;
 }
 
 // The financial fields contain no request path, client metadata, or payload.

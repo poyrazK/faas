@@ -173,6 +173,14 @@ type ProjectEnvironmentBindingResponse struct {
 	SecretKeys           []string `json:"secret_keys"`
 }
 
+// ProjectEnvironmentDomainResponse is a custom hostname explicitly routed to
+// this workload's environment. It contains no DNS challenge or certificate
+// secrets.
+type ProjectEnvironmentDomainResponse struct {
+	Domain   string `json:"domain"`
+	Verified bool   `json:"verified"`
+}
+
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
@@ -183,6 +191,7 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Domains      []ProjectEnvironmentDomainResponse        `json:"domains"`
 	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
 	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
 }
@@ -296,6 +305,14 @@ type ProjectEnvironmentBindingChangeResponse struct {
 	After     *ProjectEnvironmentBindingResponse `json:"after,omitempty"`
 }
 
+// ProjectEnvironmentDomainDiffResponse compares the verified hostnames
+// assigned to one workload in two environments.
+type ProjectEnvironmentDomainDiffResponse struct {
+	Kind   string                             `json:"kind"`
+	Before []ProjectEnvironmentDomainResponse `json:"before"`
+	After  []ProjectEnvironmentDomainResponse `json:"after"`
+}
+
 // ProjectEnvironmentWorkloadDiffResponse groups all effective-state changes
 // for one project workload.
 type ProjectEnvironmentWorkloadDiffResponse struct {
@@ -305,6 +322,7 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Domains      ProjectEnvironmentDomainDiffResponse       `json:"domains"`
 	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
 	Policies     ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
 }
@@ -455,6 +473,7 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	ProjectSlug            string                               `json:"project_slug"`
 	FromEnvironment        string                               `json:"from_environment"`
 	ToEnvironment          string                               `json:"to_environment"`
+	SyncConfig             bool                                 `json:"sync_config,omitempty"`
 	ToEnvironmentProtected bool                                 `json:"to_environment_protected"`
 	ApprovalRequired       bool                                 `json:"approval_required"`
 	CanPromote             bool                                 `json:"can_promote"`
@@ -480,7 +499,8 @@ type PromoteProjectEnvironmentRequest struct {
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's
 // promotion result. Promoted deployments reuse the source rootfs artifact;
-// environment configuration and secrets remain target-scoped.
+// environment configuration remains target-scoped unless sync_config was
+// explicitly requested, and secrets always remain target-scoped.
 type ProjectEnvironmentPromotionWorkloadResponse struct {
 	WorkloadSlug       string `json:"workload_slug"`
 	WorkloadName       string `json:"workload_name"`
@@ -496,6 +516,7 @@ type ProjectEnvironmentPromotionResponse struct {
 	ProjectSlug     string                                           `json:"project_slug"`
 	FromEnvironment string                                           `json:"from_environment"`
 	ToEnvironment   string                                           `json:"to_environment"`
+	SyncConfig      bool                                             `json:"sync_config,omitempty"`
 	PromotionHash   string                                           `json:"promotion_hash"`
 	ReleaseGraph    *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
 	Workloads       []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
@@ -535,6 +556,7 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	ProjectSlug             string                                              `json:"project_slug"`
 	FromEnvironment         string                                              `json:"from_environment"`
 	ToEnvironment           string                                              `json:"to_environment"`
+	SyncConfig              bool                                                `json:"sync_config,omitempty"`
 	PromotionHash           string                                              `json:"promotion_hash"`
 	Status                  string                                              `json:"status"`
 	Error                   string                                              `json:"error,omitempty"`
@@ -561,6 +583,7 @@ type ProjectEnvironmentPromotionSummaryResponse struct {
 	ProjectSlug             string `json:"project_slug"`
 	FromEnvironment         string `json:"from_environment"`
 	ToEnvironment           string `json:"to_environment"`
+	SyncConfig              bool   `json:"sync_config,omitempty"`
 	PromotionHash           string `json:"promotion_hash"`
 	Status                  string `json:"status"`
 	Error                   string `json:"error,omitempty"`

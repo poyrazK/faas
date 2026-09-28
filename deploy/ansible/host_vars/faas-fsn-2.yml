@@ -29,6 +29,7 @@ ansible_python_interpreter: /usr/bin/python3
 # is required.
 faas_vmmd_listen_addr: "tcp://0.0.0.0:50051"
 faas_vmmd_target_url: "tcp://fsn-2.gregale.dev:50051"
+faas_githubd_target_url: "tcp://githubd.faas:50053"
 faas_vmmd_schedd_target: "tcp://fsn-2.gregale.dev:9091"
 faas_gatewayd_schedd_target: "tcp://fsn-2.gregale.dev:9091"
 

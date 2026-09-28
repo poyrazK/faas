@@ -697,6 +697,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)

@@ -190,7 +190,7 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	app, problem := s.createDashboardWizardApp(r.Context(), acct, slug)
+	app, problem := s.createDashboardWizardApp(r.Context(), r, acct, slug)
 	if problem != nil {
 		redirectGitHubWizardError(w, r, wizardProblemMessage(problem), repo, strconv.FormatInt(installationID, 10), branch, slug)
 		return
@@ -218,13 +218,13 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"?github=connected", http.StatusSeeOther)
 }
 
-func (s *server) createDashboardWizardApp(ctx context.Context, acct state.Account, slug string) (state.App, *api.Problem) {
+func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, acct state.Account, slug string) (state.App, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug}, limits)
 	if problem != nil {
 		return state.App{}, problem
 	}
-	created, err := s.store.CreateAppIfUnderQuota(ctx, app, limits)
+	created, err := s.createAppIfUnderQuotaWithActivity(ctx, r, acct, app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
 		switch {

@@ -54,6 +54,27 @@ before the codeload fetch starts, so a `main` ref that moves
 between CI runs still produces an immutable SHA-pinned build
 row.
 
+Branch-backed source-ref deployments also retain their branch and GitHub
+installation identity through the build. Imaged checks the branch again after
+readiness validation and just before promotion. If it moved or was deleted, the
+candidate fails with `source_ref_stale`; if GitHub cannot be checked, promotion
+fails closed with `source_ref_unavailable`. A tag or commit SHA stays pinned to
+the resolved commit and skips this branch check. See
+[ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
+In split-box fleets, compute-side imaged performs the final check over the
+private `githubd.faas:50053` mTLS route provisioned by the manifest and Ansible.
+
+For App-driven push deployments, Gregale checks that the webhook's commit is
+still the branch head before it fetches source and checks again after scanning,
+immediately before reconciliation. If the branch has advanced, the older
+delivery is ignored without changing project state. See
+[ADR-313](adr/313-github-push-head-recheck.md). Once a GitHub deployment is accepted, its
+per-app revision also prevents an older in-flight GitHub build from becoming
+live after a newer deployment was accepted for the same environment. A manual
+`--repo --ref` request is an explicit deployment choice, including an older
+SHA for rollback; its accepted revision takes part in the same promotion
+order. See [ADR-311](adr/311-github-push-freshness-and-promotion-fence.md).
+
 To queue the deployment without waiting for the build, pass
 `--no-wait`. This returns the deployment id and URL as soon as the
 control plane accepts the request; omit it (the default) when the
@@ -103,10 +124,9 @@ reconciling trigger or async-route declarations. Companion declarations and
 top-level `main_depends_on` are also validated and pinned to that deployment.
 See [application companions](./companions.md) for the manifest shape.
 
-The app-level `scaling:` declaration is currently rejected on this transport
-because the source-ref handler cannot safely update app policy transactionally
-with the remote build. Apply scaling separately (for example with a local
-single-app deploy) when using `--repo`.
+The app-level `scaling:` declaration is applied during source-ref staging.
+If the deploy cannot be accepted, the handler restores the previous scaling
+policy along with the other staged manifest changes.
 
 Repository deploys accept deployment annotations, rollout controls,
 `--no-triggers`, wait controls, and an idempotency key. App-shape and local
@@ -117,9 +137,16 @@ local/tarball deploy whose source can be inspected before mutation.
 
 ## What it is NOT
 
-- **Not a webhook bind.** For push-event auto-deploy use
-  `gregale connect` and let the GitHub App's push events fire
-  the build. The `--repo --ref` shape is one-shot.
+- **Not a webhook bind.** `--repo --ref` is a one-shot deploy. For an
+  Actions-owned production push workflow, use `gregale github setup` to
+  write the workflow and set `production_trigger=actions`; the connected
+  GitHub App continues to manage PR previews. The generated workflow also
+  deploys newly created SemVer `v*` tags from their immutable event commit;
+  moved, deleted, and invalid tag pushes are skipped. Branches passed through
+  `--deploy-branches branch=environment,...` or previously saved through
+  `github bind` also deploy through Actions into their registered project
+  environments, and manual dispatch is limited to those branches. Existing
+  projects with `production_trigger=webhook` keep the App push deploy path.
 - **Not a git deploy-key fetch.** The server uses the GitHub App
   install token (ADR-012, ADR-020); the control plane never
   sees the customer's PAT. The install token is scoped to a
@@ -171,9 +198,10 @@ across repos.
   string the customer is expected to edit.
 - `app: my-app` — the slug from `gregale connect`. The snippet
   generator picks the slug from `--name` / cwd.
-- `wait: "false"` — the generated workflow queues the deployment and
-  continues, so a slow build does not hold the GitHub runner. Set it to
-  `"true"` when the job must block until the app is live.
+- `wait: "true"` — the generated workflow waits for a terminal result, so
+  the job reports a failed release as failed. Set it to `"false"` only for
+  an explicit queue-only workflow; its Check Run is named
+  **Gregale deployment queued** and does not certify a live release.
 - `checks: write` — lets the Action publish a **Gregale deployment** Check
   Run linking to the control-plane record. The deployment still works without
   this permission; the link remains available through the Action output.
@@ -191,11 +219,11 @@ action additionally:
   `check-run-id`, and `cli-version` to `$GITHUB_OUTPUT` so downstream steps can
   chain off them.
 - Appends a GitHub Step Summary with the queued/live status and deployment
-  link. The default is asynchronous (`status=queued`); `wait: "true"`
-  changes the terminal status to `live` or a failure state.
-- The asynchronous Check Run is neutral (request accepted, deployment still
-  running) rather than an indefinitely pending check; synchronous runs update
-  it to the final result.
+  link. The default `wait: "true"` reports a terminal `live` or failure
+  status. Explicit `wait: "false"` returns `status=queued`.
+- Explicit queue-only runs publish a separately named, neutral Check Run
+  confirming admission. Waiting runs update the release Check Run to the
+  final result.
 
 ### Authentication
 
@@ -222,10 +250,11 @@ If no GitHub App installation exists, the API returns
 - **PR-preview environments.** Each deploy is a fresh
   deployment id; the action does not create or tear down
   preview URLs.
-- **A redirect to the webhook push-to-deploy path.** The
-  action is a complement to the push listener; both stamp
-  `DeploymentKind = "github"` and customers pick the one
-  that matches their CI shape.
+- **A redirect to the webhook push-to-deploy path.** The action submits a
+  source-ref deployment. For the same bound project, set
+  `production_trigger=actions` with `gregale github setup` or the deployment
+  policy API so the App push listener does not submit a second production
+  deployment. The App continues to process PR preview events.
 
 See ADR-093 for the design rationale and the explicit
 non-goals.

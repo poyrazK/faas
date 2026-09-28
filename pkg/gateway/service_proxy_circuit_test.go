@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // breakerProxy builds a ServiceProxy over two endpoints where instance-a is
@@ -187,5 +188,65 @@ func TestServiceProxyBreakerCountsHealthyTransports(t *testing.T) {
 	// it got there from observed failures, not from a single blip.
 	if got := group.State(serviceProxyEndpointKey("app-orders", "instance-a")); got == circuit.StateClosed {
 		t.Fatal("instance-a breaker = closed, want open or half_open after repeated transport failures")
+	}
+}
+
+func TestServiceProxyUpgradeSettlesHalfOpenProbe(t *testing.T) {
+	now := time.Unix(100, 0)
+	cfg := circuit.DefaultConfig()
+	cfg.MinRequests = 1
+	cfg.FailureThreshold = 1
+	cfg.OpenDuration = time.Second
+	group := circuit.NewGroup(cfg, func() time.Time { return now })
+	key := serviceProxyEndpointKey("app-orders", "instance-a")
+	group.Failure(key)
+	now = now.Add(2 * time.Second)
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}}},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders", WebSocketEnabled: true}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		},
+		RawForward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusSwitchingProtocols) })
+		},
+		Breaker: group,
+		Now:     func() time.Time { return now },
+	})
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, upgradeRequest())
+	if rec.Code != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade status = %d", rec.Code)
+	}
+	if got := group.State(key); got != circuit.StateClosed {
+		t.Fatalf("breaker = %q after successful handshake, want closed", got)
+	}
+	if !group.Allow(key) {
+		t.Fatal("recovered endpoint stayed reserved after successful Upgrade")
+	}
+}
+
+func TestServiceProxyPublishesAndPrunesOpenTargetGauge(t *testing.T) {
+	now := time.Unix(100, 0)
+	clock := func() time.Time { return now }
+	cfg := circuit.DefaultConfig()
+	cfg.MinRequests = 1
+	group := circuit.NewGroup(cfg, clock)
+	metrics := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{Breaker: group, Metrics: metrics, Now: clock})
+	proxy.quarantine("app-orders", "instance-a")
+	if got := testutil.ToFloat64(metrics.circuitOpenTargets.WithLabelValues("app-orders")); got != 1 {
+		t.Fatalf("open targets = %g, want 1", got)
+	}
+	now = now.Add(11 * time.Minute)
+	proxy.pruneIdle(now)
+	if got := group.Len(); got != 0 {
+		t.Fatalf("retired breaker count = %d, want 0", got)
+	}
+	if got := testutil.CollectAndCount(metrics.circuitOpenTargets); got != 0 {
+		t.Fatalf("retired gauge series = %d, want 0", got)
 	}
 }

@@ -2,16 +2,16 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.7.0
+  version: 1.10.0
   description: |
     Gregale delivers selected app lifecycle and billing events to app-owned
-    subscriptions and cross-app statement events to platform-tenant-owned
-    subscriptions, accepts tenant-scoped events for the
-    internal content-based router, accepts external events for durable workflow
-    runs, and exposes per-app FIFO queue operations. Outbound webhook messages
-    use CloudEvents 1.0 structured JSON over HTTP POST and are signed with the
-    webhook secret; ingress, workflow, and queue operations use the public API's
-    authenticated JSON endpoints.
+    subscriptions, and cross-app statement, hostname-verification,
+    certificate-lifecycle, and deployment-outcome events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
+    the internal content-based router, accepts external events for durable
+    workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
+    messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
+    with the webhook secret; ingress, workflow, and queue operations use the
+    public API's authenticated JSON endpoints.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -98,6 +98,30 @@ channels:
     messages:
       platformTenantStatementFinalized:
         $ref: '#/components/messages/PlatformTenantStatementFinalized'
+  platformTenantHostnameVerified:
+    address: platform_tenant.hostname.verified
+    description: Emitted when DNS ownership is verified for a hostname on a surface linked to this platform tenant; this does not guarantee certificate issuance or routing.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantHostnameVerified:
+        $ref: '#/components/messages/PlatformTenantHostnameVerified'
+  platformTenantSurfaceCertificateChanged:
+    address: platform_tenant.surface.certificate.changed
+    description: Emitted when the certificate state changes for a surface linked to this platform tenant; it contains status metadata only, never certificate material or provider error text.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantSurfaceCertificateChanged:
+        $ref: '#/components/messages/PlatformTenantSurfaceCertificateChanged'
+  platformTenantSurfaceDeploymentChanged:
+    address: platform_tenant.surface.deployment.changed
+    description: Emitted when a deployment for an explicitly linked surface reaches live or failed; a failed latest attempt does not assert that no prior deployment is serving.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantSurfaceDeploymentChanged:
+        $ref: '#/components/messages/PlatformTenantSurfaceDeploymentChanged'
   internalEventPublish:
     address: /v1/events:publish
     description: Publish one tenant-scoped event for asynchronous content-based fanout.
@@ -273,6 +297,39 @@ operations:
     summary: Deliver a platform_tenant.statement.finalized event to a tenant webhook.
     messages:
       - $ref: '#/channels/platformTenantStatementFinalized/messages/platformTenantStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantHostnameVerified:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantHostnameVerified'
+    summary: Deliver a platform_tenant.hostname.verified event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantHostnameVerified/messages/platformTenantHostnameVerified'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantSurfaceCertificateChanged:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantSurfaceCertificateChanged'
+    summary: Deliver a platform_tenant.surface.certificate.changed event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantSurfaceCertificateChanged/messages/platformTenantSurfaceCertificateChanged'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantSurfaceDeploymentChanged:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantSurfaceDeploymentChanged'
+    summary: Deliver a platform_tenant.surface.deployment.changed event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantSurfaceDeploymentChanged/messages/platformTenantSurfaceDeploymentChanged'
     bindings:
       http:
         method: POST
@@ -484,6 +541,42 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/PlatformTenantStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantHostnameVerified:
+      name: platform_tenant.hostname.verified
+      title: Platform tenant hostname verified
+      summary: DNS ownership has been verified for a hostname on a surface linked to this tenant; certificate issuance and routing are separate lifecycle steps.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantHostnameVerifiedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantSurfaceCertificateChanged:
+      name: platform_tenant.surface.certificate.changed
+      title: Platform tenant surface certificate changed
+      summary: A linked surface's certificate state changed; raw provider errors and certificate material are not included.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantSurfaceCertificateChangedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantSurfaceDeploymentChanged:
+      name: platform_tenant.surface.deployment.changed
+      title: Platform tenant surface deployment changed
+      summary: A deployment for a surface linked to this tenant reached live or failed; private deployment details are not included.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedEvent'
       bindings:
         http:
           headers:
@@ -840,6 +933,75 @@ components:
               enum: ['platform_tenant.statement.finalized']
             data:
               $ref: '#/components/schemas/PlatformTenantStatementFinalizedData'
+    PlatformTenantHostnameVerifiedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.hostname.verified']
+            data:
+              $ref: '#/components/schemas/PlatformTenantHostnameVerifiedData'
+    PlatformTenantSurfaceCertificateChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.surface.certificate.changed']
+            data:
+              $ref: '#/components/schemas/PlatformTenantSurfaceCertificateChangedData'
+    PlatformTenantSurfaceDeploymentChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.surface.deployment.changed']
+            data:
+              $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedData'
+    PlatformTenantHostnameVerifiedData:
+      type: object
+      description: DNS TXT ownership proof only. This event does not mean a certificate has been issued or that the hostname is routable; the challenge token is never included.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, hostname_id, hostname, verified_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        hostname_id: { type: string, format: uuid }
+        hostname: { type: string, minLength: 1 }
+        verified_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantSurfaceCertificateChangedData:
+      type: object
+      description: Persisted certificate-state transition for a surface explicitly linked to this tenant. Raw provider error text, certificates, and private keys are never included; use the activation snapshot for current diagnostic details.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, cert_state, cert_not_after, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: [string, "null"], format: date-time, description: Null unless a certificate expiry is recorded. }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantSurfaceDeploymentChangedData:
+      type: object
+      description: Terminal deployment outcome for an explicitly linked surface. Includes safe status and revision metadata only; app/deployment IDs, source data, logs, and raw errors are never included. A failed latest attempt does not mean a previous deployment is not serving.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, revision, deployment_status, started_at, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        revision: { type: integer, minimum: 1 }
+        deployment_status: { type: string, enum: [live, failed] }
+        started_at: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
     PlatformTenantStatementFinalizedData:
       type: object
       required:

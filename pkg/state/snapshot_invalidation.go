@@ -19,6 +19,13 @@ func InvalidateAppSnapshots(ctx context.Context, store Store, appID string) (int
 	if err := store.MarkAppRuntimeConfigChanged(ctx, appID); err != nil {
 		return 0, fmt.Errorf("mark runtime config changed: %w", err)
 	}
+	return InvalidateAppSnapshotsAtExistingStamp(ctx, store, appID)
+}
+
+// InvalidateAppSnapshotsAtExistingStamp invalidates snapshots after the caller
+// has stamped runtime configuration in the same transaction as its mutation.
+// Retrying this step must not move the freshness boundary past a new instance.
+func InvalidateAppSnapshotsAtExistingStamp(ctx context.Context, store Store, appID string) (int, error) {
 	deployments, err := store.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if errors.Is(err, ErrNotFound) {
 		return 0, nil

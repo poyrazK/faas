@@ -5119,6 +5119,51 @@ func TestMem_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
 	}
 }
 
+func TestMem_UpdateDeploymentTrafficRejectsActiveCanary(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, stableID := memstoreSeedAppLive(t, m, ctx, "traffic-active-canary")
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:canary",
+		Status: DeployPending, CanaryPreset: "balanced", CanaryTotalSteps: 4,
+		CanaryStep: 0, RolloutState: "pending", TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := m.DeploymentByID(ctx, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stable.TrafficPercent != 99 || candidate.TrafficPercent != 1 {
+		t.Fatalf("canary fixture traffic = stable:%d candidate:%d, want 99/1", stable.TrafficPercent, candidate.TrafficPercent)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "candidate", id: candidate.ID, want: 100},
+		{name: "stable sibling", id: stableID, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := m.UpdateDeploymentTraffic(ctx, tc.id, tc.want); !errors.Is(err, ErrTrafficChangeDuringCanary) {
+				t.Fatalf("UpdateDeploymentTraffic during active canary = %v, want ErrTrafficChangeDuringCanary", err)
+			}
+		})
+	}
+	stableAfter, _ := m.DeploymentByID(ctx, stableID)
+	candidateAfter, _ := m.DeploymentByID(ctx, candidate.ID)
+	if stableAfter.TrafficPercent != 99 || candidateAfter.TrafficPercent != 1 ||
+		candidateAfter.CanaryStep != 0 || candidateAfter.RolloutState != "rolling_out" {
+		t.Fatalf("blocked traffic change mutated state: stable=%+v candidate=%+v", stableAfter, candidateAfter)
+	}
+}
+
 func TestMemStore_RunningInstanceForAppIgnoresSupersededGeneration(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()

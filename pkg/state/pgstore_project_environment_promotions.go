@@ -9,8 +9,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const projectEnvironmentPromotionSelectColumns = `id, account_id, project_id, project_slug, from_environment, to_environment,
+	promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
+	rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
+	rollback_completed_at, verification_status, verification_error,
+	verification_started_at, verification_completed_at,
+	release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(previous_target_release_set_id::text, ''),
+	coalesce(target_release_set_id::text, ''), coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
+	sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot,
+	previous_target_config_snapshot, target_config_version, rollback_config_version`
+
 func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, error) {
 	var promotion ProjectEnvironmentPromotion
+	var sourceConfigSnapshot, previousTargetConfigSnapshot []byte
 	if err := row.Scan(
 		&promotion.ID, &promotion.AccountID, &promotion.ProjectID, &promotion.ProjectSlug,
 		&promotion.FromEnvironment, &promotion.ToEnvironment, &promotion.PromotionHash,
@@ -23,9 +34,15 @@ func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, 
 		&promotion.ReleaseGraphMode, &promotion.SourceReleaseSetID,
 		&promotion.PreviousTargetReleaseSetID, &promotion.TargetReleaseSetID,
 		&promotion.RestoredTargetReleaseSetID, &promotion.ReleaseTTLSeconds,
+		&promotion.SyncConfig, &promotion.SourceConfigHash, &promotion.PreviousTargetConfigHash,
+		&sourceConfigSnapshot, &previousTargetConfigSnapshot, &promotion.TargetConfigVersion,
+		&promotion.RollbackConfigVersion,
 	); err != nil {
 		return ProjectEnvironmentPromotion{}, mapErr(err)
 	}
+	promotion.SourceConfigSnapshot = append([]byte(nil), sourceConfigSnapshot...)
+	promotion.PreviousTargetConfigSnapshot = append([]byte(nil), previousTargetConfigSnapshot...)
+	promotion.RollbackReleaseSetID = promotion.RestoredTargetReleaseSetID
 	return promotion, nil
 }
 
@@ -54,24 +71,22 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 
 	row := tx.QueryRow(ctx, `
 		insert into project_environment_promotions
-			(account_id, project_id, project_slug, from_environment, to_environment,
-			 promotion_hash, idempotency_key, status, error, verification_status,
-			 release_graph_mode, source_release_set_id, previous_target_release_set_id, release_ttl_seconds)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, '')::uuid, nullif($13, '')::uuid, $14)
-		returning id, account_id, project_id, project_slug, from_environment,
-		          to_environment, promotion_hash, idempotency_key, status, error,
-		          created_at, updated_at, completed_at, rollback_status,
-		          rollback_idempotency_key, rollback_error, rollback_started_at,
-		          rollback_completed_at, verification_status, verification_error,
-		          verification_started_at, verification_completed_at,
-		          release_graph_mode, coalesce(source_release_set_id::text, ''),
-		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
-	`, promotion.AccountID, promotion.ProjectID, promotion.ProjectSlug,
+			 (account_id, project_id, project_slug, from_environment, to_environment,
+			  promotion_hash, idempotency_key, status, error, verification_status,
+			  release_graph_mode, source_release_set_id, previous_target_release_set_id, release_ttl_seconds,
+			  sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot,
+			  previous_target_config_snapshot, target_config_version, rollback_config_version)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, '')::uuid,
+		        nullif($13, '')::uuid, $14, $15, $16, $17, coalesce($18::jsonb, '{}'::jsonb),
+		        coalesce($19::jsonb, '{}'::jsonb), $20, $21)
+		returning `+projectEnvironmentPromotionSelectColumns,
+		promotion.AccountID, promotion.ProjectID, promotion.ProjectSlug,
 		promotion.FromEnvironment, promotion.ToEnvironment, promotion.PromotionHash,
 		promotion.IdempotencyKey, promotion.Status, promotion.Error, promotion.VerificationStatus,
 		promotion.ReleaseGraphMode, promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID,
-		promotion.ReleaseTTLSeconds)
+		promotion.ReleaseTTLSeconds, promotion.SyncConfig, promotion.SourceConfigHash,
+		promotion.PreviousTargetConfigHash, promotion.SourceConfigSnapshot,
+		promotion.PreviousTargetConfigSnapshot, promotion.TargetConfigVersion, promotion.RollbackConfigVersion)
 	created, err := scanProjectEnvironmentPromotion(row)
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
@@ -113,7 +128,9 @@ func (s *PgStore) ProjectEnvironmentPromotionByID(ctx context.Context, accountID
 		       verification_started_at, verification_completed_at,
 		       release_graph_mode, coalesce(source_release_set_id::text, ''),
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
+		       sync_config, source_config_hash, previous_target_config_hash,
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2 and project_slug = $3 and to_environment = $4
 	`, id, accountID, projectSlug, targetEnvironment))
@@ -136,7 +153,9 @@ func (s *PgStore) ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Contex
 		       verification_started_at, verification_completed_at,
 		       release_graph_mode, coalesce(source_release_set_id::text, ''),
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
+		       sync_config, source_config_hash, previous_target_config_hash,
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 		  from project_environment_promotions
 		 where account_id = $1 and project_slug = $2 and idempotency_key = $3
 	`, accountID, projectSlug, idempotencyKey))
@@ -186,7 +205,9 @@ func (s *PgStore) ListProjectEnvironmentPromotionsBefore(ctx context.Context, ac
 	                 verification_started_at, verification_completed_at,
 	                 release_graph_mode, coalesce(source_release_set_id::text, ''),
 	                 coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-	                 coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+	                 coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
+		       sync_config, source_config_hash, previous_target_config_hash,
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	            from project_environment_promotions
 	           where ` + strings.Join(conditions, " and ") + `
 	           order by created_at desc, id desc`
@@ -254,7 +275,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotion(ctx context.Context, account
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -273,7 +294,9 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		       verification_started_at, verification_completed_at,
 		       release_graph_mode, coalesce(source_release_set_id::text, ''),
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
+		       sync_config, source_config_hash, previous_target_config_hash,
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2
 		 for update
@@ -306,7 +329,7 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	`, id, accountID, idempotencyKey)
 	updated, err := scanProjectEnvironmentPromotion(returning)
 	if err != nil {
@@ -330,7 +353,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollback(ctx context.Context,
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -387,7 +410,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Cont
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	`, id, accountID, status, errorMessage, startedAt, completedAt))
 }
 
@@ -424,6 +447,6 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Conte
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
 	`, id, accountID, targetReleaseSetID, restoredTargetReleaseSetID))
 }

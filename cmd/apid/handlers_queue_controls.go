@@ -69,7 +69,6 @@ func (s *server) resolveDeploymentAccount(w http.ResponseWriter, r *http.Request
 // goroutine's job (pkg/builderd/builderd.go).
 func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	principal := acct.ID
 	reason := state.CancelReasonUser
 	if r.ContentLength != 0 {
 		var req struct {
@@ -101,7 +100,7 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 	// which would always be "cancelled" and useless for the
 	// SOC 2 CC7.2 reader).
 	priorStatus := string(priorD.Status)
-	d, cancelledBuilds, err := s.store.CancelDeploymentTx(r.Context(), id, principal, reason)
+	d, cancelledBuilds, activityOutboxID, err := s.cancelDeploymentWithActivity(r.Context(), r, acct, app, priorD, reason, false)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		s.notFound(w, "no such deployment")
@@ -117,6 +116,9 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 			"Gregale could not cancel this deployment.",
 			"Refresh the deployment status before retrying.", err)
 	default:
+		if activityOutboxID > 0 {
+			s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+		}
 		// ADR-124: fire one build_changed pg_notify per cascade-cancelled
 		// build so builderd's cancel-LISTEN goroutine can call VM.Cancel
 		// on each in-flight VM. Fire-and-forget — the row flip already

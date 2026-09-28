@@ -441,10 +441,10 @@ func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Ac
 		return nil
 	}
 	return &state.OrgActivity{
-		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorGitHub,
+		OrgID: orgID, Kind: "deploy.requested", ActorType: state.OrgActivityActorGitHub,
 		ActorLabel: "GitHub Actions", ResourceType: "app", ResourceID: app.ID,
-		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment",
-		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch}),
+		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment.requested",
+		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch, "phase": "requested"}),
 	}
 }
 
@@ -472,11 +472,11 @@ func (g *githubdBridge) recordDeploymentActivity(ctx context.Context, acct state
 		return
 	}
 	entry := state.OrgActivity{
-		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorGitHub,
+		OrgID: orgID, Kind: "deploy.requested", ActorType: state.OrgActivityActorGitHub,
 		ActorLabel: "GitHub Actions", ResourceType: "app", ResourceID: app.ID,
 		ResourceLabel: app.Slug, AppID: &appID, DeploymentID: &deploymentID,
-		SourceType: "deployment", SourceID: res.DeploymentID,
-		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch}),
+		SourceType: "deployment.requested", SourceID: res.DeploymentID,
+		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch, "phase": "requested"}),
 	}
 	if outbox, ok := g.store.(state.OrgActivityOutboxStore); ok {
 		id, err := outbox.EnqueueOrgActivityOutbox(ctx, entry)

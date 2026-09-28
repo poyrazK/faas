@@ -55,6 +55,27 @@ func TestEmit_RejectsUnknownEvent(t *testing.T) {
 	}
 }
 
+func TestRegressionLifecycleEventsAreSubscribable(t *testing.T) {
+	for _, event := range []state.AppWebhookEvent{
+		state.AppWebhookEventDebugRegressionDetected,
+		state.AppWebhookEventDebugRegressionResolved,
+	} {
+		if !state.ValidAppWebhookEvent(event) {
+			t.Errorf("state.ValidAppWebhookEvent(%q) = false", event)
+		}
+		found := false
+		for _, allowed := range api.AllowedAppWebhookEvents {
+			if allowed == string(event) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("API does not allow subscriptions to %q", event)
+		}
+	}
+}
+
 func TestEmit_UsageStatementFinalizedPayload(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

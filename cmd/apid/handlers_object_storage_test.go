@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -253,6 +254,8 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	bucketPath := "/v1/apps/compute-binding-app/buckets"
 	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
 	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	notifier := &runtimeConfigNotifyStub{}
+	e.s.notif = notifier
 
 	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
 	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
@@ -264,6 +267,11 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	}
 	if created.Prefix != "GREGALE_S3_ASSETS" || created.Scope != state.DefaultEnvScope || created.Credential.Permission != api.ObjectBucketPermissionReadWrite {
 		t.Fatalf("unexpected binding: %+v", created)
+	}
+	var change db.RuntimeConfigChangedPayload
+	if notifier.channel != db.NotifySecretRotated || json.Unmarshal([]byte(notifier.payload), &change) != nil ||
+		change.AppID != app.ID || change.AccountID != e.acct.ID || change.Kind != "binding_created" || change.Scope != state.DefaultEnvScope || change.Key != "" {
+		t.Fatalf("binding runtime notification = %q %q", notifier.channel, notifier.payload)
 	}
 	rows, err := e.store.ListAppSecretsInScope(context.Background(), e.acct.ID, app.ID, state.DefaultEnvScope)
 	if err != nil || len(rows) != 6 {
@@ -277,6 +285,9 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	if response := e.do(t, "PUT", "/v1/apps/compute-binding-app/secrets/GREGALE_S3_ASSETS_BUCKET", api.PutAppSecretRequest{Value: "tamper"}, nil); response.Code != 409 {
 		t.Fatalf("managed secret overwrite = %d %s", response.Code, response.Body.String())
 	}
+	if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:binding-test", Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 
 	rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
 	if rotatedResponse.Code != 200 {
@@ -286,11 +297,27 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
 		t.Fatal(err)
 	}
-	if rotated.ID != created.ID || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID {
+	if rotated.ID != created.ID || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID || !rotated.RotationPending {
 		t.Fatalf("rotation did not replace access key: before=%q after=%q", created.Credential.AccessKeyID, rotated.Credential.AccessKeyID)
 	}
-	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("old access key still resolves: %v", err)
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); err != nil {
+		t.Fatalf("old access key during live overlap: %v", err)
+	}
+	listResponse := e.do(t, "GET", bindingPath, nil, nil)
+	var listed api.ObjectStorageComputeBindingList
+	if listResponse.Code != 200 || json.Unmarshal(listResponse.Body.Bytes(), &listed) != nil || len(listed.Items) != 1 || !listed.Items[0].RotationPending {
+		t.Fatalf("pending binding list = %d %s", listResponse.Code, listResponse.Body.String())
+	}
+	retryResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+	if retryResponse.Code != 200 {
+		t.Fatalf("retry compute binding rotation = %d %s", retryResponse.Code, retryResponse.Body.String())
+	}
+	var retried api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(retryResponse.Body.Bytes(), &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.Credential.AccessKeyID != rotated.Credential.AccessKeyID || !retried.RotationPending {
+		t.Fatalf("retry created another key: %+v", retried)
 	}
 
 	if response := e.do(t, "DELETE", bindingPath+"/"+created.ID, nil, nil); response.Code != 204 {
@@ -302,6 +329,45 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	}
 	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), rotated.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("rotated access key still resolves after delete: %v", err)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("previous access key still resolves after delete: %v", err)
+	}
+}
+
+func TestObjectStorageComputeBindingRotationWithoutLiveDeployment(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
+	e := setupSecrets(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	createApp(t, e, "undeployed-binding-app")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	bucketPath := "/v1/apps/undeployed-binding-app/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
+	if createdResponse.Code != 201 {
+		t.Fatalf("create binding = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+	if rotatedResponse.Code != 200 {
+		t.Fatalf("rotate binding = %d %s", rotatedResponse.Code, rotatedResponse.Body.String())
+	}
+	var rotated api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.RotationPending || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID {
+		t.Fatalf("undeployed rotation = %+v", rotated)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old undeployed key still resolves: %v", err)
 	}
 }
 

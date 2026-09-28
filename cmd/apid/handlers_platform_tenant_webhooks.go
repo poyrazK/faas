@@ -93,6 +93,14 @@ func (s *server) createPlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrAppWebhookInvalid(err.Error()))
 		return
 	}
+	eventFilter := req.EventFilter
+	if eventFilter == nil {
+		eventFilter = []string{state.PlatformTenantStatementFinalizedEvent}
+	}
+	if !state.ValidPlatformTenantWebhookFilter(eventFilter) {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid("event_filter must contain one or more supported platform tenant events without duplicates"))
+		return
+	}
 	if prob := validateWebhookURL(req.TargetURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -129,7 +137,7 @@ func (s *server) createPlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 	row, err := tenantStore.CreatePlatformTenantWebhookIfUnderQuota(r.Context(), state.AppWebhook{
 		AccountID: acct.ID, PlatformTenantID: tenant.ID, Scope: state.AppWebhookScopePlatformTenant,
 		TargetURL: req.TargetURL, SecretSealed: sealed,
-		EventFilter: []string{state.PlatformTenantStatementFinalizedEvent},
+		EventFilter: eventFilter,
 		RetryPolicy: state.AppWebhookRetryPolicy(policy), DeliveryFormat: state.AppWebhookDeliveryFormat(format), Enabled: enabled,
 	}, limits)
 	if err != nil {

@@ -2,9 +2,24 @@ package realtime
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
+
+func addSyntheticConnection(tb testing.TB, m *Manager, endpointID string) *connection {
+	tb.Helper()
+	value, ok := m.endpoints.Load(endpointID)
+	if !ok {
+		tb.Fatalf("endpoint %q is not registered", endpointID)
+	}
+	state := value.(*endpointState)
+	return m.addConnection(state, *state.config.Load(), "", nil)
+}
 
 func TestManagerPublishSelectsEndpointAndChannel(t *testing.T) {
 	m := NewManager(Config{}, nil)
@@ -16,9 +31,9 @@ func TestManagerPublishSelectsEndpointAndChannel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	alerts := m.addConnection(first, "", nil)
-	updates := m.addConnection(first, "", nil)
-	otherEndpoint := m.addConnection(second, "", nil)
+	alerts := addSyntheticConnection(t, m, first.ID)
+	updates := addSyntheticConnection(t, m, first.ID)
+	otherEndpoint := addSyntheticConnection(t, m, second.ID)
 	for _, subscription := range []struct {
 		id      string
 		channel string
@@ -48,11 +63,6 @@ func TestManagerPublishSelectsEndpointAndChannel(t *testing.T) {
 	if queued, err := m.Publish(context.Background(), first.ID, "alerts", msg); err != nil || queued != 0 {
 		t.Fatalf("unsubscribed publish = (%d, %v), want (0, nil)", queued, err)
 	}
-	m.RemoveEndpoint(first.ID)
-	if queued, err := m.Publish(context.Background(), first.ID, "updates", msg); err != nil || queued != 1 {
-		t.Fatalf("removed endpoint publish = (%d, %v), want (1, nil)", queued, err)
-	}
-	<-updates.outbound
 	if queued, err := m.Publish(context.Background(), second.ID, "alerts", msg); err != nil || queued != 1 {
 		t.Fatalf("second endpoint publish = (%d, %v), want (1, nil)", queued, err)
 	}
@@ -66,7 +76,7 @@ func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
-	c := m.addConnection(endpoint, "", nil)
+	c := addSyntheticConnection(t, m, endpoint.ID)
 	var workers sync.WaitGroup
 	errors := make(chan error, 2)
 	workers.Add(3)
@@ -105,5 +115,55 @@ func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 	}
 	if queued, err := m.Publish(context.Background(), endpoint.ID, "updates", Message{Data: []byte("x")}); err != nil || queued != 0 {
 		t.Fatalf("publish after unsubscribe = (%d, %v), want (0, nil)", queued, err)
+	}
+}
+
+func TestManagerPublishRemovesClosedConnectionFromChannelIndex(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer m.Close()
+	endpoint := Endpoint{ID: "disconnect", MaxMessageBytes: 1024}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	deadline := time.Now().Add(time.Second)
+	var id string
+	for time.Now().Before(deadline) {
+		connections := m.Snapshot()
+		if len(connections) == 1 {
+			id = connections[0].ID
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if id == "" {
+		t.Fatal("connection did not become active")
+	}
+	if err := m.Subscribe(id, "updates"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(m.Snapshot()); got != 0 {
+		t.Fatalf("connections after disconnect = %d, want 0", got)
+	}
+	if queued, err := m.Publish(context.Background(), endpoint.ID, "updates", Message{Data: []byte("x")}); err != nil || queued != 0 {
+		t.Fatalf("publish after disconnect = (%d, %v), want (0, nil)", queued, err)
 	}
 }

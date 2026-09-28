@@ -75,6 +75,8 @@
             <option value="deploy." {{if eq $d.ActivityKindPrefix "deploy."}}selected{{end}}>Rollbacks</option>
             <option value="env." {{if eq $d.ActivityKindPrefix "env."}}selected{{end}}>Environment</option>
             <option value="domain." {{if eq $d.ActivityKindPrefix "domain."}}selected{{end}}>Domains and TLS</option>
+            <option value="api_key." {{if eq $d.ActivityKindPrefix "api_key."}}selected{{end}}>API keys</option>
+            <option value="org." {{if eq $d.ActivityKindPrefix "org."}}selected{{end}}>Members and invitations</option>
           </select>
         </label>
         <label>Actor

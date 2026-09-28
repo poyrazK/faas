@@ -21,10 +21,14 @@ export type GitHubDeploymentPolicy = {
    * Controls calls from project previews to production internal
    * services. `deny` rejects the call before discovery or wake-up;
    * `allow_marked` permits it and marks the request as preview-origin
-   * traffic. Projects created before this policy was introduced are
-   * migration-backed to `allow_marked`.
+   * traffic. Legacy projects are migrated to `deny`; `allow_marked`
+   * requires an explicit policy update.
    *
    */
   preview_service_policy: 'deny' | 'allow_marked';
+  /**
+   * The single production deploy authority; GitHub App PR previews continue in either mode.
+   */
+  production_trigger: 'webhook' | 'actions';
 };
 

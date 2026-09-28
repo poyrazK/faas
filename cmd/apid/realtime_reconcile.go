@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,18 +36,45 @@ func (s *server) reconcileManagedRealtimeEndpoints(ctx context.Context) error {
 		// source-compatible. Such stores retain mutation-time synchronization.
 		return nil
 	}
+	// Read the node inventory before durable intent. A concurrent create that
+	// happens after this snapshot cannot be mistaken for a stale registration.
+	var errs []error
+	var inventory realtime.EndpointInventory
+	if observer, ok := s.realtimeRegistrar.(realtimeEndpointInventory); ok {
+		var inventoryErr error
+		inventory, inventoryErr = observer.ListEndpointInventory(ctx)
+		if inventoryErr != nil {
+			errs = append(errs, fmt.Errorf("list node endpoint inventory: %w", inventoryErr))
+		} else if inventory.NodesUnavailable > 0 {
+			errs = append(errs, fmt.Errorf("endpoint inventory incomplete: %d nodes unavailable", inventory.NodesUnavailable))
+		}
+		if inventoryErr != nil && inventory.NodesQueried == 0 {
+			// Continue replaying desired rows; a later pass can prune stale
+			// registrations once at least one node responds.
+			inventory = realtime.EndpointInventory{}
+		}
+	}
 	rows, err := lister.ListManagedRealtimeEndpoints(ctx)
 	if err != nil {
 		return fmt.Errorf("list managed realtime endpoints: %w", err)
 	}
 
-	var errs []error
+	desired := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
+		desired[row.ID] = struct{}{}
 		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, fmt.Errorf("endpoint %s: %w", row.ID, err))
 			if ctx.Err() != nil {
 				break
 			}
+		}
+	}
+	for _, id := range inventory.IDs {
+		if _, ok := desired[id]; ok {
+			continue
+		}
+		if err := s.realtimeRegistrar.RemoveEndpoint(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("remove deleted endpoint %s: %w", id, err))
 		}
 	}
 	return errors.Join(errs...)

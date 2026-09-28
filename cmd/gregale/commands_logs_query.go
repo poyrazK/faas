@@ -270,9 +270,9 @@ func httpLogRowMatches(row api.DebugTelemetryRequestItem, deploymentID, route, s
 }
 
 func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
-	requestID := ""
+	traceID := ""
 	if row.TraceID != nil {
-		requestID = *row.TraceID
+		traceID = *row.TraceID
 	}
 	return api.LogQueryEvent{
 		ID:           row.ID,
@@ -280,8 +280,8 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 		Source:       api.LogSourceHTTP,
 		DeploymentID: row.DeploymentID,
 		InstanceID:   row.InstanceID,
-		RequestID:    requestID,
-		TraceID:      requestID,
+		RequestID:    row.RequestID,
+		TraceID:      traceID,
 		Route:        row.Route,
 		Method:       row.Method,
 		Status:       row.Status,

@@ -40,7 +40,7 @@ func (s *server) dashboardDeleteKey(w http.ResponseWriter, r *http.Request) {
 			"Confirmation does not match", "type the displayed API key prefix exactly"))
 		return
 	}
-	if _, err := s.revokeAPIKey(r.Context(), acct, key.ID); err != nil {
+	if _, err := s.revokeAPIKey(r, acct, key.ID); err != nil {
 		s.writeDashboardKeyError(w, err)
 		return
 	}

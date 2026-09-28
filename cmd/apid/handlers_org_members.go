@@ -136,12 +136,15 @@ func (s *server) inviteOrgMember(w http.ResponseWriter, r *http.Request, acct st
 	if mintErr {
 		return
 	}
+	activity := newOrgAccessActivity(r, acct, org.ID, "org.invitation.created", "invitation", map[string]any{
+		"role": string(role),
+	})
 	inv, now, ok := s.persistOrgInvitation(r.Context(), w, org, state.OrgInvitation{
 		Email:              email,
 		Role:               role,
 		TokenHash:          tokenHash,
 		InvitedByAccountID: &acct.ID,
-	})
+	}, activity)
 	if !ok {
 		return
 	}
@@ -160,12 +163,15 @@ func (s *server) inviteOrgMember(w http.ResponseWriter, r *http.Request, acct st
 // hash collision — astronomically unlikely at 32 bytes) writes a
 // 500 Problem; on other Store failures also writes a 500 Problem.
 // Returns the persisted row + now() + true; false on any error.
-func (s *server) persistOrgInvitation(ctx context.Context, w http.ResponseWriter, org state.Org, base state.OrgInvitation) (state.OrgInvitation, time.Time, bool) {
+func (s *server) persistOrgInvitation(ctx context.Context, w http.ResponseWriter, org state.Org, base state.OrgInvitation, activity state.OrgActivity) (state.OrgInvitation, time.Time, bool) {
 	now := time.Now()
 	base.OrgID = org.ID
 	base.ExpiresAt = now.Add(defaultOrgInvitationTtl)
 	base.CreatedAt = now
-	inv, err := s.store.CreateOrgInvitation(ctx, base)
+	activity.Data = activityData(map[string]any{
+		"role": string(base.Role), "expires_at": base.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+	inv, err := s.createOrgInvitationWithActivity(ctx, base, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			// Duplicate token_hash is astronomically unlikely
@@ -233,7 +239,10 @@ func (s *server) changeOrgMemberRole(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrOrgRoleForbidden("change role"))
 		return
 	}
-	if err := s.store.UpdateOrgMemberRole(r.Context(), mem.OrgID, targetID, role); err != nil {
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.member.role_changed", "member", map[string]any{
+		"new_role": string(role),
+	})
+	if err := s.updateOrgMemberRoleWithActivity(r.Context(), mem.OrgID, targetID, role, activity); err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
@@ -295,7 +304,8 @@ func (s *server) removeOrgMember(w http.ResponseWriter, r *http.Request, acct st
 			"transfer ownership or ask another owner to remove you"))
 		return
 	}
-	if err := s.store.RemoveOrgMember(r.Context(), mem.OrgID, targetID); err != nil {
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.member.removed", "member", nil)
+	if err := s.removeOrgMemberWithActivity(r.Context(), mem.OrgID, targetID, activity); err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
