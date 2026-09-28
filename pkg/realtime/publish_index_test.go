@@ -111,6 +111,68 @@ func TestManagerChannelRouteSnapshotReturnsUniqueEndpointChannelPairs(t *testing
 	}
 }
 
+func TestManagerChannelRouteRevisionChangesAfterLastSubscriberDisconnects(t *testing.T) {
+	m := NewManager(Config{}, &testHooks{accept: true})
+	defer m.Close()
+	endpoint := Endpoint{ID: "disconnect", MaxMessageBytes: 1024}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + endpoint.ID
+	client, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	deadline := time.Now().Add(time.Second)
+	var connectionID string
+	for time.Now().Before(deadline) {
+		connections := m.Snapshot()
+		if len(connections) == 1 {
+			connectionID = connections[0].ID
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if connectionID == "" {
+		t.Fatal("connection did not become active")
+	}
+	if err := m.Subscribe(connectionID, "updates"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	before := m.ChannelRouteRevision()
+	if before.InstanceID == "" {
+		t.Fatal("channel route revision has no process instance")
+	}
+	if got := m.ChannelRouteSnapshot(); len(got) != 1 || got[0] != (ChannelRoute{EndpointID: endpoint.ID, Channel: "updates"}) {
+		t.Fatalf("routes before disconnect = %+v, want updates route", got)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(m.ChannelRouteSnapshot()) == 0 && m.ChannelRouteRevision().Revision > before.Revision {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := m.ChannelRouteSnapshot(); len(got) != 0 {
+		t.Fatalf("routes after disconnect = %+v, want empty", got)
+	}
+	after := m.ChannelRouteRevision()
+	if after.InstanceID != before.InstanceID || after.Revision != before.Revision+1 {
+		t.Fatalf("route revision after last disconnect = %+v, want same instance and revision %d", after, before.Revision+1)
+	}
+}
+
 func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 	m := NewManager(Config{OutboundQueue: 512}, nil)
 	defer m.cancel()
