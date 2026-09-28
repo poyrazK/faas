@@ -3945,14 +3945,18 @@ func TestPg_DeploymentActorRoundtrip(t *testing.T) {
 	// 1. Full actor payload — dashboard / API path with a session
 	//    user, remote IP, and a githubd-stamped pusher login.
 	depFull, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID:            app.ID,
-		Kind:             state.DeploymentKindGitHub,
-		ImageDigest:      "sha256:actor-full",
-		Status:           state.DeployPending,
-		DeployedByUserID: acct.ID,
-		DeployedVia:      "github",
-		DeployedFromIP:   "203.0.113.42",
-		PusherLogin:      "octocat",
+		AppID:                app.ID,
+		Kind:                 state.DeploymentKindGitHub,
+		ImageDigest:          "sha256:actor-full",
+		Status:               state.DeployPending,
+		SourceURL:            "github://onebox-faas/hello@abcdef0123456789abcdef0123456789abcdef01",
+		CommitSHA:            "abcdef0123456789abcdef0123456789abcdef01",
+		GitHubSourceRef:      "release/2026-q3",
+		GitHubInstallationID: 7777,
+		DeployedByUserID:     acct.ID,
+		DeployedVia:          "github",
+		DeployedFromIP:       "203.0.113.42",
+		PusherLogin:          "octocat",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(full): %v", err)
@@ -3972,6 +3976,9 @@ func TestPg_DeploymentActorRoundtrip(t *testing.T) {
 	}
 	if got.PusherLogin != "octocat" {
 		t.Errorf("pusher_login = %q, want %q", got.PusherLogin, "octocat")
+	}
+	if got.GitHubSourceRef != "release/2026-q3" || got.GitHubInstallationID != 7777 {
+		t.Errorf("GitHub source ref provenance = (%q, %d), want (release/2026-q3, 7777)", got.GitHubSourceRef, got.GitHubInstallationID)
 	}
 
 	// 2. Zero actor payload — anonymous / pre-FK / push-to-main

@@ -25,7 +25,7 @@ func TestRenderGithubSetupWorkflow(t *testing.T) {
 		"tags:\n      - \"v*\"",
 		"poyrazK/faas/.github/actions/deploy@v0",
 		`wait: "true"`,
-		"concurrency:",
+		"concurrency:\n  group: gregale-${{ github.repository }}-api-${{ 'default' }}",
 		"cancel-in-progress: false",
 		"PR previews are managed by the connected GitHub integration.",
 	} {
@@ -65,6 +65,7 @@ func TestRenderGithubSetupWorkflowRoutesMappedBranches(t *testing.T) {
 		"github.ref == 'refs/heads/main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/staging'",
 		"name: ${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || 'production' }}",
 		"environment: ${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || '' }}",
+		"group: gregale-${{ github.repository }}-api-${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || 'default' }}",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("mapped workflow does not contain %q:\n%s", want, workflow)

@@ -45,6 +45,7 @@ const (
 	Githubd_VerifyInstallation_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
 	Githubd_MintInstallationToken_FullMethodName    = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
+	Githubd_GetBranchHead_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
 	Githubd_ListRecoveryQueueItems_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
 	Githubd_RetryWebhookDelivery_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
 	Githubd_RetryCheckUpdate_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
@@ -181,6 +182,10 @@ type GithubdClient interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(ctx context.Context, in *StreamSourceRefRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamSourceRefChunk], error)
+	// GetBranchHead returns a branch's current commit. NOT_FOUND means the
+	// requested ref is not a branch (source-ref also accepts tags and SHAs).
+	// imaged uses this immediately before promoting branch-backed deployments.
+	GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -342,6 +347,16 @@ func (c *githubdClient) StreamSourceRef(ctx context.Context, in *StreamSourceRef
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefClient = grpc.ServerStreamingClient[StreamSourceRefChunk]
+
+func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBranchHeadResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetBranchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *githubdClient) ListRecoveryQueueItems(ctx context.Context, in *ListRecoveryQueueItemsRequest, opts ...grpc.CallOption) (*ListRecoveryQueueItemsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -513,6 +528,10 @@ type GithubdServer interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error
+	// GetBranchHead returns a branch's current commit. NOT_FOUND means the
+	// requested ref is not a branch (source-ref also accepts tags and SHAs).
+	// imaged uses this immediately before promoting branch-backed deployments.
+	GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -574,6 +593,9 @@ func (UnimplementedGithubdServer) MintInstallationToken(context.Context, *MintIn
 }
 func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error {
 	return status.Error(codes.Unimplemented, "method StreamSourceRef not implemented")
+}
+func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
 }
 func (UnimplementedGithubdServer) ListRecoveryQueueItems(context.Context, *ListRecoveryQueueItemsRequest) (*ListRecoveryQueueItemsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRecoveryQueueItems not implemented")
@@ -835,6 +857,24 @@ func _Githubd_StreamSourceRef_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefServer = grpc.ServerStreamingServer[StreamSourceRefChunk]
 
+func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBranchHeadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetBranchHead(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetBranchHead_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetBranchHead(ctx, req.(*GetBranchHeadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_ListRecoveryQueueItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListRecoveryQueueItemsRequest)
 	if err := dec(in); err != nil {
@@ -961,6 +1001,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MintInstallationToken",
 			Handler:    _Githubd_MintInstallationToken_Handler,
+		},
+		{
+			MethodName: "GetBranchHead",
+			Handler:    _Githubd_GetBranchHead_Handler,
 		},
 		{
 			MethodName: "ListRecoveryQueueItems",
