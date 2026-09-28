@@ -409,8 +409,14 @@ func TestLeasedRealtimeOwnerPublishWithNoKnownSubscribersReturnsEmptyStatus(t *t
 	owner := newLeasedRealtimeOwner(store, store, "", nil, nil)
 	owner.channelRoutingEnabled = true
 	owner.channelRoutes = store
+	generation, err := store.CurrentManagedRealtimeChannelRouteGeneration(ctx)
+	if err != nil {
+		t.Fatalf("CurrentManagedRealtimeChannelRouteGeneration: %v", err)
+	}
 	for _, node := range activeNodes {
-		owner.setChannelRoutesReady(node.ID, true)
+		if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, nil); err != nil {
+			t.Fatalf("mark node %s route snapshot ready: %v", node.ID, err)
+		}
 	}
 	owner.clientFor = func(state.ComputeNode) (realtimeNodeOperator, error) { return local, nil }
 
