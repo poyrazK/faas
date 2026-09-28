@@ -164,7 +164,7 @@ func TestCallbackOutboxPreservesConnectionSequence(t *testing.T) {
 
 func TestCallbackOutboxSchedulerPromotesNextConnectionHead(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{
-		RetryInterval: time.Millisecond, MaxRetryInterval: time.Second, MaxAttempts: 4,
+		RetryInterval: time.Millisecond, MaxRetryInterval: time.Minute, MaxAttempts: 4,
 	})
 	first := testCallbackEvent()
 	first.ID, first.Sequence = "evt_sched_first", 1
@@ -193,7 +193,7 @@ func TestCallbackOutboxSchedulerPromotesNextConnectionHead(t *testing.T) {
 	if err != nil || !ok || got.ID != first.ID {
 		t.Fatalf("ClaimNext before delay = (%s, %v, %v), want first event", got.ID, ok, err)
 	}
-	if err := queue.FailWithRetryAfter(first.ID, 35*time.Millisecond); err != nil {
+	if err := queue.FailWithRetryAfter(first.ID, time.Minute); err != nil {
 		t.Fatalf("FailWithRetryAfter first: %v", err)
 	}
 	if stats := queue.Stats(); stats.ReplayReady != 1 || stats.ReplayDelayed != 1 {
@@ -212,7 +212,17 @@ func TestCallbackOutboxSchedulerPromotesNextConnectionHead(t *testing.T) {
 	if _, ok, err := queue.ClaimNext(); err != nil || ok {
 		t.Fatalf("ClaimNext before retry time = (%v, %v), want no event", ok, err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	// Advance the retry deadline directly so slow filesystem writes cannot
+	// consume the backoff window before the assertions above run.
+	queue.mu.Lock()
+	firstItem := queue.items[first.ID]
+	if firstItem != nil {
+		firstItem.record.NextAttemptAt = time.Now().UTC().Add(-time.Second)
+	}
+	queue.mu.Unlock()
+	if firstItem == nil {
+		t.Fatal("first event disappeared before retry")
+	}
 	if stats := queue.Stats(); stats.ReplayReady != 1 || stats.ReplayDelayed != 0 {
 		t.Fatalf("stats after retry time = %+v, want the due head promoted to ready", stats)
 	}
