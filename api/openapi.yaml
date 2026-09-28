@@ -4023,6 +4023,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/reconciliation-plan:
+    post:
+      tags: [platform-tenants]
+      operationId: planPlatformTenantReconciliation
+      summary: Preview desired platform-tenant resource changes without applying them.
+      description: Validates a desired bundle and returns deterministic create, link, keep, removal-candidate, and unmanaged-retention entries. This endpoint is read-only; omitted managed resources are only candidates and are never detached, revoked, or deleted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing tenant UUID whose desired resource bundle is being previewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanPlatformTenantReconciliationRequest' }
+      responses:
+        '200':
+          description: Stable, read-only reconciliation plan for this tenant's desired consumer and surface bundle.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}:
     parameters:
       - name: id
@@ -23946,6 +23975,45 @@ components:
         surfaces:
           type: array
           items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceRequest' }
+
+    PlanPlatformTenantReconciliationRequest:
+      description: Complete desired consumer and surface bundle for one existing platform tenant. Omitted managed resources appear as removal candidates; omitted unmanaged resources are explicitly retained.
+      type: object
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantConsumerRequest' }
+        surface_ids:
+          type: array
+          items: { type: string, format: uuid }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceRequest' }
+
+    PlatformTenantReconciliationPlanChange:
+      description: One deterministic plan entry. remove_candidate is informational only; no resource is detached, revoked, or deleted by planning.
+      type: object
+      required: [resource_type, action]
+      properties:
+        resource_type: { type: string, enum: [consumer, surface, hostname] }
+        action: { type: string, enum: [create, link, keep, remove_candidate, retain_unmanaged] }
+        id: { type: string, format: uuid, description: Existing resource ID; absent for a resource that would be created. }
+        app_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Present for consumer entries. }
+        name: { type: string, description: Present for consumer and surface entries. }
+        surface_id: { type: string, format: uuid, description: Present for hostname entries on an existing surface. }
+        hostname: { type: string, description: Present for hostname entries. }
+        managed_by_platform_tenant: { type: boolean, description: Existing provenance flag; omitted when the plan describes a resource that does not exist yet. }
+
+    PlatformTenantReconciliationPlanResponse:
+      description: A deterministic, read-only plan. Applying or approving a plan is a separate future operation.
+      type: object
+      required: [tenant_id, changes]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
 
     ApplyPlatformTenantSurfaceRequest:
       description: App-local surface to create or reuse by account-level name, with an additive set of hostnames.

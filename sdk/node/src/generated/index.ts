@@ -559,6 +559,7 @@ export type { PlanCron } from './models/PlanCron.js';
 export type { PlanDetectedBy } from './models/PlanDetectedBy.js';
 export type { PlanDetectionWarning } from './models/PlanDetectionWarning.js';
 export type { PlanManaged } from './models/PlanManaged.js';
+export type { PlanPlatformTenantReconciliationRequest } from './models/PlanPlatformTenantReconciliationRequest.js';
 export type { PlanResponse } from './models/PlanResponse.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PlatformTenantAccessTokenListResponse } from './models/PlatformTenantAccessTokenListResponse.js';
@@ -581,6 +582,8 @@ export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/Plat
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';
+export type { PlatformTenantReconciliationPlanChange } from './models/PlatformTenantReconciliationPlanChange.js';
+export type { PlatformTenantReconciliationPlanResponse } from './models/PlatformTenantReconciliationPlanResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './models/PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js';
 export type { PlatformTenantSelfActivationHostnameResponse } from './models/PlatformTenantSelfActivationHostnameResponse.js';

@@ -22,6 +22,7 @@ import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePl
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
+import type { PlanPlatformTenantReconciliationRequest } from '../models/PlanPlatformTenantReconciliationRequest.js';
 import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTenantAccessTokenListResponse.js';
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
@@ -34,6 +35,7 @@ import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTen
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
+import type { PlatformTenantReconciliationPlanResponse } from '../models/PlatformTenantReconciliationPlanResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
@@ -132,6 +134,39 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Preview desired platform-tenant resource changes without applying them.
+   * Validates a desired bundle and returns deterministic create, link, keep, removal-candidate, and unmanaged-retention entries. This endpoint is read-only; omitted managed resources are only candidates and are never detached, revoked, or deleted.
+   * @returns PlatformTenantReconciliationPlanResponse Stable, read-only reconciliation plan for this tenant's desired consumer and surface bundle.
+   * @throws ApiError
+   */
+  public static planPlatformTenantReconciliation({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose desired resource bundle is being previewed.
+     */
+    id: string,
+    requestBody: PlanPlatformTenantReconciliationRequest,
+  }): CancelablePromise<PlatformTenantReconciliationPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/reconciliation-plan',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
   }
