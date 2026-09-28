@@ -13,6 +13,8 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,6 +227,61 @@ func TestEnginePark_EmitsStartedCompleted(t *testing.T) {
 	}
 	if !contains(got, "wake.park_completed") {
 		t.Errorf("kinds missing wake.park_completed: got %v", got)
+	}
+	if contains(got, events.WakeParkFailed) {
+		t.Errorf("successful park emitted failure: %v", got)
+	}
+}
+
+// adr: 343 — a terminal capture error closes the customer park timeline.
+func TestEnginePark_EmitsFailedWithClosedReason(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		snapshotErr error
+		wantReason  string
+	}{
+		{name: "callback rejected", snapshotErr: api.NewProblem(422, api.CodeBeforeCheckpointFailed,
+			"Before checkpoint callback failed", "private callback response"), wantReason: api.CodeBeforeCheckpointFailed},
+		{name: "other snapshot error", snapshotErr: errors.New("private snapshot path"), wantReason: "snapshot_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+			e := wakeEngineWithEvents(t, store, &fakeVMM{snapErr: tc.snapshotErr}, &fakeNotifier{})
+			res, err := e.Wake(ctx, app.ID, "", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Park(ctx, res.InstanceID); err == nil {
+				t.Fatal("expected park failure")
+			}
+			rows := eventuallyEventsForInstance(t, store, res.WakeID, 6)
+			var started, failed, completed int
+			for _, row := range rows {
+				switch row.Kind {
+				case events.WakeParkStarted:
+					started++
+				case events.WakeParkCompleted:
+					completed++
+				case events.WakeParkFailed:
+					failed++
+					var payload map[string]any
+					if err := json.Unmarshal(row.Data, &payload); err != nil {
+						t.Fatal(err)
+					}
+					if payload["reason"] != tc.wantReason || payload["started_at"] == nil || payload["failed_at"] == nil {
+						t.Fatalf("park_failed payload = %+v", payload)
+					}
+					if strings.Contains(string(row.Data), "private") {
+						t.Fatalf("park_failed leaked callback or host detail: %s", row.Data)
+					}
+				}
+			}
+			if started != 1 || failed != 1 || completed != 0 {
+				t.Fatalf("park event counts started/failed/completed = %d/%d/%d, kinds=%v", started, failed, completed, kindsOf(rows))
+			}
+		})
 	}
 }
 

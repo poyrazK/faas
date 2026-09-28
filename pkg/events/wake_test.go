@@ -33,6 +33,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = PageServed{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", ServedAt: now, AccountID: "acct-1"}
 	var _ WakeEvent = ParkStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n"}
 	var _ WakeEvent = ParkCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", SnapshotID: "s-1"}
+	var _ WakeEvent = ParkFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Reason: "snapshot_failed"}
 	var _ WakeEvent = Stalled{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Reason: "watchdog"}
 	var _ WakeEvent = BuildSucceeded{EmitAt: now, AppID: "a", DeploymentID: "d", ImageDigest: "sha256:abc", DurationMs: 12000}
 	var _ WakeEvent = BuildFailed{EmitAt: now, AppID: "a", DeploymentID: "d", ImageDigest: "sha256:abc", Reason: "compile"}

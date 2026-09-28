@@ -120,6 +120,10 @@ const (
 	// Dual of WakeParkStarted. Payload: {wake_id, app_id,
 	// instance_id, node_id, started_at, completed_at, snapshot_id}.
 	WakeParkCompleted = "wake.park_completed"
+	// WakeParkFailed — terminal snapshot capture failed and the source
+	// instance stopped. Payload includes only a
+	// closed reason, never a guest response or vmmd error string.
+	WakeParkFailed = "wake.park_failed"
 	// WakeStalled — watchdog path: instance hasn't transitioned
 	// states within the deadline. Sibling of the legacy
 	// `watchdog_timeout` audit row — both fire, joined by
@@ -884,6 +888,46 @@ func (e ParkCompleted) Payload() map[string]any {
 		"started_at":   e.StartedAt.UTC(),
 		"completed_at": e.CompletedAt.UTC(),
 		"snapshot_id":  e.SnapshotID,
+	}
+	if e.DeploymentID != "" {
+		p["deployment_id"] = e.DeploymentID
+	}
+	return p
+}
+
+// ParkFailed closes a ParkStarted timeline when terminal init capture fails.
+// Reason is the closed set {before_checkpoint_failed, snapshot_failed}.
+// The guest log retains callback details; this event is customer-safe.
+type ParkFailed struct {
+	EmitAt       time.Time
+	WakeID       string
+	AppID        string
+	DeploymentID string
+	InstanceID   string
+	NodeID       string
+	StartedAt    time.Time
+	FailedAt     time.Time
+	Reason       string
+}
+
+func (e ParkFailed) Kind() string     { return WakeParkFailed }
+func (e ParkFailed) At() time.Time    { return e.EmitAt }
+func (e ParkFailed) Subject() *string { return nil }
+func (e ParkFailed) Payload() map[string]any {
+	// The API returns event data verbatim. Keep the closed reason boundary
+	// here even if a future emitter accidentally passes err.Error().
+	reason := "snapshot_failed"
+	if e.Reason == "before_checkpoint_failed" {
+		reason = e.Reason
+	}
+	p := map[string]any{
+		"wake_id":     e.WakeID,
+		"app_id":      e.AppID,
+		"instance_id": e.InstanceID,
+		"node_id":     e.NodeID,
+		"started_at":  e.StartedAt.UTC(),
+		"failed_at":   e.FailedAt.UTC(),
+		"reason":      reason,
 	}
 	if e.DeploymentID != "" {
 		p["deployment_id"] = e.DeploymentID

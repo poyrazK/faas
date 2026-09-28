@@ -7415,6 +7415,20 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			reason = api.CodeBeforeCheckpointFailed
 		}
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", reason)
+		if e.events != nil {
+			failedAt := time.Now().UTC()
+			e.events.Emit(ctx, events.ParkFailed{
+				EmitAt:       failedAt,
+				WakeID:       ins.WakeID,
+				AppID:        ins.AppID,
+				DeploymentID: ins.DeploymentID,
+				InstanceID:   ins.ID,
+				NodeID:       ins.NodeID,
+				StartedAt:    now.UTC(),
+				FailedAt:     failedAt,
+				Reason:       reason,
+			})
+		}
 		return fmt.Errorf("sched: park: snapshot %s: %w", ins.ID, err)
 	}
 	e.ledger.Release(ins.ID)

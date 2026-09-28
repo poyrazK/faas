@@ -241,6 +241,29 @@ func TestSweep_ParkCompleted(t *testing.T) {
 	}
 }
 
+func TestSweep_ParkFailed(t *testing.T) {
+	now := time.Now().UTC()
+	e := ParkFailed{
+		EmitAt: now, WakeID: "w1", AppID: "a1", DeploymentID: "d1",
+		InstanceID: "i1", NodeID: "n1", StartedAt: now,
+		FailedAt: now.Add(time.Second), Reason: "before_checkpoint_failed",
+	}
+	if e.Kind() != WakeParkFailed || e.Subject() != nil || !e.At().Equal(now) {
+		t.Fatalf("ParkFailed envelope = %q/%v/%s", e.Kind(), e.Subject(), e.At())
+	}
+	payload := e.Payload()
+	if payload["deployment_id"] != "d1" || payload["reason"] != "before_checkpoint_failed" {
+		t.Fatalf("ParkFailed payload = %+v", payload)
+	}
+	if _, ok := payload["error"]; ok {
+		t.Fatal("ParkFailed payload exposed raw error")
+	}
+	e.Reason = "private callback response"
+	if got := e.Payload()["reason"]; got != "snapshot_failed" {
+		t.Fatalf("unknown park reason = %v, want closed fallback", got)
+	}
+}
+
 func TestSweep_Stalled(t *testing.T) {
 	now := time.Now()
 	e := Stalled{

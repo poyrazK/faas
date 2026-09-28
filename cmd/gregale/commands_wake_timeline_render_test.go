@@ -69,6 +69,27 @@ func TestRenderWakeTimelinePage_ApplicationRestoreFallback(t *testing.T) {
 	}
 }
 
+func TestRenderWakeTimelinePage_ParkFailureReason(t *testing.T) {
+	for _, reason := range []string{api.CodeBeforeCheckpointFailed, "snapshot_failed"} {
+		resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+			Kind: "wake.park_failed", Actor: "schedd", Data: map[string]any{"reason": reason},
+		}}}
+		var buf bytes.Buffer
+		renderWakeTimelinePage(&buf, resp)
+		if !strings.Contains(buf.String(), "reason="+reason) {
+			t.Fatalf("park failure reason %q missing: %s", reason, buf.String())
+		}
+	}
+	resp := api.WakeTimelineResponse{Events: []api.WakeTimelineEvent{{
+		Kind: "wake.park_failed", Data: map[string]any{"reason": "private callback response"},
+	}}}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "private callback response") {
+		t.Fatalf("unknown park reason escaped into CLI: %s", buf.String())
+	}
+}
+
 // TestRenderSummaryHeader_SortedByKey pins the deterministic key
 // order (sort.Strings) so the CLI output is grep-able / golden-friendly.
 func TestRenderSummaryHeader_SortedByKey(t *testing.T) {

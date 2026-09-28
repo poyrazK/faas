@@ -104,6 +104,33 @@ func TestListWakeTimeline_HappyPath(t *testing.T) {
 	}
 }
 
+func TestListWakeTimeline_ParkFailureIsCustomerVisible(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedAppForTimeline(t, e, "tl-park-failure")
+	platform := events.NewPlatform("schedd", e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	wakeID := "wake-park-failure"
+	now := time.Now().UTC()
+	platform.Emit(context.Background(), events.ParkFailed{
+		EmitAt: now, WakeID: wakeID, AppID: app.ID,
+		DeploymentID: "dep-1", InstanceID: "inst-1", NodeID: "node-1",
+		StartedAt: now.Add(-time.Second), FailedAt: now,
+		Reason: api.CodeBeforeCheckpointFailed,
+	})
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/wakes/"+wakeID+"/timeline", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WakeTimelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Events) != 1 || response.Events[0].Kind != events.WakeParkFailed ||
+		response.Events[0].Data["reason"] != api.CodeBeforeCheckpointFailed {
+		t.Fatalf("park failure timeline = %+v", response.Events)
+	}
+}
+
 func TestListWakeTimeline_UnknownWakeIDIs404(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := seedAppForTimeline(t, e, "tl-app-2")

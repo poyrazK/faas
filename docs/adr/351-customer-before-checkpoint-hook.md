@@ -43,3 +43,8 @@ park retains its existing `park_snapshot_error` audit kind and uses
 or timeout detail; deployment and audit records carry no callback response
 body or host path. Other snapshot failures retain their existing codes and
 reasons.
+
+The per-wake timeline closes a failed terminal capture with
+`wake.park_failed`, carrying the same closed reason and start/failure times.
+The CLI renders only known reason values. The existing
+`wake.park_completed` event remains exclusive to successful captures.

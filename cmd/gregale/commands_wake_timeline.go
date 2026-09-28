@@ -350,7 +350,16 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 	if ev.Kind == "wake.boot_completed" && ev.Data["restore_fallback_reason"] == "after_restore_failed" {
 		fallbackReason = "after_restore hook failed; cold boot succeeded"
 	}
-	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" && fallbackReason == "" {
+	parkReason := ""
+	if ev.Kind == "wake.park_failed" {
+		switch ev.Data["reason"] {
+		case api.CodeBeforeCheckpointFailed:
+			parkReason = api.CodeBeforeCheckpointFailed
+		case "snapshot_failed":
+			parkReason = "snapshot_failed"
+		}
+	}
+	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" && fallbackReason == "" && parkReason == "" {
 		return ""
 	}
 	parts := make([]string, 0, 5)
@@ -362,6 +371,9 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 	}
 	if fallbackReason != "" {
 		parts = append(parts, "restore_fallback=after_restore_failed ("+fallbackReason+")")
+	}
+	if parkReason != "" {
+		parts = append(parts, "reason="+parkReason)
 	}
 	if queued != 0 {
 		parts = append(parts, fmt.Sprintf("q=%d", queued))

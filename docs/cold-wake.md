@@ -40,6 +40,45 @@ marker. The hook's work adds to wake latency, so keep it short. Redeploy after
 changing the lifecycle configuration; existing snapshots retain the manifest
 from their deployment.
 
+## Prepare application state before a snapshot
+
+If your app must flush or release in-memory state before Gregale captures a
+new init snapshot, add a `before_checkpoint` hook:
+
+```yaml
+lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 500
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 500
+```
+
+Gregale sends one loopback `POST` with `X-Faas-Before-Checkpoint: 1` and no
+body before pausing the guest. Return 2xx to allow capture. The timeout
+defaults to 500 ms and can be at most 2 seconds. The path must start with
+`/`. This hook runs only for a new terminal init snapshot, not when Gregale
+reuses an existing snapshot. It applies to request and service apps. Make
+the handler idempotent because a failed capture may be retried, and check
+both the loopback peer address and the header.
+
+If the callback fails during the first capture, the deployment fails with
+`before_checkpoint_failed`. If it fails on a later park, no new snapshot is
+published and the instance stops. `gregale wake-timeline <slug> <wake-id>`
+shows `wake.park_failed` with that closed reason; `gregale logs <slug>` shows
+the guest's HTTP or timeout cause. Other capture failures appear as
+`snapshot_failed` in the timeline. Enabling `before_checkpoint` disables
+warm-tier snapshot captures because that capture resumes the same guest
+afterward.
+
+If the callback closes connections or clears state, use `after_restore` to
+reopen or rebuild them before the restored instance serves traffic. State
+created during boot, such as cached credentials or IDs, is copied into every
+instance restored from that snapshot. Refresh values that must be unique or
+current after restore. Gregale repairs the guest clock and kernel entropy
+before running `after_restore`, but cannot refresh application-held values.
+
 You can detect the wake tier on every routed response:
 
 - `x-faas-wake: hot` means an already-running instance served the request.
