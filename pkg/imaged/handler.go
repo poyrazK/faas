@@ -1647,6 +1647,12 @@ type snapshotWrittenPayload struct {
 	// lands, this field is empty and the row is recorded as
 	// init per the DB column default.
 	Tier string `json:"tier,omitempty"`
+	// Capture-time gates travel with the durable notification. A delayed
+	// publication must not describe today's app settings as the capture's.
+	WarmMinRequests *int   `json:"warm_min_requests,omitempty"`
+	WarmMinMs       *int   `json:"warm_min_ms,omitempty"`
+	RequestCount    *int64 `json:"request_count,omitempty"`
+	ReadyToParkMs   *int64 `json:"framework_ready_to_park_ms,omitempty"`
 }
 
 // deploymentReadyPayload is the non-snapshot sibling of
@@ -3141,9 +3147,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// imaged's sole snapshot-row writer as the final fail-closed fence.
 		ephemeral, secretErr := hasEphemeralSecretForDeployment(ctx, h.store, app, dep)
 		if secretErr != nil {
+			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationPolicyError)
 			return h.rejectEphemeralSnapshot(ctx, snapshot, state.Snapshot{}, secretErr)
 		}
 		if ephemeral {
+			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedEphemeral)
 			return h.rejectEphemeralSnapshot(ctx, snapshot, state.Snapshot{}, nil)
 		}
 
@@ -3154,6 +3162,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// that did not report mem_bytes.
 		expectedMemBytes := int64(app.RAMMB) << 20
 		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
+			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedRAM)
 			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 				h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
 			}
@@ -3178,17 +3187,21 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			Tier: snapshot.Tier,
 		}
 		stored, createErr := h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
+		created := createErr == nil
 		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+			h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 			h.log.Info("imaged: discarded stale snapshot capture", "deployment", snapshot.DeploymentID,
 				"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
 			return h.discardStaleSnapshotCapture(ctx, snap)
 		}
 		if createErr != nil {
 			if !errors.Is(createErr, state.ErrConflict) {
+				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: create snapshot: %w", createErr)
 			}
 			stored, createErr = h.store.LatestSnapshotForTier(ctx, snapshot.DeploymentID, snap.Tier)
 			if createErr != nil {
+				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
 			}
 			// A live row without its writable drive (a legacy capture) can
@@ -3197,27 +3210,41 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// and publish the new capture instead.
 			if state.SnapshotDriveKey(stored) == "" && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
 				}
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
 					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
 				retired := stored.ID
 				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 					h.log.Info("imaged: discarded stale snapshot capture after retirement", "deployment", snapshot.DeploymentID,
 						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
 					return h.discardStaleSnapshotCapture(ctx, snap)
 				} else if createErr != nil {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: create snapshot after retiring %s: %w", retired, createErr)
 				}
+				created = true
 			}
 		}
-		// Close the reclassification race around CreateSnapshot. If an
+		// Close the reclassification race around publication. If an
 		// ephemeral class write landed after the precheck, its app-wide stale
 		// update may have run before this candidate row existed. Re-read after
 		// publication and retire either this row or a conflicting old row.
 		ephemeral, policyErr := hasEphemeralSecretForDeployment(ctx, h.store, app, dep)
 		if policyErr != nil || ephemeral {
+			if policyErr != nil {
+				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationPolicyError)
+			} else {
+				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationRejectedEphemeral)
+			}
 			return h.rejectEphemeralSnapshot(ctx, snapshot, stored, policyErr)
+		}
+		if created {
+			h.ops.RecordSnapshotPublication(stored.Tier, wire.SnapshotPublicationPublished)
+		} else {
+			h.ops.RecordSnapshotPublication(stored.Tier, wire.SnapshotPublicationDuplicate)
 		}
 		if stored.StorageKey != snapshot.StorageKey && state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 			// A second capture can finish before the first notification is read.
@@ -3243,8 +3270,21 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// completed by the original init snapshot. Re-entering those gates here
 		// lets an ordinary idle park demote a healthy deployment long after its
 		// release. The early return is also multi-subscriber safe because
-		// CreateSnapshot collapses duplicate publications above.
+		// PublishSnapshotIfRuntimeFresh collapses duplicate publications above.
 		if stored.Tier == state.SnapshotTierWarm {
+			if created && h.audit != nil {
+				h.audit.Emit(ctx, "app.warm_snapshot_promoted", &app.AccountID, map[string]any{
+					"app_id":                     app.ID,
+					"deployment_id":              dep.ID,
+					"snapshot_id":                stored.ID,
+					"warm_min_requests":          snapshot.WarmMinRequests,
+					"warm_min_ms":                snapshot.WarmMinMs,
+					"request_count":              snapshot.RequestCount,
+					"framework_ready_to_park_ms": snapshot.ReadyToParkMs,
+					"mem_bytes":                  stored.MemBytes,
+					"tier":                       stored.Tier,
+				})
+			}
 			h.log.Debug("imaged: recorded warm snapshot without deployment activation",
 				"deployment_id", dep.ID, "snapshot_id", stored.ID)
 			return nil
@@ -4441,7 +4481,7 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 //
 // Issue #470 / PR C / ADR-074: when n > 0, walk the just-marked-stale
 // rows and emit app.warm_snapshot_stale per affected app. The kind
-// joins with schedd's app.warm_snapshot_promoted and apid's
+// joins with imaged's app.warm_snapshot_promoted and apid's
 // app.warm_snapshot_disabled to give operators a single-grep
 // lifecycle audit trail. Subject = &app.AccountID per ADR-074 §3.2.
 // The walk is best-effort: an audit-write failure here is logged

@@ -2,15 +2,145 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+func publicationCount(t *testing.T, ops *wire.OpsMetrics, tier, outcome string) float64 {
+	t.Helper()
+	families, err := ops.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "imaged_snapshot_publication_total" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["tier"] == tier && labels["outcome"] == outcome {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	t.Fatalf("missing publication metric for %s/%s", tier, outcome)
+	return 0
+}
+
+func TestWarmSnapshotPromotionFollowsFirstDurablePublication(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "warm-publication@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "warm-publication", RAMMB: 256, MaxConcurrency: 3})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	minRequests, minMs, count, readyMs := 5, 1500, int64(9), int64(2000)
+	ops := wire.NewOpsMetrics("imaged")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).
+		WithOpsMetrics(ops).WithAudit(audit.New(store, silentLogger(), nil, "imaged"))
+	p := snapshotWrittenPayload{
+		DeploymentID: dep.ID, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "published"),
+		FCVersion: "1.10.0", Tier: state.SnapshotTierWarm, MemBytes: 256 << 20,
+		WarmMinRequests: &minRequests, WarmMinMs: &minMs, RequestCount: &count, ReadyToParkMs: &readyMs,
+	}
+	for i := 0; i < 2; i++ {
+		if err := h.handleSnapshotWritten(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierWarm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListEvents(ctx, acct.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var promotions int
+	for _, event := range events {
+		if event.Kind != "app.warm_snapshot_promoted" {
+			continue
+		}
+		promotions++
+		if event.Actor != "imaged" {
+			t.Fatalf("promotion actor = %q", event.Actor)
+		}
+		if event.Subject == nil || *event.Subject != uuid.MustParse(acct.ID) {
+			t.Fatalf("promotion subject = %v, want %s", event.Subject, acct.ID)
+		}
+		var data map[string]any
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if data["snapshot_id"] != snap.ID || data["request_count"] != float64(count) ||
+			data["warm_min_requests"] != float64(minRequests) || data["warm_min_ms"] != float64(minMs) ||
+			data["framework_ready_to_park_ms"] != float64(readyMs) || data["mem_bytes"] != float64(256<<20) {
+			t.Fatalf("promotion evidence = %+v", data)
+		}
+	}
+	if promotions != 1 {
+		t.Fatalf("promotions = %d, want 1", promotions)
+	}
+	if got := publicationCount(t, ops, "warm", wire.SnapshotPublicationPublished); got != 1 {
+		t.Fatalf("published = %v", got)
+	}
+	if got := publicationCount(t, ops, "warm", wire.SnapshotPublicationDuplicate); got != 1 {
+		t.Fatalf("duplicate = %v", got)
+	}
+}
+
+func TestWarmSnapshotStalePublicationHasNoPromotion(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "warm-stale@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "warm-stale", RAMMB: 256, MaxConcurrency: 3})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	source, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	ops := wire.NewOpsMetrics("imaged")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithOpsMetrics(ops).
+		WithAudit(audit.New(store, silentLogger(), nil, "imaged"))
+	if err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID, SourceInstanceID: source.ID, SourceStartedAt: source.StartedAt,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, "stale"),
+		FCVersion:  "1.10.0", Tier: state.SnapshotTierWarm,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale row exists: %v", err)
+	}
+	events, err := store.ListEvents(ctx, acct.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Kind == "app.warm_snapshot_promoted" {
+			t.Fatal("stale notification emitted promotion")
+		}
+	}
+	if got := publicationCount(t, ops, "warm", wire.SnapshotPublicationStaleConfig); got != 1 {
+		t.Fatalf("stale_config = %v", got)
+	}
+}
 
 // Hides the cache listing capability: cleanup must use recorded keys even
 // when none of the compute-node blobs are cached on the control plane.
@@ -98,7 +228,8 @@ func TestSnapshotPublicationRejectsEphemeralSecretAndCleansCandidate(t *testing.
 		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
 	}
 	be := mustLocalStorage(t, t.TempDir())
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	ops := wire.NewOpsMetrics("imaged")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be).WithOpsMetrics(ops)
 	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "ephemeral")
 	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
 		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
@@ -125,6 +256,9 @@ func TestSnapshotPublicationRejectsEphemeralSecretAndCleansCandidate(t *testing.
 			t.Fatal(err)
 		}
 	}
+	if got := publicationCount(t, ops, "init", wire.SnapshotPublicationRejectedEphemeral); got != 1 {
+		t.Fatalf("rejected_ephemeral = %v", got)
+	}
 }
 
 func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
@@ -144,7 +278,8 @@ func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
 	}
 	store := &snapshotPolicyRaceStore{MemStore: mem, accountID: acct.ID, appID: app.ID}
 	be := mustLocalStorage(t, t.TempDir())
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	ops := wire.NewOpsMetrics("imaged")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be).WithOpsMetrics(ops)
 	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "policy-race")
 	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
 		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
@@ -170,6 +305,12 @@ func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
 		if !storage.IsNotFound(err) {
 			t.Fatal(err)
 		}
+	}
+	if got := publicationCount(t, ops, "init", wire.SnapshotPublicationRejectedEphemeral); got != 1 {
+		t.Fatalf("rejected_ephemeral = %v", got)
+	}
+	if got := publicationCount(t, ops, "init", wire.SnapshotPublicationPublished); got != 0 {
+		t.Fatalf("published = %v, want 0 after policy rejection", got)
 	}
 }
 

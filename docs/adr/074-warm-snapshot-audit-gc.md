@@ -1,6 +1,9 @@
 # ADR-074 · Warm-snapshot audit + GC + ops surface
 
 - **Status:** accepted
+- **Amended by ADR-345 (2026-09-28):** imaged now emits
+  `app.warm_snapshot_promoted` after the first durable warm snapshot row
+  insert. The schedd capture-time emission described below is historical.
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved

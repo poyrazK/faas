@@ -7479,7 +7479,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		return nil
 	}
 	if reused == nil {
-		e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit)
+		e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit, nil)
 	}
 	// A discarded capture is not a completed park snapshot. Emit the success
 	// timeline event only after the local freshness check passed.
@@ -7647,39 +7647,13 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		e.log.Info("sched: park: drop warm capture after runtime config change", "instance", ins.ID, "app", ins.AppID)
 		return SnapshotBytes{}, nil
 	}
-	e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm)
-	// Issue #470 / PR C / ADR-074: emit app.warm_snapshot_promoted
-	// so operators can grep gregale audit-events --kind-prefix
-	// warm_snapshot to see lifecycle activity. Subject is
-	// &app.AccountID (matches app.updated's account-scoped shape at
-	// handlers_ext.go:569 — diverges from app.characterized's nil
-	// subject deliberately for account-scoped listing per ADR-074
-	// §3.2). MemBytes comes from b; the snap row id is unknown at
-	// this point (imaged's subscriber writes it), so payload
-	// carries the deployment id instead.
-	if e.audit != nil {
-		// Defensive: the top-of-function nil check at line ~2836
-		// guarantees ins.FrameworkReadyAt is non-nil here, but
-		// future edits could regress that. A nil stamp means the
-		// warm-capture happened but the time-since-first-ready is
-		// unknown — log the omission rather than panic.
-		var readyToParkMs any
-		if ins.FrameworkReadyAt != nil {
-			readyToParkMs = time.Since(*ins.FrameworkReadyAt).Milliseconds()
-		} else {
-			readyToParkMs = nil
-		}
-		e.audit.Emit(ctx, "app.warm_snapshot_promoted", &app.AccountID, map[string]any{
-			"app_id":                     app.ID,
-			"deployment_id":              ins.DeploymentID,
-			"warm_min_requests":          app.WarmSnapshotMinRequests,
-			"warm_min_ms":                app.WarmSnapshotMinMs,
-			"request_count":              ins.RequestCount,
-			"mem_bytes":                  b.MemBytes,
-			"tier":                       state.SnapshotTierWarm,
-			"framework_ready_to_park_ms": readyToParkMs,
-		})
-	}
+	readyToParkMs := time.Since(*ins.FrameworkReadyAt).Milliseconds()
+	e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm, &warmPromotionEvidence{
+		MinRequests:   app.WarmSnapshotMinRequests,
+		MinMs:         app.WarmSnapshotMinMs,
+		RequestCount:  ins.RequestCount,
+		ReadyToParkMs: readyToParkMs,
+	})
 	return b, nil
 }
 
@@ -9255,14 +9229,21 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 // from the JSON and writes the matching snapshots.tier column. The base-image
 // generation is part of the same publication contract: HTTP/2 and gRPC wakes
 // reject snapshots produced by a different guest runner generation.
-func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID string, sourceStartedAt time.Time, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
+type warmPromotionEvidence struct {
+	MinRequests   int
+	MinMs         int
+	RequestCount  int64
+	ReadyToParkMs int64
+}
+
+func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID string, sourceStartedAt time.Time, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string, promotion *warmPromotionEvidence) {
 	if e.notif == nil {
 		return
 	}
 	if tier == "" {
 		tier = state.SnapshotTierInit
 	}
-	payload, _ := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"deployment_id":      deploymentID,
 		"source_instance_id": sourceInstanceID,
 		"source_started_at":  sourceStartedAt,
@@ -9275,7 +9256,14 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID strin
 		"fc_version":         e.fcVer,
 		"base_image_version": fcvm.FAAS_BASE_IMAGE_VERSION,
 		"tier":               tier,
-	})
+	}
+	if promotion != nil {
+		fields["warm_min_requests"] = promotion.MinRequests
+		fields["warm_min_ms"] = promotion.MinMs
+		fields["request_count"] = promotion.RequestCount
+		fields["framework_ready_to_park_ms"] = promotion.ReadyToParkMs
+	}
+	payload, _ := json.Marshal(fields)
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
 		e.log.Warn("emit snapshot_written", "deployment", deploymentID, "tier", tier, "err", err)
 		return

@@ -56,6 +56,31 @@ func TestOpsMetrics_ObserveCounter(t *testing.T) {
 	}
 }
 
+func TestSnapshotPublicationMetricsUseClosedLabels(t *testing.T) {
+	imaged := wire.NewOpsMetrics("imaged")
+	imaged.RecordSnapshotPublication("warm", wire.SnapshotPublicationPublished)
+	imaged.RecordSnapshotPublication("warm", "arbitrary")
+	imaged.RecordSnapshotPublication("arbitrary", wire.SnapshotPublicationPublished)
+	imaged.RecordSnapshotPublication("", wire.SnapshotPublicationDuplicate)
+	var nilOps *wire.OpsMetrics
+	nilOps.RecordSnapshotPublication("warm", wire.SnapshotPublicationPublished)
+
+	families, err := imaged.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "imaged_snapshot_publication_total" {
+			continue
+		}
+		if got := len(family.Metric); got != 14 {
+			t.Fatalf("publication series = %d, want 14", got)
+		}
+		return
+	}
+	t.Fatal("missing imaged snapshot publication counter")
+}
+
 func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	// Two daemons must not collide if they construct in the same process —
 	// that's the point of per-daemon Registry over the global default.

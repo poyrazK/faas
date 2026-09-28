@@ -109,6 +109,7 @@ type OpsMetrics struct {
 	// The two closed labels have no app, deployment, or instance IDs.
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
+	snapshotPublication         *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2117,6 +2118,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			}
 		}
 	}
+	snapshotPublication := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_snapshot_publication_total",
+		Help: "Snapshot notification publication outcomes, by tier and outcome. Duplicates count redeliveries; published counts newly durable rows.",
+	}, []string{"tier", "outcome"})
+	if prefix == "imaged" {
+		for _, tier := range []string{"init", "warm"} {
+			for _, outcome := range []string{SnapshotPublicationPublished, SnapshotPublicationDuplicate, SnapshotPublicationStaleConfig, SnapshotPublicationRejectedRAM, SnapshotPublicationRejectedEphemeral, SnapshotPublicationPolicyError, SnapshotPublicationWriteError} {
+				snapshotPublication.WithLabelValues(tier, outcome)
+			}
+		}
+	}
 	warmPoolSize := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_warm_pool_size",
 		Help: "Desired paused warm-pool size by plan (issue #1056 / ADR-074). Runtime reconciliation updates this bounded gauge; zero means the customer has disabled the pool.",
@@ -3820,6 +3832,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	if prefix == "schedd" {
 		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
 	}
+	if prefix == "imaged" {
+		commonCollectors = append(commonCollectors, snapshotPublication)
+	}
 	if cpuStatsCollectDurLocal != nil {
 		commonCollectors = append(commonCollectors, cpuStatsCollectDurLocal)
 	}
@@ -5120,6 +5135,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		warmupErrors:                               warmupErrors,
@@ -5822,6 +5838,38 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
 	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
 		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
+	}
+}
+
+const (
+	SnapshotPublicationPublished         = "published"
+	SnapshotPublicationDuplicate         = "duplicate"
+	SnapshotPublicationStaleConfig       = "stale_config"
+	SnapshotPublicationRejectedRAM       = "rejected_ram"
+	SnapshotPublicationRejectedEphemeral = "rejected_ephemeral"
+	SnapshotPublicationPolicyError       = "policy_error"
+	SnapshotPublicationWriteError        = "write_error"
+)
+
+// RecordSnapshotPublication counts one imaged notification at its row-write
+// boundary. Both labels are closed sets, and a missing tier is legacy init.
+func (m *OpsMetrics) RecordSnapshotPublication(tier, outcome string) {
+	if m == nil || m.metricPrefix != "imaged" {
+		return
+	}
+	if tier == "" {
+		tier = "init"
+	}
+	if tier != "init" && tier != "warm" {
+		return
+	}
+	switch outcome {
+	case SnapshotPublicationPublished, SnapshotPublicationDuplicate,
+		SnapshotPublicationStaleConfig, SnapshotPublicationRejectedRAM,
+		SnapshotPublicationRejectedEphemeral,
+		SnapshotPublicationPolicyError,
+		SnapshotPublicationWriteError:
+		m.snapshotPublication.WithLabelValues(tier, outcome).Inc()
 	}
 }
 

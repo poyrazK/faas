@@ -4886,21 +4886,15 @@ func TestUsableSnapshotForWake_H2CBaseImageCompatibility(t *testing.T) {
 	}
 }
 
-// TestCaptureWarmSnapshot_EmitsAuditPromoted (issue #470 / PR C /
-// ADR-074) pins the success-path audit emit from captureWarmSnapshot
-// Locked. The audit kind is app.warm_snapshot_promoted (subject =
-// &app.AccountID, payload includes app_id, deployment_id, tier
-// and the per-app min_requests/min_ms gates). Walks ListEvents
-// keyed by AccountID UUID — the subject shape mirrors
-// app.updated's account-scoped listing per ADR-074 §3.2.
-func TestCaptureWarmSnapshot_EmitsAuditPromoted(t *testing.T) {
+// The capture emits the evidence imaged needs for the promotion audit, but
+// does not claim a promotion before imaged has inserted the snapshot row.
+func TestCaptureWarmSnapshot_CarriesPromotionEvidence(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
 	enableWarmSnapshot(t, store, app.ID)
 
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	imaged := &mockImaged{store: store, fcVer: "1.10.0"}
 	e := newEngine(t, store, vmm, notif, "1.10.0")
 	e.WithAudit(audit.New(store, testLog(), nil, "schedd"))
 
@@ -4908,44 +4902,37 @@ func TestCaptureWarmSnapshot_EmitsAuditPromoted(t *testing.T) {
 	if err := e.Park(context.Background(), insID); err != nil {
 		t.Fatalf("Park: %v", err)
 	}
-	imaged.Drain(notif)
+	found := false
+	for _, notification := range notif.events {
+		if notification.channel != db.NotifySnapshotWritten {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(notification.payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["tier"] != state.SnapshotTierWarm {
+			continue
+		}
+		found = true
+		if payload["deployment_id"] != dep.ID || payload["warm_min_requests"] == nil ||
+			payload["warm_min_ms"] == nil || payload["request_count"] == nil ||
+			payload["framework_ready_to_park_ms"] == nil {
+			t.Fatalf("incomplete warm promotion evidence: %+v", payload)
+		}
+	}
+	if !found {
+		t.Fatal("missing warm snapshot publication")
+	}
 
 	events, err := store.ListEvents(context.Background(), acct.ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	var promoted *state.Event
-	for i := range events {
-		if events[i].Kind == "app.warm_snapshot_promoted" {
-			promoted = &events[i]
-			break
+	for _, event := range events {
+		if event.Kind == "app.warm_snapshot_promoted" {
+			t.Fatal("schedd emitted promotion before durable publication")
 		}
-	}
-	if promoted == nil {
-		t.Fatalf("no app.warm_snapshot_promoted audit row; got events: %+v", events)
-	}
-	if promoted.Actor != "schedd" {
-		t.Errorf("actor = %q, want schedd", promoted.Actor)
-	}
-	if promoted.Subject == nil {
-		t.Fatal("Subject = nil, want &app.AccountID")
-	}
-	if *promoted.Subject != uuid.MustParse(acct.ID) {
-		t.Errorf("subject = %s, want %s (account id)", *promoted.Subject, acct.ID)
-	}
-	// Data is JSON-marshalled — decode and pin the payload shape.
-	var payload map[string]any
-	if err := json.Unmarshal(promoted.Data, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	if payload["app_id"] != app.ID {
-		t.Errorf("payload.app_id = %v, want %s", payload["app_id"], app.ID)
-	}
-	if payload["deployment_id"] != dep.ID {
-		t.Errorf("payload.deployment_id = %v, want %s", payload["deployment_id"], dep.ID)
-	}
-	if payload["tier"] != state.SnapshotTierWarm {
-		t.Errorf("payload.tier = %v, want warm", payload["tier"])
 	}
 }
 
