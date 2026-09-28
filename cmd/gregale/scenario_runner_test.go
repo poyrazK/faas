@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,7 @@ import (
 func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gregale-test.yaml")
-	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    services:\n      worker:\n        source: ./worker\n        secrets: {NOTIFICATION_URL: '${service.notifications.url}/deliver'}\n      notifications: {source: ./notifications}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
+	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    consumers: [{name: customer-a}, {name: customer-b, scopes: [read]}]\n    services:\n      worker:\n        source: ./worker\n        secrets: {NOTIFICATION_URL: '${service.notifications.url}/deliver'}\n      notifications: {source: ./notifications}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || len(scenarios["customer-export"].Consumers) != 2 {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
@@ -54,11 +55,58 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("unknown secret service reference was accepted")
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "customer-b, scopes: [read]", "customer-a, scopes: [read]", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("duplicate consumer was accepted")
+	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("subsecond timeout was accepted")
+	}
+}
+
+type testConsumerFakeClient struct {
+	created []api.CreateAPIConsumerRequest
+	keys    []api.CreateConsumerKeyRequest
+	failKey bool
+}
+
+func (f *testConsumerFakeClient) CreateAPIConsumer(_ context.Context, _ string, req api.CreateAPIConsumerRequest) (api.APIConsumerResponse, error) {
+	f.created = append(f.created, req)
+	return api.APIConsumerResponse{ID: fmt.Sprintf("consumer-%d", len(f.created))}, nil
+}
+
+func (f *testConsumerFakeClient) CreateConsumerKey(_ context.Context, _, _ string, req api.CreateConsumerKeyRequest) (api.ConsumerKeyResponse, error) {
+	f.keys = append(f.keys, req)
+	if f.failKey {
+		return api.ConsumerKeyResponse{}, errors.New("key creation failed")
+	}
+	return api.ConsumerKeyResponse{Key: fmt.Sprintf("secret-%d", len(f.keys))}, nil
+}
+
+func TestProvisionTestConsumersReturnsShortLivedCredentialsAndPartialCleanupIDs(t *testing.T) {
+	client := &testConsumerFakeClient{}
+	env, ids, err := provisionTestConsumers(context.Background(), client, "api-app", []testConsumer{{Name: "customer-a"}, {Name: "customer-b", Scopes: []string{"read"}}}, "run-123", 15*time.Minute)
+	if err != nil || len(ids) != 2 || len(env) != 4 {
+		t.Fatalf("provision = (%v, %v, %v)", env, ids, err)
+	}
+	if env[0] != "GREGALE_TEST_CONSUMER_CUSTOMER_A_ID=consumer-1" || env[1] != "GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY=secret-1" ||
+		env[2] != "GREGALE_TEST_CONSUMER_CUSTOMER_B_ID=consumer-2" || env[3] != "GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY=secret-2" {
+		t.Fatalf("consumer environment = %v", env)
+	}
+	if len(client.keys[0].Scopes) != 2 || client.keys[0].Scopes[0] != "read" || client.keys[0].Scopes[1] != "write" ||
+		len(client.keys[1].Scopes) != 1 || client.keys[1].Scopes[0] != "read" || client.keys[0].ExpiresAt == nil ||
+		client.keys[0].ExpiresAt.Before(time.Now().Add(time.Hour)) {
+		t.Fatalf("key requests = %+v", client.keys)
+	}
+	client.failKey = true
+	_, partialIDs, err := provisionTestConsumers(context.Background(), client, "api-app", []testConsumer{{Name: "failed-key"}}, "run-123", time.Minute)
+	if err == nil || len(partialIDs) != 1 {
+		t.Fatalf("failed key cleanup ids = (%v, %v)", partialIDs, err)
 	}
 }
 

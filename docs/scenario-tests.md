@@ -17,6 +17,10 @@ scenarios:
   customer-export:
     project: export-api
     source: ./gateway
+    consumers:
+      - name: customer-a
+      - name: customer-b
+        scopes: [read]
     services:
       worker:
         source: ./worker
@@ -66,6 +70,18 @@ such as `worker.svc` inside the platform. Local commands receive
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40
 characters; plan developer-session quotas apply to every workload.
+Declared `consumers` are created for the primary app before deployment. Local
+commands receive each consumer's ID and key as
+`GREGALE_TEST_CONSUMER_CUSTOMER_A_ID` and
+`GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY` (using the consumer name in uppercase,
+with hyphens changed to underscores). A key has `read` and `write` scopes by
+default; `scopes` can narrow or expand them. Use these credentials when the
+application accepts Gregale consumer keys, for example to verify that
+`customer-b` cannot retrieve `customer-a`'s export. The keys are never written
+to the report. The runner revokes the consumers during cleanup, and their keys
+expire one hour after the scenario timeout as a backstop. Consumer key plan
+limits apply. Applications with their own authentication scheme can create
+test identities in `setup` instead.
 Each workload's normal `gregale.yaml` is applied during deployment. A worker
 can declare `queue_bindings` and retry policy there; the runner waits for
 queues on all test workloads when `wait_for.queue_idle` is enabled. Queue
@@ -118,8 +134,8 @@ whose completed boot method matches the requested profile; the report records
 these in `service_wake`. The warm profile explicitly wakes all workloads before
 the trigger and verifies the primary app's first request is hot.
 
-The assertion commands own application-specific identities and expectations.
-For an export test they should create two customers, submit and retry the same
+The assertion commands own application-specific expectations.
+For an export test they should submit and retry the same
 export request, inspect the produced object through both customers' credentials,
 and check notification delivery. A declared notification sink can return
 failures to exercise the application's retry policy. Built-in fault controls,

@@ -36,24 +36,30 @@ type testManifest struct {
 }
 
 type testScenario struct {
-	Project  string                 `yaml:"project"`
-	Source   string                 `yaml:"source"`
-	Secrets  map[string]string      `yaml:"secrets"`
-	Services map[string]testService `yaml:"services"`
-	Trigger  []string               `yaml:"trigger"`
-	Command  []string               `yaml:"command"`
-	Setup    [][]string             `yaml:"setup"`
-	Cleanup  [][]string             `yaml:"cleanup"`
-	Postgres bool                   `yaml:"postgres"`
-	Buckets  []testBucket           `yaml:"buckets"`
-	WaitFor  testWaitFor            `yaml:"wait_for"`
-	Timeout  string                 `yaml:"timeout"`
+	Project   string                 `yaml:"project"`
+	Source    string                 `yaml:"source"`
+	Secrets   map[string]string      `yaml:"secrets"`
+	Consumers []testConsumer         `yaml:"consumers"`
+	Services  map[string]testService `yaml:"services"`
+	Trigger   []string               `yaml:"trigger"`
+	Command   []string               `yaml:"command"`
+	Setup     [][]string             `yaml:"setup"`
+	Cleanup   [][]string             `yaml:"cleanup"`
+	Postgres  bool                   `yaml:"postgres"`
+	Buckets   []testBucket           `yaml:"buckets"`
+	WaitFor   testWaitFor            `yaml:"wait_for"`
+	Timeout   string                 `yaml:"timeout"`
 }
 
 type testService struct {
 	Source   string            `yaml:"source"`
 	Postgres bool              `yaml:"postgres"`
 	Secrets  map[string]string `yaml:"secrets"`
+}
+
+type testConsumer struct {
+	Name   string   `yaml:"name"`
+	Scopes []string `yaml:"scopes"`
 }
 
 type testWaitFor struct {
@@ -293,6 +299,23 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 				return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 			}
 		}
+		if len(scenario.Consumers) > 16 {
+			return nil, "", fmt.Errorf("scenario %q may declare at most 16 consumers", name)
+		}
+		seenConsumers := map[string]bool{}
+		for _, consumer := range scenario.Consumers {
+			if !api.ValidAppSlug(consumer.Name) || seenConsumers[consumer.Name] {
+				return nil, "", fmt.Errorf("scenario %q has invalid or duplicate consumer %q", name, consumer.Name)
+			}
+			seenConsumers[consumer.Name] = true
+			seenScopes := map[string]bool{}
+			for _, scope := range consumer.Scopes {
+				if (scope != "read" && scope != "write" && scope != "admin") || seenScopes[scope] {
+					return nil, "", fmt.Errorf("scenario %q consumer %q has invalid or duplicate scope", name, consumer.Name)
+				}
+				seenScopes[scope] = true
+			}
+		}
 	}
 	return manifest.Scenarios, filepath.Dir(absolute), nil
 }
@@ -354,6 +377,46 @@ func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]st
 		return "", errors.New("malformed reference")
 	}
 	return expanded, nil
+}
+
+type testConsumerClient interface {
+	CreateAPIConsumer(context.Context, string, api.CreateAPIConsumerRequest) (api.APIConsumerResponse, error)
+	CreateConsumerKey(context.Context, string, string, api.CreateConsumerKeyRequest) (api.ConsumerKeyResponse, error)
+}
+
+func provisionTestConsumers(ctx context.Context, client testConsumerClient, appSlug string, specs []testConsumer, runID string, timeout time.Duration) ([]string, []string, error) {
+	if len(specs) == 0 {
+		return nil, nil, nil
+	}
+	expiresAt := time.Now().UTC().Add(timeout + time.Hour)
+	env := make([]string, 0, 2*len(specs))
+	ids := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		consumer, err := client.CreateAPIConsumer(ctx, appSlug, api.CreateAPIConsumerRequest{
+			ExternalRef: "gregale-test-" + runID + "-" + spec.Name,
+			Name:        "Scenario " + spec.Name,
+		})
+		if err != nil {
+			return env, ids, fmt.Errorf("consumer %s: %w", spec.Name, err)
+		}
+		ids = append(ids, consumer.ID)
+		scopes := spec.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"read", "write"}
+		}
+		key, err := client.CreateConsumerKey(ctx, appSlug, consumer.ID, api.CreateConsumerKeyRequest{
+			Name: "scenario-" + spec.Name, Scopes: scopes, ExpiresAt: &expiresAt,
+		})
+		if err != nil {
+			return env, ids, fmt.Errorf("consumer %s key: %w", spec.Name, err)
+		}
+		if key.Key == "" {
+			return env, ids, fmt.Errorf("consumer %s key response omitted credential", spec.Name)
+		}
+		prefix := "GREGALE_TEST_CONSUMER_" + strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))
+		env = append(env, prefix+"_ID="+consumer.ID, prefix+"_KEY="+key.Key)
+	}
+	return env, ids, nil
 }
 
 func runTestProfile(parent context.Context, client *Client, name string, scenario testScenario, manifestDir, profile string) (receipt testRunReceipt) {
@@ -447,6 +510,16 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	registered = true
+	consumerIDs := make([]string, 0, len(scenario.Consumers))
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cleanupCancel()
+		for _, id := range consumerIDs {
+			if _, err := client.RevokeAPIConsumer(cleanupCtx, session.App.Slug, id); err != nil {
+				receipt.addCleanupError(fmt.Sprintf("revoke test consumer %s: %v", id, err))
+			}
+		}
+	}()
 	bucketEnv := make([]string, 0, 2*len(scenario.Buckets))
 	bucketByName := make(map[string]testBucketRef, len(scenario.Buckets))
 	for _, spec := range scenario.Buckets {
@@ -517,6 +590,12 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 		}
 	}
+	consumerEnv, createdIDs, err := provisionTestConsumers(ctx, client, session.App.Slug, scenario.Consumers, receipt.RunID, timeout)
+	consumerIDs = append(consumerIDs, createdIDs...)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("create test consumers: %v", err)
+		return
+	}
 	// The nested deploy command has its own progress output. Keep --json's
 	// stdout as one machine-readable test receipt.
 	previousStdout := osStdout
@@ -558,6 +637,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		"GREGALE_TEST_ENGINE=real-vm",
 	)
 	env = append(env, bucketEnv...)
+	env = append(env, consumerEnv...)
 	for _, workload := range workloads[1:] {
 		key := strings.ToUpper(strings.ReplaceAll(workload.name, "-", "_"))
 		env = append(env, "GREGALE_TEST_SERVICE_"+key+"_URL="+canonicalAppURL(workload.session.App))
