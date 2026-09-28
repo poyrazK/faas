@@ -297,8 +297,8 @@ func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeI
 	if err := lockManagedRealtimeChannelRouteEndpoints(ctx, tx, endpointIDs); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `delete from managed_realtime_channel_routes where node_id = $1`, nodeID); err != nil {
-		return fmt.Errorf("state: replace node realtime channel routes: %w", err)
+	if err := deleteStaleManagedRealtimeChannelRoutes(ctx, tx, nodeID, unique); err != nil {
+		return err
 	}
 	if err := insertManagedRealtimeChannelRoutes(ctx, tx, unique); err != nil {
 		return err
@@ -815,6 +815,41 @@ func insertManagedRealtimeChannelRoutes(ctx context.Context, tx pgx.Tx, routes [
 	return nil
 }
 
+func deleteStaleManagedRealtimeChannelRoutes(ctx context.Context, tx pgx.Tx, nodeID string, routes []ManagedRealtimeChannelRoute) error {
+	endpointIDs := make([]string, 0, len(routes))
+	channels := make([]string, 0, len(routes))
+	for _, route := range routes {
+		endpointIDs = append(endpointIDs, route.EndpointID)
+		channels = append(channels, route.Channel)
+	}
+	_, err := tx.Exec(ctx, `
+		delete from managed_realtime_channel_routes current_route
+		 where current_route.node_id = $1
+		   and (
+		     not exists (
+		       select 1
+		         from unnest($2::text[], $3::text[]) as desired(endpoint_id, channel)
+		        where desired.endpoint_id::uuid = current_route.endpoint_id
+		          and desired.channel = current_route.channel
+		     )
+		     or exists (
+		       select 1 from managed_realtime_channel_route_overflow_channels overflow_channel
+		        where overflow_channel.endpoint_id = current_route.endpoint_id
+		          and overflow_channel.channel = current_route.channel
+		     )
+		     or exists (
+		       select 1 from managed_realtime_channel_route_overflow overflow
+		        where overflow.endpoint_id = current_route.endpoint_id
+		          and overflow.rebuilding = false
+		     )
+		   )
+	`, nodeID, endpointIDs, channels)
+	if err != nil {
+		return fmt.Errorf("state: delete stale node realtime channel routes: %w", err)
+	}
+	return nil
+}
+
 func enforceManagedRealtimeChannelRouteLimit(ctx context.Context, tx pgx.Tx, endpointIDs []string) error {
 	if len(endpointIDs) == 0 {
 		return nil
@@ -1062,13 +1097,24 @@ func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureRealtimeChannelRouteMapsLocked()
+	desired := make(map[ManagedRealtimeChannelRoute]struct{}, len(unique))
+	for _, route := range unique {
+		desired[route] = struct{}{}
+	}
 	for route := range m.realtimeChannelRoutes {
-		if route.NodeID == nodeID {
-			delete(m.realtimeChannelRoutes, route)
-			m.realtimeChannelRouteCounts[route.EndpointID]--
-			if m.realtimeChannelRouteCounts[route.EndpointID] <= 0 {
-				delete(m.realtimeChannelRouteCounts, route.EndpointID)
-			}
+		if route.NodeID != nodeID {
+			continue
+		}
+		_, wanted := desired[route]
+		overflow, disabled := m.realtimeChannelRouteOverflow[route.EndpointID]
+		blocked := disabled && ((overflow.OverflowAll && !overflow.Rebuilding) || managedRealtimeChannelRouteChannelOverflowed(overflow, route.Channel))
+		if wanted && !blocked {
+			continue
+		}
+		delete(m.realtimeChannelRoutes, route)
+		m.realtimeChannelRouteCounts[route.EndpointID]--
+		if m.realtimeChannelRouteCounts[route.EndpointID] <= 0 {
+			delete(m.realtimeChannelRouteCounts, route.EndpointID)
 		}
 	}
 	for _, route := range unique {
