@@ -272,7 +272,6 @@ LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
 LatestSnapshotBytes
-LatestSnapshotForTier
 LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
