@@ -21,19 +21,28 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // recordingService (intentionally omitted — slice 7 uses the
@@ -77,6 +86,104 @@ func newRecording(t *testing.T) *Service {
 	svc.Source = &stubSource{fsys: fstest.MapFS{}}
 	svc.Reconcile = rec
 	return svc
+}
+
+func TestServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods(t *testing.T) {
+	t.Setenv(wire.SkipGroupLookupEnv, "1")
+	root := t.TempDir()
+	caCert, caKey, err := pki.EnsureCA(root, false)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	var serverRole, clientRole pki.Role
+	for _, role := range pki.Roles() {
+		switch {
+		case role.Directory == "githubd" && role.Filename == "server":
+			serverRole = role
+		case role.Directory == "imaged" && role.Filename == "githubd-client":
+			clientRole = role
+		}
+	}
+	if serverRole.Filename == "" || clientRole.Filename == "" {
+		t.Fatal("PKI roles for githubd server or imaged client are missing")
+	}
+	for _, role := range []pki.Role{serverRole, clientRole} {
+		if err := pki.EnsureLeaf(root, role, caCert, caKey, false); err != nil {
+			t.Fatalf("EnsureLeaf(%s/%s): %v", role.Directory, role.Filename, err)
+		}
+	}
+	serverCert, serverKey := pki.LeafPaths(root, serverRole)
+	clientCert, clientKey := pki.LeafPaths(root, clientRole)
+	caCertPath, _ := pki.CARoot(root)
+	clientTLS, err := wire.LoadClientTLSConfig(clientCert, clientKey, caCertPath)
+	if err != nil {
+		t.Fatalf("LoadClientTLSConfig: %v", err)
+	}
+	tcpProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve gRPC port: %v", err)
+	}
+	tcpAddr := tcpProbe.Addr().String()
+	_ = tcpProbe.Close()
+	httpProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve HTTP port: %v", err)
+	}
+	httpAddr := httpProbe.Addr().String()
+	_ = httpProbe.Close()
+
+	socketPath := filepath.Join("/tmp", "ghd-"+strconv.Itoa(os.Getpid())+".sock")
+	_ = os.Remove(socketPath)
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service := &Server{
+		Service:     NewService(log),
+		GRPCServer:  githubdgrpc.New(githubdgrpc.UnimplementedService{}, wire.NewOpsMetrics("githubd_split_test"), log),
+		SocketPath:  socketPath,
+		ListenAddr:  "tcp://" + tcpAddr,
+		TLSCertPath: serverCert,
+		TLSKeyPath:  serverKey,
+		TLSCAPath:   caCertPath,
+		HTTPAddr:    httpAddr,
+		Log:         log,
+	}
+	serverCtx, cancel := context.WithCancel(context.Background())
+	cleanup, _, err := service.Start(serverCtx)
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = cleanup(shutdownCtx)
+	})
+
+	callCtx, callCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer callCancel()
+	localConn, err := wire.DialContext(callCtx, "unix://"+socketPath, nil)
+	if err != nil {
+		t.Fatalf("dial local githubd socket: %v", err)
+	}
+	defer localConn.Close()
+	localClient := githubdpb.NewGithubdClient(localConn)
+	if _, err := localClient.GetInstallState(callCtx, &githubdpb.GetInstallStateRequest{AccountId: "acct"}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("local GetInstallState status = %v, want Unimplemented (local API remains available)", status.Code(err))
+	}
+
+	remoteConn, err := wire.DialContext(callCtx, "tcp://"+tcpAddr, clientTLS)
+	if err != nil {
+		t.Fatalf("dial remote githubd mTLS listener: %v", err)
+	}
+	defer remoteConn.Close()
+	remoteClient := githubdpb.NewGithubdClient(remoteConn)
+	if _, err := remoteClient.GetBranchHead(callCtx, &githubdpb.GetBranchHeadRequest{AccountId: "acct", InstallationId: 42, RepoFullName: "owner/repo", Branch: "main"}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("remote GetBranchHead status = %v, want Unimplemented from allowed handler", status.Code(err))
+	}
+	if _, err := remoteClient.GetInstallState(callCtx, &githubdpb.GetInstallStateRequest{AccountId: "acct"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("remote GetInstallState status = %v, want PermissionDenied", status.Code(err))
+	}
 }
 
 // newServerUnderTest wraps the loopback handler in an httptest.Server

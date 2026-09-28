@@ -47,7 +47,11 @@ gregale deploy --github --name my-app > .github/workflows/deploy.yml
 The CLI emits a copy-paste workflow file. When run inside an Actions runner (`GITHUB_REPOSITORY` + `GITHUB_SHA` env vars set), the snippet hard-codes those values; from a local checkout it emits the `${{ github.* }}` expressions so the same file is portable across repos.
 For a repository connected to Gregale's GitHub App, run `gregale github setup`
 or set the deployment policy to `production_trigger=actions` before using a
-push workflow. The App remains responsible for PR previews.
+push workflow. The App remains responsible for PR previews. When setup is run
+with `--deploy-branches staging=staging`, its generated workflow listens to
+`staging` and passes `environment: staging` to this Action. Mappings already
+saved through `github bind` are reused unless the flag supplies a replacement.
+Manual dispatch is limited to the configured production and mapped branches.
 
 ## Inputs
 
@@ -59,6 +63,7 @@ push workflow. The App remains responsible for PR previews.
 | `app` | App slug to deploy. | yes | — |
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
 | `ref` | git ref — branch, tag, or 40-char SHA. | no | `${{ github.sha }}` |
+| `environment` | Registered Gregale project environment to deploy into. Omit to use the app's default scope. | no | — |
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
 | `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `true` |
 | `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `1200` |

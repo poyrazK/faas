@@ -170,6 +170,9 @@ cmd_validate() {
 	if [ "${INPUT_ROLLOUT:-standard}" != "standard" ] && [ "${INPUT_ROLLOUT:-standard}" != "safe" ]; then
 		die "rollout must be standard or safe"
 	fi
+	if [ -n "${INPUT_ENVIRONMENT:-}" ] && { [[ ! "${INPUT_ENVIRONMENT}" =~ ^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$ ]] || [ "${INPUT_ENVIRONMENT}" = "default" ]; }; then
+		die "environment must be a registered project environment slug"
+	fi
     if [ ! -x "$BIN" ]; then
         die "vendored binary not found at $BIN (action must be released as a tagged version)"
     fi
@@ -362,6 +365,10 @@ cmd_deploy() {
     if [ -n "${INPUT_PR_NUMBER:-}" ]; then
         annotation_args+=(--pr-number "$INPUT_PR_NUMBER")
     fi
+	local environment_args=()
+	if [ -n "${INPUT_ENVIRONMENT:-}" ]; then
+		environment_args+=(--environment "$INPUT_ENVIRONMENT")
+	fi
 	local rollout_args=()
 	if [ "$rollout" = "safe" ]; then
 		rollout_args+=(--canary-preset balanced)
@@ -372,6 +379,7 @@ cmd_deploy() {
             --name "$INPUT_APP" \
             --repo "$INPUT_REPO" \
             --ref "$INPUT_REF" \
+			"${environment_args[@]}" \
 			"${rollout_args[@]}" \
             "${annotation_args[@]}" \
             2>&1

@@ -54,6 +54,16 @@ before the codeload fetch starts, so a `main` ref that moves
 between CI runs still produces an immutable SHA-pinned build
 row.
 
+Branch-backed source-ref deployments also retain their branch and GitHub
+installation identity through the build. Imaged checks the branch again after
+readiness validation and just before promotion. If it moved or was deleted, the
+candidate fails with `source_ref_stale`; if GitHub cannot be checked, promotion
+fails closed with `source_ref_unavailable`. A tag or commit SHA stays pinned to
+the resolved commit and skips this branch check. See
+[ADR-290](adr/290-source-ref-branch-freshness-before-promotion.md).
+In split-box fleets, compute-side imaged performs the final check over the
+private `githubd.faas:50053` mTLS route provisioned by the manifest and Ansible.
+
 For App-driven push deployments, Gregale checks that the webhook's commit is
 still the branch head before it fetches source and checks again after scanning,
 immediately before reconciliation. If the branch has advanced, the older
@@ -132,8 +142,11 @@ local/tarball deploy whose source can be inspected before mutation.
   write the workflow and set `production_trigger=actions`; the connected
   GitHub App continues to manage PR previews. The generated workflow also
   deploys newly created SemVer `v*` tags from their immutable event commit;
-  moved, deleted, and invalid tag pushes are skipped. Existing projects with
-  `production_trigger=webhook` keep the App push deploy path.
+  moved, deleted, and invalid tag pushes are skipped. Branches passed through
+  `--deploy-branches branch=environment,...` or previously saved through
+  `github bind` also deploy through Actions into their registered project
+  environments, and manual dispatch is limited to those branches. Existing
+  projects with `production_trigger=webhook` keep the App push deploy path.
 - **Not a git deploy-key fetch.** The server uses the GitHub App
   install token (ADR-012, ADR-020); the control plane never
   sees the customer's PAT. The install token is scoped to a

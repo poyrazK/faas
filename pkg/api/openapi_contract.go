@@ -14,21 +14,22 @@ type GitHubInstallMutationRequest struct {
 // credentials; the nested sync result is kept anonymous because it is an
 // inline object in the public OpenAPI document.
 type GitHubInstallStatus struct {
-	State                        string     `json:"state"`
-	Health                       string     `json:"health"`
-	Connected                    bool       `json:"connected"`
-	InstallationID               int64      `json:"installation_id,omitempty"`
-	GitHubLogin                  string     `json:"github_login,omitempty"`
-	DefaultBranch                string     `json:"default_branch,omitempty"`
-	RepoFullName                 string     `json:"repo_full_name,omitempty"`
-	ProductionBranch             string     `json:"production_branch,omitempty"`
-	BindingID                    string     `json:"binding_id,omitempty"`
-	LinkedAt                     *time.Time `json:"linked_at,omitempty"`
-	LastReconciledAt             *time.Time `json:"last_reconciled_at,omitempty"`
-	LastReconcileError           string     `json:"last_reconcile_error,omitempty"`
-	LastReconcileRepositoryCount int        `json:"last_reconcile_repository_count"`
-	LastReconcileDetachedCount   int        `json:"last_reconcile_detached_count"`
-	CSRFToken                    string     `json:"csrf_token,omitempty"`
+	State                        string            `json:"state"`
+	Health                       string            `json:"health"`
+	Connected                    bool              `json:"connected"`
+	InstallationID               int64             `json:"installation_id,omitempty"`
+	GitHubLogin                  string            `json:"github_login,omitempty"`
+	DefaultBranch                string            `json:"default_branch,omitempty"`
+	RepoFullName                 string            `json:"repo_full_name,omitempty"`
+	ProductionBranch             string            `json:"production_branch,omitempty"`
+	DeployBranches               map[string]string `json:"deploy_branches,omitempty"`
+	BindingID                    string            `json:"binding_id,omitempty"`
+	LinkedAt                     *time.Time        `json:"linked_at,omitempty"`
+	LastReconciledAt             *time.Time        `json:"last_reconciled_at,omitempty"`
+	LastReconcileError           string            `json:"last_reconcile_error,omitempty"`
+	LastReconcileRepositoryCount int               `json:"last_reconcile_repository_count"`
+	LastReconcileDetachedCount   int               `json:"last_reconcile_detached_count"`
+	CSRFToken                    string            `json:"csrf_token,omitempty"`
 	SyncResult                   *struct {
 		Detached              bool      `json:"detached"`
 		RemoteRepositoryCount int       `json:"remote_repository_count"`

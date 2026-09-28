@@ -54,6 +54,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 289 | [Actions-owned mapped environment deployments](289-actions-mapped-environment-deployments.md) | accepted | Generated Actions workflows route configured branches into their registered project environments |
+| 288 | [Actions-owned release-tag deployments](288-actions-release-tag-deployments.md) | accepted | Deploy only newly created SemVer release tags from the immutable event SHA |
 | 287 | [GitHub push head recheck before reconciliation](287-github-push-head-recheck.md) | accepted | Recheck branch freshness after fetch and scan, immediately before reconciling a push |
 | 286 | [PR preview freshness](286-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
 | 285 | [GitHub push freshness and promotion fence](285-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
@@ -61,7 +63,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
-| 288 | [Actions-owned release-tag deployments](288-actions-release-tag-deployments.md) | accepted | Deploy only newly created SemVer release tags from the immutable event SHA |
+| 290 | [Source-ref branch freshness before promotion](290-source-ref-branch-freshness-before-promotion.md) | accepted | Persist mutable branch intent and recheck through githubd before a candidate becomes live |
 | 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
 | 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
 | 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |
