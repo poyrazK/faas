@@ -407,11 +407,11 @@ func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Cont
 	now := time.Now().UTC()
 	for _, item := range candidates {
 		_, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
-			SET state = 'pending', available_at = $3, delivered_at = NULL,
+			SET state = 'pending', available_at = $3::timestamptz, delivered_at = NULL,
 			    claim_token = NULL, lease_until = NULL,
 			    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$2::text],
 			        ((o.recipient_progress -> $2) - 'failure_code' - 'retryable' - 'last_error') ||
-			            jsonb_build_object('state', 'pending', 'updated_at', $3), false),
+			            jsonb_build_object('state', 'pending', 'updated_at', $3::timestamptz), false),
 			    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
 			        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
 			        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
