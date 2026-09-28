@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func TestMemPlatformTenantPageRejectsInvalidCursorAndOffsetCombination(t *testin
 		{name: "offset with cursor", offset: 1, token: "1:00000000000000000000000000000001"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := store.ListPlatformTenantsPage(context.Background(), account.ID, 10, tc.offset, tc.token); err != ErrInvalidArgument {
+			if _, _, err := store.ListPlatformTenantsPage(context.Background(), account.ID, 10, tc.offset, tc.token); !errors.Is(err, ErrInvalidArgument) {
 				t.Fatalf("error = %v, want ErrInvalidArgument", err)
 			}
 		})
