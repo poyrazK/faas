@@ -7,6 +7,9 @@ import type { Invocation } from '../models/Invocation.js';
 import type { InvokeRequest } from '../models/InvokeRequest.js';
 import type { InvokeResponse } from '../models/InvokeResponse.js';
 import type { ListInvocationsResponse } from '../models/ListInvocationsResponse.js';
+import type { UpsertWorkPolicyRequest } from '../models/UpsertWorkPolicyRequest.js';
+import type { WorkPolicyListResponse } from '../models/WorkPolicyListResponse.js';
+import type { WorkPolicyResponse } from '../models/WorkPolicyResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -123,6 +126,98 @@ export class InvocationsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List named work policies for an app.
+   * @returns WorkPolicyListResponse App work policies.
+   * @throws ApiError
+   */
+  public static listAppWorkPolicies({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<WorkPolicyListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/work-policies',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create or update a named app work policy.
+   * Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+   * @returns WorkPolicyResponse Saved policy.
+   * @throws ApiError
+   */
+  public static upsertAppWorkPolicy({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named app work policy.
+     */
+    name: string,
+    requestBody: UpsertWorkPolicyRequest,
+  }): CancelablePromise<WorkPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/work-policies/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a policy after removing event subscription bindings.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppWorkPolicy({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named app work policy.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/work-policies/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

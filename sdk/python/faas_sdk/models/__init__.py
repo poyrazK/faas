@@ -842,6 +842,7 @@ from .invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
 from .invoke_response import InvokeResponse
 from .invoke_response_result import InvokeResponseResult
 from .invoke_response_status import InvokeResponseStatus
+from .invoke_work import InvokeWork
 from .issue_account_credit_body import IssueAccountCreditBody
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .job_artifact_download_response import JobArtifactDownloadResponse
@@ -1814,6 +1815,9 @@ from .upload_start_response import UploadStartResponse
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
+from .upsert_work_policy_request import UpsertWorkPolicyRequest
+from .upsert_work_policy_request_max_running_per_key import UpsertWorkPolicyRequestMaxRunningPerKey
+from .upsert_work_policy_request_pending_updates import UpsertWorkPolicyRequestPendingUpdates
 from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
@@ -1828,6 +1832,10 @@ from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_response import WakeTimelineResponse
+from .work_policy_list_response import WorkPolicyListResponse
+from .work_policy_response import WorkPolicyResponse
+from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
+from .work_policy_response_pending_updates import WorkPolicyResponsePendingUpdates
 from .worker_scaling import WorkerScaling
 from .worker_scaling_metric import WorkerScalingMetric
 from .workflow_callback_response import WorkflowCallbackResponse
@@ -2685,6 +2693,7 @@ __all__ = (
     "InvokeResponse",
     "InvokeResponseResult",
     "InvokeResponseStatus",
+    "InvokeWork",
     "IssueAccountCreditBody",
     "IssueBrowserCSRFTokenAction",
     "JobArtifactDownloadResponse",
@@ -3593,6 +3602,9 @@ __all__ = (
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",
+    "UpsertWorkPolicyRequest",
+    "UpsertWorkPolicyRequestMaxRunningPerKey",
+    "UpsertWorkPolicyRequestPendingUpdates",
     "UsageExportResponse",
     "UsageResponse",
     "UsageSummaryResponse",
@@ -3632,4 +3644,8 @@ __all__ = (
     "WorkloadDependencyCondition",
     "WorkloadPort",
     "WorkloadPortProtocol",
+    "WorkPolicyListResponse",
+    "WorkPolicyResponse",
+    "WorkPolicyResponseMaxRunningPerKey",
+    "WorkPolicyResponsePendingUpdates",
 )

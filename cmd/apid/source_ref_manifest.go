@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tarball"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 const sourceRefManifestMaxBytes = 1 << 20
@@ -42,6 +43,8 @@ type sourceRefManifestStaged struct {
 	cronIDs               []string
 	triggerIDs            []string
 	eventSubscriptionIDs  []string
+	eventWorkChanges      []sourceRefEventWorkBindingChange
+	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
@@ -51,10 +54,21 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 }
 
+type sourceRefEventWorkBindingChange struct {
+	subscriptionID string
+	previous       *state.EventWorkBinding
+}
+
+type sourceRefWorkPolicyChange struct {
+	name     string
+	previous *workpolicy.Policy
+}
+
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 ||
-		len(staged.eventSubscriptionIDs) > 0 || len(staged.bindingIDs) > 0
+		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 ||
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -336,6 +350,40 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
 		}
 	}
+	if len(m.WorkPolicies) > 0 {
+		policyStore, ok := s.store.(state.AppWorkPolicyStore)
+		if !ok {
+			return staged, api.ErrCapacity("work policies are unavailable")
+		}
+		current, err := policyStore.ListAppWorkPolicies(ctx, app.ID)
+		if err != nil {
+			return staged, api.ErrCapacity("could not list app work policies")
+		}
+		byName := make(map[string]workpolicy.Policy, len(current))
+		for _, record := range current {
+			byName[record.Policy.Name] = record.Policy
+		}
+		for _, declaration := range m.WorkPolicies {
+			if declaration.App != "" && declaration.App != app.Slug {
+				continue
+			}
+			desired := declaration.ToPolicy()
+			previous, exists := byName[desired.Name]
+			if exists && previous == desired {
+				continue
+			}
+			if _, err := policyStore.UpsertAppWorkPolicy(ctx, acct.ID, app.ID, desired); err != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+					"Invalid manifest", fmt.Sprintf("work policy %q could not be applied: %v", desired.Name, err))
+			}
+			change := sourceRefWorkPolicyChange{name: desired.Name}
+			if exists {
+				change.previous = &previous
+			}
+			staged.workPolicyChanges = append(staged.workPolicyChanges, change)
+			byName[desired.Name] = desired
+		}
+	}
 	if !applyTriggers {
 		return staged, nil
 	}
@@ -441,16 +489,26 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if !ok {
 			return staged, api.ErrCapacity("event subscriptions are unavailable")
 		}
+		workBindings, ok := s.store.(state.EventWorkBindingStore)
+		if !ok {
+			return staged, api.ErrCapacity("event work bindings are unavailable")
+		}
 		subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
 		if err != nil {
 			return staged, api.ErrCapacity("could not list app event subscriptions")
 		}
-		subscriptionKeys := make(map[string]struct{}, len(subscriptions))
+		subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
+		ids := make([]string, 0, len(subscriptions))
 		for _, subscription := range subscriptions {
 			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 			if keyErr == nil {
-				subscriptionKeys[key] = struct{}{}
+				subscriptionKeys[key] = subscription
+				ids = append(ids, subscription.ID)
 			}
+		}
+		bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
+		if err != nil {
+			return staged, api.ErrCapacity("could not list event work bindings")
 		}
 		for _, declaration := range m.EventTriggers {
 			if declaration.App != "" && declaration.App != app.Slug {
@@ -464,24 +522,41 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			if keyErr != nil {
 				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
 			}
-			if _, exists := subscriptionKeys[key]; exists {
+			row, exists := subscriptionKeys[key]
+			createdHere := false
+			if !exists {
+				var inserted bool
+				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+				if err != nil {
+					return staged, sourceRefEventSubscriptionProblem(err)
+				}
+				subscriptionKeys[key] = row
+				if inserted {
+					createdHere = true
+					staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
+					_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+						fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
+					s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
+						"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
+						"type": subscription.Type, "source_ref": true,
+					})
+				}
+			}
+			previous := bindingByID[row.ID]
+			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey {
 				continue
 			}
-			row, inserted, upsertErr := eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
-			if upsertErr != nil {
-				return staged, sourceRefEventSubscriptionProblem(upsertErr)
+			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy, declaration.WorkKey)
+			if bindingErr != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+					"Invalid manifest", "event work policy must exist on the target app")
 			}
-			subscriptionKeys[key] = struct{}{}
-			if !inserted {
-				continue
+			if !createdHere {
+				staged.eventWorkChanges = append(staged.eventWorkChanges,
+					sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
 			}
-			staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
-			_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
-				fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
-			s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
-				"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
-				"type": subscription.Type, "source_ref": true,
-			})
+			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
+				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey}
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -653,6 +728,23 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		}
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", staged.appID, staged.triggerIDs[i]))
 	}
+	if len(staged.eventWorkChanges) > 0 {
+		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {
+			for i := len(staged.eventWorkChanges) - 1; i >= 0; i-- {
+				change := staged.eventWorkChanges[i]
+				policy, selector := "", ""
+				if change.previous != nil {
+					policy, selector = change.previous.PolicyName, change.previous.KeySelector
+				}
+				if _, err := bindings.SetEventWorkBinding(ctx, staged.appID,
+					change.subscriptionID, policy, selector); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("event work bindings unavailable during rollback"))
+		}
+	}
 	if len(staged.eventSubscriptionIDs) > 0 {
 		eventStore, ok := s.store.(state.EventSubscriptionStore)
 		if !ok {
@@ -667,6 +759,22 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 				_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
 					fmt.Sprintf(`{"kind":"deleted","app_id":"%s","subscription_id":"%s"}`, staged.appID, id))
 			}
+		}
+	}
+	if len(staged.workPolicyChanges) > 0 {
+		if policies, ok := s.store.(state.AppWorkPolicyStore); ok {
+			for i := len(staged.workPolicyChanges) - 1; i >= 0; i-- {
+				change := staged.workPolicyChanges[i]
+				if change.previous == nil {
+					if err := policies.DeleteAppWorkPolicy(ctx, staged.accountID, staged.appID, change.name); err != nil {
+						errs = append(errs, err)
+					}
+				} else if _, err := policies.UpsertAppWorkPolicy(ctx, staged.accountID, staged.appID, *change.previous); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("work policies unavailable during rollback"))
 		}
 	}
 	for i := len(staged.cronIDs) - 1; i >= 0; i-- {

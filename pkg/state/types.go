@@ -3930,12 +3930,13 @@ type Invocation struct {
 	QuotaReserved bool `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
-	WorkPolicyName string     `json:"work_policy_name,omitempty"`
-	WorkKeyDigest  []byte     `json:"-"`
-	WorkExpiresAt  *time.Time `json:"work_expires_at,omitempty"`
-	WorkSequence   int64      `json:"-"`
-	LastError      string     `json:"last_error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
+	WorkPolicyRevision int64      `json:"work_policy_revision,omitempty"`
+	WorkKeyDigest      []byte     `json:"-"`
+	WorkExpiresAt      *time.Time `json:"work_expires_at,omitempty"`
+	WorkSequence       int64      `json:"-"`
+	LastError          string     `json:"last_error,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 	// Outcome is the normalized terminal classification (issue #791).
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.

@@ -35,6 +35,18 @@ export type Invocation = {
    */
   attempts?: number;
   /**
+   * Named policy under which this invocation was admitted.
+   */
+  work_policy_name?: string;
+  /**
+   * Policy revision captured at admission.
+   */
+  work_policy_revision?: number;
+  /**
+   * Pending work expiry; running work is never expired by this policy.
+   */
+  work_expires_at?: string | null;
+  /**
    * When the in-flight dispatch lease expires; null when no lease is held.
    */
   lease_expires_at?: string | null;

@@ -48,6 +48,12 @@ class Invocation:
     """Optional ack URL for queueReceive consumers; populated on queue-sourced rows."""
     attempts: int | Unset = UNSET
     """Number of dispatch attempts so far; 0 on the first try."""
+    work_policy_name: str | Unset = UNSET
+    """Named policy under which this invocation was admitted."""
+    work_policy_revision: int | Unset = UNSET
+    """Policy revision captured at admission."""
+    work_expires_at: datetime.datetime | None | Unset = UNSET
+    """Pending work expiry; running work is never expired by this policy."""
     lease_expires_at: datetime.datetime | None | Unset = UNSET
     """When the in-flight dispatch lease expires; null when no lease is held."""
     received_at: datetime.datetime | None | Unset = UNSET
@@ -147,6 +153,18 @@ class Invocation:
             ack_url = self.ack_url
 
         attempts = self.attempts
+
+        work_policy_name = self.work_policy_name
+
+        work_policy_revision = self.work_policy_revision
+
+        work_expires_at: None | str | Unset
+        if isinstance(self.work_expires_at, Unset):
+            work_expires_at = UNSET
+        elif isinstance(self.work_expires_at, datetime.datetime):
+            work_expires_at = self.work_expires_at.isoformat()
+        else:
+            work_expires_at = self.work_expires_at
 
         lease_expires_at: None | str | Unset
         if isinstance(self.lease_expires_at, Unset):
@@ -250,6 +268,12 @@ class Invocation:
             field_dict["ack_url"] = ack_url
         if attempts is not UNSET:
             field_dict["attempts"] = attempts
+        if work_policy_name is not UNSET:
+            field_dict["work_policy_name"] = work_policy_name
+        if work_policy_revision is not UNSET:
+            field_dict["work_policy_revision"] = work_policy_revision
+        if work_expires_at is not UNSET:
+            field_dict["work_expires_at"] = work_expires_at
         if lease_expires_at is not UNSET:
             field_dict["lease_expires_at"] = lease_expires_at
         if received_at is not UNSET:
@@ -395,6 +419,27 @@ class Invocation:
         ack_url = _parse_ack_url(d.pop("ack_url", UNSET))
 
         attempts = d.pop("attempts", UNSET)
+
+        work_policy_name = d.pop("work_policy_name", UNSET)
+
+        work_policy_revision = d.pop("work_policy_revision", UNSET)
+
+        def _parse_work_expires_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                work_expires_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return work_expires_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        work_expires_at = _parse_work_expires_at(d.pop("work_expires_at", UNSET))
 
         def _parse_lease_expires_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -552,6 +597,9 @@ class Invocation:
             last_error=last_error,
             ack_url=ack_url,
             attempts=attempts,
+            work_policy_name=work_policy_name,
+            work_policy_revision=work_policy_revision,
+            work_expires_at=work_expires_at,
             lease_expires_at=lease_expires_at,
             received_at=received_at,
             deadline_at=deadline_at,

@@ -15,7 +15,7 @@ export type EventDeliveryResponse = {
   event_source: string;
   event_type: string;
   subscription_id?: string;
-  state: 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled' | 'dead_letter';
+  state: 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled' | 'dead_letter' | 'superseded' | 'expired';
   attempts: number;
   last_error?: string;
   created_at: string;

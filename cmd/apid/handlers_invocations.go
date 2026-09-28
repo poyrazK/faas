@@ -149,7 +149,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	}, "enqueue async invoke")
+	}, "enqueue async invoke", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
 		return
@@ -187,6 +187,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if problem := validateInvokeRequest(req); problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if req.Work != nil {
+		api.WriteProblem(w, api.ErrValidation("work applies only to asynchronous invocations"))
 		return
 	}
 	if req.Method == "" {

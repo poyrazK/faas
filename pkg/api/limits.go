@@ -89,6 +89,8 @@ const (
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
 	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
+	// MaxWorkPoliciesPerApp bounds durable named policy configuration.
+	MaxWorkPoliciesPerApp = 64
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

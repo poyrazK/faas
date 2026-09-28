@@ -1443,6 +1443,8 @@ var cliCommands = []cliCommand{
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 			{Name: "on-success-webhook", Short: "app webhook id for completed invocation callbacks", Value: "ID"},
 			{Name: "on-failure-webhook", Short: "app webhook id for failed or dead-lettered callbacks", Value: "ID"},
+			{Name: "work-policy", Short: "named app work policy for async invocation", Value: "NAME"},
+			{Name: "work-key", Short: "JSON scalar application key for async invocation", Value: "JSON"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},

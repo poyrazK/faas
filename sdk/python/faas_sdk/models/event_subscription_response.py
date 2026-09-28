@@ -7,6 +7,8 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.event_subscription_response_filter import EventSubscriptionResponseFilter
 
@@ -29,6 +31,10 @@ class EventSubscriptionResponse:
     enabled: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    work_policy: str | Unset = UNSET
+    """Named app policy for keyed event deliveries, when configured."""
+    work_key: str | Unset = UNSET
+    """Dot selector into the CloudEvents envelope for the work key."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -47,6 +53,10 @@ class EventSubscriptionResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        work_policy = self.work_policy
+
+        work_key = self.work_key
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -61,6 +71,10 @@ class EventSubscriptionResponse:
                 "updated_at": updated_at,
             }
         )
+        if work_policy is not UNSET:
+            field_dict["work_policy"] = work_policy
+        if work_key is not UNSET:
+            field_dict["work_key"] = work_key
 
         return field_dict
 
@@ -85,6 +99,10 @@ class EventSubscriptionResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        work_policy = d.pop("work_policy", UNSET)
+
+        work_key = d.pop("work_key", UNSET)
+
         event_subscription_response = cls(
             id=id,
             app_id=app_id,
@@ -94,6 +112,8 @@ class EventSubscriptionResponse:
             enabled=enabled,
             created_at=created_at,
             updated_at=updated_at,
+            work_policy=work_policy,
+            work_key=work_key,
         )
 
         return event_subscription_response

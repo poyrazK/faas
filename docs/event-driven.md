@@ -509,6 +509,29 @@ event_triggers:
     filter: '{"data":{"amount":{"$gt":100}}}'
 ```
 
+To coordinate related event deliveries, declare a named work policy and bind
+the subscription to a scalar field in the CloudEvents envelope:
+
+```yaml
+work_policies:
+  - name: document-index
+    max_running_per_key: 1
+    pending_updates: keep_latest
+    debounce_ms: 3000
+    expires_after_ms: 600000
+event_triggers:
+  - source: documents
+    type: document.edited
+    work_policy: document-index
+    work_key: data.document_id
+```
+
+The same policy name and key can be supplied to an explicit async invocation.
+Gregale serializes dispatch within that lane and can replace older pending
+work. Running work continues; handlers should still protect external side
+effects with an idempotency key or version check. See
+[application work policies](work-policies.md) for the complete contract.
+
 The filter is a JSON object encoded as a string. `app` is optional for a
 single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,

@@ -2088,7 +2088,7 @@ gregale inspect my-api --upstreams
 
 Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug defaults to linked context)
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>]`
+`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2096,6 +2096,8 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
 | `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
 | `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
+| `--work-policy <NAME>` | named app work policy for async invocation |  |
+| `--work-key <JSON>` | JSON scalar application key for async invocation |  |
 
 
 ## run

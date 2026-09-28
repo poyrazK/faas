@@ -373,6 +373,7 @@ func (m *MemStore) DeleteEventSubscription(_ context.Context, id, accountID, app
 			return ErrNotFound
 		}
 		delete(m.eventSubscriptions, key)
+		delete(m.eventWorkBindings, id)
 		return nil
 	}
 	return ErrNotFound

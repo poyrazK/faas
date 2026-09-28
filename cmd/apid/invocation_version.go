@@ -9,11 +9,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // enqueueVersionedInvocation captures the selected release when work is
 // accepted. The drain validates it again at delivery, including after retries.
-func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders http.Header, inv state.Invocation, capacityDetail string) (state.Invocation, *api.Problem) {
+func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders http.Header, inv state.Invocation, capacityDetail string, work ...*api.InvokeWork) (state.Invocation, *api.Problem) {
 	var err error
 	inv.Headers, err = mergeInvocationVersionHeaders(inv.Headers, requestHeaders)
 	if err != nil {
@@ -32,7 +33,28 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 			return state.Invocation{}, api.ErrCapacity("resolve invocation version")
 		}
 	}
-	created, err := s.store.EnqueueInvocation(ctx, inv)
+	var created state.Invocation
+	if len(work) > 0 && work[0] != nil {
+		policyStore, ok := s.store.(state.AppWorkPolicyStore)
+		if !ok {
+			return state.Invocation{}, api.ErrCapacity("work policy store unavailable")
+		}
+		record, lookupErr := policyStore.AppWorkPolicyByName(ctx, inv.AppID, work[0].Policy)
+		if errors.Is(lookupErr, state.ErrNotFound) {
+			return state.Invocation{}, api.ErrValidation("unknown work policy")
+		}
+		if lookupErr != nil {
+			return state.Invocation{}, api.ErrCapacity("lookup work policy")
+		}
+		key, keyErr := workpolicy.CanonicalScalar(work[0].Key)
+		if keyErr != nil {
+			return state.Invocation{}, api.ErrValidation("work key must be a bounded string, number, or boolean")
+		}
+		inv.WorkPolicyRevision = record.Revision
+		created, err = s.store.EnqueueKeyedInvocation(ctx, inv, record.Policy, key)
+	} else {
+		created, err = s.store.EnqueueInvocation(ctx, inv)
+	}
 	if err != nil {
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}

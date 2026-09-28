@@ -209,14 +209,16 @@ type SendAppMessageResponse struct {
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.
 type EventSubscriptionResponse struct {
-	ID        string          `json:"id"`
-	AppID     string          `json:"app_id"`
-	Source    string          `json:"source"`
-	Type      string          `json:"type"`
-	Filter    json.RawMessage `json:"filter"`
-	Enabled   bool            `json:"enabled"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID         string          `json:"id"`
+	AppID      string          `json:"app_id"`
+	Source     string          `json:"source"`
+	Type       string          `json:"type"`
+	Filter     json.RawMessage `json:"filter"`
+	WorkPolicy string          `json:"work_policy,omitempty"`
+	WorkKey    string          `json:"work_key,omitempty"`
+	Enabled    bool            `json:"enabled"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -5093,6 +5095,8 @@ type ListDelayedTasksResponse struct {
 // defaults; the zero values are not persisted).
 type InvokeRequest struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Work selects an app-owned background policy for async invocations.
+	Work    *InvokeWork     `json:"work,omitempty"`
 	Headers json.RawMessage `json:"headers,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Path    string          `json:"path,omitempty"`
@@ -5115,6 +5119,33 @@ type InvokeRequest struct {
 	// subscriptions. Each value is an app_webhooks id owned by the target
 	// app; omitted destinations preserve the existing no-callback behavior.
 	Destinations *InvocationDestinations `json:"destinations,omitempty"`
+}
+
+type InvokeWork struct {
+	Policy string          `json:"policy"`
+	Key    json.RawMessage `json:"key"`
+}
+
+type UpsertWorkPolicyRequest struct {
+	MaxRunningPerKey int    `json:"max_running_per_key"`
+	PendingUpdates   string `json:"pending_updates,omitempty"`
+	DebounceMS       int64  `json:"debounce_ms,omitempty"`
+	ExpiresAfterMS   int64  `json:"expires_after_ms,omitempty"`
+}
+
+type WorkPolicyResponse struct {
+	Name             string    `json:"name"`
+	Revision         int64     `json:"revision"`
+	MaxRunningPerKey int       `json:"max_running_per_key"`
+	PendingUpdates   string    `json:"pending_updates"`
+	DebounceMS       int64     `json:"debounce_ms"`
+	ExpiresAfterMS   int64     `json:"expires_after_ms"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type WorkPolicyListResponse struct {
+	Policies []WorkPolicyResponse `json:"policies"`
 }
 
 // InvocationDestinations configures terminal callbacks for an invocation.
@@ -5200,27 +5231,30 @@ type DelayedTaskRequest struct {
 // name `Invocation` matches the OpenAPI schema (api/openapi.yaml
 // `Invocation`) so the spec_compliance test sees a 1:1 mapping.
 type Invocation struct {
-	ID             string          `json:"id"`
-	AppID          string          `json:"app_id"`
-	AccountID      string          `json:"account_id"`
-	InstanceID     string          `json:"instance_id,omitempty"`
-	Source         string          `json:"source"`
-	QueueName      string          `json:"queue_name,omitempty"`
-	State          string          `json:"state"`
-	Method         string          `json:"method"`
-	Path           string          `json:"path"`
-	Payload        json.RawMessage `json:"payload"`
-	Headers        json.RawMessage `json:"headers"`
-	DueAt          time.Time       `json:"due_at"`
-	ScheduledAt    *time.Time      `json:"scheduled_at,omitempty"`
-	AckURL         string          `json:"ack_url,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
-	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	Attempts       int             `json:"attempts"`
-	LastError      string          `json:"last_error,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID                 string          `json:"id"`
+	AppID              string          `json:"app_id"`
+	AccountID          string          `json:"account_id"`
+	InstanceID         string          `json:"instance_id,omitempty"`
+	Source             string          `json:"source"`
+	QueueName          string          `json:"queue_name,omitempty"`
+	State              string          `json:"state"`
+	Method             string          `json:"method"`
+	Path               string          `json:"path"`
+	Payload            json.RawMessage `json:"payload"`
+	Headers            json.RawMessage `json:"headers"`
+	DueAt              time.Time       `json:"due_at"`
+	ScheduledAt        *time.Time      `json:"scheduled_at,omitempty"`
+	AckURL             string          `json:"ack_url,omitempty"`
+	Result             json.RawMessage `json:"result,omitempty"`
+	LeaseExpiresAt     *time.Time      `json:"lease_expires_at,omitempty"`
+	ReceivedAt         *time.Time      `json:"received_at,omitempty"`
+	CompletedAt        *time.Time      `json:"completed_at,omitempty"`
+	Attempts           int             `json:"attempts"`
+	WorkPolicyName     string          `json:"work_policy_name,omitempty"`
+	WorkPolicyRevision int64           `json:"work_policy_revision,omitempty"`
+	WorkExpiresAt      *time.Time      `json:"work_expires_at,omitempty"`
+	LastError          string          `json:"last_error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
 	// DeadlineAt (ADR-134 PR-B): optional hard-stop. The drain
 	// transitions the row to dead_letter when this time passes.
 	DeadlineAt *time.Time `json:"deadline_at,omitempty"`

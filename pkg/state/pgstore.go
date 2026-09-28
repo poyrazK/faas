@@ -14962,7 +14962,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        deadline_at, retry_policy, result_retention_until,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
-       work_expires_at, work_sequence`
+       work_expires_at, work_sequence, work_policy_revision`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15031,20 +15031,21 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 			 deadline_at, retry_policy, result_retention_until,
 			 on_success_destination_id, on_failure_destination_id,
 			 work_policy_name, work_key_digest, work_expires_at,
-			 work_sequence)
+			 work_sequence, work_policy_revision)
 		values
 			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
 			 coalesce(nullif($6,''),'pending'), $7, $8,
 			 $9, $10, $11, $12, $13,
 			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24)
+			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25)
 		returning `+invocationSelectCols,
 		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
 		scheduledAt, cronID, inv.AckURL, leaseExpires,
 		deadlineAt, retryPolicy, retentionUntil,
 		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
-		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence))
+		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
+		nullableWorkSequence(inv.WorkPolicyRevision))
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -16211,6 +16212,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workKeyDigest []byte
 	var workExpiresAt *time.Time
 	var workSequence *int64
+	var workPolicyRevision *int64
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16218,7 +16220,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&inv.QuotaReserved, &lastErr, &inv.CreatedAt, &instanceID, &outcome,
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
-		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence,
+		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16231,6 +16233,9 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv.WorkExpiresAt = workExpiresAt
 	if workSequence != nil {
 		inv.WorkSequence = *workSequence
+	}
+	if workPolicyRevision != nil {
+		inv.WorkPolicyRevision = *workPolicyRevision
 	}
 	inv.State = InvocationState(state)
 	if len(payload) > 0 {

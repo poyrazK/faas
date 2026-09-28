@@ -69,6 +69,27 @@ func (s Selector) Resolve(payload json.RawMessage) (string, error) {
 			return "", fmt.Errorf("work key field %q is missing", segment)
 		}
 	}
+	return canonicalScalar(value)
+}
+
+// CanonicalScalar resolves a caller-supplied JSON scalar for explicit async
+// work. Selectors and explicit keys therefore produce identical lane keys.
+func CanonicalScalar(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return "", fmt.Errorf("decode work key: %w", err)
+	}
+	if err := dec.Decode(new(any)); err == nil {
+		return "", fmt.Errorf("work key contains multiple JSON values")
+	} else if err != io.EOF {
+		return "", fmt.Errorf("decode trailing work key: %w", err)
+	}
+	return canonicalScalar(value)
+}
+
+func canonicalScalar(value any) (string, error) {
 	var key string
 	switch scalar := value.(type) {
 	case string:

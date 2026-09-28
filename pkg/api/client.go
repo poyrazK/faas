@@ -3120,6 +3120,20 @@ func (c *Client) InvokeAppAsync(ctx context.Context, slug string, req InvokeRequ
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/invoke/async", req, &out)
 }
 
+func (c *Client) ListAppWorkPolicies(ctx context.Context, slug string) (WorkPolicyListResponse, error) {
+	var out WorkPolicyListResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/work-policies", nil, &out)
+}
+
+func (c *Client) UpsertAppWorkPolicy(ctx context.Context, slug, name string, req UpsertWorkPolicyRequest) (WorkPolicyResponse, error) {
+	var out WorkPolicyResponse
+	return out, c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name), req, &out)
+}
+
+func (c *Client) DeleteAppWorkPolicy(ctx context.Context, slug, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name), nil, nil)
+}
+
 // QueueSend enqueues a payload on the per-app FIFO queue. Cap-checked
 // against the plan's MaxQueueDepth at the handler.
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {

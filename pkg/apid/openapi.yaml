@@ -17794,6 +17794,57 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/work-policies:
+    get:
+      tags: [invocations]
+      operationId: listAppWorkPolicies
+      summary: List named work policies for an app.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: App work policies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkPolicyListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/work-policies/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - in: path
+        name: name
+        required: true
+        description: Named app work policy.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+    put:
+      tags: [invocations]
+      operationId: upsertAppWorkPolicy
+      summary: Create or update a named app work policy.
+      description: Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertWorkPolicyRequest' }
+      responses:
+        '200':
+          description: Saved policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkPolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [invocations]
+      operationId: deleteAppWorkPolicy
+      summary: Delete a policy after removing event subscription bindings.
+      responses:
+        '204': { description: Policy deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/queues/send:
     post:
       tags: [queues]
@@ -29302,6 +29353,8 @@ components:
           type: object
           additionalProperties: true
           description: Normalized JSON filter evaluated by the event matcher.
+        work_policy: { type: string, description: "Named app policy for keyed event deliveries, when configured." }
+        work_key: { type: string, description: "Dot selector into the CloudEvents envelope for the work key." }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -29332,7 +29385,7 @@ components:
         event_source: { type: string }
         event_type: { type: string }
         subscription_id: { type: string, format: uuid }
-        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter, superseded, expired] }
         attempts: { type: integer, minimum: 0 }
         last_error: { type: string }
         created_at: { type: string, format: date-time }
@@ -38715,6 +38768,9 @@ components:
         last_error: { type: [string, "null"] }
         ack_url: { type: [string, "null"], description: "Optional ack URL for queueReceive consumers; populated on queue-sourced rows." }
         attempts: { type: integer, description: "Number of dispatch attempts so far; 0 on the first try." }
+        work_policy_name: { type: string, description: "Named policy under which this invocation was admitted." }
+        work_policy_revision: { type: integer, minimum: 1, description: "Policy revision captured at admission." }
+        work_expires_at: { type: [string, "null"], format: date-time, description: "Pending work expiry; running work is never expired by this policy." }
         lease_expires_at: { type: [string, "null"], format: date-time, description: "When the in-flight dispatch lease expires; null when no lease is held." }
         received_at: { type: [string, "null"], format: date-time, description: "When the drain first claimed the row; null until claimed." }
         # ADR-134 PR-B: per-row async fields. All three are
@@ -38781,6 +38837,55 @@ components:
         destinations:
           anyOf: [{ $ref: '#/components/schemas/InvocationDestinations' }, { type: "null" }]
           description: "EPIC #1278. Optional terminal callbacks."
+        work:
+          allOf:
+            - $ref: '#/components/schemas/InvokeWork'
+          description: "Async invocation only. Assigns a named policy and application key."
+
+    InvokeWork:
+      description: Named policy and typed application key for one async invocation.
+      type: object
+      additionalProperties: false
+      required: [policy, key]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key: { description: "A bounded JSON string, number, or boolean. Equal typed values share one work lane." }
+
+    UpsertWorkPolicyRequest:
+      description: App work policy settings; durations use whole milliseconds.
+      type: object
+      additionalProperties: false
+      required: [max_running_per_key]
+      properties:
+        max_running_per_key: { type: integer, enum: [1] }
+        pending_updates: { type: string, enum: [all, keep_latest], default: all }
+        debounce_ms: { type: integer, minimum: 0, maximum: 86400000, default: 0 }
+        expires_after_ms: { type: integer, minimum: 0, maximum: 2592000000, default: 0 }
+
+    WorkPolicyResponse:
+      description: Saved app policy and revision used for subsequent work admissions.
+      type: object
+      additionalProperties: false
+      required: [name, revision, max_running_per_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
+      properties:
+        name: { type: string }
+        revision: { type: integer, minimum: 1 }
+        max_running_per_key: { type: integer, enum: [1] }
+        pending_updates: { type: string, enum: [all, keep_latest] }
+        debounce_ms: { type: integer }
+        expires_after_ms: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WorkPolicyListResponse:
+      description: All named work policies for one app.
+      type: object
+      additionalProperties: false
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          items: { $ref: '#/components/schemas/WorkPolicyResponse' }
 
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."

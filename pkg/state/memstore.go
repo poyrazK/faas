@@ -495,7 +495,9 @@ type MemStore struct {
 	// ... for update skip locked` semantics by serialising every access
 	// through m.mu (MemStore is inherently single-process); per-row
 	// lease_expires_at is in-memory instead of SQL NOW().
-	invocations map[string]Invocation
+	invocations       map[string]Invocation
+	workPolicies      map[string]AppWorkPolicy
+	eventWorkBindings map[string]EventWorkBinding
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
@@ -1159,6 +1161,8 @@ func NewMemStore() *MemStore {
 		tenantSurfaces:          map[string]TenantSurface{},
 		tenantHostnames:         map[string]TenantHostname{},
 		invocations:             map[string]Invocation{},
+		workPolicies:            map[string]AppWorkPolicy{},
+		eventWorkBindings:       map[string]EventWorkBinding{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
 		executionUsageLedger:    map[string]executionUsageLedgerRow{},
