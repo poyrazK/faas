@@ -54,8 +54,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 338 | [Runtime revocation of delivered secrets](338-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-337 |
-| 337 | [Sidecar runtime secret reload](337-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
+| 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
+| 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
 | 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |
 | 335 | [Tenant-scoped self-service customer offboarding](335-platform-tenant-self-service-customer-offboarding.md) | accepted | Atomic, tenant-bound customer and active-key revocation with retry-safe responses |
 | 334 | [Owner-controlled downstream customer provisioning](334-platform-tenant-consumer-provisioning-policy.md) | accepted | Default-off customer creation policy and per-tenant active-customer ceiling, separate from the tenant-bound manage scope |

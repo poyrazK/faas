@@ -1,4 +1,4 @@
-# ADR-338 · Runtime revocation of delivered secrets
+# ADR-339 · Runtime revocation of delivered secrets
 
 - **Status:** accepted
 - **Date:** 2026-09-27
