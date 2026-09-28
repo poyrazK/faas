@@ -352,6 +352,7 @@ export type { EnvScope } from './models/EnvScope.js';
 export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js';
 export type { EventDeliveryListResponse } from './models/EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
+export type { EventFanoutFailureResponse } from './models/EventFanoutFailureResponse.js';
 export type { EventPreviewSubscription } from './models/EventPreviewSubscription.js';
 export type { EventSchema } from './models/EventSchema.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';

@@ -613,6 +613,12 @@ the account-wide invocation ledger. `--event-id` narrows the view to one
 published event; `--state` can focus on pending, failed, or dead-lettered
 deliveries.
 
+The same command also reports terminal recipient routing failures that
+occurred before Gregale created an invocation. These rows include the event,
+subscription, routing attempt count, failure time, and error. Use
+`--fanout-before` with `next_fanout_before` from `--json` to page through that
+failure history independently of invocation deliveries.
+
 The machine-readable event contract is published in
 [`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated
 `POST /v1/events:publish` ingress.

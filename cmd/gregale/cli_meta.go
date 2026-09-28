@@ -416,7 +416,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "events",
 		DocSlug: "events",
-		Short:   "Preview routing, publish events and inspect subscriptions and deliveries",
+		Short:   "Preview routing, publish events and inspect subscriptions and delivery failures",
 		Subcommands: []cliSub{
 			{Name: "preview", Short: "Preview account-wide event routing without publishing", Flags: []cliFlag{
 				{Name: "id", Short: "event id to use when filters inspect the CloudEvents id", Value: "ID"},
@@ -433,10 +433,11 @@ var cliCommands = []cliCommand{
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest"},
-			{Name: "deliveries", Short: "Inspect event delivery lifecycle", Flags: []cliFlag{
+			{Name: "deliveries", Short: "Inspect event deliveries and pre-invocation fanout failures", Flags: []cliFlag{
 				{Name: "event-id", Short: "filter by published event id", Value: "ID"},
-				{Name: "state", Short: "filter by delivery state", Value: "STATE"},
+				{Name: "state", Short: "filter by delivery state; failed includes recipient fanout failures", Value: "STATE"},
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
+				{Name: "fanout-before", Short: "pre-invocation failure pagination cursor", Value: "CURSOR"},
 				{Name: "limit", Short: "max deliveries (1..200)", Value: "N"},
 			}},
 		},

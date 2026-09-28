@@ -133,52 +133,68 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 }
 
 // cmdEventsDeliveries implements `gregale events deliveries <app>`. It is a
-// focused operational view for event-triggered invocations; users do not need
-// to correlate the account-wide invocation ledger by hand.
+// focused operational view for event-triggered invocations and routing
+// failures that happen before invocation creation.
 func cmdEventsDeliveries(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events deliveries", flag.ContinueOnError)
 	eventID := fs.String("event-id", "", "filter by exact published event id")
-	deliveryState := fs.String("state", "", "filter by delivery state (pending|dispatching|completed|failed|dead_letter)")
+	deliveryState := fs.String("state", "", "filter by delivery state; failed includes recipient fanout failures")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
+	fanoutBefore := fs.String("fanout-before", "", "pagination cursor (NextFanoutBefore from a prior call)")
 	limit := fs.Int("limit", 20, "max deliveries (1..200)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-id ID] [--state STATE] [--before ID] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-id ID] [--state STATE] [--before ID] [--fanout-before CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventDeliveries(context.Background(), positional[0], *eventID, *deliveryState, *before, *limit)
+	resp, err := client.ListEventDeliveriesPage(context.Background(), positional[0], *eventID, *deliveryState, *before, *fanoutBefore, *limit)
 	if err != nil {
 		return printErr("Could not list event deliveries", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	if len(resp.Deliveries) == 0 {
+	if len(resp.Deliveries) == 0 && len(resp.FanoutFailures) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no event deliveries)")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
-	for _, delivery := range resp.Deliveries {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
-			delivery.InvocationID,
-			delivery.EventID,
-			delivery.EventSource,
-			delivery.EventType,
-			delivery.State,
-			delivery.Attempts,
-			delivery.CreatedAt.Format(time.RFC3339),
-			oneLine(delivery.LastError),
-		)
+	if len(resp.Deliveries) > 0 {
+		_, _ = fmt.Fprintln(osStdout, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
+		for _, delivery := range resp.Deliveries {
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+				delivery.InvocationID,
+				delivery.EventID,
+				delivery.EventSource,
+				delivery.EventType,
+				delivery.State,
+				delivery.Attempts,
+				delivery.CreatedAt.Format(time.RFC3339),
+				oneLine(delivery.LastError),
+			)
+		}
+		if resp.NextBefore != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more invocations — pass --before %s\n", resp.NextBefore)
+		}
 	}
-	if resp.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", resp.NextBefore)
+	if len(resp.FanoutFailures) > 0 {
+		_, _ = fmt.Fprintln(osStdout, "PRE-INVOCATION FANOUT FAILURES")
+		_, _ = fmt.Fprintln(osStdout, "EVENT\tSOURCE\tTYPE\tSUBSCRIPTION\tSTATE\tATTEMPTS\tFAILED\tERROR")
+		for _, failure := range resp.FanoutFailures {
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+				oneLine(failure.EventID), oneLine(failure.EventSource), oneLine(failure.EventType), oneLine(failure.SubscriptionID),
+				oneLine(failure.State), failure.Attempts, failure.FailedAt.Format(time.RFC3339), oneLine(failure.LastError),
+			)
+		}
+	}
+	if resp.NextFanoutBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more fanout failures — pass --fanout-before %s\n", resp.NextFanoutBefore)
 	}
 	return 0
 }

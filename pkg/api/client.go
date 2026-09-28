@@ -6588,9 +6588,16 @@ func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string
 	return c.ListEventSubscriptions(ctx, slug)
 }
 
-// ListEventDeliveries returns the app's event-triggered invocation lifecycle,
-// newest first. Optional filters are exact event-id/state matches.
+// ListEventDeliveries returns the app's invocation lifecycle and terminal
+// pre-invocation fanout failures. Optional filters are exact event-id/state
+// matches; each history is newest first.
 func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveriesPage(ctx, slug, eventID, deliveryState, before, "", limit)
+}
+
+// ListEventDeliveriesPage returns both invocation deliveries and pre-invocation
+// fanout failures. The two histories have independent cursors.
+func (c *Client) ListEventDeliveriesPage(ctx context.Context, slug, eventID, deliveryState, before, fanoutBefore string, limit int) (EventDeliveryListResponse, error) {
 	var out EventDeliveryListResponse
 	q := url.Values{}
 	if eventID != "" {
@@ -6601,6 +6608,9 @@ func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliver
 	}
 	if before != "" {
 		q.Set("before", before)
+	}
+	if fanoutBefore != "" {
+		q.Set("fanout_before", fanoutBefore)
 	}
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))

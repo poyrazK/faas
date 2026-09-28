@@ -52,6 +52,29 @@ type PublishedEventRecipientProgress struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// EventFanoutFailure is a terminal routing failure recorded before an
+// invocation exists. OutboxID is only used to build a stable page cursor.
+type EventFanoutFailure struct {
+	OutboxID       int64
+	EventID        string
+	EventSource    string
+	EventType      string
+	SubscriptionID string
+	Attempts       int
+	LastError      string
+	CreatedAt      time.Time
+	FailedAt       time.Time
+}
+
+// EventFanoutFailureCursor is the keyset cursor for failed recipients. One
+// outbox event can contribute multiple failures, so the subscription ID
+// disambiguates rows with the same outbox ID.
+type EventFanoutFailureCursor struct {
+	CreatedAt      time.Time
+	OutboxID       int64
+	SubscriptionID string
+}
+
 const (
 	PublishedEventRecipientPending  = "pending"
 	PublishedEventRecipientFiltered = "filtered"
@@ -69,6 +92,12 @@ type PublishedEventWorkStore interface {
 // candidates after a worker restart.
 type PublishedEventRecipientProgressStore interface {
 	RecordPublishedEventRecipientProgress(context.Context, int64, string, string, PublishedEventRecipientProgress) error
+}
+
+// EventFanoutFailureStore exposes bounded, app-scoped inspection of terminal
+// recipient failures that did not reach the invocation lifecycle.
+type EventFanoutFailureStore interface {
+	ListEventFanoutFailuresForApp(context.Context, string, int, EventFanoutFailureCursor, string) ([]EventFanoutFailure, error)
 }
 
 const PublishedEventLease = 5 * time.Minute
@@ -197,6 +226,50 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+// ListEventFanoutFailuresForApp returns failed recipient outcomes newest
+// first. The app/account predicates are tied to the immutable acceptance-time
+// recipient snapshot, so removed subscriptions remain inspectable without
+// widening the authenticated app scope.
+func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID string, limit int, before EventFanoutFailureCursor, eventID string) ([]EventFanoutFailure, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `SELECT o.id, o.event_id, o.source, o.event_type,
+		p.key, COALESCE(NULLIF(p.outcome->>'attempts', '')::int, 0),
+		COALESCE(p.outcome->>'last_error', ''), o.created_at,
+		COALESCE((p.outcome->>'updated_at')::timestamptz, o.created_at)
+	FROM event_fanout_outbox o
+	JOIN apps a ON a.id = $1 AND a.account_id = o.account_id
+	CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
+	CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
+	WHERE o.last_error IS NOT NULL
+	  AND r.recipient->>'app_id' = a.id::text
+	  AND r.recipient->>'id' = p.key
+	  AND p.outcome->>'state' = 'failed'
+	  AND ($2 = '' OR o.event_id = $2)
+	  AND ($3::bigint = 0 OR (o.created_at, o.id, p.key) < ($4::timestamptz, $3, $5))
+	ORDER BY o.created_at DESC, o.id DESC, p.key DESC
+	LIMIT $6`, appID, eventID, before.OutboxID, before.CreatedAt, before.SubscriptionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]EventFanoutFailure, 0)
+	for rows.Next() {
+		var failure EventFanoutFailure
+		if err := rows.Scan(&failure.OutboxID, &failure.EventID, &failure.EventSource, &failure.EventType,
+			&failure.SubscriptionID, &failure.Attempts, &failure.LastError, &failure.CreatedAt, &failure.FailedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, failure)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 type publishedEventIdentity struct {
@@ -373,4 +446,53 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 		}
 	}
 	return pruned, nil
+}
+
+// ListEventFanoutFailuresForApp mirrors the PostgreSQL projection for tests
+// and in-memory API use.
+func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string, limit int, before EventFanoutFailureCursor, eventID string) ([]EventFanoutFailure, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]EventFanoutFailure, 0)
+	for _, work := range m.eventFanout {
+		var event publishedEventIdentity
+		if json.Unmarshal(work.Payload, &event) != nil || (eventID != "" && event.ID != eventID) {
+			continue
+		}
+		for _, recipient := range work.RecipientSnapshot {
+			if recipient.AppID != appID {
+				continue
+			}
+			progress, ok := work.RecipientProgress[recipient.ID]
+			if !ok || progress.State != PublishedEventRecipientFailed {
+				continue
+			}
+			if before.OutboxID > 0 && (work.CreatedAt.After(before.CreatedAt) ||
+				(work.CreatedAt.Equal(before.CreatedAt) && (work.ID > before.OutboxID ||
+					(work.ID == before.OutboxID && recipient.ID >= before.SubscriptionID)))) {
+				continue
+			}
+			out = append(out, EventFanoutFailure{
+				OutboxID: work.ID, EventID: event.ID, EventSource: event.Source, EventType: event.Type,
+				SubscriptionID: recipient.ID, Attempts: progress.Attempts, LastError: progress.LastError,
+				CreatedAt: work.CreatedAt, FailedAt: progress.UpdatedAt,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		if out[i].OutboxID == out[j].OutboxID {
+			return out[i].SubscriptionID > out[j].SubscriptionID
+		}
+		return out[i].OutboxID > out[j].OutboxID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

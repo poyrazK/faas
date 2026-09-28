@@ -19,6 +19,7 @@ def _get_kwargs(
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
     limit: int | Unset = 20,
+    fanout_before: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -34,6 +35,8 @@ def _get_kwargs(
     params["before"] = before
 
     params["limit"] = limit
+
+    params["fanout_before"] = fanout_before
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -101,12 +104,15 @@ def sync_detailed(
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
     limit: int | Unset = 20,
+    fanout_before: str | Unset = UNSET,
 ) -> Response[EventDeliveryListResponse | Problem]:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata, newest first. The
-    projection includes the published event identity, subscription,
-    lifecycle state, attempts, and last error without returning payloads.
+     Returns event-triggered invocation metadata and terminal fanout
+    recipient failures, each newest first. The projections include the
+    published event identity, subscription, lifecycle state, attempts,
+    and last error without returning payloads. The two histories have
+    independent pagination cursors.
 
     Args:
         slug (str):
@@ -114,6 +120,7 @@ def sync_detailed(
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
         limit (int | Unset):  Default: 20.
+        fanout_before (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,6 +136,7 @@ def sync_detailed(
         state=state,
         before=before,
         limit=limit,
+        fanout_before=fanout_before,
     )
 
     response = client.get_httpx_client().request(
@@ -146,12 +154,15 @@ def sync(
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
     limit: int | Unset = 20,
+    fanout_before: str | Unset = UNSET,
 ) -> EventDeliveryListResponse | Problem | None:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata, newest first. The
-    projection includes the published event identity, subscription,
-    lifecycle state, attempts, and last error without returning payloads.
+     Returns event-triggered invocation metadata and terminal fanout
+    recipient failures, each newest first. The projections include the
+    published event identity, subscription, lifecycle state, attempts,
+    and last error without returning payloads. The two histories have
+    independent pagination cursors.
 
     Args:
         slug (str):
@@ -159,6 +170,7 @@ def sync(
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
         limit (int | Unset):  Default: 20.
+        fanout_before (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,6 +187,7 @@ def sync(
         state=state,
         before=before,
         limit=limit,
+        fanout_before=fanout_before,
     ).parsed
 
 
@@ -186,12 +199,15 @@ async def asyncio_detailed(
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
     limit: int | Unset = 20,
+    fanout_before: str | Unset = UNSET,
 ) -> Response[EventDeliveryListResponse | Problem]:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata, newest first. The
-    projection includes the published event identity, subscription,
-    lifecycle state, attempts, and last error without returning payloads.
+     Returns event-triggered invocation metadata and terminal fanout
+    recipient failures, each newest first. The projections include the
+    published event identity, subscription, lifecycle state, attempts,
+    and last error without returning payloads. The two histories have
+    independent pagination cursors.
 
     Args:
         slug (str):
@@ -199,6 +215,7 @@ async def asyncio_detailed(
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
         limit (int | Unset):  Default: 20.
+        fanout_before (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,6 +231,7 @@ async def asyncio_detailed(
         state=state,
         before=before,
         limit=limit,
+        fanout_before=fanout_before,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -229,12 +247,15 @@ async def asyncio(
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
     limit: int | Unset = 20,
+    fanout_before: str | Unset = UNSET,
 ) -> EventDeliveryListResponse | Problem | None:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata, newest first. The
-    projection includes the published event identity, subscription,
-    lifecycle state, attempts, and last error without returning payloads.
+     Returns event-triggered invocation metadata and terminal fanout
+    recipient failures, each newest first. The projections include the
+    published event identity, subscription, lifecycle state, attempts,
+    and last error without returning payloads. The two histories have
+    independent pagination cursors.
 
     Args:
         slug (str):
@@ -242,6 +263,7 @@ async def asyncio(
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
         limit (int | Unset):  Default: 20.
+        fanout_before (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -259,5 +281,6 @@ async def asyncio(
             state=state,
             before=before,
             limit=limit,
+            fanout_before=fanout_before,
         )
     ).parsed

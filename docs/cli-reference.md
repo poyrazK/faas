@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Preview routing, publish events and inspect subscriptions and deliveries |
+| [`events`](#events) | Preview routing, publish events and inspect subscriptions and delivery failures |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -324,7 +324,7 @@ Show one audit event
 
 ## events
 
-Preview routing, publish events and inspect subscriptions and deliveries
+Preview routing, publish events and inspect subscriptions and delivery failures
 
 `gregale events [<subcommand>]`
 
@@ -358,13 +358,14 @@ List subscriptions reconciled from the app manifest
 
 ### events deliveries
 
-Inspect event delivery lifecycle
+Inspect event deliveries and pre-invocation fanout failures
 
 | Flag | Meaning | |
 |---|---|---|
 | `--event-id <ID>` | filter by published event id |  |
-| `--state <STATE>` | filter by delivery state |  |
+| `--state <STATE>` | filter by delivery state; failed includes recipient fanout failures |  |
 | `--before <ID>` | pagination cursor |  |
+| `--fanout-before <CURSOR>` | pre-invocation failure pagination cursor |  |
 | `--limit <N>` | max deliveries (1..200) |  |
 
 

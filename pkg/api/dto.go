@@ -243,12 +243,28 @@ type EventDeliveryResponse struct {
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 
-// EventDeliveryListResponse is an app-scoped page of event-triggered
-// invocations, ordered newest first.
+// EventFanoutFailureResponse describes a recipient that terminally failed
+// before an invocation could be created.
+type EventFanoutFailureResponse struct {
+	EventID        string    `json:"event_id"`
+	EventSource    string    `json:"event_source"`
+	EventType      string    `json:"event_type"`
+	SubscriptionID string    `json:"subscription_id"`
+	State          string    `json:"state"`
+	Attempts       int       `json:"attempts"`
+	LastError      string    `json:"last_error"`
+	CreatedAt      time.Time `json:"created_at"`
+	FailedAt       time.Time `json:"failed_at"`
+}
+
+// EventDeliveryListResponse contains invocation lifecycle rows and terminal
+// recipient routing failures, each ordered newest first with its own cursor.
 type EventDeliveryListResponse struct {
-	AppSlug    string                  `json:"app_slug"`
-	Deliveries []EventDeliveryResponse `json:"deliveries"`
-	NextBefore string                  `json:"next_before,omitempty"`
+	AppSlug          string                       `json:"app_slug"`
+	Deliveries       []EventDeliveryResponse      `json:"deliveries"`
+	NextBefore       string                       `json:"next_before,omitempty"`
+	FanoutFailures   []EventFanoutFailureResponse `json:"fanout_failures"`
+	NextFanoutBefore string                       `json:"next_fanout_before,omitempty"`
 }
 
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and

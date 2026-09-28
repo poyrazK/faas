@@ -17685,9 +17685,11 @@ paths:
       operationId: listEventDeliveries
       summary: Inspect event delivery lifecycle for an app.
       description: |
-        Returns event-triggered invocation metadata, newest first. The
-        projection includes the published event identity, subscription,
-        lifecycle state, attempts, and last error without returning payloads.
+        Returns event-triggered invocation metadata and terminal fanout
+        recipient failures, each newest first. The projections include the
+        published event identity, subscription, lifecycle state, attempts,
+        and last error without returning payloads. The two histories have
+        independent pagination cursors.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -17698,12 +17700,16 @@ paths:
         - name: state
           in: query
           schema: { type: string, enum: [pending, dispatching, completed, failed, dead_letter] }
-          description: Exact delivery state to include.
+          description: Exact delivery state to include; failed also includes pre-invocation recipient routing failures.
         - $ref: '#/components/parameters/QueueCursorBefore'
         - $ref: '#/components/parameters/QueueCursorLimit'
+        - name: fanout_before
+          in: query
+          schema: { type: string }
+          description: Opaque cursor from next_fanout_before for this app and event_id filter.
       responses:
         '200':
-          description: App-scoped event delivery page, newest first.
+          description: App-scoped event deliveries and terminal fanout failures, newest first.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventDeliveryListResponse' }
@@ -28325,8 +28331,24 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
 
+    EventFanoutFailureResponse:
+      description: A terminal subscription routing failure before an invocation was created.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, event_type, subscription_id, state, attempts, last_error, created_at, failed_at]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        subscription_id: { type: string, format: uuid }
+        state: { type: string, enum: [failed] }
+        attempts: { type: integer, minimum: 1 }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time, description: When the event was accepted. }
+        failed_at: { type: string, format: date-time, description: When recipient routing became terminal. }
+
     EventDeliveryListResponse:
-      description: App-scoped event delivery page, ordered newest first.
+      description: App-scoped event invocation and fanout failure history, each ordered newest first.
       type: object
       additionalProperties: false
       required: [app_slug, deliveries]
@@ -28336,6 +28358,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventDeliveryResponse' }
         next_before: { type: string, description: ID cursor for the next older page. }
+        fanout_failures:
+          type: array
+          items: { $ref: '#/components/schemas/EventFanoutFailureResponse' }
+          description: Terminal recipient routing failures; empty when none exist.
+        next_fanout_before: { type: string, description: Opaque cursor for the next older page of pre-invocation failures. }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."

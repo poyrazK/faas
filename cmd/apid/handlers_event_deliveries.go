@@ -1,15 +1,64 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const eventDeliveriesMaxLimit = 200
+
+var errInvalidEventFanoutFailureCursor = errors.New("invalid event fanout failure cursor")
+
+type eventFanoutFailureCursor struct {
+	Version        int       `json:"v"`
+	AppID          string    `json:"app_id"`
+	EventID        string    `json:"event_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	OutboxID       int64     `json:"outbox_id"`
+	SubscriptionID string    `json:"subscription_id"`
+}
+
+func encodeEventFanoutFailureCursor(appID, eventID string, failure state.EventFanoutFailure) string {
+	payload, err := json.Marshal(eventFanoutFailureCursor{
+		Version: 1, AppID: appID, EventID: eventID,
+		CreatedAt: failure.CreatedAt, OutboxID: failure.OutboxID, SubscriptionID: failure.SubscriptionID,
+	})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeEventFanoutFailureCursor(raw, appID, eventID string) (state.EventFanoutFailureCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return state.EventFanoutFailureCursor{}, nil
+	}
+	if len(raw) > 1024 {
+		return state.EventFanoutFailureCursor{}, errInvalidEventFanoutFailureCursor
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return state.EventFanoutFailureCursor{}, err
+	}
+	var cursor eventFanoutFailureCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return state.EventFanoutFailureCursor{}, err
+	}
+	if cursor.Version != 1 || cursor.AppID != appID || cursor.EventID != eventID ||
+		cursor.CreatedAt.IsZero() || cursor.OutboxID <= 0 || strings.TrimSpace(cursor.SubscriptionID) == "" {
+		return state.EventFanoutFailureCursor{}, errInvalidEventFanoutFailureCursor
+	}
+	return state.EventFanoutFailureCursor{
+		CreatedAt: cursor.CreatedAt, OutboxID: cursor.OutboxID, SubscriptionID: cursor.SubscriptionID,
+	}, nil
+}
 
 func eventDeliveryResponse(inv state.Invocation) (api.EventDeliveryResponse, bool) {
 	var headers map[string]string
@@ -52,12 +101,32 @@ func (s *server) listEventDeliveries(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, prob)
 		return
 	}
-	rows, err := store.ListEventDeliveriesForApp(r.Context(), app.ID, limit, r.URL.Query().Get("before"), r.URL.Query().Get("event_id"), r.URL.Query().Get("state"))
+	eventID := r.URL.Query().Get("event_id")
+	deliveryState := r.URL.Query().Get("state")
+	fanoutBefore, err := decodeEventFanoutFailureCursor(r.URL.Query().Get("fanout_before"), app.ID, eventID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid fanout_before", "fanout_before must be an opaque cursor returned as next_fanout_before for this app and event filter"))
+		return
+	}
+	rows, err := store.ListEventDeliveriesForApp(r.Context(), app.ID, limit, r.URL.Query().Get("before"), eventID, deliveryState)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("event deliveries"))
 		return
 	}
-	out := api.EventDeliveryListResponse{AppSlug: app.Slug, Deliveries: make([]api.EventDeliveryResponse, 0, len(rows))}
+	failureStore, hasFailureHistory := s.store.(state.EventFanoutFailureStore)
+	failures := make([]state.EventFanoutFailure, 0)
+	if hasFailureHistory && (deliveryState == "" || deliveryState == state.PublishedEventRecipientFailed) {
+		failures, err = failureStore.ListEventFanoutFailuresForApp(r.Context(), app.ID, limit+1, fanoutBefore, eventID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrInternal("event fanout failures"))
+			return
+		}
+	}
+	out := api.EventDeliveryListResponse{
+		AppSlug: app.Slug, Deliveries: make([]api.EventDeliveryResponse, 0, len(rows)),
+		FanoutFailures: make([]api.EventFanoutFailureResponse, 0, len(failures)),
+	}
 	for _, row := range rows {
 		if delivery, ok := eventDeliveryResponse(row); ok {
 			out.Deliveries = append(out.Deliveries, delivery)
@@ -65,6 +134,18 @@ func (s *server) listEventDeliveries(w http.ResponseWriter, r *http.Request, acc
 	}
 	if len(rows) == limit && len(rows) > 0 {
 		out.NextBefore = rows[len(rows)-1].ID
+	}
+	if len(failures) > limit {
+		out.NextFanoutBefore = encodeEventFanoutFailureCursor(app.ID, eventID, failures[limit-1])
+		failures = failures[:limit]
+	}
+	for _, failure := range failures {
+		out.FanoutFailures = append(out.FanoutFailures, api.EventFanoutFailureResponse{
+			EventID: failure.EventID, EventSource: failure.EventSource, EventType: failure.EventType,
+			SubscriptionID: failure.SubscriptionID, State: state.PublishedEventRecipientFailed,
+			Attempts: failure.Attempts, LastError: failure.LastError,
+			CreatedAt: failure.CreatedAt, FailedAt: failure.FailedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

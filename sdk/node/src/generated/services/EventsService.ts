@@ -195,11 +195,13 @@ export class EventsService {
   }
   /**
    * Inspect event delivery lifecycle for an app.
-   * Returns event-triggered invocation metadata, newest first. The
-   * projection includes the published event identity, subscription,
-   * lifecycle state, attempts, and last error without returning payloads.
+   * Returns event-triggered invocation metadata and terminal fanout
+   * recipient failures, each newest first. The projections include the
+   * published event identity, subscription, lifecycle state, attempts,
+   * and last error without returning payloads. The two histories have
+   * independent pagination cursors.
    *
-   * @returns EventDeliveryListResponse App-scoped event delivery page, newest first.
+   * @returns EventDeliveryListResponse App-scoped event deliveries and terminal fanout failures, newest first.
    * @throws ApiError
    */
   public static listEventDeliveries({
@@ -208,6 +210,7 @@ export class EventsService {
     state,
     before,
     limit = 20,
+    fanoutBefore,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -218,7 +221,7 @@ export class EventsService {
      */
     eventId?: string,
     /**
-     * Exact delivery state to include.
+     * Exact delivery state to include; failed also includes pre-invocation recipient routing failures.
      */
     state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'dead_letter',
     /**
@@ -229,6 +232,10 @@ export class EventsService {
      * Maximum number of rows to return; capped at 200.
      */
     limit?: number,
+    /**
+     * Opaque cursor from next_fanout_before for this app and event_id filter.
+     */
+    fanoutBefore?: string,
   }): CancelablePromise<EventDeliveryListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -241,6 +248,7 @@ export class EventsService {
         'state': state,
         'before': before,
         'limit': limit,
+        'fanout_before': fanoutBefore,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
