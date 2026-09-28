@@ -504,6 +504,77 @@ func TestPgStore_ClaimDueAppWebhookDeliveries_CapsConcurrentSchedulers(t *testin
 	}
 }
 
+func TestPgStore_ClaimDueAppWebhookDeliveries_FairAcrossSubscriptions(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "subscription-fairness")
+	busy, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	// More busy rows than the old account-wide candidate window.
+	for i := 0; i < 129; i++ {
+		d := pgSampleDelivery(busy.ID, app, acct)
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := pgSampleDelivery(quiet.ID, app, acct)
+	d.NextAttemptAt = now.Add(-time.Second)
+	if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimDueAppWebhookDeliveries(ctx, 32, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, row := range claimed {
+		counts[row.WebhookID]++
+	}
+	if counts[busy.ID] != state.AppWebhookMaxInFlightPerSubscription || counts[quiet.ID] != 1 {
+		t.Fatalf("first batch: busy=%d quiet=%d, want %d and 1", counts[busy.ID], counts[quiet.ID], state.AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
+func TestPgStore_ClaimDueAppWebhookDeliveries_RotatesSubscriptionsBeyondBatch(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "subscription-rotation")
+	const hooks, batchSize = 10, 4
+	now := time.Now().UTC().Add(time.Second).Truncate(5 * time.Second)
+	for i := 0; i < hooks; i++ {
+		hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			d := pgSampleDelivery(hook.ID, app, acct)
+			d.NextAttemptAt = now.Add(-time.Minute)
+			if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := s.ClaimDueAppWebhookDeliveries(ctx, batchSize, now.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claim = %+v, %v; want %d", tick, claimed, err, batchSize)
+		}
+		for _, d := range claimed {
+			seen[d.WebhookID] = true
+		}
+	}
+	if len(seen) != hooks {
+		t.Fatalf("reached %d subscriptions in three ticks, want %d", len(seen), hooks)
+	}
+}
+
 func TestPgStore_ClaimDueAppWebhookDeliveries_FairAcrossAccounts(t *testing.T) {
 	s, ctx := pgStore(t)
 	const accounts, perAccount, cap = 3, 5, 5
@@ -619,12 +690,6 @@ func TestPgStore_AppWebhookReceiverCooldownClaimAndHealth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	otherDelivery := pgSampleDelivery(other.ID, app, acct)
-	otherDelivery.NextAttemptAt = now.Add(-time.Second)
-	otherDelivery, err = s.RecordAppWebhookDelivery(ctx, otherDelivery)
-	if err != nil {
-		t.Fatal(err)
-	}
 	claims, err := s.ClaimDueAppWebhookDeliveries(ctx, 2, now)
 	if err != nil || len(claims) != 2 || claims[0].WebhookID != paused.ID || claims[1].WebhookID != paused.ID {
 		t.Fatalf("first claims = %+v, %v; want two paused-subscription rows", claims, err)
@@ -642,6 +707,12 @@ func TestPgStore_AppWebhookReceiverCooldownClaimAndHealth(t *testing.T) {
 	if err := s.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
 		"stale", staleUntil, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &staleUntil, ReceiverCooldownTargetURL: paused.TargetURL}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale cooldown extension = %v, want conflict", err)
+	}
+	otherDelivery := pgSampleDelivery(other.ID, app, acct)
+	otherDelivery.NextAttemptAt = now.Add(-time.Second)
+	otherDelivery, err = s.RecordAppWebhookDelivery(ctx, otherDelivery)
+	if err != nil {
+		t.Fatal(err)
 	}
 	health, err := s.AppWebhookDeliveryHealth(ctx, paused.ID, acct, now.Add(2*time.Minute))
 	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||

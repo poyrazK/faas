@@ -50,12 +50,13 @@ delivery path is unchanged; the new surface lives at
 
 The original `ORDER BY account_id, next_attempt_at` grouped a busy
 account's rows and could fill the entire 32-row batch. The claim now
-enumerates due accounts, reads a bounded number of oldest rows per
-account through the partial index, and interleaves them before
-`FOR UPDATE SKIP LOCKED`. The starting account rotates every five
-seconds by one batch width, sharing extra slots when the batch size
-is not divisible by the account count. The property test counts
-delivered rows by webhook after each tick.
+enumerates due accounts, selects their due subscriptions, then reads a
+bounded number of oldest rows per subscription through a partial index.
+It interleaves subscriptions within each account and accounts across the
+batch before `FOR UPDATE SKIP LOCKED`. Both starting positions rotate
+every five seconds by one batch width, sharing extra slots when a batch
+is smaller than the active account or subscription set. A deep backlog
+on one subscription therefore cannot hide another on the same account.
 
 ### 3.3 DLQ at attempt 7 with three retry-policy presets
 

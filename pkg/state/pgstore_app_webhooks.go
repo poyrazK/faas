@@ -326,12 +326,10 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //  4. Returns the claimed rows.
 //
 // An active receiver cooldown excludes the subscription from new claims.
-// Each claim batch interleaves the oldest due row from every selected account.
-// The leading account rotates every five-second tick so extra batch slots do
-// not always go to the lexicographically first account. The lateral read uses
-// the existing partial (account_id, next_attempt_at) index and fetches at most
-// four batches per selected account. The surplus lets another worker skip
-// rows locked by a concurrent claim without scanning every due delivery.
+// Each claim batch interleaves accounts, then subscriptions within each
+// account. Both starting positions rotate every five-second tick. The lateral
+// delivery read is bounded per subscription, so one deep backlog cannot fill
+// the account's candidate window before another subscription is considered.
 func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -344,8 +342,8 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 
 	rotation := now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)
 	// The subscription lock serializes capacity decisions across schedd
-	// processes. Filtering saturated subscriptions here also lets another
-	// receiver on the same account use the batch while one is slow.
+	// processes. Select due subscriptions per account before taking a bounded
+	// set of locks, so an older backlog cannot hide another subscription.
 	lockRows, err := tx.Query(ctx, `
 		with live_claims as materialized (
 			select webhook_id, count(*) as n
@@ -371,36 +369,33 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			  from numbered_accounts
 			 order by turn
 			 limit ($2::integer * 2)
-		), candidates as materialized (
-			select due.webhook_id, due.next_attempt_at, selected_accounts.turn,
-			       row_number() over (
-			           partition by selected_accounts.account_id
-			           order by due.next_attempt_at, due.id
-			       ) as slot
+		), eligible_hooks as materialized (
+			select w.id, w.account_id, selected_accounts.turn as account_turn
 			  from selected_accounts
-			 cross join lateral (
-				select d.id, d.webhook_id, d.next_attempt_at
-				  from app_webhook_deliveries d
-				  join app_webhooks w on w.id = d.webhook_id
-				  left join live_claims live on live.webhook_id = d.webhook_id
-				 where d.account_id = selected_accounts.account_id
-				   and d.status in ('pending','in_flight')
-				   and d.next_attempt_at <= $1
-				   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-				   and coalesce(live.n, 0) < $4
-				 order by d.next_attempt_at, d.id
-				 limit ($2::integer * 4)
-			 ) due
-		), hooks as (
-			select webhook_id, min(slot) as slot, min(turn) as turn,
-			       min(next_attempt_at) as next_attempt_at
-			  from candidates
-			 group by webhook_id
+			  join app_webhooks w on w.account_id = selected_accounts.account_id
+			  left join live_claims live on live.webhook_id = w.id
+			 where (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
+			   and coalesce(live.n, 0) < $4
+			   and exists (
+			       select 1 from app_webhook_deliveries d
+			        where d.webhook_id = w.id
+			          and d.status in ('pending','in_flight')
+			          and d.next_attempt_at <= $1
+			   )
+		), numbered_hooks as (
+			select id, account_turn,
+			       row_number() over (partition by account_id order by id) - 1 as hook_pos,
+			       count(*) over (partition by account_id) as hook_count
+			  from eligible_hooks
+		), rotated_hooks as (
+			select id, account_turn,
+			       (hook_pos + $3::bigint) % hook_count as hook_turn
+			  from numbered_hooks
 		)
 		select w.id
-		  from hooks h
-		  join app_webhooks w on w.id = h.webhook_id
-		 order by h.slot, h.turn, h.next_attempt_at, w.id
+		  from rotated_hooks h
+		  join app_webhooks w on w.id = h.id
+		 order by h.hook_turn, h.account_turn, w.id
 		 limit ($2::integer * 2)
 		   for update of w skip locked
 	`, now, limit, rotation, AppWebhookMaxInFlightPerSubscription)
@@ -428,51 +423,52 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	}
 
 	// This statement starts after the locks are held, so its lease count
-	// sees claims committed by any prior lock holder. Lock more candidate
-	// delivery rows than the requested output so SKIP LOCKED can pass rows
-	// held by another transaction before applying the per-hook rank. The
-	// locked webhook IDs keep the first statement's rotated account order.
+	// sees claims committed by any prior lock holder. Each locked subscription
+	// contributes bounded due rows; account and hook turns order them before
+	// SKIP LOCKED and the per-subscription cap are applied.
 	rows, err := tx.Query(ctx, `
-		with eligible_accounts as materialized (
-			select d.account_id, min(locked_hook.ordinality) as turn
+		with locked_hooks as materialized (
+			select w.id as webhook_id, w.account_id,
+			       locked_hook.ordinality as hook_turn,
+			       min(locked_hook.ordinality) over (partition by w.account_id) as account_turn
 			  from unnest($3::uuid[]) with ordinality as locked_hook(webhook_id, ordinality)
-			  join app_webhook_deliveries d on d.webhook_id = locked_hook.webhook_id
-			  join app_webhooks w on w.id = d.webhook_id
-			 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
-			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-			 group by d.account_id
-		), selected_accounts as materialized (
-			select account_id, turn from eligible_accounts
-			 order by turn
-			 limit ($2::integer * 2)
-		), candidates as materialized (
-			select due.id, due.next_attempt_at, selected_accounts.turn,
-			       row_number() over (
-			           partition by selected_accounts.account_id
-			           order by due.next_attempt_at, due.id
-			       ) as slot
-			  from selected_accounts
+			  join app_webhooks w on w.id = locked_hook.webhook_id
+			 where w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1
+		), due as materialized (
+			select delivery.id, delivery.webhook_id, delivery.next_attempt_at,
+			       locked_hooks.account_id, locked_hooks.hook_turn, locked_hooks.account_turn
+			  from locked_hooks
 			 cross join lateral (
-				select d.id, d.next_attempt_at
+				select d.id, d.webhook_id, d.next_attempt_at
 				  from app_webhook_deliveries d
-				  join app_webhooks w on w.id = d.webhook_id
-				 where d.account_id = selected_accounts.account_id
-				   and d.webhook_id = any($3::uuid[])
+				 where d.webhook_id = locked_hooks.webhook_id
 				   and d.status in ('pending','in_flight')
 				   and d.next_attempt_at <= $1
-				   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 				 order by d.next_attempt_at, d.id
 				 limit ($2::integer * 4)
-			 ) due
+			 ) delivery
+		), ranked_due as (
+			select due.*,
+			       row_number() over (
+			           partition by webhook_id order by next_attempt_at, id
+			       ) as hook_slot
+			  from due
+		), candidates as materialized (
+			select ranked_due.*,
+			       row_number() over (
+			           partition by account_id
+			           order by hook_slot, hook_turn, next_attempt_at, id
+			       ) as account_slot
+			  from ranked_due
 		), locked as materialized (
 			select d.id, d.webhook_id, d.app_id, d.account_id, d.event, d.payload,
 			       d.attempt, d.status, d.last_error, d.last_response_code,
 			       d.next_attempt_at, d.delivered_at, d.created_at, d.updated_at,
-			       c.slot, c.turn
+			       c.account_slot, c.account_turn
 			  from candidates c
 			  join app_webhook_deliveries d on d.id = c.id
 			 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
-			 order by c.slot, c.turn, c.next_attempt_at, c.id
+			 order by c.account_slot, c.account_turn, c.next_attempt_at, c.id
 			 limit ($2::integer * 4)
 			   for update of d skip locked
 		), live_claims as materialized (
@@ -494,7 +490,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 		  from ranked r
 		  left join live_claims live on live.webhook_id = r.webhook_id
 		 where r.webhook_slot + coalesce(live.n, 0) <= $4
-		 order by r.slot, r.turn, r.next_attempt_at, r.id
+		 order by r.account_slot, r.account_turn, r.next_attempt_at, r.id
 		 limit $2
 	`, now, limit, webhookIDs, AppWebhookMaxInFlightPerSubscription)
 	if err != nil {

@@ -480,6 +480,74 @@ func TestMemStoreAppWebhookDelivery_ClaimCapsEachSubscription(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_ClaimFairAcrossSubscriptions(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	busy, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 129; i++ {
+		d := memSampleDelivery(busy.ID, app.ID, acct.ID, fmt.Sprintf("busy-%03d", i))
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := memSampleDelivery(quiet.ID, app.ID, acct.ID, "quiet")
+	d.NextAttemptAt = now.Add(-time.Second)
+	if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 32, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, row := range claimed {
+		counts[row.WebhookID]++
+	}
+	if counts[busy.ID] != AppWebhookMaxInFlightPerSubscription || counts[quiet.ID] != 1 {
+		t.Fatalf("first batch: busy=%d quiet=%d, want %d and 1", counts[busy.ID], counts[quiet.ID], AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimRotatesSubscriptionsBeyondBatch(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	const hooks, batchSize = 10, 4
+	now := time.Now().UTC().Add(time.Second).Truncate(5 * time.Second)
+	for i := 0; i < hooks; i++ {
+		hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			d := memSampleDelivery(hook.ID, app.ID, acct.ID, fmt.Sprintf("hook-%d-%d", i, j))
+			d.NextAttemptAt = now.Add(-time.Minute)
+			if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, batchSize, now.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claim = %+v, %v; want %d", tick, claimed, err, batchSize)
+		}
+		for _, d := range claimed {
+			seen[d.WebhookID] = true
+		}
+	}
+	if len(seen) != hooks {
+		t.Fatalf("reached %d subscriptions in three ticks, want %d", len(seen), hooks)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
@@ -538,12 +606,6 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 		}
 		pausedRows = append(pausedRows, row)
 	}
-	otherRow := memSampleDelivery(other.ID, app.ID, acct.ID, uuid.NewString())
-	otherRow.NextAttemptAt = now.Add(-time.Second)
-	otherRow, err = m.RecordAppWebhookDelivery(ctx, otherRow)
-	if err != nil {
-		t.Fatal(err)
-	}
 	claims, err := m.ClaimDueAppWebhookDeliveries(ctx, 2, now)
 	if err != nil || len(claims) != 2 || claims[0].ID != pausedRows[0].ID || claims[1].ID != pausedRows[1].ID {
 		t.Fatalf("first claims = %+v, %v", claims, err)
@@ -560,6 +622,12 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
 		"stale", now.Add(10*time.Minute), AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale completion = %v, want conflict", err)
+	}
+	otherRow := memSampleDelivery(other.ID, app.ID, acct.ID, uuid.NewString())
+	otherRow.NextAttemptAt = now.Add(-time.Second)
+	otherRow, err = m.RecordAppWebhookDelivery(ctx, otherRow)
+	if err != nil {
+		t.Fatal(err)
 	}
 	health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, now.Add(2*time.Minute))
 	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||

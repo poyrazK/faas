@@ -414,27 +414,54 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 			liveClaims[d.WebhookID]++
 		}
 	}
-	byAccount := make(map[string][]AppWebhookDelivery)
+	byAccount := make(map[string]map[string][]AppWebhookDelivery)
 	for _, d := range m.appWebhookDeliveries {
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
 			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
 			liveClaims[d.WebhookID] < AppWebhookMaxInFlightPerSubscription {
-			byAccount[d.AccountID] = append(byAccount[d.AccountID], d)
+			if byAccount[d.AccountID] == nil {
+				byAccount[d.AccountID] = make(map[string][]AppWebhookDelivery)
+			}
+			byAccount[d.AccountID][d.WebhookID] = append(byAccount[d.AccountID][d.WebhookID], d)
 		}
 	}
 	if len(byAccount) == 0 {
 		return nil, nil
 	}
 	accounts := make([]string, 0, len(byAccount))
-	for accountID, rows := range byAccount {
+	type accountQueue struct {
+		hooks     []string
+		rows      map[string][]AppWebhookDelivery
+		positions map[string]int
+		cursor    int
+	}
+	queues := make(map[string]*accountQueue, len(byAccount))
+	for accountID, hooks := range byAccount {
 		accounts = append(accounts, accountID)
-		sort.Slice(rows, func(i, j int) bool {
-			if rows[i].NextAttemptAt.Equal(rows[j].NextAttemptAt) {
-				return rows[i].ID < rows[j].ID
-			}
-			return rows[i].NextAttemptAt.Before(rows[j].NextAttemptAt)
-		})
-		byAccount[accountID] = rows
+		hookIDs := make([]string, 0, len(hooks))
+		for hookID, rows := range hooks {
+			hookIDs = append(hookIDs, hookID)
+			sort.Slice(rows, func(i, j int) bool {
+				if rows[i].NextAttemptAt.Equal(rows[j].NextAttemptAt) {
+					return rows[i].ID < rows[j].ID
+				}
+				return rows[i].NextAttemptAt.Before(rows[j].NextAttemptAt)
+			})
+			hooks[hookID] = rows
+		}
+		sort.Strings(hookIDs)
+		// Rotate the first subscription just as the first account rotates.
+		hookCount := len(hookIDs)
+		offset := (now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)) % int64(hookCount)
+		if offset < 0 {
+			offset += int64(hookCount)
+		}
+		orderedHooks := make([]string, hookCount)
+		for turn := range orderedHooks {
+			pos := (hookCount - int(offset) + turn) % hookCount
+			orderedHooks[turn] = hookIDs[pos]
+		}
+		queues[accountID] = &accountQueue{hooks: orderedHooks, rows: hooks, positions: make(map[string]int)}
 	}
 	sort.Strings(accounts)
 	// The first account in each five-second bucket moves by one batch.
@@ -456,24 +483,28 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	}
 
 	var candidates []AppWebhookDelivery
-	for slot := 0; len(candidates) < limit; slot++ {
-		scanned := false
+	for len(candidates) < limit {
+		progress := false
 		for _, accountID := range orderedAccounts {
-			rows := byAccount[accountID]
-			if slot >= len(rows) {
-				continue
+			queue := queues[accountID]
+			for checked := 0; checked < len(queue.hooks); checked++ {
+				hookID := queue.hooks[queue.cursor]
+				queue.cursor = (queue.cursor + 1) % len(queue.hooks)
+				if liveClaims[hookID] >= AppWebhookMaxInFlightPerSubscription ||
+					queue.positions[hookID] >= len(queue.rows[hookID]) {
+					continue
+				}
+				candidates = append(candidates, queue.rows[hookID][queue.positions[hookID]])
+				queue.positions[hookID]++
+				liveClaims[hookID]++
+				progress = true
+				break
 			}
-			scanned = true
-			if liveClaims[rows[slot].WebhookID] >= AppWebhookMaxInFlightPerSubscription {
-				continue
-			}
-			candidates = append(candidates, rows[slot])
-			liveClaims[rows[slot].WebhookID]++
 			if len(candidates) == limit {
 				break
 			}
 		}
-		if !scanned {
+		if !progress {
 			break
 		}
 	}
