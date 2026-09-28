@@ -63,7 +63,6 @@ func TestPreAuthCentralRouteSharesBudgetAcrossReplicas(t *testing.T) {
 	shared := &sharedPreAuthCentral{}
 	newReplica := func() (*Handler, *fakeBackend) {
 		h, b, _ := newTestHandler(t)
-		b.setLegacyHot()
 		b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
 			Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 10, Burst: 10,
 			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1,
