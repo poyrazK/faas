@@ -2398,7 +2398,9 @@ func (s *server) handler() http.Handler {
 	// write-scoped key must not be able to grant itself more scopes.
 	// Listing is read.
 	mux.HandleFunc("GET /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listKeys))))
-	mux.HandleFunc("POST /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createKey))))
+	// Minting needs the same step-up as rotating (and as the org-key
+	// twin): a new admin key outlives the session that created it.
+	mux.HandleFunc("POST /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.createKey)))))
 	mux.HandleFunc("DELETE /v1/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteKey))))
 	// IAM-5 (issue #189): rotation endpoint. Admin-only because
 	// rotation mints a new key that retains the predecessor's
@@ -2412,7 +2414,7 @@ func (s *server) handler() http.Handler {
 	// the bearer middleware solely on /v1/apps/{slug}/... paths.
 	// loadApp enforces that the slug matches the token's bound app.
 	mux.HandleFunc("GET /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployTokens))))
-	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createDeployToken))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.createDeployToken)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/deploy-tokens/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeDeployToken))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateDeployToken)))))
 
