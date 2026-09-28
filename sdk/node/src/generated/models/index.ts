@@ -588,6 +588,7 @@ export type { PlatformTenantHostnameVerifiedWebhookPayload } from './PlatformTen
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';
+export type { PlatformTenantReconciliationAppliedWebhookPayload } from './PlatformTenantReconciliationAppliedWebhookPayload.js';
 export type { PlatformTenantReconciliationApplyResponse } from './PlatformTenantReconciliationApplyResponse.js';
 export type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
 export type { PlatformTenantReconciliationPlanResponse } from './PlatformTenantReconciliationPlanResponse.js';

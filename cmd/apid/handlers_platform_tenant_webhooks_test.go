@@ -49,6 +49,21 @@ func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 	if len(hostnameHook.EventFilter) != 1 || hostnameHook.EventFilter[0] != "platform_tenant.hostname.verified" {
 		t.Fatalf("hostname event_filter = %v", hostnameHook.EventFilter)
 	}
+	reconciliationRequest := api.CreatePlatformTenantWebhookRequest{
+		TargetURL: "https://example.com/reconciliations", WebhookSecret: "test-secret",
+		EventFilter: []string{"platform_tenant.reconciliation.applied"},
+	}
+	reconciliationResponse := e.do(t, http.MethodPost, path, reconciliationRequest, nil)
+	if reconciliationResponse.Code != http.StatusCreated {
+		t.Fatalf("reconciliation create: %d %s", reconciliationResponse.Code, reconciliationResponse.Body)
+	}
+	var reconciliationHook api.PlatformTenantWebhookResponse
+	if err := json.Unmarshal(reconciliationResponse.Body.Bytes(), &reconciliationHook); err != nil {
+		t.Fatal(err)
+	}
+	if len(reconciliationHook.EventFilter) != 1 || reconciliationHook.EventFilter[0] != "platform_tenant.reconciliation.applied" {
+		t.Fatalf("reconciliation event_filter = %v", reconciliationHook.EventFilter)
+	}
 
 	invalidRequest := api.CreatePlatformTenantWebhookRequest{
 		TargetURL: "https://example.com/invalid", WebhookSecret: "test-secret",

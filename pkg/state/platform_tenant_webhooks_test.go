@@ -25,19 +25,24 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 		{name: "deployment changed", events: []string{state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
 		{name: "customer linked", events: []string{state.PlatformTenantCustomerLinkedEvent}, valid: true},
 		{name: "customer offboarded", events: []string{state.PlatformTenantCustomerOffboardedEvent}, valid: true},
+		{name: "reconciliation applied", events: []string{state.PlatformTenantReconciliationAppliedEvent}, valid: true},
 		{name: "both events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: true},
 		{name: "all events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent}, valid: true},
 		{name: "all four events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent}, valid: true},
-		{name: "all six events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
+		{name: "all six existing events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
 			state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent,
 			state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent}, valid: true},
+		{name: "all seven events", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
+			state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent,
+			state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent,
+			state.PlatformTenantReconciliationAppliedEvent}, valid: true},
 		{name: "empty", events: []string{}, valid: false},
 		{name: "unknown", events: []string{"platform_tenant.hostname.failed"}, valid: false},
 		{name: "duplicate", events: []string{state.PlatformTenantHostnameVerifiedEvent, state.PlatformTenantHostnameVerifiedEvent}, valid: false},
 		{name: "too many", events: []string{state.PlatformTenantStatementFinalizedEvent, state.PlatformTenantHostnameVerifiedEvent,
 			state.PlatformTenantSurfaceCertificateChangedEvent, state.PlatformTenantSurfaceDeploymentChangedEvent,
 			state.PlatformTenantCustomerLinkedEvent, state.PlatformTenantCustomerOffboardedEvent,
-			state.PlatformTenantStatementFinalizedEvent}, valid: false},
+			state.PlatformTenantReconciliationAppliedEvent, "unknown"}, valid: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +63,126 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantCustomerLinkedEvent)) ||
 		state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantCustomerOffboardedEvent)) {
 		t.Fatal("tenant-owned customer events must not enter the app webhook vocabulary")
+	}
+	if state.ValidAppWebhookEvent(state.AppWebhookEvent(state.PlatformTenantReconciliationAppliedEvent)) {
+		t.Fatal("tenant-owned reconciliation event must not enter the app webhook vocabulary")
+	}
+}
+
+type platformTenantReconciliationWebhookFixture interface {
+	state.Store
+	state.PlatformTenantStore
+	state.PlatformTenantReconciliationStore
+	state.PlatformTenantWebhookStore
+}
+
+func TestMemPlatformTenantReconciliationAppliedWebhook(t *testing.T) {
+	testPlatformTenantReconciliationAppliedWebhook(t, state.NewMemStore(), context.Background())
+}
+
+func TestPgPlatformTenantReconciliationAppliedWebhook(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	testPlatformTenantReconciliationAppliedWebhook(t, store, ctx)
+}
+
+func testPlatformTenantReconciliationAppliedWebhook(t *testing.T, store platformTenantReconciliationWebhookFixture, ctx context.Context) {
+	t.Helper()
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	tenant, _, err := store.CreatePlatformTenant(ctx, accountID, "reconcile-events-"+uuid.NewString()[:8], "Reconcile events", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	hook, err := store.CreatePlatformTenantWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: accountID, PlatformTenantID: tenant.ID, Scope: state.AppWebhookScopePlatformTenant,
+		TargetURL: "https://example.test/reconciliation-events", SecretSealed: []byte("sealed"),
+		EventFilter: []string{state.PlatformTenantReconciliationAppliedEvent}, Enabled: true,
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelatedHook, err := store.CreatePlatformTenantWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: accountID, PlatformTenantID: tenant.ID, Scope: state.AppWebhookScopePlatformTenant,
+		TargetURL: "https://example.test/unrelated-events", SecretSealed: []byte("sealed"),
+		EventFilter: []string{state.PlatformTenantCustomerLinkedEvent}, Enabled: true,
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := state.PlatformTenantReconciliationParams{TenantID: tenant.ID, ApplyPlatformTenantParams: state.ApplyPlatformTenantParams{
+		AccountID: accountID, ExternalRef: tenant.ExternalRef, Name: tenant.Name, TenantLimit: 250, Limits: limits,
+	}}
+	plan, err := store.PlanPlatformTenantReconciliation(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ApplyPlatformTenantReconciliation(ctx, in, plan.PlanHash)
+	if err != nil || !first.Applied || first.ReceiptID == "" || first.AppliedAt.IsZero() {
+		t.Fatalf("first apply = %+v, %v", first, err)
+	}
+	assertReconciliationAppliedDelivery := func(receipt api.PlatformTenantReconciliationApplyResponse) {
+		t.Helper()
+		deliveries, next, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, "")
+		if err != nil || next != "" || len(deliveries) != 1 {
+			t.Fatalf("reconciliation deliveries = %d, next=%q, err=%v; want one", len(deliveries), next, err)
+		}
+		delivery := deliveries[0]
+		if delivery.Event != state.AppWebhookEvent(state.PlatformTenantReconciliationAppliedEvent) || delivery.AppID != "" || delivery.AccountID != accountID {
+			t.Fatalf("delivery metadata = %+v", delivery)
+		}
+		var payload api.PlatformTenantReconciliationAppliedWebhookPayload
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.PlatformTenantID != tenant.ID || payload.ExternalRef != tenant.ExternalRef ||
+			payload.ReceiptID != receipt.ReceiptID || payload.PlanHash != receipt.PlanHash ||
+			!payload.AppliedAt.Equal(receipt.AppliedAt) || payload.ChangeCount != len(receipt.Changes) {
+			t.Fatalf("reconciliation payload = %+v; receipt = %+v", payload, receipt)
+		}
+		if containsJSONStringKey(delivery.Payload, "changes") || containsJSONStringKey(delivery.Payload, "challenge_token") ||
+			containsJSONStringKey(delivery.Payload, "desired_bundle") || containsJSONStringKey(delivery.Payload, "webhook_secret") {
+			t.Fatalf("reconciliation event includes sensitive or duplicate receipt data: %s", delivery.Payload)
+		}
+	}
+	assertReconciliationAppliedDelivery(first)
+	if deliveries, next, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, unrelatedHook.ID, 50, ""); err != nil || next != "" || len(deliveries) != 0 {
+		t.Fatalf("unrelated event deliveries = %d, next=%q, err=%v; want none", len(deliveries), next, err)
+	}
+	staleHash := strings.Repeat("0", 64)
+	if staleHash == plan.PlanHash {
+		staleHash = strings.Repeat("f", 64)
+	}
+	if _, err := store.ApplyPlatformTenantReconciliation(ctx, in, staleHash); !errors.Is(err, state.ErrPlatformTenantPlanStale) {
+		t.Fatalf("stale apply error = %v, want stale plan", err)
+	}
+	if deliveries, _, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, ""); err != nil || len(deliveries) != 1 {
+		t.Fatalf("stale apply emitted a delivery: %d, %v", len(deliveries), err)
+	}
+	secondPlan, err := store.PlanPlatformTenantReconciliation(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ApplyPlatformTenantReconciliation(ctx, in, secondPlan.PlanHash)
+	if err != nil || second.ReceiptID == first.ReceiptID {
+		t.Fatalf("second successful no-op apply = %+v, %v", second, err)
+	}
+	deliveries, next, err := store.ListPlatformTenantWebhookDeliveries(ctx, accountID, tenant.ID, hook.ID, 50, "")
+	if err != nil || next != "" || len(deliveries) != 2 {
+		t.Fatalf("successful no-op apply deliveries = %d, next=%q, err=%v; want two", len(deliveries), next, err)
+	}
+	seenReceipts := make(map[string]bool, len(deliveries))
+	for _, delivery := range deliveries {
+		if delivery.Event != state.AppWebhookEvent(state.PlatformTenantReconciliationAppliedEvent) {
+			t.Fatalf("second batch event = %q", delivery.Event)
+		}
+		var payload api.PlatformTenantReconciliationAppliedWebhookPayload
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		seenReceipts[payload.ReceiptID] = true
+	}
+	if !seenReceipts[first.ReceiptID] || !seenReceipts[second.ReceiptID] {
+		t.Fatalf("delivery receipts = %v, want both successful apply receipts", seenReceipts)
 	}
 }
 

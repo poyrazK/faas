@@ -54,10 +54,12 @@ func (m *MemStore) ApplyPlatformTenantReconciliation(ctx context.Context, in Pla
 	changes := platformTenantAppliedReconciliationChanges(snapshot.changes, result)
 	response := api.PlatformTenantReconciliationApplyResponse{TenantID: result.Tenant.ID, ReceiptID: uuid.NewString(),
 		PlanHash: snapshot.planHash, AppliedAt: m.clock().UTC(), Applied: true, Changes: changes}
-	m.platformTenantReconciliationReceipts[response.ReceiptID] = api.PlatformTenantReconciliationReceiptResponse{
+	receipt := api.PlatformTenantReconciliationReceiptResponse{
 		TenantID: response.TenantID, ReceiptID: response.ReceiptID, PlanHash: response.PlanHash,
 		AppliedAt: response.AppliedAt, Changes: append([]api.PlatformTenantReconciliationPlanChange(nil), changes...),
 	}
+	m.platformTenantReconciliationReceipts[response.ReceiptID] = receipt
+	m.enqueuePlatformTenantReconciliationAppliedWebhooksLocked(receipt)
 	return response, nil
 }
 

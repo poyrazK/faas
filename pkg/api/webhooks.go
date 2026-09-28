@@ -273,6 +273,18 @@ type PlatformTenantCustomerLifecycleWebhookPayload struct {
 	ChangedAt           time.Time `json:"changed_at"`
 }
 
+// PlatformTenantReconciliationAppliedWebhookPayload identifies a successful
+// reconciliation receipt without duplicating its resource changes or any
+// submitted desired state. Fetch the immutable receipt for full details.
+type PlatformTenantReconciliationAppliedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	ReceiptID        string    `json:"receipt_id"`
+	PlanHash         string    `json:"plan_hash"`
+	AppliedAt        time.Time `json:"applied_at"`
+	ChangeCount      int       `json:"change_count"`
+}
+
 type CreatePlatformTenantWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`
 	WebhookSecret  string   `json:"webhook_secret"`

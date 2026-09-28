@@ -12,6 +12,7 @@ const PlatformTenantSurfaceCertificateChangedEvent = "platform_tenant.surface.ce
 const PlatformTenantSurfaceDeploymentChangedEvent = "platform_tenant.surface.deployment.changed"
 const PlatformTenantCustomerLinkedEvent = "platform_tenant.customer.linked"
 const PlatformTenantCustomerOffboardedEvent = "platform_tenant.customer.offboarded"
+const PlatformTenantReconciliationAppliedEvent = "platform_tenant.reconciliation.applied"
 
 // PlatformTenantWebhookStore adds tenant-owned receivers to the shared
 // durable webhook ledger. The webhook remains account-owned for quota and
@@ -24,7 +25,7 @@ type PlatformTenantWebhookStore interface {
 // ValidPlatformTenantWebhookFilter accepts the closed platform-tenant
 // webhook vocabulary and rejects empty, duplicate, or unknown subscriptions.
 func ValidPlatformTenantWebhookFilter(events []string) bool {
-	if len(events) == 0 || len(events) > 6 {
+	if len(events) == 0 || len(events) > 7 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(events))
@@ -32,7 +33,8 @@ func ValidPlatformTenantWebhookFilter(events []string) bool {
 		switch event {
 		case PlatformTenantStatementFinalizedEvent, PlatformTenantHostnameVerifiedEvent,
 			PlatformTenantSurfaceCertificateChangedEvent, PlatformTenantSurfaceDeploymentChangedEvent,
-			PlatformTenantCustomerLinkedEvent, PlatformTenantCustomerOffboardedEvent:
+			PlatformTenantCustomerLinkedEvent, PlatformTenantCustomerOffboardedEvent,
+			PlatformTenantReconciliationAppliedEvent:
 		default:
 			return false
 		}

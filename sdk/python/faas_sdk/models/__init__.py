@@ -1138,6 +1138,7 @@ from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
+from .platform_tenant_reconciliation_applied_webhook_payload import PlatformTenantReconciliationAppliedWebhookPayload
 from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
 from .platform_tenant_reconciliation_plan_change import PlatformTenantReconciliationPlanChange
 from .platform_tenant_reconciliation_plan_change_action import PlatformTenantReconciliationPlanChangeAction
@@ -2949,6 +2950,7 @@ __all__ = (
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseUnit",
+    "PlatformTenantReconciliationAppliedWebhookPayload",
     "PlatformTenantReconciliationApplyResponse",
     "PlatformTenantReconciliationPlanChange",
     "PlatformTenantReconciliationPlanChangeAction",
