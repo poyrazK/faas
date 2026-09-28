@@ -4,6 +4,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -113,6 +114,98 @@ func TestChooseRestorePlacementReservesAndReleasesInFlightCounts(t *testing.T) {
 	if len(e.restorePlacementInFlight) != 0 {
 		t.Fatalf("in-flight restore counts after release = %#v, want empty", e.restorePlacementInFlight)
 	}
+}
+
+func TestChooseRestorePlacementCoordinatesAcrossEngines(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	nodes := []state.ComputeNode{cpuPlacementNode("cached"), cpuPlacementNode("peer")}
+	registry := NewNodeRegistry(nodes)
+	firstEngine := newEngine(t, store, nil, nil, "").WithNodeRegistry(registry)
+	secondEngine := newEngine(t, store, nil, nil, "").WithNodeRegistry(registry)
+	request := Request{
+		RAMMB: 128, VCPU: 4, CPUMillicores: 1000,
+		PreferredNodeID: "cached", PreferredNodeIDs: []string{"cached"},
+	}
+
+	first, releaseFirst, err := firstEngine.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, releaseSecond, err := secondEngine.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		releaseFirst()
+		t.Fatal(err)
+	}
+	third, releaseThird, err := firstEngine.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		releaseFirst()
+		releaseSecond()
+		t.Fatal(err)
+	}
+	if first.NodeID != "cached" || second.NodeID != "cached" {
+		t.Fatalf("placements before fleet watermark = %q, %q; want cached, cached", first.NodeID, second.NodeID)
+	}
+	if third.NodeID != "peer" {
+		t.Fatalf("placement at fleet watermark = %q, want peer", third.NodeID)
+	}
+
+	releaseFirst()
+	releaseSecond()
+	releaseThird()
+	for name, engine := range map[string]*Engine{"first": firstEngine, "second": secondEngine} {
+		engine.restorePlacementMu.Lock()
+		remaining := len(engine.restorePlacementInFlight)
+		engine.restorePlacementMu.Unlock()
+		if remaining != 0 {
+			t.Errorf("%s engine local restore counts after release = %#v, want empty", name, engine.restorePlacementInFlight)
+		}
+	}
+}
+
+func TestChooseRestorePlacementFallsBackToLocalCounts(t *testing.T) {
+	t.Parallel()
+	store := unavailableRestorePressureStore{Store: state.NewMemStore()}
+	e := newEngine(t, store, nil, nil, "").WithNodeRegistry(NewNodeRegistry([]state.ComputeNode{
+		cpuPlacementNode("cached"), cpuPlacementNode("peer"),
+	}))
+	request := Request{
+		RAMMB: 128, VCPU: 4, CPUMillicores: 1000,
+		PreferredNodeID: "cached", PreferredNodeIDs: []string{"cached"},
+	}
+
+	first, releaseFirst, err := e.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, releaseSecond, err := e.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		releaseFirst()
+		t.Fatal(err)
+	}
+	third, releaseThird, err := e.chooseRestorePlacementLocked(context.Background(), request)
+	if err != nil {
+		releaseFirst()
+		releaseSecond()
+		t.Fatal(err)
+	}
+	if first.NodeID != "cached" || second.NodeID != "cached" || third.NodeID != "peer" {
+		t.Fatalf("fallback placements = %q, %q, %q; want cached, cached, peer", first.NodeID, second.NodeID, third.NodeID)
+	}
+	releaseFirst()
+	releaseSecond()
+	releaseThird()
+	if len(e.restorePlacementFallbackInFlight) != 0 {
+		t.Fatalf("fallback counts after release = %#v, want empty", e.restorePlacementFallbackInFlight)
+	}
+}
+
+type unavailableRestorePressureStore struct {
+	state.Store
+}
+
+func (unavailableRestorePressureStore) AcquireSnapshotRestorePressure(context.Context) (state.SnapshotRestorePressureSession, error) {
+	return nil, errors.New("coordinator unavailable")
 }
 
 func TestWakeBurstSpreadsSnapshotRestoresAfterWatermark(t *testing.T) {

@@ -136,12 +136,21 @@ type sessionAdvisoryLock struct {
 // or the unlock failed) is closed rather than returned to the pool, where
 // it would orphan the lock and block every later holder.
 func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvisoryLock) (func(context.Context), error) {
+	_, release, err := s.acquireSessionAdvisoryLockConn(ctx, l)
+	return release, err
+}
+
+// acquireSessionAdvisoryLockConn is acquireSessionAdvisoryLock's pinned
+// connection form for short multi-statement critical sections. The caller
+// must not issue pool queries while retaining the lock: all work should use
+// the returned connection so a one-connection pool remains usable.
+func (s *PgStore) acquireSessionAdvisoryLockConn(ctx context.Context, l sessionAdvisoryLock) (*pgxpool.Conn, func(context.Context), error) {
 	var conn *pgxpool.Conn
 	for {
 		var err error
 		conn, err = db.DirectPool(s.pool).Acquire(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
+			return nil, nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
 		}
 		var locked bool
 		if err = conn.QueryRow(ctx, l.tryLock, l.keyArg).Scan(&locked); err != nil {
@@ -150,7 +159,7 @@ func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvis
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
-			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
+			return nil, nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
 			break
@@ -158,12 +167,12 @@ func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvis
 		conn.Release()
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, ctx.Err())
+			return nil, nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, ctx.Err())
 		case <-time.After(l.retryWait):
 		}
 	}
 	var once sync.Once
-	return func(ctx context.Context) {
+	release := func(ctx context.Context) {
 		once.Do(func() {
 			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			var unlocked bool
@@ -179,7 +188,8 @@ func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvis
 			}
 			conn.Release()
 		})
-	}, nil
+	}
+	return conn, release, nil
 }
 
 // Compile-time check.

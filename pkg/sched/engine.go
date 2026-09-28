@@ -623,8 +623,9 @@ type Engine struct {
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
-	restorePlacementMu       sync.Mutex
-	restorePlacementInFlight map[string]int
+	restorePlacementMu               sync.Mutex
+	restorePlacementInFlight         map[string]int
+	restorePlacementFallbackInFlight map[string]int
 	// restartMu/restartInFlight coalesce duplicate restart notifications for
 	// one app. The notification is a best-effort hint and can be delivered
 	// more than once, so a second caller waits for the first park+fresh-wake
@@ -4221,7 +4222,18 @@ func effectiveAppCPUMillicores(app state.App) int {
 	return api.DefaultAppCPUMillicores
 }
 
-func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
+type placementSnapshot struct {
+	nodes             []state.ComputeNode
+	usedMB            map[string]int64
+	usedVCPU          map[string]int64
+	usedCPUMillicores map[string]int64
+}
+
+func (s placementSnapshot) choose(r Request) (Placement, error) {
+	return choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
+}
+
+func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
 	// Phase 2 / Gate A: authorize the app against this schedd's owner and
 	// prefer that node for locality. Capacity remains fleet-wide: a saturated
 	// owner may spill to a peer through the routed VMM. An empty ownerNodeID
@@ -4234,7 +4246,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		// this is the second-line filter for direct Engine
 		// calls (the engine_test.go wake-locality tests).
 		if app, err := e.store.AppByID(ctx, r.AppID); err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
-			return Placement{}, api.ErrCapacity(fmt.Sprintf(
+			return placementSnapshot{}, api.ErrCapacity(fmt.Sprintf(
 				"placement: app %s is owned by node %s; this schedd owns %s",
 				r.AppID, app.NodeID, e.ownerNodeID))
 		}
@@ -4254,7 +4266,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 	} else {
 		nodes, err = e.store.ActiveComputeNodes(ctx)
 		if err != nil {
-			return Placement{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
+			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
 	// One pass over the fleet — use fresh vmmd capacity where available, and
@@ -4270,44 +4282,155 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		// per-node budget is the gate, not the absolute number).
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
-	return choosePlacementWithCPU(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
+	return placementSnapshot{
+		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
+		usedCPUMillicores: usedCPUMillicores,
+	}, nil
+}
+
+func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
+	snapshot, err := e.loadPlacementSnapshot(ctx, r)
+	if err != nil {
+		return Placement{}, err
+	}
+	return snapshot.choose(r)
 }
 
 // chooseRestorePlacementLocked snapshots local restore pressure, selects a
 // fitting node, and reserves one in-flight slot before another restore may
-// make a placement decision. The reservation lasts through the vmmd RPC and
-// is process-local because the Engine has no shared restore queue view.
+// make a placement decision. When the store supports shared coordination,
+// the fleet-wide lease lasts through the vmmd RPC; local counts remain a
+// fallback if the coordinator is temporarily unavailable.
 func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
+	r.restorePressureAware = !r.PrioritizeSnapshotLocality
+	snapshot, err := e.loadPlacementSnapshot(ctx, r)
+	if err != nil {
+		return Placement{}, nil, err
+	}
+
+	if coordinator, ok := e.store.(state.SnapshotRestorePressureCoordinator); ok {
+		coordCtx, cancelCoord := context.WithTimeout(ctx, restorePressureCoordinationTimeout)
+		session, err := coordinator.AcquireSnapshotRestorePressure(coordCtx)
+		if err == nil {
+			counts, countsErr := session.ActiveSnapshotRestoreCounts(coordCtx)
+			if countsErr == nil {
+				if counts == nil {
+					counts = make(map[string]int)
+				}
+				e.restorePlacementMu.Lock()
+				for nodeID, inFlight := range e.restorePlacementFallbackInFlight {
+					counts[nodeID] += inFlight
+				}
+				e.restorePlacementMu.Unlock()
+				r.restorePressureByNode = counts
+				placement, chooseErr := snapshot.choose(r)
+				if chooseErr != nil {
+					session.Close()
+					cancelCoord()
+					return Placement{}, nil, chooseErr
+				}
+				sharedRelease, reserveErr := session.ReserveSnapshotRestore(coordCtx, placement.NodeID, restorePressureLeaseTTL)
+				session.Close()
+				cancelCoord()
+				if reserveErr == nil {
+					e.restorePlacementMu.Lock()
+					localRelease := e.reserveLocalRestorePlacementLocked(placement.NodeID, false)
+					e.restorePlacementMu.Unlock()
+					return placement, combineRestorePressureReleases(sharedRelease, localRelease), nil
+				}
+				if ctx.Err() != nil {
+					return Placement{}, nil, ctx.Err()
+				}
+				e.warnRestorePressureFallback("reserve shared lease", reserveErr)
+			} else {
+				session.Close()
+				cancelCoord()
+				if ctx.Err() != nil {
+					return Placement{}, nil, ctx.Err()
+				}
+				e.warnRestorePressureFallback("read shared counts", countsErr)
+			}
+		} else {
+			cancelCoord()
+			if ctx.Err() != nil {
+				return Placement{}, nil, ctx.Err()
+			}
+			e.warnRestorePressureFallback("acquire coordinator", err)
+		}
+	}
+
 	e.restorePlacementMu.Lock()
 	defer e.restorePlacementMu.Unlock()
-
-	r.restorePressureAware = !r.PrioritizeSnapshotLocality
 	r.restorePressureByNode = make(map[string]int, len(e.restorePlacementInFlight))
 	for nodeID, inFlight := range e.restorePlacementInFlight {
 		r.restorePressureByNode[nodeID] = inFlight
 	}
-	placement, err := e.choosePlacementLocked(ctx, r)
+	placement, err := snapshot.choose(r)
 	if err != nil {
 		return Placement{}, nil, err
 	}
+	return placement, e.reserveLocalRestorePlacementLocked(placement.NodeID, true), nil
+}
+
+// The vmmd restore RPC is bounded by WakingTimeout (6s); this lease allows
+// process and RPC cleanup time before a crashed schedd's reservation expires.
+const restorePressureLeaseTTL = 30 * time.Second
+
+// Keep coordination lock contention well below the wake budget. A brief
+// store hiccup falls back to local accounting instead of delaying the wake.
+const restorePressureCoordinationTimeout = 250 * time.Millisecond
+
+func (e *Engine) reserveLocalRestorePlacementLocked(nodeID string, fallback bool) func() {
 	if e.restorePlacementInFlight == nil {
 		e.restorePlacementInFlight = make(map[string]int)
 	}
-	e.restorePlacementInFlight[placement.NodeID]++
+	e.restorePlacementInFlight[nodeID]++
+	if fallback {
+		if e.restorePlacementFallbackInFlight == nil {
+			e.restorePlacementFallbackInFlight = make(map[string]int)
+		}
+		e.restorePlacementFallbackInFlight[nodeID]++
+	}
 
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			e.restorePlacementMu.Lock()
 			defer e.restorePlacementMu.Unlock()
-			if inFlight := e.restorePlacementInFlight[placement.NodeID]; inFlight > 1 {
-				e.restorePlacementInFlight[placement.NodeID] = inFlight - 1
+			if inFlight := e.restorePlacementInFlight[nodeID]; inFlight > 1 {
+				e.restorePlacementInFlight[nodeID] = inFlight - 1
 			} else {
-				delete(e.restorePlacementInFlight, placement.NodeID)
+				delete(e.restorePlacementInFlight, nodeID)
+			}
+			if fallback {
+				if inFlight := e.restorePlacementFallbackInFlight[nodeID]; inFlight > 1 {
+					e.restorePlacementFallbackInFlight[nodeID] = inFlight - 1
+				} else {
+					delete(e.restorePlacementFallbackInFlight, nodeID)
+				}
 			}
 		})
 	}
-	return placement, release, nil
+	return release
+}
+
+func combineRestorePressureReleases(releases ...func()) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for _, release := range releases {
+				if release != nil {
+					release()
+				}
+			}
+		})
+	}
+}
+
+func (e *Engine) warnRestorePressureFallback(operation string, err error) {
+	if e.log != nil {
+		e.log.Warn("sched: shared snapshot restore pressure unavailable; using local counts", "operation", operation, "err", err)
+	}
 }
 
 // ClaimUnplaced is the schedd-side async placement claim
