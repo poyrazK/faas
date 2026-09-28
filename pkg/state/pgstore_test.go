@@ -3500,6 +3500,62 @@ func TestPg_UpdateDeploymentTraffic_RejectsNonLive(t *testing.T) {
 	}
 }
 
+func TestPg_UpdateDeploymentTrafficRejectsActiveCanary(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-active-canary")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:active-canary",
+		Status: state.DeployPending, Scope: "canary", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment (canary): %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments
+		set status = 'live', rollout_state = 'pending', canary_step = 0,
+		    traffic_percent = 1
+		where id = $1`, candidate.ID); err != nil {
+		t.Fatalf("activate canary fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set traffic_percent = 99 where id = $1`, stableID); err != nil {
+		t.Fatalf("set stable fixture weight: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "candidate", id: candidate.ID, want: 100},
+		{name: "stable sibling", id: stableID, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.UpdateDeploymentTraffic(ctx, tc.id, tc.want); !errors.Is(err, state.ErrTrafficChangeDuringCanary) {
+				t.Fatalf("UpdateDeploymentTraffic during active canary = %v, want ErrTrafficChangeDuringCanary", err)
+			}
+		})
+	}
+	stableAfter, err := s.DeploymentByID(ctx, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateAfter, err := s.DeploymentByID(ctx, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stableAfter.TrafficPercent != 99 || candidateAfter.TrafficPercent != 1 ||
+		candidateAfter.CanaryStep != 0 || candidateAfter.RolloutState != "pending" {
+		t.Fatalf("blocked traffic change mutated state: stable=%+v candidate=%+v", stableAfter, candidateAfter)
+	}
+	var auditRows int
+	if err := pool.QueryRow(ctx, `select count(*) from deployment_audit where deployment_id = $1`, candidate.ID).Scan(&auditRows); err != nil {
+		t.Fatal(err)
+	}
+	if auditRows != 0 {
+		t.Fatalf("blocked traffic change wrote %d deployment audit rows, want 0", auditRows)
+	}
+}
+
 func TestPg_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-explicit-zero")

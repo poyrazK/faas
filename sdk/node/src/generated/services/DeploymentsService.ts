@@ -1038,6 +1038,9 @@ export class DeploymentsService {
    * An optional expected_serving_deployment_id is checked under the
    * same live-row locks before rebalance. A stale expectation returns
    * 409 `traffic_serving_changed` without changing traffic.
+   * An in-flight managed canary owns the app's traffic weights; direct
+   * traffic changes during `pending` or `rolling_out` return 409
+   * `traffic_change_during_canary` without changing traffic.
    *
    * @returns DeploymentResponse The updated deployment with the new traffic_percent.
    * @throws ApiError
@@ -1069,11 +1072,13 @@ export class DeploymentsService {
         \`plan_traffic_split_not_allowed\`.
         `,
         404: `code: not_found`,
-        409: `\`409 Conflict\` — either the post-write Σ invariant check
-        tripped (\`traffic_percent_sum_invalid\`) or the optional
+        409: `\`409 Conflict\` — the post-write Σ invariant check tripped
+        (\`traffic_percent_sum_invalid\`), the optional
         expected_serving_deployment_id was stale
-        (\`traffic_serving_changed\`). A stale expectation is checked
-        before any traffic write.
+        (\`traffic_serving_changed\`), or an in-flight managed canary
+        owns traffic (\`traffic_change_during_canary\`). The canary and
+        serving checks run before mutation; a sum-invariant failure
+        rolls back all tentative updates.
         `,
         422: `\`422 Unprocessable Entity\` — \`traffic_percent\` was
         outside the inclusive \`[0, 100]\` range. Stable code

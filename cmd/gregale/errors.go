@@ -58,6 +58,7 @@ var errorDocsURL = map[string]string{
 	api.CodeInvalidTrafficPercent:       cliDocsURL,
 	api.CodeTrafficPercentSumInvalid:    cliDocsURL,
 	api.CodeTrafficServingChanged:       cliDocsURL,
+	api.CodeTrafficChangeDuringCanary:   cliDocsURL,
 	api.CodeAccountDeletionConfirm:      cliDocsURL,
 	api.CodeAccountDeletionPending:      cliDocsURL,
 	api.CodeAccountNotRestorable:        cliDocsURL,
