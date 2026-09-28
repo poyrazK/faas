@@ -1186,3 +1186,16 @@ func ensureRecoveryTestSecret(t *testing.T) {
 		}
 	})
 }
+
+// apid boots without an age identity when FAAS_*_AGE_IDENTITY_PATH is
+// unset; enrolling then dereferenced the nil recipient accessor.
+func TestMFAEnrollWithoutAgeIdentityIsUnavailable(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	prev := mfaRecipient
+	SetMFARecipient(nil)
+	t.Cleanup(func() { SetMFARecipient(prev) })
+	rec := e.do(t, http.MethodPost, "/v1/account/mfa/enroll", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("enroll without an age identity = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+}

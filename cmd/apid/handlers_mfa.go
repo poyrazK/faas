@@ -121,7 +121,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
-	rec := mfaRecipient()
+	// mfaRecipient stays nil when apid boots without an age identity;
+	// calling it panicked (a recovered 500) instead of reporting 503.
+	var rec *age.X25519Recipient
+	if mfaRecipient != nil {
+		rec = mfaRecipient()
+	}
 	if rec == nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age key not loaded — refusing to seal TOTP secret"))
