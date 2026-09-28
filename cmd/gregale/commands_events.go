@@ -215,7 +215,8 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 func cmdEventsDeliveries(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events deliveries", flag.ContinueOnError)
-	eventID := fs.String("event-id", "", "filter by exact published event id")
+	eventSource := fs.String("event-source", "", "narrow event filter to one published source; requires --event-id")
+	eventID := fs.String("event-id", "", "filter by published event id")
 	deliveryState := fs.String("state", "", "filter by delivery state; failed includes recipient fanout failures")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	fanoutBefore := fs.String("fanout-before", "", "pagination cursor (NextFanoutBefore from a prior call)")
@@ -223,15 +224,18 @@ func cmdEventsDeliveries(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-id ID] [--state STATE] [--before ID] [--fanout-before CURSOR] [--limit N]", "events")
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
+		(strings.TrimSpace(*eventSource) != "" && strings.TrimSpace(*eventID) == "") ||
+		validateCLILimit("limit", *limit, 200) != nil {
+		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventDeliveriesPage(context.Background(), positional[0], *eventID, *deliveryState, *before, *fanoutBefore, *limit)
+	resp, err := client.ListEventDeliveriesPageByEventIdentity(context.Background(), positional[0],
+		strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), *deliveryState, *before, *fanoutBefore, *limit)
 	if err != nil {
 		return printErr("Could not list event deliveries", err)
 	}

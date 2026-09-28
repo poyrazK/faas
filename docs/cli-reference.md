@@ -362,9 +362,10 @@ Inspect event deliveries and pre-invocation fanout failures
 
 | Flag | Meaning | |
 |---|---|---|
+| `--event-source <SOURCE>` | narrow event filter to one published source; requires --event-id |  |
 | `--event-id <ID>` | filter by published event id |  |
 | `--state <STATE>` | filter by delivery state; failed includes recipient fanout failures |  |
-| `--before <ID>` | pagination cursor |  |
+| `--before <CURSOR>` | pagination cursor |  |
 | `--fanout-before <CURSOR>` | pre-invocation failure pagination cursor |  |
 | `--limit <N>` | max deliveries (1..200) |  |
 

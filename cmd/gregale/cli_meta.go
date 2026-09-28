@@ -434,9 +434,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest"},
 			{Name: "deliveries", Short: "Inspect event deliveries and pre-invocation fanout failures", Flags: []cliFlag{
+				{Name: "event-source", Short: "narrow event filter to one published source; requires --event-id", Value: "SOURCE"},
 				{Name: "event-id", Short: "filter by published event id", Value: "ID"},
 				{Name: "state", Short: "filter by delivery state; failed includes recipient fanout failures", Value: "STATE"},
-				{Name: "before", Short: "pagination cursor", Value: "ID"},
+				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
 				{Name: "fanout-before", Short: "pre-invocation failure pagination cursor", Value: "CURSOR"},
 				{Name: "limit", Short: "max deliveries (1..200)", Value: "N"},
 			}},

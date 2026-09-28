@@ -12744,7 +12744,7 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 // ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection.
 // MemStore keeps the filter in-process so handler tests exercise the same
 // account/app isolation and cursor semantics as production.
-func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventSource, eventID, deliveryState string) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if limit <= 0 {
@@ -12782,6 +12782,9 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 			continue
 		}
 		if eventID != "" && headers["x-gregale-event-id"] != eventID {
+			continue
+		}
+		if eventSource != "" && headers["x-gregale-event-source"] != eventSource {
 			continue
 		}
 		if deliveryState != "" && string(inv.State) != deliveryState {

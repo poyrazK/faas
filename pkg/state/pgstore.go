@@ -15782,10 +15782,10 @@ func (s *PgStore) ListInvocationsForApp(ctx context.Context, appID string, state
 }
 
 // ListEventDeliveriesForApp returns the app's event-triggered invocations,
-// newest first. Event fan-out stamps the event id in headers; filtering there
+// newest first. Event fan-out stamps source and id in headers; filtering there
 // keeps ordinary async invokes out of the delivery view. The optional event
-// id and state filters are intentionally exact matches.
-func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+// identity and state filters are exact matches.
+func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, limit int, before, eventSource, eventID, deliveryState string) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -15793,23 +15793,26 @@ func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, l
 		where app_id = $1
 		  and source = 'async_invoke'
 		  and headers ? 'x-gregale-event-id'
-		  and ($2 = '' or headers->>'x-gregale-event-id' = $2)
-		  and ($3 = '' or state = $3)`
+		  and ($2 = '' or headers->>'x-gregale-event-source' = $2)
+		  and ($3 = '' or headers->>'x-gregale-event-id' = $3)
+		  and ($4 = '' or state = $4)`
 	var rows pgx.Rows
 	var err error
 	if before == "" {
 		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
 			order by created_at desc, id desc
-			limit $4`, appID, eventID, deliveryState, limit)
+			limit $5`, appID, eventSource, eventID, deliveryState, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
 			  and (created_at, id) < (
 				  select created_at, id from invocations
-				  where id = $4 and app_id = $1
+				  where id = $5 and app_id = $1
 				    and source = 'async_invoke'
-				    and headers ? 'x-gregale-event-id')
+				    and headers ? 'x-gregale-event-id'
+				    and ($2 = '' or headers->>'x-gregale-event-source' = $2)
+				    and ($3 = '' or headers->>'x-gregale-event-id' = $3))
 			order by created_at desc, id desc
-			limit $5`, appID, eventID, deliveryState, before, limit)
+			limit $6`, appID, eventSource, eventID, deliveryState, before, limit)
 	}
 	if err != nil {
 		return nil, err

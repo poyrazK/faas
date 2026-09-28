@@ -81,7 +81,7 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	if err := store.FinishPublishedEvent(ctx, replayed.ID, replayed.ClaimToken, nil); err != nil {
 		t.Fatal(err)
 	}
-	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "evt-retry")
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "", "evt-retry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "evt-classification")
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "", "evt-classification")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +264,20 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("settle event with colliding ID: %v", err)
+	}
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "orders.eu", "evt-replay-batch")
+	if err != nil {
+		t.Fatalf("list source-qualified fanout failures: %v", err)
+	}
+	if len(failures) != 1 || failures[0].EventSource != "orders.eu" || failures[0].EventID != "evt-replay-batch" {
+		t.Fatalf("source-qualified fanout failures = %+v, want only orders.eu collision", failures)
+	}
+	failures, err = store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "orders.us", "evt-replay-batch")
+	if err != nil {
+		t.Fatalf("list first source-qualified fanout failures: %v", err)
+	}
+	if len(failures) != 1 || failures[0].EventSource != "orders.us" {
+		t.Fatalf("first source-qualified fanout failures = %+v, want only orders.us collision", failures)
 	}
 
 	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "orders.us", "evt-replay-batch", 100)

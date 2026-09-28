@@ -135,6 +135,20 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("settle event with colliding ID: %v", err)
 	}
+	failures, err := s.ListEventFanoutFailuresForApp(ctx, appID, 10, state.EventFanoutFailureCursor{}, "orders.eu", "evt-pg-replay-batch")
+	if err != nil {
+		t.Fatalf("list source-qualified fanout failures: %v", err)
+	}
+	if len(failures) != 1 || failures[0].EventSource != "orders.eu" || failures[0].EventID != "evt-pg-replay-batch" {
+		t.Fatalf("source-qualified fanout failures = %+v, want only orders.eu collision", failures)
+	}
+	failures, err = s.ListEventFanoutFailuresForApp(ctx, appID, 10, state.EventFanoutFailureCursor{}, "orders.us", "evt-pg-replay-batch")
+	if err != nil {
+		t.Fatalf("list first source-qualified fanout failures: %v", err)
+	}
+	if len(failures) != 1 || failures[0].EventSource != "orders.us" {
+		t.Fatalf("first source-qualified fanout failures = %+v, want only orders.us collision", failures)
+	}
 
 	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "orders.us", "evt-pg-replay-batch", 100)
 	if err != nil || batch.Replayed != 0 || batch.HasMore {

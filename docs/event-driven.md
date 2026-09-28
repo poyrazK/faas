@@ -609,8 +609,9 @@ source, type, filter, and enabled state that the router will use.
 
 After publishing, use `events deliveries` to see the matching event id,
 delivery state, attempt count, and last lifecycle timestamp without searching
-the account-wide invocation ledger. `--event-id` narrows the view to one
-published event; `--state` can focus on pending, failed, or dead-lettered
+the account-wide invocation ledger. `--event-id` narrows the view by event ID;
+add `--event-source` to select one exact event identity when IDs are reused by
+different sources. `--state` can focus on pending, failed, or dead-lettered
 deliveries.
 
 The same command also reports terminal recipient routing failures that

@@ -194,14 +194,27 @@ func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
 	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"inv-1"}`, http.StatusOK)
 	stdout, restore := swapStdout(t)
 	defer restore()
-	if code := cmdEventsDeliveries([]string{"invoice-worker", "--state", "failed", "--limit", "1"}); code != 0 {
+	if code := cmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-1", "--state", "failed", "--limit", "1"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-deliveries" {
 		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
 	}
+	if f.sawQuery != "event_id=evt-1&event_source=billing&limit=1&state=failed" {
+		t.Fatalf("query=%q", f.sawQuery)
+	}
 	if got := stdout.String(); !strings.Contains(got, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR") || !strings.Contains(got, "inv-1\tevt-1\tbilling\tinvoice.paid\tfailed\t3") || !strings.Contains(got, "worker unavailable") {
 		t.Fatalf("stdout=%q", got)
+	}
+}
+
+func TestCmdEventsDeliveries_EventSourceRequiresEventID(t *testing.T) {
+	resetJSONOut(t)
+	code, captured := runWithStderr(t, func() int {
+		return cmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing"})
+	})
+	if code != 1 || !strings.Contains(captured, "--event-source SOURCE --event-id ID") {
+		t.Fatalf("exit=%d stderr=%q", code, captured)
 	}
 }
 

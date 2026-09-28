@@ -203,13 +203,15 @@ export class EventsService {
    * recipient failures, each newest first. The projections include the
    * published event identity, subscription, lifecycle state, attempts,
    * and last error without returning payloads. The two histories have
-   * independent pagination cursors.
+   * independent pagination cursors. event_id alone searches across event
+   * sources; provide event_source with event_id to select one event identity.
    *
    * @returns EventDeliveryListResponse App-scoped event deliveries and terminal fanout failures, newest first.
    * @throws ApiError
    */
   public static listEventDeliveries({
     slug,
+    eventSource,
     eventId,
     state,
     before,
@@ -221,7 +223,11 @@ export class EventsService {
      */
     slug: string,
     /**
-     * Exact published event id to inspect.
+     * Optional exact published event source; requires event_id.
+     */
+    eventSource?: string,
+    /**
+     * Published event ID; without event_source, matching IDs from all sources are included.
      */
     eventId?: string,
     /**
@@ -229,7 +235,7 @@ export class EventsService {
      */
     state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'dead_letter',
     /**
-     * Cursor — the last id from the previous page (omit for the first page).
+     * Opaque cursor from next_before, bound to this app and the event identity and state filters.
      */
     before?: string,
     /**
@@ -237,7 +243,7 @@ export class EventsService {
      */
     limit?: number,
     /**
-     * Opaque cursor from next_fanout_before for this app and event_id filter.
+     * Opaque cursor from next_fanout_before for this app and event source and ID filters.
      */
     fanoutBefore?: string,
   }): CancelablePromise<EventDeliveryListResponse> {
@@ -248,6 +254,7 @@ export class EventsService {
         'slug': slug,
       },
       query: {
+        'event_source': eventSource,
         'event_id': eventId,
         'state': state,
         'before': before,

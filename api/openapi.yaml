@@ -17905,24 +17905,32 @@ paths:
         recipient failures, each newest first. The projections include the
         published event identity, subscription, lifecycle state, attempts,
         and last error without returning payloads. The two histories have
-        independent pagination cursors.
+        independent pagination cursors. event_id alone searches across event
+        sources; provide event_source with event_id to select one event identity.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: event_source
+          in: query
+          schema: { type: string }
+          description: Optional exact published event source; requires event_id.
         - name: event_id
           in: query
           schema: { type: string }
-          description: Exact published event id to inspect.
+          description: Published event ID; without event_source, matching IDs from all sources are included.
         - name: state
           in: query
           schema: { type: string, enum: [pending, dispatching, completed, failed, dead_letter] }
           description: Exact delivery state to include; failed also includes pre-invocation recipient routing failures.
-        - $ref: '#/components/parameters/QueueCursorBefore'
+        - name: before
+          in: query
+          schema: { type: string }
+          description: Opaque cursor from next_before, bound to this app and the event identity and state filters.
         - $ref: '#/components/parameters/QueueCursorLimit'
         - name: fanout_before
           in: query
           schema: { type: string }
-          description: Opaque cursor from next_fanout_before for this app and event_id filter.
+          description: Opaque cursor from next_fanout_before for this app and event source and ID filters.
       responses:
         '200':
           description: App-scoped event deliveries and terminal fanout failures, newest first.
@@ -28680,7 +28688,7 @@ components:
         deliveries:
           type: array
           items: { $ref: '#/components/schemas/EventDeliveryResponse' }
-        next_before: { type: string, description: ID cursor for the next older page. }
+        next_before: { type: string, description: Opaque cursor bound to the app and event identity and state filters. }
         fanout_failures:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutFailureResponse' }

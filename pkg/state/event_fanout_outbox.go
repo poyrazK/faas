@@ -119,7 +119,7 @@ type PublishedEventRecipientProgressStore interface {
 // EventFanoutFailureStore exposes bounded, app-scoped inspection of terminal
 // recipient failures that did not reach the invocation lifecycle.
 type EventFanoutFailureStore interface {
-	ListEventFanoutFailuresForApp(context.Context, string, int, EventFanoutFailureCursor, string) ([]EventFanoutFailure, error)
+	ListEventFanoutFailuresForApp(context.Context, string, int, EventFanoutFailureCursor, string, string) ([]EventFanoutFailure, error)
 }
 
 // EventFanoutReplayStore retries one terminal recipient using the exact
@@ -266,10 +266,11 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 }
 
 // ListEventFanoutFailuresForApp returns failed recipient outcomes newest
-// first. The app/account predicates are tied to the immutable acceptance-time
-// recipient snapshot, so removed subscriptions remain inspectable without
-// widening the authenticated app scope.
-func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID string, limit int, before EventFanoutFailureCursor, eventID string) ([]EventFanoutFailure, error) {
+// first, optionally filtered by source and event ID. The app/account
+// predicates are tied to the immutable acceptance-time recipient snapshot, so
+// removed subscriptions remain inspectable without widening the authenticated
+// app scope.
+func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID string, limit int, before EventFanoutFailureCursor, eventSource, eventID string) ([]EventFanoutFailure, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -287,10 +288,11 @@ func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID strin
 	  AND r.recipient->>'app_id' = a.id::text
 	  AND r.recipient->>'id' = p.key
 	  AND p.outcome->>'state' = 'failed'
-	  AND ($2 = '' OR o.event_id = $2)
-	  AND ($3::bigint = 0 OR (o.created_at, o.id, p.key) < ($4::timestamptz, $3, $5))
+	  AND ($2 = '' OR o.source = $2)
+	  AND ($3 = '' OR o.event_id = $3)
+	  AND ($4::bigint = 0 OR (o.created_at, o.id, p.key) < ($5::timestamptz, $4, $6))
 	ORDER BY o.created_at DESC, o.id DESC, p.key DESC
-	LIMIT $6`, appID, eventID, before.OutboxID, before.CreatedAt, before.SubscriptionID, limit)
+	LIMIT $7`, appID, eventSource, eventID, before.OutboxID, before.CreatedAt, before.SubscriptionID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +634,7 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 
 // ListEventFanoutFailuresForApp mirrors the PostgreSQL projection for tests
 // and in-memory API use.
-func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string, limit int, before EventFanoutFailureCursor, eventID string) ([]EventFanoutFailure, error) {
+func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string, limit int, before EventFanoutFailureCursor, eventSource, eventID string) ([]EventFanoutFailure, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if limit <= 0 {
@@ -641,7 +643,8 @@ func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string
 	out := make([]EventFanoutFailure, 0)
 	for _, work := range m.eventFanout {
 		var event publishedEventIdentity
-		if json.Unmarshal(work.Payload, &event) != nil || (eventID != "" && event.ID != eventID) {
+		if json.Unmarshal(work.Payload, &event) != nil ||
+			(eventSource != "" && event.Source != eventSource) || (eventID != "" && event.ID != eventID) {
 			continue
 		}
 		for _, recipient := range work.RecipientSnapshot {

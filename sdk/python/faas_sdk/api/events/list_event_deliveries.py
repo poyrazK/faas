@@ -15,6 +15,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    event_source: str | Unset = UNSET,
     event_id: str | Unset = UNSET,
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
@@ -23,6 +24,8 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    params["event_source"] = event_source
 
     params["event_id"] = event_id
 
@@ -100,6 +103,7 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient,
+    event_source: str | Unset = UNSET,
     event_id: str | Unset = UNSET,
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
@@ -112,10 +116,12 @@ def sync_detailed(
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
-    independent pagination cursors.
+    independent pagination cursors. event_id alone searches across event
+    sources; provide event_source with event_id to select one event identity.
 
     Args:
         slug (str):
+        event_source (str | Unset):
         event_id (str | Unset):
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
@@ -132,6 +138,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        event_source=event_source,
         event_id=event_id,
         state=state,
         before=before,
@@ -150,6 +157,7 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient,
+    event_source: str | Unset = UNSET,
     event_id: str | Unset = UNSET,
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
@@ -162,10 +170,12 @@ def sync(
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
-    independent pagination cursors.
+    independent pagination cursors. event_id alone searches across event
+    sources; provide event_source with event_id to select one event identity.
 
     Args:
         slug (str):
+        event_source (str | Unset):
         event_id (str | Unset):
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
@@ -183,6 +193,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        event_source=event_source,
         event_id=event_id,
         state=state,
         before=before,
@@ -195,6 +206,7 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient,
+    event_source: str | Unset = UNSET,
     event_id: str | Unset = UNSET,
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
@@ -207,10 +219,12 @@ async def asyncio_detailed(
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
-    independent pagination cursors.
+    independent pagination cursors. event_id alone searches across event
+    sources; provide event_source with event_id to select one event identity.
 
     Args:
         slug (str):
+        event_source (str | Unset):
         event_id (str | Unset):
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
@@ -227,6 +241,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        event_source=event_source,
         event_id=event_id,
         state=state,
         before=before,
@@ -243,6 +258,7 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient,
+    event_source: str | Unset = UNSET,
     event_id: str | Unset = UNSET,
     state: ListEventDeliveriesState | Unset = UNSET,
     before: str | Unset = UNSET,
@@ -255,10 +271,12 @@ async def asyncio(
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
-    independent pagination cursors.
+    independent pagination cursors. event_id alone searches across event
+    sources; provide event_source with event_id to select one event identity.
 
     Args:
         slug (str):
+        event_source (str | Unset):
         event_id (str | Unset):
         state (ListEventDeliveriesState | Unset):
         before (str | Unset):
@@ -277,6 +295,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            event_source=event_source,
             event_id=event_id,
             state=state,
             before=before,

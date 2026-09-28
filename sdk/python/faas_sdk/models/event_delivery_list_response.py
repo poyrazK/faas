@@ -22,7 +22,7 @@ class EventDeliveryListResponse:
     app_slug: str
     deliveries: list[EventDeliveryResponse]
     next_before: str | Unset = UNSET
-    """ID cursor for the next older page."""
+    """Opaque cursor bound to the app and event identity and state filters."""
     fanout_failures: list[EventFanoutFailureResponse] | Unset = UNSET
     """Terminal recipient routing failures; empty when none exist."""
     next_fanout_before: str | Unset = UNSET

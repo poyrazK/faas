@@ -6639,16 +6639,26 @@ func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string
 
 // ListEventDeliveries returns the app's invocation lifecycle and terminal
 // pre-invocation fanout failures. Optional filters are exact event-id/state
-// matches; each history is newest first.
+// matches; an event ID alone may match more than one source.
 func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
 	return c.ListEventDeliveriesPage(ctx, slug, eventID, deliveryState, before, "", limit)
 }
 
 // ListEventDeliveriesPage returns both invocation deliveries and pre-invocation
-// fanout failures. The two histories have independent cursors.
+// fanout failures. The two histories have independent cursors. It retains the
+// original event-id-only filter for callers that need the broad view.
 func (c *Client) ListEventDeliveriesPage(ctx context.Context, slug, eventID, deliveryState, before, fanoutBefore string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveriesPageByEventIdentity(ctx, slug, "", eventID, deliveryState, before, fanoutBefore, limit)
+}
+
+// ListEventDeliveriesPageByEventIdentity optionally narrows event deliveries
+// and fanout failures by source as well as ID. The source filter requires an ID.
+func (c *Client) ListEventDeliveriesPageByEventIdentity(ctx context.Context, slug, eventSource, eventID, deliveryState, before, fanoutBefore string, limit int) (EventDeliveryListResponse, error) {
 	var out EventDeliveryListResponse
 	q := url.Values{}
+	if eventSource != "" {
+		q.Set("event_source", eventSource)
+	}
 	if eventID != "" {
 		q.Set("event_id", eventID)
 	}

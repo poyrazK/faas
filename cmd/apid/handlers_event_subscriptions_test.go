@@ -28,6 +28,11 @@ func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
 		},
 		{
 			AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+			State: state.InvocationCompleted, Headers: json.RawMessage(`{"x-gregale-event-id":"evt-1","x-gregale-event-source":"shipping","x-gregale-event-type":"shipment.sent","x-gregale-event-subscription-id":"sub-2"}`),
+			DueAt: now.Add(time.Second), CreatedAt: now.Add(time.Second), Attempts: 1,
+		},
+		{
+			AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
 			State: state.InvocationCompleted, Headers: json.RawMessage(`{"x-user":"ordinary"}`),
 			DueAt: now.Add(-2 * time.Second), CreatedAt: now.Add(-2 * time.Second),
 		},
@@ -59,29 +64,95 @@ func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode event filter: %v", err)
 	}
-	if len(out.Deliveries) != 1 || out.Deliveries[0].SubscriptionID != "sub-1" {
+	if len(out.Deliveries) != 2 {
 		t.Fatalf("event filter deliveries = %+v", out.Deliveries)
 	}
+	gotSources := map[string]bool{}
+	for _, delivery := range out.Deliveries {
+		gotSources[delivery.EventSource] = true
+	}
+	if !gotSources["billing"] || !gotSources["shipping"] {
+		t.Fatalf("event ID filter sources = %v, want billing and shipping", gotSources)
+	}
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "billing", source: "billing", want: "sub-1"},
+		{name: "shipping", source: "shipping", want: "sub-2"},
+	} {
+		t.Run("source_filter_"+tc.name, func(t *testing.T) {
+			path := "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&event_source=" + tc.source
+			rec := e.do(t, http.MethodGet, path, nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("source filter status = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			var filtered api.EventDeliveryListResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &filtered); err != nil {
+				t.Fatalf("decode source filter: %v", err)
+			}
+			if len(filtered.Deliveries) != 1 || filtered.Deliveries[0].EventSource != tc.source || filtered.Deliveries[0].SubscriptionID != tc.want {
+				t.Fatalf("source filter deliveries = %+v", filtered.Deliveries)
+			}
+		})
+	}
 
-	// A cursor is positioned in the unfiltered event stream. Changing the
-	// filter must not restart pagination when the cursor row is excluded.
-	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?limit=2", nil, nil)
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_source=billing", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("source without ID status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The generated cursor is bound to the exact event identity and state.
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&event_source=shipping&limit=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page status = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Deliveries) != 2 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Deliveries) != 1 {
 		t.Fatalf("decode page: err=%v deliveries=%+v", err, out.Deliveries)
 	}
-	if out.Deliveries[1].EventID != "evt-2" {
-		t.Fatalf("cursor event = %q, want evt-2", out.Deliveries[1].EventID)
+	if out.NextBefore == "" {
+		t.Fatal("full page has empty next_before")
 	}
-	before := out.Deliveries[1].InvocationID
-	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&before="+before, nil, nil)
+	before := out.NextBefore
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&event_source=shipping&before="+before, nil, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("filtered cursor status = %d; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("matching filtered cursor status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Deliveries) != 0 {
-		t.Fatalf("filtered cursor: err=%v deliveries=%+v, want empty page", err, out.Deliveries)
+		t.Fatalf("matching filtered cursor: err=%v deliveries=%+v, want empty page", err, out.Deliveries)
+	}
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&event_source=billing&before="+before, nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched source cursor status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-2&event_source=shipping&before="+before, nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched event ID cursor status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&event_source=shipping&state=failed&before="+before, nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched state cursor status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&before="+before, nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("source-bound cursor without source status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The legacy raw invocation-ID cursor remains accepted for clients that
+	// continue event-ID-only inspection.
+	legacyRec := e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&limit=2", nil, nil)
+	if legacyRec.Code != http.StatusOK {
+		t.Fatalf("legacy cursor seed status = %d; body=%s", legacyRec.Code, legacyRec.Body.String())
+	}
+	var legacyPage api.EventDeliveryListResponse
+	if err := json.Unmarshal(legacyRec.Body.Bytes(), &legacyPage); err != nil || len(legacyPage.Deliveries) != 2 {
+		t.Fatalf("decode legacy cursor seed: err=%v deliveries=%+v", err, legacyPage.Deliveries)
+	}
+	legacyRawCursor := legacyPage.Deliveries[0].InvocationID
+	legacyRec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&before="+legacyRawCursor, nil, nil)
+	if legacyRec.Code != http.StatusOK {
+		t.Fatalf("legacy raw cursor status = %d, want 200; body=%s", legacyRec.Code, legacyRec.Body.String())
 	}
 }
 
@@ -223,6 +294,92 @@ func TestReplayRetryableEventFanoutFailures_RequeuesBoundedRetryableRows(t *test
 	}
 	if got := replayed.RecipientProgress[permanent.ID]; got.State != state.PublishedEventRecipientFailed || got.Retryable {
 		t.Fatalf("permanent progress = %+v, want unchanged failed", got)
+	}
+}
+
+func TestListEventDeliveries_FiltersFanoutFailuresBySourceAndBindsCursor(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "delivery-fanout-filter")
+	ctx := context.Background()
+	for _, spec := range []struct {
+		source string
+		typ    string
+	}{
+		{source: "orders.us", typ: "order.created"},
+		{source: "orders.*", typ: "order.created"},
+		{source: "orders.eu", typ: "invoice.created"},
+	} {
+		if _, _, err := e.store.UpsertEventSubscription(ctx, e.acct.ID, appID, spec.source, spec.typ, nil); err != nil {
+			t.Fatalf("seed subscription %s/%s: %v", spec.source, spec.typ, err)
+		}
+	}
+
+	for _, event := range []struct {
+		source string
+		typ    string
+		want   int
+	}{
+		{source: "orders.us", typ: "order.created", want: 2},
+		{source: "orders.eu", typ: "invoice.created", want: 1},
+	} {
+		payload := json.RawMessage(`{"id":"evt-duplicate","source":"` + event.source + `","type":"` + event.typ + `","data":{}}`)
+		if err := e.store.AppendEvent(ctx, "apid", "event.published", &e.acct.ID, payload); err != nil {
+			t.Fatalf("append %s event: %v", event.source, err)
+		}
+		work, err := e.store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+		if err != nil {
+			t.Fatalf("claim %s event: %v", event.source, err)
+		}
+		if len(work.RecipientSnapshot) != event.want {
+			t.Fatalf("%s recipient snapshot has %d entries, want %d: %+v", event.source, len(work.RecipientSnapshot), event.want, work.RecipientSnapshot)
+		}
+		for _, recipient := range work.RecipientSnapshot {
+			if err := e.store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID,
+				state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1,
+					FailureCode: state.EventFanoutFailureCodeTargetUnavailable, LastError: "target unavailable", UpdatedAt: time.Now().UTC()}); err != nil {
+				t.Fatalf("record %s failure for %s: %v", event.source, recipient.ID, err)
+			}
+		}
+		if err := e.store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+			t.Fatalf("finish %s event: %v", event.source, err)
+		}
+	}
+
+	listPath := "/v1/apps/delivery-fanout-filter/event-deliveries?event_source=orders.us&event_id=evt-duplicate&state=failed&limit=1"
+	rec := e.do(t, http.MethodGet, listPath, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("source-filtered list status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.EventDeliveryListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if len(first.FanoutFailures) != 1 || first.FanoutFailures[0].EventSource != "orders.us" || first.NextFanoutBefore == "" {
+		t.Fatalf("first source-filtered failure page = %+v, want one US failure and a cursor", first)
+	}
+
+	page2Path := listPath + "&fanout_before=" + first.NextFanoutBefore
+	rec = e.do(t, http.MethodGet, page2Path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-filter fanout cursor status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.EventDeliveryListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if len(second.FanoutFailures) != 1 || second.FanoutFailures[0].EventSource != "orders.us" ||
+		second.FanoutFailures[0].SubscriptionID == first.FanoutFailures[0].SubscriptionID {
+		t.Fatalf("second source-filtered failure page = %+v, want the other US failure", second.FanoutFailures)
+	}
+
+	mismatchedPath := "/v1/apps/delivery-fanout-filter/event-deliveries?event_source=orders.eu&event_id=evt-duplicate&state=failed&limit=1&fanout_before=" + first.NextFanoutBefore
+	rec = e.do(t, http.MethodGet, mismatchedPath, nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched fanout cursor status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-fanout-filter/event-deliveries?event_source=orders.us", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("fanout source without event ID status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

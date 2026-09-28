@@ -11,7 +11,7 @@ export type EventDeliveryListResponse = {
   app_slug: string;
   deliveries: Array<EventDeliveryResponse>;
   /**
-   * ID cursor for the next older page.
+   * Opaque cursor bound to the app and event identity and state filters.
    */
   next_before?: string;
   /**
