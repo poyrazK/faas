@@ -1,5 +1,7 @@
 package sched
 
+// adr: 343 — terminal init capture runs the callback and warm capture is skipped.
+
 import (
 	"context"
 	"encoding/json"

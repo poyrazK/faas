@@ -1,5 +1,7 @@
 package fcvm
 
+// adr: 343 — the guest callback must acknowledge before a terminal init capture.
+
 import (
 	"context"
 	"encoding/binary"

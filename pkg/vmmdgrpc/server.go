@@ -850,9 +850,9 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	}
 	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	return &vmmdpb.SnapshotResponse{
-		MemBytes:     info.MemBytes,
-		VmstateBytes: info.VMStateBytes,
-		StoredBytes:  info.StoredBytes,
+		MemBytes:                  info.MemBytes,
+		VmstateBytes:              info.VMStateBytes,
+		StoredBytes:               info.StoredBytes,
 		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
 	}, nil
 }
