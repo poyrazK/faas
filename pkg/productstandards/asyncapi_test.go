@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.10.0" {
-		t.Fatalf("info.version = %v, want 1.10.0 after platform tenant deployment webhooks", got)
+	if got := info["version"]; got != "1.11.0" {
+		t.Fatalf("info.version = %v, want 1.11.0 after platform tenant customer lifecycle webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -50,6 +50,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		"platformTenantHostnameVerified":          "platform_tenant.hostname.verified",
 		"platformTenantSurfaceCertificateChanged": "platform_tenant.surface.certificate.changed",
 		"platformTenantSurfaceDeploymentChanged":  "platform_tenant.surface.deployment.changed",
+		"platformTenantCustomerLinked":            "platform_tenant.customer.linked",
+		"platformTenantCustomerOffboarded":         "platform_tenant.customer.offboarded",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -113,6 +115,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		"deliverPlatformTenantHostnameVerified":          "platformTenantHostnameVerified",
 		"deliverPlatformTenantSurfaceCertificateChanged": "platformTenantSurfaceCertificateChanged",
 		"deliverPlatformTenantSurfaceDeploymentChanged":  "platformTenantSurfaceDeploymentChanged",
+		"deliverPlatformTenantCustomerLinked":            "platformTenantCustomerLinked",
+		"deliverPlatformTenantCustomerOffboarded":         "platformTenantCustomerOffboarded",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
@@ -250,7 +254,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantSurfaceCertificateChangedData", "PlatformTenantSurfaceDeploymentChangedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantSurfaceCertificateChangedData", "PlatformTenantSurfaceDeploymentChangedData", "PlatformTenantCustomerLifecycleData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")
