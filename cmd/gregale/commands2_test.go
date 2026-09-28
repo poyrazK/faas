@@ -359,6 +359,25 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 			t.Fatalf("PublicAuth = %+v; want explicit mode=bearer", seen.PublicAuth)
 		}
 	})
+	t.Run("internal_only_mode_forwards", func(t *testing.T) {
+		var seen api.UpdateAppRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+		}))
+		defer srv.Close()
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_test_x")
+		if code := cmdApp([]string{constSlug, "--public-auth", api.AppPublicAuthModeInternalOnly}); code != 0 {
+			t.Fatalf("cmdApp internal_only exit = %d; want 0", code)
+		}
+		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeInternalOnly {
+			t.Fatalf("PublicAuth = %+v; want mode=internal_only", seen.PublicAuth)
+		}
+	})
 	t.Run("unknown_mode_rejected_locally", func(t *testing.T) {
 		called := false
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

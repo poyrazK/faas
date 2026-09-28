@@ -208,7 +208,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -312,7 +312,7 @@ func cmdApp(args []string) int {
 	// code): Free PATCH 'bearer' = 402
 	// plan_public_auth_bearer_not_allowed; Free/Hobby
 	// PATCH 'basic' or 'ip_allowlist' = 402.
-	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: open|bearer|basic|ip_allowlist (basic and ip_allowlist are Pro+)")
+	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: open|bearer|basic|ip_allowlist|internal_only (basic and ip_allowlist are Pro+)")
 	basicUser := fs.String("basic-user", "", "basic-auth username (RFC 7617 §2); required when --public-auth=basic")
 	basicPass := fs.String("basic-pass", "", "basic-auth password (RFC 7617 §2); required when --public-auth=basic")
 	var ipAllowlist stringListFlag
@@ -565,10 +565,10 @@ func cmdApp(args []string) int {
 	if explicit["public-auth"] {
 		v := *publicAuth
 		switch v {
-		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic, api.AppPublicAuthModeIPAllowlist:
+		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic, api.AppPublicAuthModeIPAllowlist, api.AppPublicAuthModeInternalOnly:
 		default:
 			return printErr("Invalid --public-auth",
-				fmt.Errorf("must be 'open', 'bearer', 'basic', or 'ip_allowlist'; got %q", v))
+				fmt.Errorf("must be 'open', 'bearer', 'basic', 'ip_allowlist', or 'internal_only'; got %q", v))
 		}
 		block := &api.PublicAuthBlock{Mode: v}
 		if v == api.AppPublicAuthModeBasic {
