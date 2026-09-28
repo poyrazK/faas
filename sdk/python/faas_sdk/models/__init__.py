@@ -1178,6 +1178,8 @@ from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
 from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
+from .pre_auth_route_limit import PreAuthRouteLimit
+from .pre_auth_route_limit_method import PreAuthRouteLimitMethod
 from .preflight_finding import PreflightFinding
 from .preflight_level import PreflightLevel
 from .preflight_plan_budget import PreflightPlanBudget
@@ -2912,6 +2914,8 @@ __all__ = (
     "PostSweepStuckBuildsConfirm",
     "PreAuthRateLimitConfig",
     "PreAuthRateLimitConfigMode",
+    "PreAuthRouteLimit",
+    "PreAuthRouteLimitMethod",
     "PreflightFinding",
     "PreflightLevel",
     "PreflightPlanBudget",

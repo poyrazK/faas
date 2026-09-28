@@ -842,14 +842,15 @@ type CreateAPIConsumerRequest struct {
 
 // APIConsumerResponse is the public representation of an API consumer.
 type APIConsumerResponse struct {
-	ID          string     `json:"id"`
-	AppID       string     `json:"app_id"`
-	ExternalRef string     `json:"external_ref"`
-	Name        string     `json:"name"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ID                      string     `json:"id"`
+	AppID                   string     `json:"app_id"`
+	ExternalRef             string     `json:"external_ref"`
+	Name                    string     `json:"name"`
+	Status                  string     `json:"status"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
+	ManagedByPlatformTenant bool       `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // CreateConsumerKeyRequest creates a credential for an API consumer.
@@ -3602,18 +3603,19 @@ type DomainDoctorCheck struct {
 // the state machine values (pending/active/suspended/deleted,
 // none/pending/issued/failed) verbatim.
 type TenantSurfaceResponse struct {
-	ID            string                   `json:"id"`
-	AccountID     string                   `json:"account_id"`
-	AppID         string                   `json:"app_id"`
-	Name          string                   `json:"name"`
-	CertKind      string                   `json:"cert_kind"`
-	Status        string                   `json:"status"`
-	CertState     string                   `json:"cert_state"`
-	CertNotAfter  string                   `json:"cert_not_after,omitempty"`
-	CertLastError string                   `json:"cert_last_error,omitempty"`
-	CreatedAt     string                   `json:"created_at"`
-	UpdatedAt     string                   `json:"updated_at"`
-	Hostnames     []TenantHostnameResponse `json:"hostnames"`
+	ID                      string                   `json:"id"`
+	AccountID               string                   `json:"account_id"`
+	AppID                   string                   `json:"app_id"`
+	Name                    string                   `json:"name"`
+	CertKind                string                   `json:"cert_kind"`
+	Status                  string                   `json:"status"`
+	CertState               string                   `json:"cert_state"`
+	CertNotAfter            string                   `json:"cert_not_after,omitempty"`
+	CertLastError           string                   `json:"cert_last_error,omitempty"`
+	CreatedAt               string                   `json:"created_at"`
+	UpdatedAt               string                   `json:"updated_at"`
+	Hostnames               []TenantHostnameResponse `json:"hostnames"`
+	ManagedByPlatformTenant bool                     `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // TenantHostnameResponse is a hostname within a surface. Mirror
@@ -3622,12 +3624,13 @@ type TenantSurfaceResponse struct {
 // surfaces the column shape now so the API contract doesn't shift
 // when verification lands).
 type TenantHostnameResponse struct {
-	Hostname       string `json:"hostname"`
-	ChallengeToken string `json:"challenge_token,omitempty"`
-	Verified       bool   `json:"verified"`
-	VerifiedAt     string `json:"verified_at,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	TXTRecord      string `json:"txt_record,omitempty"` // convenience
+	Hostname                string `json:"hostname"`
+	ChallengeToken          string `json:"challenge_token,omitempty"`
+	Verified                bool   `json:"verified"`
+	VerifiedAt              string `json:"verified_at,omitempty"`
+	LastError               string `json:"last_error,omitempty"`
+	TXTRecord               string `json:"txt_record,omitempty"` // convenience
+	ManagedByPlatformTenant bool   `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // CreateTenantSurfaceRequest creates a tenant surface (one app, one

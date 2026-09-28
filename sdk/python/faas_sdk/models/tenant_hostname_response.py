@@ -14,7 +14,10 @@ T = TypeVar("T", bound="TenantHostnameResponse")
 
 @_attrs_define
 class TenantHostnameResponse:
-    """A hostname attached to a tenant surface (DNS-01 verified)."""
+    """A hostname attached to a tenant surface (DNS-01 verified). managed_by_platform_tenant is true only when created by a
+    platform-tenant bundle apply.
+
+    """
 
     hostname: str
     verified: bool
@@ -23,6 +26,8 @@ class TenantHostnameResponse:
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
     last_error: None | str | Unset = UNSET
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only when a platform-tenant bundle created this hostname; omitted otherwise."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +57,8 @@ class TenantHostnameResponse:
         else:
             last_error = self.last_error
 
+        managed_by_platform_tenant = self.managed_by_platform_tenant
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +74,8 @@ class TenantHostnameResponse:
             field_dict["verified_at"] = verified_at
         if last_error is not UNSET:
             field_dict["last_error"] = last_error
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
 
         return field_dict
 
@@ -114,6 +123,8 @@ class TenantHostnameResponse:
 
         last_error = _parse_last_error(d.pop("last_error", UNSET))
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         tenant_hostname_response = cls(
             hostname=hostname,
             verified=verified,
@@ -121,6 +132,7 @@ class TenantHostnameResponse:
             challenge_token=challenge_token,
             verified_at=verified_at,
             last_error=last_error,
+            managed_by_platform_tenant=managed_by_platform_tenant,
         )
 
         tenant_hostname_response.additional_properties = d

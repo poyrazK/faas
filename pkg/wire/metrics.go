@@ -2335,7 +2335,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeSnapshotTier.WithLabelValues("cold_boot_fallback")
 	wakeColdReason := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_cold_reason_total",
-		Help: "Count of wakes that cold-booted instead of restoring a snapshot, labelled by reason (the pkg/sched ColdReason closed set: no_snapshot, snapshots_stale, snapshot_lookup_failed, fc_version_mismatch, snapshot_without_drive, ram_mismatch, base_image_mismatch, snapshot_stale, instance_mode; unknown for anything else). Sums to the cold_boot_fallback row of _wake_snapshot_tier_total minus snapshot-miss backoff gates.",
+		Help: "Count of wakes that cold-booted instead of restoring a snapshot, labelled by reason (the pkg/sched ColdReason closed set: no_snapshot, snapshots_stale, snapshot_lookup_failed, fc_version_mismatch, snapshot_without_drive, ram_mismatch, base_image_mismatch, snapshot_stale, instance_mode, ephemeral_secret, secret_policy_unavailable; unknown for anything else). Sums to the cold_boot_fallback row of _wake_snapshot_tier_total minus snapshot-miss backoff gates.",
 	}, []string{"reason"})
 	for _, reason := range append(append([]string(nil), WakeColdReasons...), "unknown") {
 		wakeColdReason.WithLabelValues(reason)
@@ -6010,6 +6010,7 @@ var WakeColdReasons = []string{
 	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
 	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
 	"base_image_mismatch", "snapshot_stale", "instance_mode",
+	"ephemeral_secret", "secret_policy_unavailable",
 }
 
 // WakeColdReason returns the counter for one cold-boot reason. Values outside

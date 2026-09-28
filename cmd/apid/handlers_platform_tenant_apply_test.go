@@ -24,7 +24,8 @@ func TestPlatformTenantApplyDryRunReplayAndAtomicConflict(t *testing.T) {
 	req.DryRun = true
 	preview := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
 	if preview.Action != "create" || preview.TenantID != "" || len(preview.Consumers) != 2 ||
-		preview.Consumers[0].Action != "create" || preview.Surfaces[0].Action != "link" || !preview.DryRun {
+		preview.Consumers[0].Action != "create" || preview.Consumers[0].ManagedByPlatformTenant ||
+		preview.Surfaces[0].Action != "link" || preview.Surfaces[0].ManagedByPlatformTenant || !preview.DryRun {
 		t.Fatalf("preview = %+v", preview)
 	}
 	page, err := e.store.ListPlatformTenants(context.Background(), e.acct.ID, 100, 0)
@@ -33,14 +34,24 @@ func TestPlatformTenantApplyDryRunReplayAndAtomicConflict(t *testing.T) {
 	}
 	req.DryRun = false
 	applied := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
-	if applied.Action != "create" || applied.TenantID == "" || applied.Consumers[0].ID == "" || applied.Consumers[1].ID == "" {
+	if applied.Action != "create" || applied.TenantID == "" || applied.Consumers[0].ID == "" || applied.Consumers[1].ID == "" ||
+		!applied.Consumers[0].ManagedByPlatformTenant || !applied.Consumers[1].ManagedByPlatformTenant ||
+		applied.Surfaces[0].ManagedByPlatformTenant {
 		t.Fatalf("apply = %+v", applied)
 	}
 	replay := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
 	if replay.Action != "unchanged" || replay.TenantID != applied.TenantID ||
 		replay.Consumers[0].Action != "unchanged" || replay.Consumers[0].ID != applied.Consumers[0].ID ||
-		replay.Surfaces[0].Action != "unchanged" {
+		replay.Consumers[0].ManagedByPlatformTenant != applied.Consumers[0].ManagedByPlatformTenant ||
+		replay.Surfaces[0].Action != "unchanged" || replay.Surfaces[0].ManagedByPlatformTenant {
 		t.Fatalf("replay = %+v", replay)
+	}
+	var detail api.PlatformTenantDetailResponse
+	detailResp := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+applied.TenantID, nil, nil)
+	if detailResp.Code != http.StatusOK || json.Unmarshal(detailResp.Body.Bytes(), &detail) != nil ||
+		len(detail.Consumers) != 2 || !detail.Consumers[0].ManagedByPlatformTenant ||
+		len(detail.Surfaces) != 1 || detail.Surfaces[0].ManagedByPlatformTenant {
+		t.Fatalf("tenant managed inventory = %d %s %+v", detailResp.Code, detailResp.Body.String(), detail)
 	}
 	linked, err := e.store.GetAPIConsumerByID(context.Background(), e.acct.ID, applied.Consumers[0].ID)
 	if err != nil || linked.PlatformTenantID != applied.TenantID {
@@ -152,6 +163,9 @@ func TestPlatformTenantApplyLinksExistingConsumerWithoutResumingTenant(t *testin
 	if err != nil || loaded.PlatformTenantID != tenant.ID {
 		t.Fatalf("linked existing consumer = %+v, %v", loaded, err)
 	}
+	if loaded.PlatformTenantManaged || result.Consumers[0].ManagedByPlatformTenant {
+		t.Fatalf("linking an existing consumer adopted it: state=%+v response=%+v", loaded, result.Consumers[0])
+	}
 }
 
 func readApplyResponse(t *testing.T, resp interface{ Result() *http.Response }) api.ApplyPlatformTenantResponse {
@@ -180,7 +194,8 @@ func TestPlatformTenantApplyCreatesHostnameIntentAndReportsActivation(t *testing
 	req.DryRun = true
 	preview := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
 	if len(preview.Surfaces) != 1 || preview.Surfaces[0].Action != "create" || preview.Surfaces[0].ID != "" ||
-		len(preview.Surfaces[0].Hostnames) != 1 || preview.Surfaces[0].Hostnames[0].ChallengeToken != "" {
+		preview.Surfaces[0].ManagedByPlatformTenant || len(preview.Surfaces[0].Hostnames) != 1 ||
+		preview.Surfaces[0].Hostnames[0].ChallengeToken != "" || preview.Surfaces[0].Hostnames[0].ManagedByPlatformTenant {
 		t.Fatalf("preview = %+v", preview)
 	}
 	if count, _ := e.store.CountTenantSurfacesForAccount(context.Background(), e.acct.ID); count != 0 {
@@ -190,14 +205,23 @@ func TestPlatformTenantApplyCreatesHostnameIntentAndReportsActivation(t *testing
 	applied := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
 	surface := applied.Surfaces[0]
 	if surface.ID == "" || surface.Action != "create" || surface.Hostnames[0].Hostname != "www.customer.example" ||
-		surface.Hostnames[0].ChallengeToken == "" || surface.Hostnames[0].TXTRecord != "_faas-verify.www.customer.example" {
+		surface.Hostnames[0].ChallengeToken == "" || surface.Hostnames[0].TXTRecord != "_faas-verify.www.customer.example" ||
+		!surface.ManagedByPlatformTenant || !surface.Hostnames[0].ManagedByPlatformTenant {
 		t.Fatalf("apply = %+v", applied)
 	}
 	replay := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", req, nil))
 	if replay.TenantID != applied.TenantID || replay.Surfaces[0].ID != surface.ID ||
 		replay.Surfaces[0].Action != "unchanged" || replay.Surfaces[0].Hostnames[0].Action != "unchanged" ||
-		replay.Surfaces[0].Hostnames[0].ChallengeToken != surface.Hostnames[0].ChallengeToken {
+		replay.Surfaces[0].Hostnames[0].ChallengeToken != surface.Hostnames[0].ChallengeToken ||
+		!replay.Surfaces[0].ManagedByPlatformTenant || !replay.Surfaces[0].Hostnames[0].ManagedByPlatformTenant {
 		t.Fatalf("replay = %+v", replay)
+	}
+	inventoryResp := e.do(t, http.MethodGet, "/v1/apps/apply-domains/tenant-surfaces", nil, nil)
+	var inventory api.ListTenantSurfacesResponse
+	if inventoryResp.Code != http.StatusOK || json.Unmarshal(inventoryResp.Body.Bytes(), &inventory) != nil ||
+		len(inventory.Surfaces) != 1 || !inventory.Surfaces[0].ManagedByPlatformTenant ||
+		len(inventory.Surfaces[0].Hostnames) != 1 || !inventory.Surfaces[0].Hostnames[0].ManagedByPlatformTenant {
+		t.Fatalf("managed tenant surface inventory = %d %s %+v", inventoryResp.Code, inventoryResp.Body.String(), inventory)
 	}
 	activationURL := "/v1/account/platform-tenants/" + applied.TenantID + "/activation"
 	getActivation := func() api.PlatformTenantActivationResponse {

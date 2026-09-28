@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1115,7 +1116,10 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	requestRPS, requestBurst := 7, 31
 	app.RequestRateLimitRPS = &requestRPS
 	app.RequestRateLimitBurst = &requestBurst
-	app.Manifest.PreAuthRateLimit = &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 3, Burst: 6}
+	app.Manifest.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 3, Burst: 6,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2}},
+	}
 	r := pgRouter{store: store}
 	got, ok, err := r.toApp(context.Background(), app)
 	if err != nil || !ok {
@@ -1130,7 +1134,7 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	if got.RequestRateLimitRPS != requestRPS || got.RequestRateLimitBurst != requestBurst {
 		t.Fatalf("request rate policy = %d/%d, want %d/%d", got.RequestRateLimitRPS, got.RequestRateLimitBurst, requestRPS, requestBurst)
 	}
-	if got.PreAuthRateLimit == nil || *got.PreAuthRateLimit != *app.Manifest.PreAuthRateLimit {
+	if !reflect.DeepEqual(got.PreAuthRateLimit, app.Manifest.PreAuthRateLimit) {
 		t.Fatalf("pre-auth rate policy = %+v, want %+v", got.PreAuthRateLimit, app.Manifest.PreAuthRateLimit)
 	}
 	if got.Type != gateway.AppTypeApp {

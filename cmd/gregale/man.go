@@ -271,15 +271,19 @@ func writeManCommandArguments(w io.Writer, c cliCommand) {
 func manSynopsisFlag(w io.Writer, f cliFlag) {
 	name := `\-\-` + f.Name
 	value := f.Value
+	repeat := ""
+	if f.Repeatable {
+		repeat = " ..."
+	}
 	if value == "" && f.Req {
 		value = "value"
 	}
 	if value != "" {
 		if f.Req {
-			_, _ = fmt.Fprintf(w, ".RI %s \\~%s\n", name, value)
+			_, _ = fmt.Fprintf(w, ".RI %s \\~%s%s\n", name, value, repeat)
 			return
 		}
-		_, _ = fmt.Fprintf(w, ".RI [ %s \\~%s ]\n", name, value)
+		_, _ = fmt.Fprintf(w, ".RI [ %s \\~%s ]%s\n", name, value, repeat)
 		return
 	}
 	if f.Req {

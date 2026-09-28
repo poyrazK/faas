@@ -218,6 +218,9 @@ type cliFlag struct {
 	// "slug" or "PATH"). Empty means the flag is boolean unless Req or
 	// ClosedSet says otherwise.
 	Value string
+	// Repeatable marks flags that may be supplied multiple times; synopsis
+	// renderers append an ellipsis to make that contract visible.
+	Repeatable bool
 	// ClosedSet enumerates the allowed literal values, when the
 	// flag is a closed enum (plan, metric, comparison, window-spec,
 	// etc.). When non-empty, completion offers these as the flag's
@@ -312,9 +315,18 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List bindings, verify connectivity, or smoke-test a pinned private service deployment",
+		Short:       "Inspect app bindings, manage storage credentials, or verify private services",
 		Positionals: []string{"<app>"},
 		Subcommands: []cliSub{
+			{
+				Name:  "object-storage",
+				Short: "Manage app-to-bucket compute bindings",
+				Subcommands: []cliSub{
+					{Name: "list", Short: "List safe binding metadata", Positionals: []string{"<app>", "<bucket>"}, Examples: []string{"gregale bindings object-storage list my-api assets"}},
+					{Name: "rotate", Short: "Rotate a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage rotate my-api assets BINDING_ID"}},
+					{Name: "revoke", Short: "Revoke a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage revoke my-api assets BINDING_ID"}},
+				},
+			},
 			{
 				Name:        "verify",
 				Short:       "Check DNS, TLS, authorization, and live routing for one or all bound services",
@@ -514,6 +526,8 @@ var cliCommands = []cliCommand{
 			{Name: "ip-allowlist", Short: "repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist", Value: "CIDR"},
 			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
 			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
+			{Name: "public-auth", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
+			{Name: "ip-allowlist", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
@@ -1057,10 +1071,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
-			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
+			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status; exits nonzero while pending"},
 			{Name: subDomainsShow, Short: "Show a domain's cert details"},
 			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
-			{Name: subDomainsDoctor, Short: "5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)"},
+			{Name: subDomainsDoctor, Short: "5-check readiness report; exits nonzero when unhealthy, including in JSON mode"},
 		},
 	},
 	{
@@ -1855,14 +1869,16 @@ var cliCommands = []cliCommand{
 		DocSlug: "secrets",
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__"}, Flags: []cliFlag{
+			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__", "gregale secrets list --app my-api --class ephemeral"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"},
+				{Name: "class", Short: "filter by snapshot-retention class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 			}},
-			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart"}, Positionals: []string{"[<KEY=VALUE>...]"}, Flags: []cliFlag{
+			{Name: "set", Short: "Set a sealed secret; ephemeral values disable VM snapshots for the scope", Examples: []string{"gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart", "gregale secrets set --app my-api SESSION_TOKEN=\"$SESSION_TOKEN\" --class ephemeral"}, Positionals: []string{"[<KEY=VALUE>...]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "class", Short: "retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "restart", Short: "restart the app and apply updated secrets now"},
 			}},
 			{Name: "unset", Short: "Remove a sealed secret", Examples: []string{"gregale secrets unset --app my-api OLD_API_KEY", "gregale secrets unset --app my-api OLD_API_KEY --scope staging", "gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack"}, Positionals: []string{"<KEY>"}, Flags: []cliFlag{
@@ -1871,7 +1887,11 @@ var cliCommands = []cliCommand{
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
 				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements", Value: "DURATION"},
 			}},
-			{Name: "list-all", Short: "List every secret across apps"},
+			{Name: "list-all", Short: "List every secret across apps", Examples: []string{"gregale secrets list-all --class ephemeral"}, Flags: []cliFlag{
+				{Name: "before", Short: "pagination cursor from a previous call's next_before", Value: "slug|key"},
+				{Name: "limit", Short: "page size (1..200; server caps at 200)", Value: "N"},
+				{Name: "class", Short: "filter this page by snapshot-retention class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
+			}},
 			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "from-stdin", Short: "read one KEY=VALUE pair from stdin"},

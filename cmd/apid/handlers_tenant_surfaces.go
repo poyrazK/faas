@@ -438,18 +438,19 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 // the dataset at TenantHostnamesPerSurface (250 today).
 func surfaceResponseWithHostnames(surf state.TenantSurface, hostnames []state.TenantHostname) api.TenantSurfaceResponse {
 	out := api.TenantSurfaceResponse{
-		ID:            surf.ID,
-		AccountID:     surf.AccountID,
-		AppID:         surf.AppID,
-		Name:          surf.Name,
-		CertKind:      string(surf.CertKind),
-		Status:        string(surf.Status),
-		CertState:     string(surf.CertState),
-		CertNotAfter:  surf.CertNotAfter.UTC().Format("2006-01-02T15:04:05Z"),
-		CertLastError: surf.CertLastError,
-		CreatedAt:     surf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:     surf.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		Hostnames:     make([]api.TenantHostnameResponse, 0, len(hostnames)),
+		ID:                      surf.ID,
+		AccountID:               surf.AccountID,
+		AppID:                   surf.AppID,
+		Name:                    surf.Name,
+		CertKind:                string(surf.CertKind),
+		Status:                  string(surf.Status),
+		CertState:               string(surf.CertState),
+		CertNotAfter:            surf.CertNotAfter.UTC().Format("2006-01-02T15:04:05Z"),
+		CertLastError:           surf.CertLastError,
+		CreatedAt:               surf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:               surf.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		Hostnames:               make([]api.TenantHostnameResponse, 0, len(hostnames)),
+		ManagedByPlatformTenant: surf.PlatformTenantManaged,
 	}
 	for _, h := range hostnames {
 		out.Hostnames = append(out.Hostnames, hostnameResponse(h))
@@ -467,12 +468,13 @@ func hostnameResponse(h state.TenantHostname) api.TenantHostnameResponse {
 		verifiedAt = h.VerifiedAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
 	return api.TenantHostnameResponse{
-		Hostname:       h.Hostname,
-		ChallengeToken: h.ChallengeToken,
-		Verified:       h.Verified(),
-		VerifiedAt:     verifiedAt,
-		LastError:      h.LastError,
-		TXTRecord:      "_faas-verify." + h.Hostname,
+		Hostname:                h.Hostname,
+		ChallengeToken:          h.ChallengeToken,
+		Verified:                h.Verified(),
+		VerifiedAt:              verifiedAt,
+		LastError:               h.LastError,
+		TXTRecord:               "_faas-verify." + h.Hostname,
+		ManagedByPlatformTenant: h.PlatformTenantManaged,
 	}
 }
 

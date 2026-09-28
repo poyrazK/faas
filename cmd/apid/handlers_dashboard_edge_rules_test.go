@@ -48,6 +48,49 @@ func TestDashboardHandler_AppEdgeRules(t *testing.T) {
 	}
 }
 
+func TestDashboardEdgeRuleTraceShowsThrottlePolicy(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-throttle-trace", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/api/*", Priority: 10, Enabled: true,
+		Kind: state.EdgeRuleKindThrottle,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindThrottle, Throttle: &state.EdgeRuleThrottleAction{
+			RequestsPerSecond: 2.5, Burst: 8, KeyBy: api.ThrottleKeyByJWTClaim, JWTClaimName: "org_id",
+			MaxKeysPerRule: 250, MissingKeyPolicy: api.ThrottleMissingKeyReject,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-throttle-trace/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/api/orders", "trace_method": "POST",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"Simulation: incomplete · needs_throttle_runtime_context", "Route throttle:", "2.5 requests/s, burst 8",
+		"key by <code>jwt_claim</code> claim <code>org_id</code>", "missing key reject", "max keys 250 (rule)",
+		"plan ceiling", "within_plan", "admission and HTTP 429 are not predicted",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
 	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")

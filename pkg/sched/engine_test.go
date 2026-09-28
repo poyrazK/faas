@@ -2753,6 +2753,45 @@ func TestEngineParkAppSnapshotsRunningInstance(t *testing.T) {
 	}
 }
 
+func TestEngineParkEphemeralSecretDestroysWithoutInitOrWarmSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	enableWarmSnapshot(t, store, app.ID)
+	if err := store.UpsertAppSecretWithClassInScope(ctx, acct.ID, app.ID, api.DefaultEnvScope,
+		"SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
+		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
+	}
+	vmm := &fakeVMM{}
+	notifier := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notifier, "1.10.0")
+
+	wake, err := e.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := store.SetInstanceFrameworkReadyAt(ctx, wake.InstanceID, time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetInstanceFrameworkReadyAt: %v", err)
+	}
+	if err := e.Park(ctx, wake.InstanceID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	if vmm.snapshots != 0 || vmm.warmSnapshots != 0 || vmm.destroys != 1 {
+		t.Fatalf("ephemeral park calls: init=%d warm=%d destroy=%d; want 0/0/1",
+			vmm.snapshots, vmm.warmSnapshots, vmm.destroys)
+	}
+	instance, err := store.InstanceByID(ctx, wake.InstanceID)
+	if err != nil || instance.State != string(state.StateStopped) {
+		t.Fatalf("ephemeral parked instance = %+v, %v; want stopped", instance, err)
+	}
+	if _, err := store.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ephemeral park published a snapshot: %v", err)
+	}
+	if notifier.count(db.NotifySnapshotWritten) != 0 {
+		t.Fatalf("snapshot_written notifications = %d, want 0", notifier.count(db.NotifySnapshotWritten))
+	}
+}
+
 func TestEngineParkAppDrainsSuspendedAccountWithoutChangingAppLifecycle(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)

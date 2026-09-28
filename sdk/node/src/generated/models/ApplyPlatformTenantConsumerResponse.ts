@@ -15,5 +15,9 @@ export type ApplyPlatformTenantConsumerResponse = {
   name: string;
   status: 'active';
   action: 'create' | 'link' | 'unchanged';
+  /**
+   * True only after the tenant bundle created this consumer; omitted for unmanaged resources and dry-run creates. Linking an existing consumer does not adopt it.
+   */
+  managed_by_platform_tenant?: boolean;
 };
 

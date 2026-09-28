@@ -541,3 +541,44 @@ func TestLimits_M2DefaultsPerPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestPreAuthRouteLimitValidation(t *testing.T) {
+	base := PreAuthRateLimitConfig{
+		Mode: PreAuthRateLimitEnforce, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4}},
+	}
+	if err := base.Validate(PlanFree); err != nil {
+		t.Fatalf("valid route limit: %v", err)
+	}
+	cases := []struct {
+		name  string
+		route PreAuthRouteLimit
+	}{
+		{"relative_path", PreAuthRouteLimit{"POST", "login", 2, 4}},
+		{"dot_segment", PreAuthRouteLimit{"POST", "/a/../login", 2, 4}},
+		{"encoded_path", PreAuthRouteLimit{"POST", "/%6cogin", 2, 4}},
+		{"query", PreAuthRouteLimit{"POST", "/login?next=x", 2, 4}},
+		{"unsupported_method", PreAuthRouteLimit{"TRACE", "/login", 2, 4}},
+		{"rate_above_base", PreAuthRouteLimit{"POST", "/login", 6, 4}},
+		{"burst_above_base", PreAuthRouteLimit{"POST", "/login", 2, 21}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := base
+			config.Routes = []PreAuthRouteLimit{tc.route}
+			if err := config.Validate(PlanFree); err == nil {
+				t.Fatal("invalid route limit accepted")
+			}
+		})
+	}
+	duplicate := base
+	duplicate.Routes = append(append([]PreAuthRouteLimit{}, base.Routes...), base.Routes[0])
+	if err := duplicate.Validate(PlanFree); err == nil {
+		t.Fatal("duplicate method/path accepted")
+	}
+	off := duplicate
+	off.Mode = PreAuthRateLimitOff
+	if err := off.Validate(PlanFree); err != nil {
+		t.Fatalf("turning off a policy with saved overrides: %v", err)
+	}
+}

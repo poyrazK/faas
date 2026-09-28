@@ -14,6 +14,7 @@
 //
 //	TestDomainDoctor_AllOK           — every probe stubbed ok
 //	TestDomainDoctor_CNAMEMismatch   — points_to_gregale fail + remediation
+//	TestDomainDoctor_CNAMEMismatchJSON — unhealthy JSON retains exit 1
 //	TestDomainDoctor_StaleObservations — old row, stale:true in response
 //
 // Each test inserts a custom_domains + domain_doctor_observations row,
@@ -178,6 +179,47 @@ func TestDomainDoctor_CNAMEMismatch(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Set CNAME") {
 		t.Errorf("stdout missing remediation line:\n%s", stdout)
+	}
+}
+
+// TestDomainDoctor_CNAMEMismatchJSON pins the same unhealthy DNS
+// result through the CLI's machine-readable output path. Scripts must
+// receive both the full report and a failing process status.
+func TestDomainDoctor_CNAMEMismatchJSON(t *testing.T) {
+	report := `{
+		"dns_record_found": true,
+		"points_to_gregale": false,
+		"caa_permits": true,
+		"ipv6_conflict": false,
+		"cert_state": "pending",
+		"observed_target": "wrong.example.com.",
+		"last_error": "Set CNAME api.example.com → apps.gregale.dev"
+	}`
+	fx := newDomainDoctorFixture(t, report)
+	bin := buildGregale(t)
+	stdout, stderr, exit := runGregale(t, bin, []string{"--json", "domains", "doctor", fx.domain})
+	if exit != 1 {
+		t.Fatalf("exit = %d, want 1 (unhealthy). stdout=%s stderr=%s", exit, stdout, stderr)
+	}
+	var got struct {
+		Healthy bool `json:"healthy"`
+		Checks  []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout)
+	}
+	pointsToGregaleFailed := false
+	for _, check := range got.Checks {
+		if check.Name == "points_to_gregale" && check.Status == "fail" {
+			pointsToGregaleFailed = true
+			break
+		}
+	}
+	if got.Healthy || !pointsToGregaleFailed {
+		t.Fatalf("JSON report = %+v, want an unhealthy CNAME check", got)
 	}
 }
 

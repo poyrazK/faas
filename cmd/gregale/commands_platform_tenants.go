@@ -116,12 +116,14 @@ func cmdPlatformTenants(args []string) int {
 			return printErr("Output failed", err)
 		}
 		for _, item := range row.Consumers {
-			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\t%s\n", item.Action, item.AppID, item.ID); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\t%s\tmanaged_by_platform_tenant=%t\n",
+				item.Action, item.AppID, item.ID, item.ManagedByPlatformTenant); err != nil {
 				return printErr("Output failed", err)
 			}
 		}
 		for _, item := range row.Surfaces {
-			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\t%s\t%s\n", item.Action, item.ID, item.Status, item.CertState); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\t%s\t%s\tmanaged_by_platform_tenant=%t\n",
+				item.Action, item.ID, item.Status, item.CertState, item.ManagedByPlatformTenant); err != nil {
 				return printErr("Output failed", err)
 			}
 		}
@@ -141,12 +143,14 @@ func cmdPlatformTenants(args []string) int {
 			return printErr("Output failed", err)
 		}
 		for _, consumer := range row.Consumers {
-			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\n", consumer.AppID, consumer.ID); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\tmanaged_by_platform_tenant=%t\n",
+				consumer.AppID, consumer.ID, consumer.ManagedByPlatformTenant); err != nil {
 				return printErr("Output failed", err)
 			}
 		}
 		for _, surface := range row.Surfaces {
-			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\n", surface.AppID, surface.ID); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\tmanaged_by_platform_tenant=%t\n",
+				surface.AppID, surface.ID, surface.ManagedByPlatformTenant); err != nil {
 				return printErr("Output failed", err)
 			}
 		}

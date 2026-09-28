@@ -228,15 +228,26 @@ func TestTenantSurfaces_ScaleEnabledListAndAdd(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &surface); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
+	if surface.ManagedByPlatformTenant {
+		t.Fatal("self-service surface creation must not mark the surface managed by a platform tenant")
+	}
 
 	list := e.do(t, "GET", "/v1/apps/scale-enabled-app/tenant-surfaces", nil, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("list status = %d, want 200; body=%s", list.Code, list.Body.String())
 	}
+	var listed api.ListTenantSurfacesResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil || len(listed.Surfaces) != 1 || listed.Surfaces[0].ManagedByPlatformTenant {
+		t.Fatalf("self-service surface inventory = %s %+v, %v", list.Body.String(), listed, err)
+	}
 	add := e.do(t, "POST", "/v1/apps/scale-enabled-app/tenant-surfaces/"+surface.ID+"/hostnames",
 		api.AddTenantHostnameRequest{Hostname: "tenant.example.com"}, nil)
 	if add.Code != http.StatusAccepted {
 		t.Fatalf("add status = %d, want 202; body=%s", add.Code, add.Body.String())
+	}
+	var hostname api.TenantHostnameResponse
+	if err := json.Unmarshal(add.Body.Bytes(), &hostname); err != nil || hostname.ManagedByPlatformTenant {
+		t.Fatalf("self-service hostname response = %s %+v, %v", add.Body.String(), hostname, err)
 	}
 }
 

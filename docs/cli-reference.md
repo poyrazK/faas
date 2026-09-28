@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | List bindings, verify connectivity, or smoke-test a pinned private service deployment |
+| [`bindings`](#bindings) | Inspect app bindings, manage storage credentials, or verify private services |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -171,9 +171,49 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-List bindings, verify connectivity, or smoke-test a pinned private service deployment
+Inspect app bindings, manage storage credentials, or verify private services
 
 `gregale bindings [<subcommand>] <app>`
+
+### bindings object-storage
+
+Manage app-to-bucket compute bindings
+
+#### bindings object-storage list
+
+List safe binding metadata
+
+`gregale bindings object-storage list <app> <bucket>`
+
+Examples:
+
+```sh
+gregale bindings object-storage list my-api assets
+```
+
+#### bindings object-storage rotate
+
+Rotate a binding credential
+
+`gregale bindings object-storage rotate <app> <bucket> <binding-id>`
+
+Examples:
+
+```sh
+gregale bindings object-storage rotate my-api assets BINDING_ID
+```
+
+#### bindings object-storage revoke
+
+Revoke a binding credential
+
+`gregale bindings object-storage revoke <app> <bucket> <binding-id>`
+
+Examples:
+
+```sh
+gregale bindings object-storage revoke my-api assets BINDING_ID
+```
 
 ### bindings verify
 
@@ -408,7 +448,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -430,6 +470,8 @@ Get/update one app or run a deployment-attached command
 | `--ip-allowlist <CIDR>` | repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist |  |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
+| `--public-auth <open|bearer|basic|ip_allowlist|internal_only>` | set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+ | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
+| `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
 
 ### app scale
 
@@ -1132,7 +1174,7 @@ Manage stable named URLs for immutable deployments
 
 List deployment aliases for an app
 
-`gregale deployments alias list [flags]`
+`gregale deployments alias list [--app <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1142,7 +1184,7 @@ List deployment aliases for an app
 
 Point an alias at an exact deployment revision
 
-`gregale deployments alias set [flags]`
+`gregale deployments alias set [--app <SLUG>] --name <NAME> --deployment <ID|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1154,7 +1196,7 @@ Point an alias at an exact deployment revision
 
 Remove an alias without deleting its deployment
 
-`gregale deployments alias delete [flags]`
+`gregale deployments alias delete [--app <SLUG>] --name <NAME>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1407,7 +1449,7 @@ Set a verified domain as the app default
 
 ### domains verify
 
-Re-verify DNS + cert for a domain
+Check DNS and certificate verification status; exits nonzero while pending
 
 ### domains show
 
@@ -1419,7 +1461,7 @@ Show durable TLS status for all domains
 
 ### domains doctor
 
-5-check doctor report (DNS / CNAME / TLS / CAA / IPv6)
+5-check readiness report; exits nonzero when unhealthy, including in JSON mode
 
 
 ## dev
@@ -2597,37 +2639,37 @@ Manage project environments (list|create|protect|unprotect|inspect|release-sets|
 
 List environments
 
-`gregale projects environments list [flags]`
+`gregale projects environments list`
 
 #### projects environments create
 
 Create or clone an environment
 
-`gregale projects environments create [flags]`
+`gregale projects environments create`
 
 #### projects environments protect
 
 Protect an environment
 
-`gregale projects environments protect [flags]`
+`gregale projects environments protect`
 
 #### projects environments unprotect
 
 Remove environment protection
 
-`gregale projects environments unprotect [flags]`
+`gregale projects environments unprotect`
 
 #### projects environments inspect
 
 Inspect the active graph and environment deployments
 
-`gregale projects environments inspect [flags]`
+`gregale projects environments inspect`
 
 #### projects environments release-sets
 
 List release graphs and their retention deadlines
 
-`gregale projects environments release-sets [flags]`
+`gregale projects environments release-sets [--before <CURSOR>] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2638,43 +2680,43 @@ List release graphs and their retention deadlines
 
 List live workload deployments
 
-`gregale projects environments releases [flags]`
+`gregale projects environments releases`
 
 #### projects environments history
 
 List environment promotions
 
-`gregale projects environments history [flags]`
+`gregale projects environments history`
 
 #### projects environments config
 
 Manage environment configuration
 
-`gregale projects environments config [flags]`
+`gregale projects environments config`
 
 #### projects environments routes
 
 Manage environment routes
 
-`gregale projects environments routes [flags]`
+`gregale projects environments routes`
 
 #### projects environments policies
 
 Manage environment policies
 
-`gregale projects environments policies [flags]`
+`gregale projects environments policies`
 
 #### projects environments diff
 
 Compare environments
 
-`gregale projects environments diff [flags]`
+`gregale projects environments diff`
 
 #### projects environments preview
 
 Plan a promotion
 
-`gregale projects environments preview [flags]`
+`gregale projects environments preview --from <ENV> --to <ENV> [--sync-config]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2686,7 +2728,7 @@ Plan a promotion
 
 Promote workloads
 
-`gregale projects environments promote [flags]`
+`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2703,13 +2745,13 @@ Promote workloads
 
 Inspect a promotion
 
-`gregale projects environments status [flags]`
+`gregale projects environments status`
 
 #### projects environments rollback
 
 Roll back a promotion
 
-`gregale projects environments rollback [flags]`
+`gregale projects environments rollback`
 
 ### projects update
 
@@ -2766,25 +2808,28 @@ List sealed secrets
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
+| `--class <CLASS>` | filter by snapshot-retention class | one of `persistent` · `ephemeral` |
 
 Examples:
 
 ```sh
 gregale secrets list --app my-api
 gregale secrets list --app my-api --scope __all__
+gregale secrets list --app my-api --class ephemeral
 ```
 
 ### secrets set
 
-Set a sealed secret
+Set a sealed secret; ephemeral values disable VM snapshots for the scope
 
-`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart]`
+`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--class <CLASS>] [--restart]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
+| `--class <CLASS>` | retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class | one of `persistent` · `ephemeral` |
 | `--restart` | restart the app and apply updated secrets now |  |
 
 Examples:
@@ -2793,6 +2838,7 @@ Examples:
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
 printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemeral
 ```
 
 ### secrets unset
@@ -2819,6 +2865,18 @@ gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack
 ### secrets list-all
 
 List every secret across apps
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <slug|key>` | pagination cursor from a previous call&#39;s next_before |  |
+| `--limit <N>` | page size (1..200; server caps at 200) |  |
+| `--class <CLASS>` | filter this page by snapshot-retention class | one of `persistent` · `ephemeral` |
+
+Examples:
+
+```sh
+gregale secrets list-all --class ephemeral
+```
 
 ### secrets rotate
 

@@ -1653,6 +1653,10 @@ type deploymentReadyPayload struct {
 	DeploymentID  string `json:"deployment_id"`
 	ExecutionMode string `json:"execution_mode"`
 	InstanceID    string `json:"instance_id,omitempty"`
+	// NoSnapshotReason is an explicit, closed reason for modes that normally
+	// activate from an init snapshot. Ephemeral secrets are the only request /
+	// service path allowed to activate without publishing VM state.
+	NoSnapshotReason string `json:"no_snapshot_reason,omitempty"`
 }
 
 // snapshotBootPayload is the JSON shape builderd emits on `snapshot_boot`
@@ -2969,11 +2973,63 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	return h.handleDeploymentActivation(ctx, p, nil)
 }
 
-// handleDeploymentReady activates worker/job deployments without inventing a
-// snapshot. Workers prove readiness with a matching RUNNING instance; jobs are
-// artifact-only at deploy time so user code runs exactly once per invocation.
+// handleDeploymentReady activates worker/job deployments and the explicitly
+// authorized ephemeral-secret path without inventing a snapshot. Workers prove
+// readiness with a matching RUNNING instance; jobs are artifact-only at deploy
+// time so user code runs exactly once per invocation.
 func (h *Handler) handleDeploymentReady(ctx context.Context, p deploymentReadyPayload) error {
 	return h.handleDeploymentActivation(ctx, snapshotWrittenPayload{}, &p)
+}
+
+func hasEphemeralSecretForDeployment(ctx context.Context, store state.Store, app state.App, dep state.Deployment) (bool, error) {
+	scope := dep.Scope
+	if scope == "" {
+		scope = api.DefaultEnvScope
+	}
+	secrets, err := store.ListAppSecretsInScope(ctx, app.AccountID, app.ID, scope)
+	if err != nil {
+		return false, err
+	}
+	for _, secret := range secrets {
+		if secret.SecretClass == state.SecretClassEphemeral {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapshotWrittenPayload, stored state.Snapshot, policyErr error) error {
+	// If this notification already inserted its candidate row, make that row
+	// unusable before removing its objects. For an older conflicting row, stale
+	// it and leave physical cleanup to the normal retention job.
+	rowSafe := stored.ID == ""
+	if stored.ID != "" {
+		if err := h.store.MarkSnapshotStale(ctx, stored.ID); err == nil {
+			rowSafe = true
+		} else {
+			h.log.Error("imaged: stale snapshot after ephemeral-policy race", "snapshot_id", stored.ID, "err", err)
+		}
+		if stored.StorageKey == candidate.StorageKey {
+			if _, err := h.store.DeleteSnapshotsByID(ctx, []string{stored.ID}); err == nil {
+				rowSafe = true
+			} else {
+				h.log.Error("imaged: delete ephemeral snapshot row", "snapshot_id", stored.ID, "err", err)
+			}
+		}
+	}
+	if state.IsSnapshotCaptureKey(candidate.StorageKey) {
+		h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: candidate.StorageKey})
+	}
+	if !rowSafe {
+		if policyErr != nil {
+			return fmt.Errorf("imaged: ephemeral-secret snapshot cleanup could not make row %s unusable: %w", stored.ID, policyErr)
+		}
+		return fmt.Errorf("imaged: ephemeral-secret snapshot cleanup could not make row %s unusable", stored.ID)
+	}
+	if policyErr != nil {
+		return fmt.Errorf("imaged: recheck snapshot retention policy: %w", policyErr)
+	}
+	return fmt.Errorf("imaged: refusing snapshot publication for deployment %s with ephemeral secrets", candidate.DeploymentID)
 }
 
 // handleDeploymentActivation is the common post-readiness deployment gate.
@@ -3021,6 +3077,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		switch mode {
 		case api.ExecutionModeWorker:
+			if ready.NoSnapshotReason != "" {
+				return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+			}
 			if ready.InstanceID == "" {
 				return errors.New("imaged: worker deployment_ready missing instance_id")
 			}
@@ -3036,18 +3095,54 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
 			}
 		case api.ExecutionModeJob:
+			if ready.NoSnapshotReason != "" {
+				return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
+			}
 			if ready.InstanceID != "" {
 				return errors.New("imaged: job deployment_ready must not carry instance_id")
 			}
 			if dep.Status == state.DeployLive {
 				return nil
 			}
+		case api.ExecutionModeRequest, api.ExecutionModeService:
+			if ready.NoSnapshotReason != "ephemeral_secret" {
+				return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+			}
+			if ready.InstanceID == "" {
+				return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
+			}
+			if dep.Status == state.DeployLive {
+				return nil
+			}
+			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+			if instanceErr != nil {
+				return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
+			}
+			wantMode := state.InstanceModeNormal
+			if mode == api.ExecutionModeService {
+				wantMode = state.InstanceModeService
+			}
+			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+				ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
+				return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+			}
 		default:
-			return fmt.Errorf("imaged: execution mode %q requires snapshot activation", mode)
+			return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 		}
 	}
 
 	if ready == nil {
+		// The scheduler checks this before capture, but secrets may be
+		// reclassified while vmmd is writing or publishing the artifact. Keep
+		// imaged's sole snapshot-row writer as the final fail-closed fence.
+		ephemeral, secretErr := hasEphemeralSecretForDeployment(ctx, h.store, app, dep)
+		if secretErr != nil {
+			return h.rejectEphemeralSnapshot(ctx, snapshot, state.Snapshot{}, secretErr)
+		}
+		if ephemeral {
+			return h.rejectEphemeralSnapshot(ctx, snapshot, state.Snapshot{}, nil)
+		}
+
 		// Firecracker restore requires the memory artifact to match the VM's
 		// configured RAM exactly. An app update can race a snapshot notification,
 		// so validate again at the sole snapshot-row writer rather than relying
@@ -3102,6 +3197,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					return fmt.Errorf("imaged: create snapshot after retiring %s: %w", retired, createErr)
 				}
 			}
+		}
+		// Close the reclassification race around CreateSnapshot. If an
+		// ephemeral class write landed after the precheck, its app-wide stale
+		// update may have run before this candidate row existed. Re-read after
+		// publication and retire either this row or a conflicting old row.
+		ephemeral, policyErr := hasEphemeralSecretForDeployment(ctx, h.store, app, dep)
+		if policyErr != nil || ephemeral {
+			return h.rejectEphemeralSnapshot(ctx, snapshot, stored, policyErr)
 		}
 		if stored.StorageKey != snapshot.StorageKey && state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 			// A second capture can finish before the first notification is read.

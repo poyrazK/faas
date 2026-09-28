@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -24,8 +25,9 @@ import (
 
 // cmdDomainsVerify is the `gregale domains verify <domain>` handler.
 // Calls apid's POST /v1/domains/{domain}/verify (idempotent) and
-// prints the result. On 422 the CLI prints the problem code
-// verbatim so the customer can grep their dashboard.
+// prints the result. A pending response remains visible but returns
+// exit 1 so scripts cannot treat an unverified domain as ready.
+// JSON mode emits the CustomDomainResponse, including `verified`.
 func cmdDomainsVerify(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "usage: gregale domains verify <domain>\n")
@@ -42,7 +44,19 @@ func cmdDomainsVerify(args []string) int {
 	if err != nil {
 		return printErr("Verify failed", err)
 	}
-	printDomainRow(d, true)
+	if jsonOutput {
+		if code := jsonOut(writeJSON(d)); code != 0 {
+			return code
+		}
+	} else {
+		printDomainRow(osStdout, d, true)
+		if !d.Verified {
+			PrintWarn(osStdout, "Domain is still pending verification; check DNS records and retry.")
+		}
+	}
+	if !d.Verified {
+		return 1
+	}
 	return 0
 }
 
@@ -70,7 +84,7 @@ func cmdDomainsShow(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(d))
 	}
-	printDomainRow(d, true)
+	printDomainRow(osStdout, d, true)
 	return 0
 }
 
@@ -118,7 +132,7 @@ func cmdDomainsStatus(args []string) int {
 
 // printDomainRow is the shared printer for both verify + show.
 // When verbose is true, it also prints the cert NotAfter + SANs.
-func printDomainRow(d api.CustomDomainResponse, verbose bool) {
+func printDomainRow(w io.Writer, d api.CustomDomainResponse, verbose bool) {
 	verified := statusPending
 	if d.Verified {
 		verified = statusVerified
@@ -127,13 +141,13 @@ func printDomainRow(d api.CustomDomainResponse, verbose bool) {
 	if d.Environment != "" {
 		target += " [" + d.Environment + "]"
 	}
-	fmt.Printf("%-40s %-12s %s\n", d.Domain, verified, target)
+	_, _ = fmt.Fprintf(w, "%-40s %-12s %s\n", d.Domain, verified, target)
 	if verbose && d.Verified {
 		if d.CertNotAfter != "" {
-			fmt.Printf("    cert_not_after: %s\n", d.CertNotAfter)
+			_, _ = fmt.Fprintf(w, "    cert_not_after: %s\n", d.CertNotAfter)
 		}
 		if len(d.CertSANs) > 0 {
-			fmt.Printf("    cert_sans:      %v\n", d.CertSANs)
+			_, _ = fmt.Fprintf(w, "    cert_sans:      %v\n", d.CertSANs)
 		}
 	}
 }

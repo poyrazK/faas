@@ -111,6 +111,10 @@ func cmdEdgeRulesTrace(args []string) int {
 	input.RequestBudgetMS = app.EffectiveLimits.RequestBudgetMS
 	input.RequestBudgetMaxMS = app.EffectiveLimits.RequestBudgetMaxMS
 	input.RequestTimeoutS = app.RequestTimeoutS
+	input.AppThrottleContextLoaded = app.EffectiveLimits.AppRequestRateRPS > 0 && app.EffectiveLimits.AppRequestBurst > 0
+	input.AppRequestRateRPS = app.EffectiveLimits.AppRequestRateRPS
+	input.AppRequestRateBurst = app.EffectiveLimits.AppRequestBurst
+	input.AccountRequestRateRPM = app.EffectiveLimits.AccountRequestRateRPM
 	input.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 	input.DeclaredRoutes = append([]api.DeclaredRoute(nil), app.DeclaredRoutes...)
 	var environmentWorkload *api.ProjectEnvironmentStateWorkloadResponse
@@ -162,6 +166,19 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	if edgeRuleTraceHasEnabledKind(rules, "throttle") {
+		// The app response carries effective app/account ceilings; the
+		// account profile supplies the plan needed to show the per-route
+		// throttle validation ceiling. If it is temporarily unavailable,
+		// keep the trace useful and mark that ceiling as unavailable.
+		if account, accountErr := client.Whoami(context.Background()); accountErr == nil {
+			if limits, ok := api.LimitsFor(api.Plan(account.Plan)); ok {
+				input.ThrottlePlanLimitsLoaded = limits.RateLimitRPS > 0 && limits.RateLimitBurst > 0
+				input.ThrottlePlanMaxRPS = limits.RateLimitRPS
+				input.ThrottlePlanMaxBurst = limits.RateLimitBurst
+			}
+		}
+	}
 	if environmentWorkload != nil {
 		rules, err = edgeruletrace.ApplyEnvironmentEdgePolicy(input, rules, environmentWorkload.Policies, environmentWorkload.Release.URL, environmentWorkload.Domains)
 		if err != nil {
@@ -184,6 +201,15 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	renderEdgeRuleTrace(result)
 	return 0
+}
+
+func edgeRuleTraceHasEnabledKind(rules []api.EdgeRuleResponse, kind string) bool {
+	for _, rule := range rules {
+		if rule.Enabled && rule.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func renderEdgeRuleTrace(result edgeruletrace.Result) {
@@ -222,6 +248,18 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 			policy := step.BudgetPolicy
 			_, _ = fmt.Fprintf(osStdout, "    request budget: %d ms effective (configured %d ms; plan ceiling %d ms; source %s; override %s)\n",
 				policy.BudgetMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.Source, policy.OverrideStatus)
+		}
+		if step.ThrottlePolicy != nil {
+			policy := step.ThrottlePolicy
+			_, _ = fmt.Fprintf(osStdout, "    route throttle: configured %.3g requests/s, burst %d (gateway effective %.3g requests/s, burst %d); key_by=%s; missing_key_policy=%s; max_keys_per_rule=%d (%s)\n",
+				policy.RequestsPerSecond, policy.Burst, policy.GatewayRateRPS, policy.GatewayBurst, policy.KeyBy, policy.MissingKeyPolicy, policy.MaxKeysPerRule, policy.MaxKeysSource)
+			if policy.PlanMaxRPS > 0 && policy.PlanMaxBurst > 0 {
+				_, _ = fmt.Fprintf(osStdout, "    route-throttle plan ceiling: %d requests/s, burst %d (%s)\n", policy.PlanMaxRPS, policy.PlanMaxBurst, policy.PlanCeilingStatus)
+			}
+			if policy.AppRequestRPS > 0 && policy.AppRequestBurst > 0 {
+				_, _ = fmt.Fprintf(osStdout, "    separate app-wide cap: %d requests/s, burst %d; account-wide cap: %d requests/min\n",
+					policy.AppRequestRPS, policy.AppRequestBurst, policy.AccountRequestRPM)
+			}
 		}
 	}
 	if result.Simulation.StatusCode != 0 {

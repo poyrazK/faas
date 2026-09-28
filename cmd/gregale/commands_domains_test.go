@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,6 +32,48 @@ func TestDomainsVerify_HappyPath(t *testing.T) {
 	}
 	if f.sawMethod != "POST" || f.sawPath != "/v1/domains/app.example.com/verify" {
 		t.Errorf("route = %s %s, want POST /v1/domains/app.example.com/verify", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestDomainsVerify_PendingExitsOne(t *testing.T) {
+	resetJSONOut(t)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	authedFakeAPI(t,
+		`{"domain":"app.example.com","app_id":"app-1","verified":false,"cert_status":"pending"}`,
+		http.StatusOK,
+	)
+
+	if code := run([]string{"domains", "verify", "app.example.com"}); code != 1 {
+		t.Fatalf("pending verify exit = %d, want 1", code)
+	}
+	if !strings.Contains(out.String(), "pending") || !strings.Contains(out.String(), "retry") {
+		t.Fatalf("pending verify output should explain the state and next step:\n%s", out.String())
+	}
+}
+
+func TestDomainsVerify_PendingJSONExitsOneAndPreservesResponse(t *testing.T) {
+	resetJSONOut(t)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	authedFakeAPI(t,
+		`{"domain":"app.example.com","app_id":"app-1","verified":false,"cert_status":"pending"}`,
+		http.StatusOK,
+	)
+
+	if code := run([]string{"--json", "domains", "verify", "app.example.com"}); code != 1 {
+		t.Fatalf("pending JSON verify exit = %d, want 1", code)
+	}
+	var got api.CustomDomainResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, out.String())
+	}
+	if got.Domain != "app.example.com" || got.Verified || got.CertStatus != "pending" {
+		t.Fatalf("JSON response = %+v, want the pending domain state", got)
 	}
 }
 
@@ -199,6 +242,48 @@ func TestDomainsDispatch_DoctorReportsFail(t *testing.T) {
 	authedFakeAPI(t, badReport, http.StatusOK)
 	if code := cmdDomains([]string{"doctor", "app.example.com"}); code != 1 {
 		t.Fatalf("cmdDomains doctor exit = %d, want 1 (unhealthy)", code)
+	}
+}
+
+func TestDomainsDoctor_UnhealthyJSONExitsOneAndPreservesReport(t *testing.T) {
+	resetJSONOut(t)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	authedFakeAPI(t,
+		`{"domain":"app.example.com","app_id":"app-1","observed_at":"2026-09-28T00:00:00Z","healthy":false,"checks":[{"name":"dns_record","status":"fail","detail":"TXT record missing","remediation":"Publish the requested TXT record."}]}`,
+		http.StatusOK,
+	)
+
+	if code := run([]string{"--json", "domains", "doctor", "app.example.com"}); code != 1 {
+		t.Fatalf("unhealthy JSON doctor exit = %d, want 1", code)
+	}
+	var got api.DomainDoctorReport
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, out.String())
+	}
+	if got.Healthy || len(got.Checks) != 1 || got.Checks[0].Name != "dns_record" {
+		t.Fatalf("JSON report = %+v, want the unhealthy DNS result", got)
+	}
+}
+
+func TestDomainsDoctor_PendingHumanSummaryIsNotHealthy(t *testing.T) {
+	resetJSONOut(t)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	authedFakeAPI(t,
+		`{"domain":"app.example.com","app_id":"app-1","observed_at":"2026-09-28T00:00:00Z","healthy":false,"checks":[{"name":"tls_certificate","status":"pending","detail":"Certificate issuance is pending."}]}`,
+		http.StatusOK,
+	)
+
+	if code := run([]string{"domains", "doctor", "app.example.com"}); code != 1 {
+		t.Fatalf("pending doctor exit = %d, want 1", code)
+	}
+	if !strings.Contains(out.String(), "domain is not ready") || strings.Contains(out.String(), "all 1 checks OK") {
+		t.Fatalf("pending report should not claim readiness:\n%s", out.String())
 	}
 }
 

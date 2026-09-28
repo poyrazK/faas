@@ -13,5 +13,9 @@ export type ApplyPlatformTenantHostnameResponse = {
   last_error?: string;
   txt_record?: string;
   action: 'create' | 'unchanged';
+  /**
+   * True only after the tenant bundle created this hostname; omitted for unmanaged resources and dry-run creates.
+   */
+  managed_by_platform_tenant?: boolean;
 };
 

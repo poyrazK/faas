@@ -30,7 +30,7 @@ func consumerResponse(c state.APIConsumer) api.APIConsumerResponse {
 	return api.APIConsumerResponse{
 		ID: c.ID, AppID: c.AppID, ExternalRef: c.ExternalRef, Name: c.Name,
 		Status: string(c.Status), CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
-		RevokedAt: c.RevokedAt,
+		RevokedAt: c.RevokedAt, ManagedByPlatformTenant: c.PlatformTenantManaged,
 	}
 }
 

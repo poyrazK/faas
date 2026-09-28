@@ -151,6 +151,9 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if listResp.Count != 1 || len(listResp.Secrets) != 1 || listResp.Secrets[0].Key != "STRIPE_KEY" {
 		t.Errorf("list shape = %+v, want one STRIPE_KEY", listResp)
 	}
+	if got := listResp.Secrets[0].SecretClass; got != api.SecretClassPersistent {
+		t.Errorf("new secret class = %q, want persistent by default", got)
+	}
 	if got := listResp.Secrets[0]; got.DeliveryVersion != 1 || got.DeliveryStatus != string(state.SecretDeliveryPending) {
 		t.Errorf("new secret delivery = version %d status %q, want 1/pending", got.DeliveryVersion, got.DeliveryStatus)
 	}
@@ -279,6 +282,48 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("store after delete = %d, want 0", len(rows))
+	}
+}
+
+func TestSecrets_EphemeralClassRoundTripAndLegacyPutPreservesClass(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "ephemeral-app")
+	path := "/v1/apps/" + app.Slug + "/secrets/SESSION_TOKEN"
+
+	put := e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "first", SecretClass: api.SecretClassEphemeral}, nil)
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT ephemeral: %d %s", put.Code, put.Body.String())
+	}
+
+	assertClass := func(want string) {
+		t.Helper()
+		list := e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+		if list.Code != http.StatusOK {
+			t.Fatalf("GET secrets: %d %s", list.Code, list.Body.String())
+		}
+		var response struct {
+			Secrets []api.AppSecretResponse `json:"secrets"`
+		}
+		if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode secrets: %v", err)
+		}
+		if len(response.Secrets) != 1 || response.Secrets[0].SecretClass != want {
+			t.Fatalf("secret response = %+v; want one class %q", response.Secrets, want)
+		}
+	}
+	assertClass(api.SecretClassEphemeral)
+
+	// Existing clients that omit the new optional field must not silently
+	// downgrade the retention policy when they replace a value.
+	put = e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "second"}, nil)
+	if put.Code != http.StatusOK {
+		t.Fatalf("legacy PUT: %d %s", put.Code, put.Body.String())
+	}
+	assertClass(api.SecretClassEphemeral)
+
+	invalid := e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "third", SecretClass: "temporary"}, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid secret class status = %d, want 400: %s", invalid.Code, invalid.Body.String())
 	}
 }
 

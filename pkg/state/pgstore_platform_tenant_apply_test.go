@@ -32,7 +32,8 @@ func TestPgPlatformTenantApplyIsAtomicAndRetrySafe(t *testing.T) {
 			{AppID: appB, ExternalRef: "customer", Name: "Customer"}},
 		SurfaceIDs: []string{surface.ID}, DryRun: true}
 	preview, err := store.ApplyPlatformTenant(ctx, in)
-	if err != nil || preview.Action != "create" || preview.Tenant.ID != "" {
+	if err != nil || preview.Action != "create" || preview.Tenant.ID != "" || !preview.Consumers[0].Consumer.PlatformTenantManaged ||
+		preview.Surfaces[0].Surface.PlatformTenantManaged {
 		t.Fatalf("preview = %+v, %v", preview, err)
 	}
 	if consumers, err := store.ListAPIConsumersForApp(ctx, accountID, appA); err != nil || len(consumers) != 0 {
@@ -40,12 +41,14 @@ func TestPgPlatformTenantApplyIsAtomicAndRetrySafe(t *testing.T) {
 	}
 	in.DryRun = false
 	created, err := store.ApplyPlatformTenant(ctx, in)
-	if err != nil || created.Tenant.ID == "" || created.Consumers[0].Consumer.ID == "" {
+	if err != nil || created.Tenant.ID == "" || created.Consumers[0].Consumer.ID == "" ||
+		!created.Consumers[0].Consumer.PlatformTenantManaged || created.Surfaces[0].Surface.PlatformTenantManaged {
 		t.Fatalf("apply = %+v, %v", created, err)
 	}
 	replay, err := store.ApplyPlatformTenant(ctx, in)
 	if err != nil || replay.Tenant.ID != created.Tenant.ID || replay.Action != "unchanged" ||
-		replay.Consumers[0].Action != "unchanged" || replay.Surfaces[0].Action != "unchanged" {
+		replay.Consumers[0].Action != "unchanged" || !replay.Consumers[0].Consumer.PlatformTenantManaged ||
+		replay.Surfaces[0].Action != "unchanged" || replay.Surfaces[0].Surface.PlatformTenantManaged {
 		t.Fatalf("replay = %+v, %v", replay, err)
 	}
 	other, _, err := store.CreatePlatformTenant(ctx, accountID, "other-"+uuid.NewString(), "Other", 250)
@@ -58,6 +61,9 @@ func TestPgPlatformTenantApplyIsAtomicAndRetrySafe(t *testing.T) {
 	}
 	if _, err := store.LinkPlatformTenantConsumer(ctx, accountID, other.ID, otherConsumer.ID); err != nil {
 		t.Fatal(err)
+	}
+	if linked, err := store.GetAPIConsumerByID(ctx, accountID, otherConsumer.ID); err != nil || linked.PlatformTenantManaged {
+		t.Fatalf("linking an existing consumer adopted it: %+v, %v", linked, err)
 	}
 	failed := in
 	failed.ExternalRef = "failed-" + uuid.NewString()
@@ -93,12 +99,14 @@ func TestPgPlatformTenantApplyCreatesHostnameIntentAtomically(t *testing.T) {
 	}
 	in.DryRun = false
 	applied, err := store.ApplyPlatformTenant(ctx, in)
-	if err != nil || applied.Surfaces[0].Surface.ID == "" || applied.Surfaces[0].Hostnames[0].Hostname.ChallengeToken != "challenge-token" {
+	if err != nil || applied.Surfaces[0].Surface.ID == "" || applied.Surfaces[0].Hostnames[0].Hostname.ChallengeToken != "challenge-token" ||
+		!applied.Surfaces[0].Surface.PlatformTenantManaged || !applied.Surfaces[0].Hostnames[0].Hostname.PlatformTenantManaged {
 		t.Fatalf("apply = %+v, %v", applied, err)
 	}
 	replay, err := store.ApplyPlatformTenant(ctx, in)
 	if err != nil || replay.Surfaces[0].Action != "unchanged" || replay.Surfaces[0].Hostnames[0].Action != "unchanged" ||
-		replay.Surfaces[0].Surface.ID != applied.Surfaces[0].Surface.ID {
+		replay.Surfaces[0].Surface.ID != applied.Surfaces[0].Surface.ID ||
+		!replay.Surfaces[0].Surface.PlatformTenantManaged || !replay.Surfaces[0].Hostnames[0].Hostname.PlatformTenantManaged {
 		t.Fatalf("replay = %+v, %v", replay, err)
 	}
 	if replay.Surfaces[0].Hostnames[0].Hostname.Verified() {

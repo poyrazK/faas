@@ -18,6 +18,10 @@ export type AccountAppSecretResponse = {
   key: string;
   scope: string;
   /**
+   * Retention treatment for this envelope: persistent values may be present in VM state, while ephemeral values prohibit init and warm snapshot publication for the app scope.
+   */
+  secret_class: 'persistent' | 'ephemeral';
+  /**
    * base64 age-sealed envelope. Plaintext NEVER appears on this wire.
    */
   ciphertext: string;

@@ -5,7 +5,7 @@
 import type { APIConsumerResponse } from './APIConsumerResponse.js';
 import type { PlatformTenantSurfaceResponse } from './PlatformTenantSurfaceResponse.js';
 /**
- * One customer and its current app-local consumer and surface links.
+ * One customer and its current app-local consumer and surface links. Resource managed_by_platform_tenant fields distinguish tenant-bundle-created resources from pre-existing resources merely linked to the tenant.
  */
 export type PlatformTenantDetailResponse = {
   id: string;
