@@ -21,6 +21,8 @@ class PlatformTenantListResponse:
 
     tenants: list[PlatformTenantResponse]
     next_offset: int | Unset = UNSET
+    next_page_token: str | Unset = UNSET
+    """Opaque cursor for the next stable page; omitted when no more tenants remain."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +33,8 @@ class PlatformTenantListResponse:
 
         next_offset = self.next_offset
 
+        next_page_token = self.next_page_token
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -40,6 +44,8 @@ class PlatformTenantListResponse:
         )
         if next_offset is not UNSET:
             field_dict["next_offset"] = next_offset
+        if next_page_token is not UNSET:
+            field_dict["next_page_token"] = next_page_token
 
         return field_dict
 
@@ -57,9 +63,12 @@ class PlatformTenantListResponse:
 
         next_offset = d.pop("next_offset", UNSET)
 
+        next_page_token = d.pop("next_page_token", UNSET)
+
         platform_tenant_list_response = cls(
             tenants=tenants,
             next_offset=next_offset,
+            next_page_token=next_page_token,
         )
 
         platform_tenant_list_response.additional_properties = d

@@ -64,9 +64,33 @@ func (m *MemStore) ResolvePlatformTenantExternalRef(_ context.Context, accountID
 	return PlatformTenant{}, ErrNotFound
 }
 
-func (m *MemStore) ListPlatformTenants(_ context.Context, accountID string, limit, offset int) ([]PlatformTenant, error) {
+func (m *MemStore) ListPlatformTenants(ctx context.Context, accountID string, limit, offset int) ([]PlatformTenant, error) {
+	page, _, err := m.ListPlatformTenantsPage(ctx, accountID, limit, offset, "")
+	return page, err
+}
+
+// ListPlatformTenantsPage returns a newest-first page. Supplying pageToken
+// switches from legacy offset pagination to a stable (created_at, id) cursor.
+func (m *MemStore) ListPlatformTenantsPage(_ context.Context, accountID string, limit, offset int, pageToken string) ([]PlatformTenant, string, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, ErrInvalidArgument
+		return nil, "", ErrInvalidArgument
+	}
+	var cursorTime time.Time
+	var cursorID string
+	if pageToken != "" {
+		if offset != 0 {
+			return nil, "", ErrInvalidArgument
+		}
+		var valid bool
+		cursorTime, cursorID, valid = decodePageToken(pageToken)
+		if !valid {
+			return nil, "", ErrInvalidArgument
+		}
+		parsedID, err := uuid.Parse(cursorID)
+		if err != nil {
+			return nil, "", ErrInvalidArgument
+		}
+		cursorID = parsedID.String()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -82,14 +106,26 @@ func (m *MemStore) ListPlatformTenants(_ context.Context, accountID string, limi
 		}
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
-	if offset >= len(out) {
-		return []PlatformTenant{}, nil
+	if pageToken != "" {
+		filtered := out[:0]
+		for _, tenant := range out {
+			if tenant.CreatedAt.Before(cursorTime) || (tenant.CreatedAt.Equal(cursorTime) && tenant.ID < cursorID) {
+				filtered = append(filtered, tenant)
+			}
+		}
+		out = filtered
+	} else {
+		if offset >= len(out) {
+			return []PlatformTenant{}, "", nil
+		}
+		out = out[offset:]
 	}
-	end := offset + limit
-	if end > len(out) {
-		end = len(out)
+	if len(out) <= limit {
+		return out, "", nil
 	}
-	return out[offset:end], nil
+	out = out[:limit]
+	last := out[len(out)-1]
+	return out, encodePageToken(last.CreatedAt, last.ID), nil
 }
 
 func (m *MemStore) SetPlatformTenantStatus(_ context.Context, accountID, tenantID, status string) (PlatformTenant, error) {

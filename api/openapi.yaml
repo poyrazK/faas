@@ -4027,13 +4027,18 @@ paths:
         - name: offset
           in: query
           description: Zero-based offset for the account's tenant list.
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: integer, minimum: 0 }
+        - name: page_token
+          in: query
+          description: Opaque cursor returned as next_page_token. Cannot be combined with offset; use it for stable traversal while tenants are being created.
+          schema: { type: string, maxLength: 256 }
       responses:
         '200':
           description: One page of platform customers.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       tags: [platform-tenants]
@@ -25176,6 +25181,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantResponse' }
         next_offset: { type: integer, minimum: 0 }
+        next_page_token: { type: string, description: Opaque cursor for the next stable page; omitted when no more tenants remain. }
 
     CreatePlatformTenantAccessTokenRequest:
       description: Mint a bearer for one downstream tenant. Plaintext is returned once and expires no later than one year after creation.

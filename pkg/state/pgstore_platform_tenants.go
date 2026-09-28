@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -102,27 +103,61 @@ func (s *PgStore) ResolvePlatformTenantExternalRef(ctx context.Context, accountI
 }
 
 func (s *PgStore) ListPlatformTenants(ctx context.Context, accountID string, limit, offset int) ([]PlatformTenant, error) {
+	page, _, err := s.ListPlatformTenantsPage(ctx, accountID, limit, offset, "")
+	return page, err
+}
+
+// ListPlatformTenantsPage returns a newest-first page. Supplying pageToken
+// switches from legacy offset pagination to a stable (created_at, id) cursor.
+func (s *PgStore) ListPlatformTenantsPage(ctx context.Context, accountID string, limit, offset int, pageToken string) ([]PlatformTenant, string, error) {
 	if accountID == "" {
-		return nil, ErrNotFound
+		return nil, "", ErrNotFound
 	}
 	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, ErrInvalidArgument
+		return nil, "", ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `select `+platformTenantCols+` from platform_tenants
-		where account_id = $1::uuid order by created_at desc, id desc limit $2 offset $3`, accountID, limit, offset)
+	var rows pgx.Rows
+	var err error
+	if pageToken != "" {
+		if offset != 0 {
+			return nil, "", ErrInvalidArgument
+		}
+		cursorTime, cursorID, valid := decodePageToken(pageToken)
+		if !valid {
+			return nil, "", ErrInvalidArgument
+		}
+		parsedID, parseErr := uuid.Parse(cursorID)
+		if parseErr != nil {
+			return nil, "", ErrInvalidArgument
+		}
+		rows, err = s.pool.Query(ctx, `select `+platformTenantCols+` from platform_tenants
+			where account_id = $1::uuid and (created_at, id) < ($2::timestamptz, $3::uuid)
+			order by created_at desc, id desc limit $4`, accountID, cursorTime, parsedID, limit+1)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+platformTenantCols+` from platform_tenants
+			where account_id = $1::uuid order by created_at desc, id desc limit $2 offset $3`, accountID, limit+1, offset)
+	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
 	out := []PlatformTenant{}
 	for rows.Next() {
 		tenant, err := scanPlatformTenant(rows)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		out = append(out, tenant)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(out) <= limit {
+		return out, "", nil
+	}
+	out = out[:limit]
+	last := out[len(out)-1]
+	return out, encodePageToken(last.CreatedAt, last.ID), nil
 }
 
 func (s *PgStore) SetPlatformTenantStatus(ctx context.Context, accountID, tenantID, status string) (PlatformTenant, error) {

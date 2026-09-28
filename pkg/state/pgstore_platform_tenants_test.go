@@ -130,3 +130,47 @@ func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 		t.Fatalf("cross-account link = %v", err)
 	}
 }
+
+func TestPgPlatformTenantCursorPaginationSurvivesInsert(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	originalIDs := make(map[string]struct{}, 3)
+	for _, externalRef := range []string{"page-a-" + uuid.NewString(), "page-b-" + uuid.NewString(), "page-c-" + uuid.NewString()} {
+		tenant, _, err := store.CreatePlatformTenant(ctx, accountID, externalRef, externalRef, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalIDs[tenant.ID] = struct{}{}
+	}
+	tiedAt := time.Now().UTC().Add(-time.Minute)
+	if _, err := pool.Exec(ctx, `update platform_tenants set created_at = $2 where account_id = $1::uuid`, accountID, tiedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	first, token, err := store.ListPlatformTenantsPage(ctx, accountID, 1, 0, "")
+	if err != nil || len(first) != 1 || token == "" {
+		t.Fatalf("first page = %+v, token %q, err %v", first, token, err)
+	}
+	inserted, _, err := store.CreatePlatformTenant(ctx, accountID, "page-new-"+uuid.NewString(), "New customer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, nextToken, err := store.ListPlatformTenantsPage(ctx, accountID, 1, 0, token)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second page = %+v, token %q, err %v", second, nextToken, err)
+	}
+	if second[0].ID == first[0].ID || second[0].ID == inserted.ID {
+		t.Fatalf("cursor page repeated or included post-page insert: first=%s second=%s inserted=%s", first[0].ID, second[0].ID, inserted.ID)
+	}
+	if _, ok := originalIDs[second[0].ID]; !ok {
+		t.Fatalf("cursor returned tenant outside original list: %s", second[0].ID)
+	}
+
+	if _, _, err := store.ListPlatformTenantsPage(ctx, accountID, 1, 1, token); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("offset with cursor = %v, want invalid argument", err)
+	}
+	if _, _, err := store.ListPlatformTenantsPage(ctx, accountID, 1, 0, "not-a-cursor"); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("malformed cursor = %v, want invalid argument", err)
+	}
+}

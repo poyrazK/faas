@@ -13,6 +13,14 @@ Content-Type: application/json
 
 Repeating that request with the same name returns the existing tenant. Link each app's existing consumer with `POST /v1/account/platform-tenants/{id}/consumers` and `{"consumer_id":"…"}`. Link an existing tenant surface with `POST /v1/account/platform-tenants/{id}/surfaces` and `{"surface_id":"…"}`. A consumer or surface cannot belong to two platform tenants, and cross-account IDs return 404. Unlinked resources keep their current behavior.
 
+List account tenants with `GET /v1/account/platform-tenants?limit=100`. Results are ordered newest first by creation time and ID. The legacy `offset` parameter remains available; for a stable traversal while tenants may be added, follow `next_page_token` instead:
+
+```http
+GET /v1/account/platform-tenants?limit=100&page_token=<next_page_token>
+```
+
+The cursor is exclusive of the last row in the previous page, so newly created tenants do not shift later pages. Do not combine `page_token` and `offset`.
+
 ## Onboard a customer across apps
 
 Use one additive, retry-safe operation to register a customer, create or reuse its app-local consumer identities, and create or attach its hostname surfaces:

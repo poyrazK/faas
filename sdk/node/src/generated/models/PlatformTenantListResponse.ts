@@ -9,5 +9,9 @@ import type { PlatformTenantResponse } from './PlatformTenantResponse.js';
 export type PlatformTenantListResponse = {
   tenants: Array<PlatformTenantResponse>;
   next_offset?: number;
+  /**
+   * Opaque cursor for the next stable page; omitted when no more tenants remain.
+   */
+  next_page_token?: string;
 };
 

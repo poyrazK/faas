@@ -78,6 +78,7 @@ export class PlatformTenantsService {
   public static listPlatformTenants({
     limit = 100,
     offset,
+    pageToken,
   }: {
     /**
      * Maximum number of platform tenants in this page.
@@ -87,6 +88,10 @@ export class PlatformTenantsService {
      * Zero-based offset for the account's tenant list.
      */
     offset?: number,
+    /**
+     * Opaque cursor returned as next_page_token. Cannot be combined with offset; use it for stable traversal while tenants are being created.
+     */
+    pageToken?: string,
   }): CancelablePromise<PlatformTenantListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -94,8 +99,10 @@ export class PlatformTenantsService {
       query: {
         'limit': limit,
         'offset': offset,
+        'page_token': pageToken,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
       },
     });

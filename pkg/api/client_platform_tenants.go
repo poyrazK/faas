@@ -23,6 +23,24 @@ func (c *Client) ListPlatformTenants(ctx context.Context, limit, offset int) (Pl
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListPlatformTenantsPage reads one stable cursor-paginated page of account tenants.
+// Pass the returned NextPageToken to continue; an empty token means the list ended.
+func (c *Client) ListPlatformTenantsPage(ctx context.Context, limit int, pageToken string) (PlatformTenantListResponse, error) {
+	var out PlatformTenantListResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if pageToken != "" {
+		q.Set("page_token", pageToken)
+	}
+	path := "/v1/account/platform-tenants"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) CreatePlatformTenant(ctx context.Context, req CreatePlatformTenantRequest) (PlatformTenantResponse, error) {
 	var out PlatformTenantResponse
 	return out, c.do(ctx, "POST", "/v1/account/platform-tenants", req, &out)

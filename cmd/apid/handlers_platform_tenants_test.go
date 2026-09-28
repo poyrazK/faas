@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -170,6 +171,78 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	}
 	if _, err := e.store.LinkPlatformTenantConsumer(context.Background(), other.ID, tenant.ID, consumerA); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account consumer link = %v", err)
+	}
+}
+
+func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	originalIDs := make(map[string]struct{}, 3)
+	for _, externalRef := range []string{"page-customer-1", "page-customer-2", "page-customer-3"} {
+		rec := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+			ExternalRef: externalRef, Name: externalRef,
+		}, nil)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create tenant %q: %d %s", externalRef, rec.Code, rec.Body.String())
+		}
+		var tenant api.PlatformTenantResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &tenant); err != nil {
+			t.Fatal(err)
+		}
+		originalIDs[tenant.ID] = struct{}{}
+	}
+
+	firstResponse := e.do(t, http.MethodGet, "/v1/account/platform-tenants?limit=1", nil, nil)
+	if firstResponse.Code != http.StatusOK {
+		t.Fatalf("first tenant page: %d %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	var first api.PlatformTenantListResponse
+	if err := json.Unmarshal(firstResponse.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Tenants) != 1 || first.NextPageToken == "" || first.NextOffset == nil {
+		t.Fatalf("first tenant page = %+v", first)
+	}
+
+	newResponse := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+		ExternalRef: "page-customer-new", Name: "New customer",
+	}, nil)
+	if newResponse.Code != http.StatusCreated {
+		t.Fatalf("create interleaved tenant: %d %s", newResponse.Code, newResponse.Body.String())
+	}
+	var inserted api.PlatformTenantResponse
+	if err := json.Unmarshal(newResponse.Body.Bytes(), &inserted); err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/v1/account/platform-tenants?" + url.Values{
+		"limit":      []string{"1"},
+		"page_token": []string{first.NextPageToken},
+	}.Encode()
+	secondResponse := e.do(t, http.MethodGet, path, nil, nil)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("cursor tenant page: %d %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	var second api.PlatformTenantListResponse
+	if err := json.Unmarshal(secondResponse.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Tenants) != 1 || second.Tenants[0].ID == first.Tenants[0].ID || second.Tenants[0].ID == inserted.ID {
+		t.Fatalf("cursor page repeated or included the interleaved insert: %+v", second)
+	}
+	if _, ok := originalIDs[second.Tenants[0].ID]; !ok {
+		t.Fatalf("cursor page returned a tenant outside the original list: %+v", second.Tenants[0])
+	}
+	if second.NextOffset != nil || second.NextPageToken == "" {
+		t.Fatalf("cursor response pagination fields = %+v", second)
+	}
+
+	badToken := e.do(t, http.MethodGet, "/v1/account/platform-tenants?page_token=bad", nil, nil)
+	if badToken.Code != http.StatusBadRequest {
+		t.Fatalf("malformed cursor status = %d, want 400: %s", badToken.Code, badToken.Body.String())
+	}
+	mixed := e.do(t, http.MethodGet, path+"&offset=0", nil, nil)
+	if mixed.Code != http.StatusBadRequest {
+		t.Fatalf("cursor plus offset status = %d, want 400: %s", mixed.Code, mixed.Body.String())
 	}
 }
 

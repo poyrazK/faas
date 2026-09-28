@@ -13,7 +13,8 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     limit: int | Unset = 100,
-    offset: int | Unset = 0,
+    offset: int | Unset = UNSET,
+    page_token: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -21,6 +22,8 @@ def _get_kwargs(
     params["limit"] = limit
 
     params["offset"] = offset
+
+    params["page_token"] = page_token
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -40,6 +43,11 @@ def _parse_response(
         response_200 = PlatformTenantListResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -67,13 +75,15 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
-    offset: int | Unset = 0,
+    offset: int | Unset = UNSET,
+    page_token: str | Unset = UNSET,
 ) -> Response[PlatformTenantListResponse | Problem]:
     """List account-level platform customers.
 
     Args:
         limit (int | Unset):  Default: 100.
-        offset (int | Unset):  Default: 0.
+        offset (int | Unset):
+        page_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -86,6 +96,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         limit=limit,
         offset=offset,
+        page_token=page_token,
     )
 
     response = client.get_httpx_client().request(
@@ -99,13 +110,15 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
-    offset: int | Unset = 0,
+    offset: int | Unset = UNSET,
+    page_token: str | Unset = UNSET,
 ) -> PlatformTenantListResponse | Problem | None:
     """List account-level platform customers.
 
     Args:
         limit (int | Unset):  Default: 100.
-        offset (int | Unset):  Default: 0.
+        offset (int | Unset):
+        page_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,6 +132,7 @@ def sync(
         client=client,
         limit=limit,
         offset=offset,
+        page_token=page_token,
     ).parsed
 
 
@@ -126,13 +140,15 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
-    offset: int | Unset = 0,
+    offset: int | Unset = UNSET,
+    page_token: str | Unset = UNSET,
 ) -> Response[PlatformTenantListResponse | Problem]:
     """List account-level platform customers.
 
     Args:
         limit (int | Unset):  Default: 100.
-        offset (int | Unset):  Default: 0.
+        offset (int | Unset):
+        page_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,6 +161,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         limit=limit,
         offset=offset,
+        page_token=page_token,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -156,13 +173,15 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 100,
-    offset: int | Unset = 0,
+    offset: int | Unset = UNSET,
+    page_token: str | Unset = UNSET,
 ) -> PlatformTenantListResponse | Problem | None:
     """List account-level platform customers.
 
     Args:
         limit (int | Unset):  Default: 100.
-        offset (int | Unset):  Default: 0.
+        offset (int | Unset):
+        page_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,5 +196,6 @@ async def asyncio(
             client=client,
             limit=limit,
             offset=offset,
+            page_token=page_token,
         )
     ).parsed

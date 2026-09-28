@@ -94,6 +94,7 @@ func (s *server) listPlatformTenants(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	limit, offset := 100, 0
+	query := r.URL.Query()
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 100 {
@@ -103,7 +104,7 @@ func (s *server) listPlatformTenants(w http.ResponseWriter, r *http.Request, acc
 		}
 		limit = parsed
 	}
-	if raw := r.URL.Query().Get("offset"); raw != "" {
+	if raw := query.Get("offset"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 0 {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -112,16 +113,26 @@ func (s *server) listPlatformTenants(w http.ResponseWriter, r *http.Request, acc
 		}
 		offset = parsed
 	}
-	tenants, err := store.ListPlatformTenants(r.Context(), acct.ID, limit, offset)
+	pageToken := query.Get("page_token")
+	_, offsetProvided := query["offset"]
+	if pageToken != "" && (offsetProvided || len(pageToken) > 256) {
+		api.WriteProblem(w, api.ErrValidation("page_token cannot be combined with offset and must be at most 256 characters"))
+		return
+	}
+	tenants, nextPageToken, err := store.ListPlatformTenantsPage(r.Context(), acct.ID, limit, offset, pageToken)
 	if err != nil {
+		if errors.Is(err, state.ErrInvalidArgument) {
+			api.WriteProblem(w, api.ErrValidation("page_token is invalid"))
+			return
+		}
 		api.WriteProblem(w, api.ErrInternal("could not list platform tenants"))
 		return
 	}
-	out := api.PlatformTenantListResponse{Tenants: make([]api.PlatformTenantResponse, 0, len(tenants))}
+	out := api.PlatformTenantListResponse{Tenants: make([]api.PlatformTenantResponse, 0, len(tenants)), NextPageToken: nextPageToken}
 	for _, tenant := range tenants {
 		out.Tenants = append(out.Tenants, platformTenantResponse(tenant))
 	}
-	if len(tenants) == limit {
+	if pageToken == "" && len(tenants) == limit {
 		next := offset + len(tenants)
 		out.NextOffset = &next
 	}

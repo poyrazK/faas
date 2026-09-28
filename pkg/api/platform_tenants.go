@@ -305,8 +305,9 @@ type PlatformTenantResponse struct {
 }
 
 type PlatformTenantListResponse struct {
-	Tenants    []PlatformTenantResponse `json:"tenants"`
-	NextOffset *int                     `json:"next_offset,omitempty"`
+	Tenants       []PlatformTenantResponse `json:"tenants"`
+	NextOffset    *int                     `json:"next_offset,omitempty"`
+	NextPageToken string                   `json:"next_page_token,omitempty"`
 }
 
 type PlatformTenantSurfaceResponse struct {

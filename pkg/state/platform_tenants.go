@@ -47,6 +47,7 @@ type PlatformTenantStore interface {
 	CreatePlatformTenant(context.Context, string, string, string, int) (PlatformTenant, bool, error)
 	GetPlatformTenant(context.Context, string, string) (PlatformTenant, error)
 	ListPlatformTenants(context.Context, string, int, int) ([]PlatformTenant, error)
+	ListPlatformTenantsPage(context.Context, string, int, int, string) ([]PlatformTenant, string, error)
 	SetPlatformTenantStatus(context.Context, string, string, string) (PlatformTenant, error)
 	LinkPlatformTenantConsumer(context.Context, string, string, string) (APIConsumer, error)
 	LinkPlatformTenantSurface(context.Context, string, string, string) (TenantSurface, error)
