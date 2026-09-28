@@ -7450,25 +7450,6 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	}
 	e.ledger.Release(ins.ID)
 	e.transition(ctx, ins.ID, ins.AppID, state.StateParked)
-	// issue #517 / PR-C / ADR-064 — emit wake.park_completed on the
-	// successful park. The snapshot_id is the storage key the next
-	// wake will use to restore (per ADR-025 axis 2), so the timeline
-	// row lets an operator trace "this wake restored from the
-	// snapshot produced by that wake" by joining the storage_key
-	// back to the upcoming wake.row's restore_path metadata.
-	if e.events != nil {
-		e.events.Emit(ctx, events.ParkCompleted{
-			EmitAt:       time.Now().UTC(),
-			WakeID:       ins.WakeID,
-			AppID:        ins.AppID,
-			DeploymentID: ins.DeploymentID,
-			InstanceID:   ins.ID,
-			NodeID:       ins.NodeID,
-			StartedAt:    now.UTC(),
-			CompletedAt:  time.Now().UTC(),
-			SnapshotID:   storageKey,
-		})
-	}
 	// Init-tier capture is the "cold" snapshot the next wake falls back
 	// to when no warm row exists or the plan no longer allows warm
 	// (issue #470 / PR A / ADR-070). Tagged tier="init" so the
@@ -7482,12 +7463,36 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// Issue #3360: a secret or env change that landed during the capture
 	// invalidated snapshots before this one existed. Leave the blob
 	// unpublished (GC reclaims it) so the next wake cold-boots.
-	if reused == nil && e.runtimeConfigStale(ctx, ins) {
+	if e.runtimeConfigStale(ctx, ins) {
 		e.log.Info("sched: park: drop init capture after runtime config change", "instance", ins.ID, "app", ins.AppID)
+		if e.events != nil {
+			failedAt := time.Now().UTC()
+			e.events.Emit(ctx, events.ParkFailed{
+				EmitAt: failedAt, WakeID: ins.WakeID, AppID: ins.AppID,
+				DeploymentID: ins.DeploymentID, InstanceID: ins.ID, NodeID: ins.NodeID,
+				StartedAt: now.UTC(), FailedAt: failedAt, Reason: "runtime_config_changed",
+			})
+		}
 		return nil
 	}
 	if reused == nil {
-		e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit)
+		e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit)
+	}
+	// A discarded capture is not a completed park snapshot. Emit the success
+	// timeline event only after the local freshness check passed.
+	if e.events != nil {
+		completedAt := time.Now().UTC()
+		e.events.Emit(ctx, events.ParkCompleted{
+			EmitAt:       completedAt,
+			WakeID:       ins.WakeID,
+			AppID:        ins.AppID,
+			DeploymentID: ins.DeploymentID,
+			InstanceID:   ins.ID,
+			NodeID:       ins.NodeID,
+			StartedAt:    now.UTC(),
+			CompletedAt:  completedAt,
+			SnapshotID:   storageKey,
+		})
 	}
 	return nil
 }
@@ -7639,7 +7644,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		e.log.Info("sched: park: drop warm capture after runtime config change", "instance", ins.ID, "app", ins.AppID)
 		return SnapshotBytes{}, nil
 	}
-	e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm)
+	e.emitSnapshotWritten(ctx, ins.ID, ins.StartedAt, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm)
 	// Issue #470 / PR C / ADR-074: emit app.warm_snapshot_promoted
 	// so operators can grep gregale audit-events --kind-prefix
 	// warm_snapshot to see lifecycle activity. Subject is
@@ -9247,7 +9252,7 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 // from the JSON and writes the matching snapshots.tier column. The base-image
 // generation is part of the same publication contract: HTTP/2 and gRPC wakes
 // reject snapshots produced by a different guest runner generation.
-func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
+func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID string, sourceStartedAt time.Time, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
 	if e.notif == nil {
 		return
 	}
@@ -9256,6 +9261,8 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"deployment_id":      deploymentID,
+		"source_instance_id": sourceInstanceID,
+		"source_started_at":  sourceStartedAt,
 		"node_id":            nodeID,
 		"vmstate_path":       vmstatePath,
 		"storage_key":        storageKey,

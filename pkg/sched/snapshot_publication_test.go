@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -153,6 +154,14 @@ func TestCaptureNotificationCarriesExactKeys(t *testing.T) {
 		}
 		if got := payload["base_image_version"]; got != fcvm.FAAS_BASE_IMAGE_VERSION {
 			t.Fatalf("base_image_version = %v, want %s", got, fcvm.FAAS_BASE_IMAGE_VERSION)
+		}
+		instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+		if err != nil || len(instances) != 1 || payload["source_instance_id"] != instances[0].ID {
+			t.Fatalf("snapshot source = %v, instances = %+v, err = %v", payload["source_instance_id"], instances, err)
+		}
+		capturedStart, err := time.Parse(time.RFC3339Nano, payload["source_started_at"].(string))
+		if err != nil || capturedStart.IsZero() || capturedStart.After(instances[0].StartedAt) {
+			t.Fatalf("snapshot source start = %v, current instance start = %v, err = %v", capturedStart, instances[0].StartedAt, err)
 		}
 		return
 	}

@@ -50,6 +50,27 @@ func TestPrimeRecovery_ReplaysLostRollbackHandoff(t *testing.T) {
 	}
 }
 
+func TestPrimeRecovery_RetriesParkedCaptureAfterConfigChange(t *testing.T) {
+	ctx := context.Background()
+	store, app, _, loop := primeRecoveryFixture(t)
+	loop.runPrimeRecovery(ctx)
+	loop.waitPrimes()
+	before, err := store.ListInstancesForApp(ctx, app.ID)
+	if err != nil || len(before) != 1 || before[0].State != string(state.StateParked) {
+		t.Fatalf("initial prime = (%+v, %v)", before, err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	loop.runPrimeRecovery(ctx)
+	loop.waitPrimes()
+	after, err := store.ListInstancesForApp(ctx, app.ID)
+	if err != nil || len(after) != 2 {
+		t.Fatalf("stale parked capture suppressed retry: (%+v, %v)", after, err)
+	}
+}
+
 func TestPrimeRecovery_SkipsFreshStage(t *testing.T) {
 	store, _, dep, loop := primeRecoveryFixture(t)
 	loop.WithClock(time.Now)

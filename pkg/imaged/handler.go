@@ -1618,9 +1618,13 @@ func jobArtifactJobID(key string) (string, bool) {
 // after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
 // imaged is the sole writer to the snapshots table, so it records the row.
 type snapshotWrittenPayload struct {
-	DeploymentID string `json:"deployment_id"`
-	NodeID       string `json:"node_id,omitempty"`
-	VMStatePath  string `json:"vmstate_path"`
+	DeploymentID     string `json:"deployment_id"`
+	SourceInstanceID string `json:"source_instance_id,omitempty"`
+	// The source row's started_at can advance after this notification is
+	// emitted, so imaged must compare the captured value to the config stamp.
+	SourceStartedAt time.Time `json:"source_started_at,omitempty"`
+	NodeID          string    `json:"node_id,omitempty"`
+	VMStatePath     string    `json:"vmstate_path"`
 	// StorageKey is the canonical StorageBackend key (issue #96,
 	// ADR-025 axis 2). schedd populates it on the snapshot_written
 	// payload; imaged copies it onto the snapshots row so Wake can
@@ -3173,7 +3177,12 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// framework-ready signal has actually fired.
 			Tier: snapshot.Tier,
 		}
-		stored, createErr := h.store.CreateSnapshot(ctx, snap)
+		stored, createErr := h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
+		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+			h.log.Info("imaged: discarded stale snapshot capture", "deployment", snapshot.DeploymentID,
+				"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
+			return h.discardStaleSnapshotCapture(ctx, snap)
+		}
 		if createErr != nil {
 			if !errors.Is(createErr, state.ErrConflict) {
 				return fmt.Errorf("imaged: create snapshot: %w", createErr)
@@ -3193,7 +3202,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
 					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
 				retired := stored.ID
-				if stored, createErr = h.store.CreateSnapshot(ctx, snap); createErr != nil {
+				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+					h.log.Info("imaged: discarded stale snapshot capture after retirement", "deployment", snapshot.DeploymentID,
+						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
+					return h.discardStaleSnapshotCapture(ctx, snap)
+				} else if createErr != nil {
 					return fmt.Errorf("imaged: create snapshot after retiring %s: %w", retired, createErr)
 				}
 			}
@@ -3488,6 +3501,23 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// pre-smoke notification is route-only and carries no terminal status, so
 	// CLI/SSE waiters cannot report success while verification is still running.
 	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
+	return nil
+}
+
+// A stale notification can be a replay of an already-published capture. Only
+// remove immutable capture artifacts when no live row points at their key.
+func (h *Handler) discardStaleSnapshotCapture(ctx context.Context, snap state.Snapshot) error {
+	if !state.IsSnapshotCaptureKey(snap.StorageKey) {
+		return nil
+	}
+	live, err := h.store.LatestSnapshotForTier(ctx, snap.DeploymentID, snap.Tier)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return fmt.Errorf("imaged: inspect stale capture before cleanup: %w", err)
+	}
+	if err == nil && live.StorageKey == snap.StorageKey {
+		return nil
+	}
+	h.deleteSnapshotPair(ctx, snap)
 	return nil
 }
 

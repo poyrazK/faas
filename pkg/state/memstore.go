@@ -14061,6 +14061,35 @@ func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []I
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createSnapshotLocked(snap)
+}
+
+func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dep, ok := m.deployments[snap.DeploymentID]
+	if !ok {
+		return Snapshot{}, ErrNotFound
+	}
+	changedAt, changed := m.runtimeConfigChangedAt[dep.AppID]
+	if sourceInstanceID == "" {
+		if changed {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	} else {
+		ins, ok := m.instances[sourceInstanceID]
+		if !ok || ins.AppID != dep.AppID || ins.DeploymentID != dep.ID || sourceStartedAt.IsZero() ||
+			ins.StartedAt.IsZero() || sourceStartedAt.After(ins.StartedAt) {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+		if changed && !sourceStartedAt.After(changedAt) {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	}
+	return m.createSnapshotLocked(snap)
+}
+
+func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 	// StorageKey is required on both backends (see PgStore for the
 	// rationale). The in-memory store doesn't have a DB DEFAULT to
 	// fall back on, so the contract is enforced here as well —

@@ -120,8 +120,8 @@ const (
 	// Dual of WakeParkStarted. Payload: {wake_id, app_id,
 	// instance_id, node_id, started_at, completed_at, snapshot_id}.
 	WakeParkCompleted = "wake.park_completed"
-	// WakeParkFailed — terminal snapshot capture failed and the source
-	// instance stopped. Payload includes only a
+	// WakeParkFailed — terminal snapshot capture failed or was discarded
+	// after a runtime configuration change. Payload includes only a
 	// closed reason, never a guest response or vmmd error string.
 	WakeParkFailed = "wake.park_failed"
 	// WakeStalled — watchdog path: instance hasn't transitioned
@@ -895,8 +895,9 @@ func (e ParkCompleted) Payload() map[string]any {
 	return p
 }
 
-// ParkFailed closes a ParkStarted timeline when terminal init capture fails.
-// Reason is the closed set {before_checkpoint_failed, snapshot_failed}.
+// ParkFailed closes a ParkStarted timeline when terminal init capture fails
+// or its result is discarded. Reason is the closed set
+// {before_checkpoint_failed, snapshot_failed, runtime_config_changed}.
 // The guest log retains callback details; this event is customer-safe.
 type ParkFailed struct {
 	EmitAt       time.Time
@@ -917,7 +918,7 @@ func (e ParkFailed) Payload() map[string]any {
 	// The API returns event data verbatim. Keep the closed reason boundary
 	// here even if a future emitter accidentally passes err.Error().
 	reason := "snapshot_failed"
-	if e.Reason == "before_checkpoint_failed" {
+	if e.Reason == "before_checkpoint_failed" || e.Reason == "runtime_config_changed" {
 		reason = e.Reason
 	}
 	p := map[string]any{

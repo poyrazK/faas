@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -22,7 +23,11 @@ type snapshotPolicyRaceStore struct {
 	inserted  bool
 }
 
-func (s *snapshotPolicyRaceStore) CreateSnapshot(ctx context.Context, snap state.Snapshot) (state.Snapshot, error) {
+func (s *snapshotPolicyRaceStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap state.Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (state.Snapshot, error) {
+	stored, err := s.MemStore.PublishSnapshotIfRuntimeFresh(ctx, snap, sourceInstanceID, sourceStartedAt)
+	if err != nil {
+		return stored, err
+	}
 	if !s.inserted {
 		s.inserted = true
 		if err := s.MemStore.UpsertAppSecretWithClassInScope(ctx, s.accountID, s.appID, api.DefaultEnvScope,
@@ -30,7 +35,7 @@ func (s *snapshotPolicyRaceStore) CreateSnapshot(ctx context.Context, snap state
 			return state.Snapshot{}, err
 		}
 	}
-	return s.MemStore.CreateSnapshot(ctx, snap)
+	return stored, nil
 }
 
 func TestSnapshotPublicationRejectsRAMMismatchAndCleansCandidate(t *testing.T) {
@@ -165,6 +170,55 @@ func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
 		if !storage.IsNotFound(err) {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSnapshotPublicationDiscardsDelayedStaleNotification(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "snapshot-delayed@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "snapshot-delayed", RAMMB: 256, MaxConcurrency: 3})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	source, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "delayed")
+	be := mustLocalStorage(t, t.TempDir())
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	for _, sourceID := range []string{source.ID, ""} {
+		if err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+			DeploymentID: dep.ID, SourceInstanceID: sourceID, SourceStartedAt: source.StartedAt, StorageKey: key,
+			FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+		}); err != nil {
+			t.Fatalf("stale notification %q: %v", sourceID, err)
+		}
+	}
+	if _, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale notification published a row: %v", err)
+	}
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		rc, err := be.Get(ctx, part)
+		if err == nil {
+			_ = rc.Close()
+			t.Fatalf("stale capture artifact remains: %s", part)
+		}
+		if !storage.IsNotFound(err) {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil || got.Status == state.DeployLive {
+		t.Fatalf("stale notification activated deployment: (%+v, %v)", got, err)
 	}
 }
 

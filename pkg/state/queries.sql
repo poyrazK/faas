@@ -3976,7 +3976,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key;
 
 -- name: ObjectS3BindingStampRuntime :exec
-INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,clock_timestamp())
 ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at;
 
 -- name: ObjectS3BindingStaleSnapshots :exec

@@ -17237,6 +17237,66 @@ func (s *PgStore) TouchInstancesWithRequestDelta(ctx context.Context, touches []
 // Tier (issue #470 / ADR-055): empty tier defaults to "init" for legacy
 // callers; new warm-tier capture code passes SnapshotTierWarm explicitly.
 func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error) {
+	return createSnapshotWithQuerier(ctx, s.pool, snap)
+}
+
+// PublishSnapshotIfRuntimeFresh serializes publication with every config stamp
+// through the app row. The stamp trigger takes the same lock, so a stamp that
+// commits first is visible here; a stamp that follows will invalidate this row.
+func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer tx.Rollback(ctx)
+	var appID string
+	err = tx.QueryRow(ctx, `select a.id::text from apps a join deployments d on d.app_id = a.id
+		where d.id = $1 for update of a`, snap.DeploymentID).Scan(&appID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Snapshot{}, ErrNotFound
+	}
+	if err != nil {
+		return Snapshot{}, err
+	}
+	var currentStartedAt *time.Time
+	if sourceInstanceID != "" {
+		var sourceAppID, sourceDeploymentID string
+		err = tx.QueryRow(ctx, `select app_id::text, deployment_id::text, started_at
+			from instances where id = $1`, sourceInstanceID).Scan(&sourceAppID, &sourceDeploymentID, &currentStartedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if sourceAppID != appID || sourceDeploymentID != snap.DeploymentID || sourceStartedAt.IsZero() ||
+			currentStartedAt == nil || currentStartedAt.IsZero() || sourceStartedAt.After(*currentStartedAt) {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	}
+	var changedAt time.Time
+	err = tx.QueryRow(ctx, `select changed_at from app_runtime_config_changes where app_id = $1`, appID).Scan(&changedAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Snapshot{}, err
+	}
+	if err == nil && !sourceStartedAt.After(changedAt) {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
+	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	return stored, nil
+}
+
+type snapshotQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snapshot) (Snapshot, error) {
 	// StorageKey is required. The migration's `NOT NULL DEFAULT ''`
 	// is a safety net for any path we miss, but the contract here is
 	// that the caller populates it explicitly (production: imaged
@@ -17254,7 +17314,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 	if tier == "" {
 		tier = SnapshotTierInit
 	}
-	row := s.pool.QueryRow(ctx,
+	row := q.QueryRow(ctx,
 		`insert into snapshots (deployment_id, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 returning id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier`,
@@ -17318,12 +17378,12 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 	return nil
 }
 
-// MarkAppRuntimeConfigChanged implements Store. The stamp uses the database
-// clock, the same clock the instances trigger uses for started_at, so the
-// comparison in schedd is immune to host clock skew.
+// MarkAppRuntimeConfigChanged implements Store. Use the database wall clock at
+// the statement, not the transaction start: a long-running config mutation
+// must not look older than an instance started while that mutation was open.
 func (s *PgStore) MarkAppRuntimeConfigChanged(ctx context.Context, appID string) error {
 	_, err := s.pool.Exec(ctx, `
-		insert into app_runtime_config_changes (app_id, changed_at) values ($1, now())
+		insert into app_runtime_config_changes (app_id, changed_at) values ($1, clock_timestamp())
 		on conflict (app_id) do update set changed_at = excluded.changed_at`, appID)
 	if err != nil {
 		return fmt.Errorf("pgstore: mark app %s runtime config changed: %w", appID, err)

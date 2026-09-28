@@ -98,13 +98,19 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
+	changedAt, changed, err := l.engine.store.AppRuntimeConfigChangedAt(ctx, app.ID)
+	if err != nil {
+		return err
+	}
 	for _, ins := range instances {
 		// A PARKED instance means capture finished and imaged may still be
-		// handling snapshot_written. Never start a second VM during that
-		// handoff. Older parked instances from before a rollback requeue do
-		// not protect the new attempt.
+		// handling snapshot_written. A guest older than the config stamp
+		// cannot publish, so it must not suppress recovery indefinitely.
+		// Older parked instances from before a rollback requeue also do not
+		// protect the new attempt.
 		if ins.DeploymentID == dep.ID && ins.StartedAt.After(*stage.CurrentStartedAt) &&
-			(state.State(ins.State).CountsForRAM() || state.State(ins.State) == state.StateParked) {
+			(state.State(ins.State).CountsForRAM() ||
+				(state.State(ins.State) == state.StateParked && (!changed || ins.StartedAt.After(changedAt)))) {
 			return nil
 		}
 	}

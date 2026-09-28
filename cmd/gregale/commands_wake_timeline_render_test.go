@@ -70,7 +70,7 @@ func TestRenderWakeTimelinePage_ApplicationRestoreFallback(t *testing.T) {
 }
 
 func TestRenderWakeTimelinePage_ParkFailureReason(t *testing.T) {
-	for _, reason := range []string{api.CodeBeforeCheckpointFailed, "snapshot_failed"} {
+	for _, reason := range []string{api.CodeBeforeCheckpointFailed, "snapshot_failed", "runtime_config_changed"} {
 		resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
 			Kind: "wake.park_failed", Actor: "schedd", Data: map[string]any{"reason": reason},
 		}}}

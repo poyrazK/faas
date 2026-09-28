@@ -124,7 +124,7 @@ Rejected: `kind string + data map[string]any` (mirrors
 | `wake.proxy_first_byte` | `{wake_id, app_id, request_id, instance_id, node_id, latency_ms, proxy_latency_ms, gateway_phases_ms}` | gatewayd `pkg/gateway/forwardproxy.go` Response Init frame `WriteHeader`; `gateway_phases_ms` is an optional map of request-local phase durations |
 | `wake.park_started` | `{wake_id, app_id, instance_id, node_id, started_at}` | schedd Snapshotting transition |
 | `wake.park_completed` | `{wake_id, app_id, instance_id, node_id, started_at, completed_at, snapshot_id}` | schedd Snapshot success path |
-| `wake.park_failed` | `{wake_id, app_id, deployment_id?, instance_id, node_id, started_at, failed_at, reason}`; `reason` is `before_checkpoint_failed` or `snapshot_failed` | schedd terminal init snapshot failure path |
+| `wake.park_failed` | `{wake_id, app_id, deployment_id?, instance_id, node_id, started_at, failed_at, reason}`; `reason` is `before_checkpoint_failed`, `snapshot_failed`, or `runtime_config_changed` | schedd terminal init snapshot failure or stale capture discard |
 | `wake.stalled` | `{wake_id, app_id, instance_id, node_id, reason}` | schedd watchdog path |
 | `wake.build_succeeded` | `{app_id, deployment_id, image_digest, duration_ms}` | builderd `pkg/builderd/builderd.go` |
 | `wake.build_failed` | `{app_id, deployment_id, image_digest, reason}` | builderd mirror |

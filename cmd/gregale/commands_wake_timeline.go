@@ -357,6 +357,8 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 			parkReason = api.CodeBeforeCheckpointFailed
 		case "snapshot_failed":
 			parkReason = "snapshot_failed"
+		case "runtime_config_changed":
+			parkReason = "runtime_config_changed"
 		}
 	}
 	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" && fallbackReason == "" && parkReason == "" {

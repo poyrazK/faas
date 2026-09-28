@@ -10080,7 +10080,7 @@ func (q *Queries) ObjectS3BindingStaleSnapshots(ctx context.Context, db DBTX, ap
 }
 
 const objectS3BindingStampRuntime = `-- name: ObjectS3BindingStampRuntime :exec
-INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,clock_timestamp())
 ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
 `
 
