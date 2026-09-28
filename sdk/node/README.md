@@ -230,6 +230,13 @@ the document response's `Set-Cookie` header with its body. It is a browser
 session cookie; the release graph's server-side TTL controls whether its value
 is still routable.
 
+Same-host browser WebSocket reconnects use the same bootstrap cookie without a
+custom header: the native `WebSocket` API does not expose request headers. The
+gateway reads the cookie only on a WebSocket handshake, routes to that release
+if it remains eligible, and strips the platform cookie before the guest sees
+the request. Because `__Host-` cookies are host-only, the SPA and WebSocket
+endpoint must share a hostname for this automatic pinning.
+
 State is in-memory per adapter instance after initialization; create a new
 instance for a new client session. A 410 expired-release response is returned
 unchanged and is never retried against the active release. Call `clearRelease()`

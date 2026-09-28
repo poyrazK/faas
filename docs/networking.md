@@ -416,6 +416,13 @@ It is a browser session cookie, while the graph's server-side TTL controls its
 routing eligibility. If the graph expires, requests fail with 410 and are not
 retried against the active graph.
 
+Same-host browser WebSocket reconnects also inherit this cookie: the browser's
+native `WebSocket` API cannot set a custom release header, so the gateway reads
+the cookie only from a WebSocket handshake, validates the graph and TTL, then
+strips the cookie before forwarding. The SPA and WebSocket endpoint must use
+the same hostname for the host-only cookie to be sent. Already-open sockets
+stay on their selected deployment until they disconnect.
+
 For a multi-workload project, publish a complete release set after all member
 deployments are ready. An incompatible new service deployment can be deployed
 with an explicit 0% traffic weight first; publishing the new graph activates

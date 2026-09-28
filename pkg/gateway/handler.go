@@ -6054,6 +6054,24 @@ haveApp:
 	if !deploymentSmoke {
 		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
 		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+		// The browser WebSocket API cannot set custom request headers. A
+		// same-host SPA reconnect therefore uses the platform bootstrap cookie
+		// as its release pin. Keep this fallback specific to project WebSocket
+		// handshakes; ordinary requests and other Upgrade protocols retain their
+		// existing routing semantics. Explicit pins always take precedence.
+		if app.ProjectID != "" && !app.IsPreview && app.PinnedDeploymentID == "" &&
+			isWebSocketHandshake(r) && !revisionPresent && !releasePresent {
+			cookieRelease, present, duplicate := managedReleaseContextCookieValue(r)
+			if duplicate {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "the release context cookie must contain one release ID"))
+				return
+			}
+			if present {
+				r.Header.Set(api.ReleaseHeader, cookieRelease)
+				releasePresent = true
+			}
+		}
 		if revisionPresent && releasePresent {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Conflicting version pins", "send either X-Gregale-Revision or X-Gregale-Release"))

@@ -1,6 +1,6 @@
 # ADR-259 · Expiring revision pins and project release sets
 
-- **Status:** implemented for HTTP ingress, static browser bootstrap, durable invocations, managed service calls, and graph-aware environment promotion
+- **Status:** implemented for HTTP ingress, static browser bootstrap, same-host browser WebSocket reconnects, durable invocations, managed service calls, and graph-aware environment promotion
 - **Date:** 2026-09-25
 - **Decision:** An app may opt into `revision_pin_ttl_seconds` (maximum seven
   days). When a stable, canary, or service rollout replaces a live deployment,
@@ -31,7 +31,10 @@
   guest forwarding, protected from guest replacement, and scoped to the
   browser session. The release's server-side TTL controls routing eligibility.
   An expired release still returns 410; the SDK does not fall back to the
-  active graph.
+  active graph. Since the browser WebSocket API cannot attach custom headers,
+  the gateway also reads the cookie on same-host WebSocket reconnect handshakes
+  before stripping it from the guest request; ordinary requests do not use the
+  cookie as a pin.
 - **Internal routing:** Managed service calls retain same-account and declared
   binding authorization. The guest bridge resolves the caller app and exact
   deployment from its source IP; a release is usable only if that deployment
@@ -83,10 +86,12 @@
 - **Limits:** The graph contract covers public HTTP/WebSocket handshakes,
   managed HTTP service calls, and the durable work above. Direct external
   calls and non-browser clients that do not replay a release header are not
-  automatically pinned. Static browser clients need the Gregale browser SDK
-  to read and forward the bootstrap cookie. WebSocket connections already
-  established on a selected deployment stay there until disconnect; reconnects
-  must carry the pin. Deployment artifacts must remain available through the
+  automatically pinned. Static browser HTTP clients need the Gregale browser
+  SDK to read and forward the bootstrap cookie; same-host browser WebSocket
+  clients send it automatically, but cross-host WebSocket endpoints do not
+  receive the host-only cookie. WebSocket connections already established on a
+  selected deployment stay there until disconnect; reconnects must carry the
+  pin. Deployment artifacts must remain available through the
   configured TTL. Disabling an app's revision TTL rejects direct revision pins
   but does not revoke a previously published release set; operators must
   retire its member deployment to fail those requests closed.

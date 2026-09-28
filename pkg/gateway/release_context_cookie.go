@@ -55,6 +55,31 @@ func clearManagedReleaseContextCookie(w http.ResponseWriter) string {
 	return cookie.String()
 }
 
+// managedReleaseContextCookieValue reads the platform bootstrap cookie before
+// it is stripped from the guest request. Duplicate names are ambiguous and
+// must not silently select whichever value happens to be parsed first.
+func managedReleaseContextCookieValue(r *http.Request) (value string, present, duplicate bool) {
+	if r == nil {
+		return "", false, false
+	}
+	for _, line := range r.Header.Values("Cookie") {
+		for _, part := range strings.Split(line, ";") {
+			name, raw, hasValue := strings.Cut(strings.TrimSpace(part), "=")
+			if strings.TrimSpace(name) != api.ManagedReleaseContextCookieName {
+				continue
+			}
+			if present {
+				return "", true, true
+			}
+			present = true
+			if hasValue {
+				value = strings.TrimSpace(raw)
+			}
+		}
+	}
+	return value, present, false
+}
+
 // stripManagedReleaseContextCookie keeps the platform bootstrap value out of
 // guest requests while leaving application cookies untouched.
 func stripManagedReleaseContextCookie(r *http.Request) {
