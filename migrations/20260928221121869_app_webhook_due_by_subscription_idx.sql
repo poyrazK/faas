@@ -1,4 +1,4 @@
--- filename: 20260928155000000_app_webhook_due_by_subscription_idx.sql
+-- filename: 20260928221121869_app_webhook_due_by_subscription_idx.sql
 -- +goose Up
 -- Claim a bounded number of oldest due rows for each selected subscription.
 -- Terminal delivery history stays out of the scheduler's per-hook read.

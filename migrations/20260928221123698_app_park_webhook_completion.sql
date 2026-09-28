@@ -1,4 +1,4 @@
--- filename: 20260928200100000_app_park_webhook_completion.sql
+-- filename: 20260928221123698_app_park_webhook_completion.sql
 
 -- +goose Up
 ALTER TABLE apps

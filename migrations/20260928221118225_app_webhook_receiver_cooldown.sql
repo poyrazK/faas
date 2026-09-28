@@ -1,3 +1,5 @@
+-- filename: 20260928221118225_app_webhook_receiver_cooldown.sql
+
 -- +goose Up
 -- A receiver's Retry-After pauses new claims for this subscription across
 -- schedd instances. The deadline expires naturally; no sweep is required.

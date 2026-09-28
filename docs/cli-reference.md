@@ -3244,15 +3244,9 @@ Delete one webhook
 
 Show the delivery ledger
 
-Succeeded and dead deliveries, including their attempt history, remain
-available for 90 days after their last update. Pending and in-flight
-deliveries remain until they finish.
-
 ### webhooks retry
 
 Retry a failed delivery
-
-Dead deliveries can be replayed while they remain in the 90-day ledger.
 
 ### webhooks rotate-secret
 

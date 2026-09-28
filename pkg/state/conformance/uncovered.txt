@@ -447,9 +447,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkAppWebhookDeliveryDead
-MarkAppWebhookDeliveryFailed
-MarkAppWebhookDeliverySucceeded
 MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
