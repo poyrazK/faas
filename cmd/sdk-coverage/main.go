@@ -489,18 +489,21 @@ var methodRouteMap = map[string]string{
 	// Matches the `gregale jobs <list|add|info|update|rm|run|
 	// runs|cancel|tasks|retry|logs>` CLI surface at
 	// cmd/gregale/commands_jobs.go.
-	"GET /v1/jobs":                                     "ListJobs",
-	"POST /v1/jobs":                                    "CreateJob",
-	"GET /v1/jobs/{name}":                              "GetJob",
-	"PATCH /v1/jobs/{name}":                            "UpdateJob",
-	"DELETE /v1/jobs/{name}":                           "DeleteJob",
-	"POST /v1/jobs/{name}/runs":                        "CreateJobRun",
-	"GET /v1/jobs/{name}/runs":                         "ListJobRuns",
-	"GET /v1/jobs/{name}/runs/{id}":                    "GetJobRun",
-	"POST /v1/jobs/{name}/runs/{id}/cancel":            "CancelJobRun",
-	"GET /v1/jobs/{name}/runs/{id}/tasks":              "ListJobRunTasks",
-	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry": "RetryJobTask",
-	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":   "GetJobTaskLogs",
+	"GET /v1/jobs":                                       "ListJobs",
+	"POST /v1/jobs":                                      "CreateJob",
+	"GET /v1/jobs/{name}":                                "GetJob",
+	"PATCH /v1/jobs/{name}":                              "UpdateJob",
+	"DELETE /v1/jobs/{name}":                             "DeleteJob",
+	"POST /v1/jobs/{name}/runs":                          "CreateJobRun",
+	"GET /v1/jobs/{name}/runs":                           "ListJobRuns",
+	"GET /v1/jobs/{name}/runs/{id}":                      "GetJobRun",
+	"POST /v1/jobs/{name}/runs/{id}/cancel":              "CancelJobRun",
+	"POST /v1/jobs/{name}/runs/{id}/replay-failed":       "ReplayFailedJobRun",
+	"GET /v1/jobs/{name}/runs/{id}/tasks":                "ListJobRunTasks",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts": "ListJobTaskAttempts",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download": "DownloadJobArtifact",
+	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry":                        "RetryJobTask",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":                          "GetJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
