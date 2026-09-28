@@ -1,4 +1,4 @@
-# ADR-317 · Managed realtime revocation and delivery outcomes
+# ADR-318 · Managed realtime revocation and delivery outcomes
 
 - **Status:** accepted
 - **Date:** 2026-09-27
@@ -32,6 +32,6 @@
   order. Returning a generic failure for a partially delivered publish hides
   the queues that already accepted it and encourages duplicate retries.
 
-The callback spool remains node-local. ADR-318 moves its default from
+The callback spool remains node-local. ADR-319 moves its default from
 `/run/faas` to persistent host storage for reboot survival.
 The public publish operation reports queue admission, not client receipt.

@@ -1,4 +1,4 @@
-# ADR-318 · Persistent managed realtime callback outbox
+# ADR-319 · Persistent managed realtime callback outbox
 
 - **Status:** accepted
 - **Date:** 2026-09-27

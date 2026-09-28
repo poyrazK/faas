@@ -44,7 +44,8 @@ func testPlatformTenantAccessTokenLifecycle(t *testing.T, store platformTenantAc
 	}
 	input := state.PlatformTenantAccessTokenInput{AccountID: account.ID, TenantID: tenant.ID,
 		Name: "billing reader", Prefix: prefix, TokenHash: hash,
-		Scopes: []string{api.ScopePlatformTenantStatementsRead, api.ScopePlatformTenantActivationRead}, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+		Scopes: []string{api.ScopePlatformTenantStatementsRead, api.ScopePlatformTenantActivationRead,
+			api.ScopePlatformTenantCredentialsRead, api.ScopePlatformTenantCredentialsManage}, ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	token, err := store.CreatePlatformTenantAccessToken(ctx, input)
 	if err != nil {
 		t.Fatal(err)

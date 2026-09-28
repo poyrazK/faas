@@ -1,4 +1,4 @@
-# ADR-328 · Realtime callbacks without durable delivery
+# ADR-329 · Realtime callbacks without durable delivery
 
 - **Status:** accepted
 - **Date:** 2026-09-27

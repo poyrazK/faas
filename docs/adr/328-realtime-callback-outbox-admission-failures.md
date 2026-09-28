@@ -1,4 +1,4 @@
-# ADR-327 · Realtime callback outbox admission failure handling
+# ADR-328 · Realtime callback outbox admission failure handling
 
 - **Status:** accepted
 - **Date:** 2026-09-27

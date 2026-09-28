@@ -33,6 +33,7 @@ import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRat
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
+import type { PlatformTenantSelfConsumersResponse } from '../models/PlatformTenantSelfConsumersResponse.js';
 import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
@@ -1183,7 +1184,7 @@ export class PlatformTenantsService {
   }
   /**
    * Mint a tenant-bound, explicitly scoped self-service credential.
-   * The bearer is scoped to exactly one downstream tenant and supports only the listed read scopes or the narrow hostnames:manage capability, which can add policy-allowed hostnames to existing linked surfaces. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+   * The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service scopes. Credential management additionally requires the owner to enable a scope allowlist and per-consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
    * @returns CreatePlatformTenantAccessTokenResponse Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
    * @throws ApiError
    */
@@ -1253,6 +1254,81 @@ export class PlatformTenantsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/activation',
+    });
+  }
+  /**
+   * List this tenant's linked consumers for credential management.
+   * Requires platform_tenant:credentials:read. The tenant is derived from the bearer. The response omits app IDs and account-owned details.
+   * @returns PlatformTenantSelfConsumersResponse Linked consumer identities belonging only to the caller's tenant.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfConsumers(): CancelablePromise<PlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/consumers',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List this tenant's linked consumer-key metadata.
+   * Requires platform_tenant:credentials:read. Plaintext and hashes are never returned.
+   * @returns PlatformTenantCredentialsResponse One bounded page of redacted key metadata.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfCredentials({
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Maximum keys in this page.
+     */
+    limit?: number,
+    /**
+     * Zero-based offset for the next page.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/credentials',
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Reconcile this tenant's downstream consumer keys.
+   * Requires platform_tenant:credentials:manage. New keys must use an owner-allowed scope and fit the owner's active-key cap; revocation remains available even after delegation is disabled. Submit only client-generated SHA-256 hashes, never plaintext. Changes are atomic, account/tenant identity comes from the bearer, and responses contain metadata only.
+   * @returns ApplyPlatformTenantCredentialsResponse Credential metadata after atomic tenant-scoped reconciliation.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfCredentials({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantCredentialsRequest,
+  }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/credentials/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `The owner disabled delegation, a requested scope is not permitted, or the per-consumer active-key ceiling would be exceeded.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
     });
   }
   /**

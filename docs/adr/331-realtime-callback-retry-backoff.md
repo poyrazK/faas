@@ -1,4 +1,4 @@
-# ADR-330 · Realtime callback retry backoff
+# ADR-331 · Realtime callback retry backoff
 
 - **Status:** accepted
 - **Date:** 2026-09-27

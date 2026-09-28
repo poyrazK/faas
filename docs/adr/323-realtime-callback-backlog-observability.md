@@ -1,4 +1,4 @@
-# ADR-322 · Managed realtime callback backlog observability
+# ADR-323 · Managed realtime callback backlog observability
 
 - **Status:** accepted
 - **Date:** 2026-09-27

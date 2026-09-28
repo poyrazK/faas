@@ -1,4 +1,4 @@
-# ADR-331 · Realtime callback replay scheduling index
+# ADR-332 · Realtime callback replay scheduling index
 
 - **Status:** accepted
 - **Date:** 2026-09-27

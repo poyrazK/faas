@@ -1,4 +1,4 @@
-# ADR-325 · Realtime callback outbox capacity warning
+# ADR-326 · Realtime callback outbox capacity warning
 
 - **Status:** accepted
 - **Date:** 2026-09-27
