@@ -403,6 +403,7 @@ from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCa
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
+from .create_platform_tenant_webhook_request_event_filter_item import CreatePlatformTenantWebhookRequestEventFilterItem
 from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformTenantWebhookRequestRetryPolicy
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
@@ -1086,6 +1087,7 @@ from .platform_tenant_credential_result_action import PlatformTenantCredentialRe
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
+from .platform_tenant_hostname_verified_webhook_payload import PlatformTenantHostnameVerifiedWebhookPayload
 from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
@@ -2095,6 +2097,7 @@ __all__ = (
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
+    "CreatePlatformTenantWebhookRequestEventFilterItem",
     "CreatePlatformTenantWebhookRequestRetryPolicy",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
@@ -2770,6 +2773,7 @@ __all__ = (
     "PlatformTenantCredentialsResponse",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
+    "PlatformTenantHostnameVerifiedWebhookPayload",
     "PlatformTenantListResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",

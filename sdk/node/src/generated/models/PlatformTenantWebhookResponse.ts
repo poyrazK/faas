@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Tenant-scoped statement event receiver. The secret is never returned.
+ * Tenant-scoped event receiver. The secret is never returned.
  */
 export type PlatformTenantWebhookResponse = {
   id: string;
@@ -12,7 +12,7 @@ export type PlatformTenantWebhookResponse = {
   account_id: string;
   target_url: string;
   webhook_secret_sealed_masked: '***';
-  event_filter: Array<'platform_tenant.statement.finalized'>;
+  event_filter: Array<'platform_tenant.statement.finalized' | 'platform_tenant.hostname.verified'>;
   retry_policy: 'default' | 'aggressive' | 'none';
   delivery_format: 'json' | 'cloudevents';
   enabled: boolean;

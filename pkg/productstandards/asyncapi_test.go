@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.7.0" {
-		t.Fatalf("info.version = %v, want 1.7.0 after platform tenant statement webhooks", got)
+	if got := info["version"]; got != "1.8.0" {
+		t.Fatalf("info.version = %v, want 1.8.0 after platform tenant hostname webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -47,6 +47,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"rolloutAborted":                   "rollout.aborted",
 		"usageStatementFinalized":          "usage_statement.finalized",
 		"platformTenantStatementFinalized": "platform_tenant.statement.finalized",
+		"platformTenantHostnameVerified":   "platform_tenant.hostname.verified",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -107,6 +108,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"deliverRolloutAborted":                   "rolloutAborted",
 		"deliverUsageStatementFinalized":          "usageStatementFinalized",
 		"deliverPlatformTenantStatementFinalized": "platformTenantStatementFinalized",
+		"deliverPlatformTenantHostnameVerified":   "platformTenantHostnameVerified",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
@@ -200,7 +202,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized"} {
+	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized", "PlatformTenantHostnameVerified"} {
 		message := object(t, messages, messageName)
 		if message["contentType"] != "application/cloudevents+json" {
 			t.Errorf("components.messages.%s contentType = %v, want CloudEvents structured JSON", messageName, message["contentType"])
@@ -244,7 +246,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")
