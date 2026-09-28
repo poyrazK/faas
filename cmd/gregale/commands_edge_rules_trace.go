@@ -107,6 +107,10 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	input.AppMaintenanceLoaded = true
 	input.AppMaintenanceMode = app.MaintenanceMode
+	input.AppRequestBudgetLoaded = app.EffectiveLimits.RequestBudgetMS > 0 && app.EffectiveLimits.RequestBudgetMaxMS > 0
+	input.RequestBudgetMS = app.EffectiveLimits.RequestBudgetMS
+	input.RequestBudgetMaxMS = app.EffectiveLimits.RequestBudgetMaxMS
+	input.RequestTimeoutS = app.RequestTimeoutS
 	input.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 	input.DeclaredRoutes = append([]api.DeclaredRoute(nil), app.DeclaredRoutes...)
 	var environmentWorkload *api.ProjectEnvironmentStateWorkloadResponse
@@ -214,6 +218,11 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 			label = step.Kind
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, label, step.Reason)
+		if step.BudgetPolicy != nil {
+			policy := step.BudgetPolicy
+			_, _ = fmt.Fprintf(osStdout, "    request budget: %d ms effective (configured %d ms; plan ceiling %d ms; source %s; override %s)\n",
+				policy.BudgetMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.Source, policy.OverrideStatus)
+		}
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)

@@ -1123,6 +1123,93 @@ func TestSimulateCacheRuleReportsDeterministicBypasses(t *testing.T) {
 	}
 }
 
+func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
+	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{
+		BudgetMs: 4000, AllowOverrideHeader: "X-Tenant-Budget",
+	})
+	input := budgetTraceInput()
+	input.RequestBudgetMaxMS = 5000
+	input.Headers = http.Header{"X-Tenant-Budget": []string{"6500"}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	step := result.Simulation.Steps[0]
+	if step.Phase != "budget" || step.Outcome != "budget_candidate" || step.RuleID != "budget-rule" {
+		t.Fatalf("budget step = %#v", step)
+	}
+	policy := step.BudgetPolicy
+	if policy == nil || policy.ConfiguredMS != 4000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideHeader != "X-Tenant-Budget" || policy.OverrideStatus != "applied_clamped" {
+		t.Fatalf("effective budget policy = %#v", policy)
+	}
+	if result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.BudgetPolicy == nil || result.Rules[0].ActionPreview.BudgetPolicy.BudgetMS != 5000 {
+		t.Fatalf("budget rule preview = %#v", result.Rules[0])
+	}
+	if !strings.Contains(step.Reason, "does not predict when it expires") {
+		t.Fatalf("budget trace overclaims runtime behavior: %q", step.Reason)
+	}
+}
+
+func TestSimulateBudgetRuleIgnoresInvalidOverride(t *testing.T) {
+	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{
+		BudgetMs: 2400,
+	})
+	input := budgetTraceInput()
+	input.Headers = http.Header{api.RequestBudgetDefaultOverrideHeader: []string{"3s"}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].BudgetPolicy
+	if policy == nil || policy.BudgetMS != 2400 || policy.Source != "rule" || policy.OverrideStatus != "ignored_invalid" || policy.OverrideHeader != api.RequestBudgetDefaultOverrideHeader {
+		t.Fatalf("invalid override policy = %#v", policy)
+	}
+}
+
+func TestSimulateBudgetFallbackUsesAppTimeoutAndPlanCeiling(t *testing.T) {
+	input := budgetTraceInput()
+	input.RequestTimeoutS = 8
+	input.RequestBudgetMaxMS = 5000
+	result, err := edgeruletrace.Simulate(input, nil)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	policy := result.Simulation.Steps[0].BudgetPolicy
+	if policy == nil || policy.ConfiguredMS != 8000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideStatus != "not_applicable" {
+		t.Fatalf("fallback budget policy = %#v", policy)
+	}
+
+	planInput := budgetTraceInput()
+	planInput.RequestTimeoutS = 0
+	planInput.RequestBudgetMS = 2400
+	planResult, err := edgeruletrace.Simulate(planInput, nil)
+	if err != nil {
+		t.Fatalf("Simulate plan fallback: %v", err)
+	}
+	planPolicy := planResult.Simulation.Steps[0].BudgetPolicy
+	if planPolicy == nil || planPolicy.ConfiguredMS != 2400 || planPolicy.BudgetMS != 2400 || planPolicy.Source != "plan_default" {
+		t.Fatalf("plan fallback budget policy = %#v", planPolicy)
+	}
+}
+
+func TestSimulateBudgetRuleNeedsAppCeilingMetadata(t *testing.T) {
+	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{BudgetMs: 2400})
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodPost, AppMaintenanceLoaded: true}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_app_request_budget" || result.Simulation.StoppedAt != "budget" {
+		t.Fatalf("simulation without effective limits = %#v", result.Simulation)
+	}
+}
+
 func TestSimulateRespondRulePrecedesCachePolicy(t *testing.T) {
 	cacheRule := cacheTraceRule(t, "cache-rule", api.EdgeRuleCacheAction{MaxAgeSeconds: 60})
 	respondRule := api.EdgeRuleResponse{
@@ -1147,6 +1234,25 @@ func cacheTraceRule(t *testing.T, id string, action api.EdgeRuleCacheAction) api
 	}
 	return api.EdgeRuleResponse{
 		ID: id, Enabled: true, Kind: "cache", MatchHost: "*", MatchPath: "*", Action: encodedAction,
+	}
+}
+
+func budgetTraceRule(t *testing.T, id string, action api.EdgeRuleBudgetAction) api.EdgeRuleResponse {
+	t.Helper()
+	encodedAction, err := json.Marshal(map[string]any{"budget": action})
+	if err != nil {
+		t.Fatalf("Marshal budget action: %v", err)
+	}
+	return api.EdgeRuleResponse{
+		ID: id, Enabled: true, Kind: "budget", MatchHost: "*", MatchPath: "*", Action: encodedAction,
+	}
+}
+
+func budgetTraceInput() edgeruletrace.Input {
+	return edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/payments", Method: http.MethodPost,
+		AppMaintenanceLoaded: true, AppRequestBudgetLoaded: true,
+		RequestBudgetMS: 3000, RequestBudgetMaxMS: 6000,
 	}
 }
 

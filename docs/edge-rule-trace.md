@@ -72,6 +72,18 @@ async or pinned-deployment context, and live cache contents determine whether
 runtime serves a fresh hit, refreshes stale content, falls through on a miss, or
 serves stale content on an error. The trace never predicts one of those results.
 
+When the app's effective request-budget limits are available, the trace also
+reports the matching `kind=budget` rule's configured value, any accepted
+override-header decision, the effective milliseconds, and the plan ceiling.
+The selected header is the rule's `allow_override_header` or the platform
+default `x-faas-budget-ms`. If no budget rule matches, it shows the app's positive
+`request_timeout_s` override or the type-aware plan baseline. Invalid or
+non-positive override values fall back to the rule value; values above the
+plan ceiling are shown as clamped. This is a configured budget candidate, not
+a predicted timeout: the gateway starts the deadline only after upload, wake,
+routing, and per-VM admission. A possible response-cache lookup still stops the
+trace as incomplete because a runtime cache hit can bypass guest execution.
+
 ```json
 {
   "version": 1,
