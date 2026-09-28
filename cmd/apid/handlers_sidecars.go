@@ -602,7 +602,7 @@ func emitSidecarSetAudit(ctxr context.Context, audit *auditor, acct state.Accoun
 // the goroutine briefly (audit.Emit is sync; pkg/audit batches
 // async-flush). The log line sanitises req.Image at the sink
 // (CodeQL go/log-injection CWE-117).
-func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
+func notifyAndAuditDeployment(r *http.Request, s *server, owner, actor state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
 	ctxr := r.Context()
 	// F-03: deployment_changed emits now carry status + deployment_id.
 	// status="pending" tells listeners this row is still in-flight
@@ -668,8 +668,8 @@ func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, ap
 		DeployedBy: d.DeployedBy,
 		PRNumber:   d.PRNumber,
 	})
-	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &acct.ID, mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
-	s.recordDeploymentActivity(ctxr, r, acct, app, d,
+	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &owner.ID, mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctxr, r, actor, app, d,
 		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes})
 	// Issue #472 / ADR-054: emit app.signed_image_accepted here ONLY
 	// when effective signature enforcement is on for this deploy
@@ -682,7 +682,7 @@ func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, ap
 	// keeps the row distinct from the plain app.deployed event
 	// (different `kind`).
 	if app.RequireSigned || app.SecurityPolicy.RequiresSignedImage() {
-		s.audit.EmitAs(ctxr, resolvedActor, "app.signed_image_accepted", &acct.ID, mergeActorAudit(map[string]any{
+		s.audit.EmitAs(ctxr, resolvedActor, "app.signed_image_accepted", &owner.ID, mergeActorAudit(map[string]any{
 			"app_id":        app.ID,
 			"deployment_id": d.ID,
 			"ref":           req.Image,
@@ -690,7 +690,7 @@ func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, ap
 	}
 	// Issue #463 / ADR-068: sidecar audit event (delegated to its
 	// own helper so the sidecar surface is grep-able from one place).
-	emitSidecarSetAudit(ctxr, s.audit, acct, app, d, req.Sidecars)
+	emitSidecarSetAudit(ctxr, s.audit, owner, app, d, req.Sidecars)
 	// Issue #556 PR-A: emit a distinct audit row when the caller
 	// supplied an explicit traffic_percent (i.e. opted into canary
 	// mode on this deploy). The omitted case (server default 100)
@@ -702,7 +702,7 @@ func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, ap
 	// app.deployed + deployment.traffic_percent_set_on_create +
 	// deployment.traffic_percent_changed (PATCH path).
 	if req.TrafficPercent != nil {
-		s.audit.EmitAs(ctxr, resolvedActor, "deployment.traffic_percent_set_on_create", &acct.ID, mergeActorAudit(map[string]any{
+		s.audit.EmitAs(ctxr, resolvedActor, "deployment.traffic_percent_set_on_create", &owner.ID, mergeActorAudit(map[string]any{
 			"app_id":          app.ID,
 			"deployment_id":   d.ID,
 			"traffic_percent": *req.TrafficPercent,

@@ -98,6 +98,14 @@ var roleMatrixCells = []struct {
 	{OrgActionCreateApp, state.OrgRoleViewer, false},
 	{OrgActionCreateApp, state.OrgRoleBilling, false},
 
+	// DeployApp — workspace operators may deploy existing apps; view-only and
+	// billing roles cannot publish a new release.
+	{OrgActionDeployApp, state.OrgRoleOwner, true},
+	{OrgActionDeployApp, state.OrgRoleAdmin, true},
+	{OrgActionDeployApp, state.OrgRoleDeveloper, true},
+	{OrgActionDeployApp, state.OrgRoleViewer, false},
+	{OrgActionDeployApp, state.OrgRoleBilling, false},
+
 	// ManageMembers — owner + admin.
 	{OrgActionManageMembers, state.OrgRoleOwner, true},
 	{OrgActionManageMembers, state.OrgRoleAdmin, true},
@@ -215,8 +223,8 @@ func TestRoleMatrix_Exhaustive(t *testing.T) {
 // Pin rationale: the original table covered 9 actions × 5 roles
 // (=45 cells); the PR-6 cells for OrgActionCreateApiKey /
 // OrgActionRevokeApiKey added two more actions, taking the matrix
-// to 11×5 = 55 cells; the app-provisioning action brings it to
-// 12×5 = 60. Without this orphan-cell test, a future PR that adds an
+// to 11×5 = 55 cells; app provisioning and deployment bring it to
+// 13×5 = 65. Without this orphan-cell test, a future PR that adds an
 // action (say, OrgActionManageSSO) could ship with
 // the matrix updated but the test table untouched — and the
 // change would land with the matrix's per-role behaviour entirely
@@ -399,6 +407,7 @@ func TestOrgActionString(t *testing.T) {
 		OrgActionCreateApiKey:      "org.create_api_key",
 		OrgActionRevokeApiKey:      "org.revoke_api_key",
 		OrgActionCreateApp:         "org.create_app",
+		OrgActionDeployApp:         "org.deploy_app",
 	}
 	for action, want := range cases {
 		if got := action.String(); got != want {
@@ -424,6 +433,7 @@ func TestAllOrgActions_Complete(t *testing.T) {
 		OrgActionCreateApiKey:      true,
 		OrgActionRevokeApiKey:      true,
 		OrgActionCreateApp:         true,
+		OrgActionDeployApp:         true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {

@@ -20,7 +20,7 @@ package authz
 
 import "github.com/onebox-faas/faas/pkg/state"
 
-// OrgAction is one of the twelve role-checked verbs the org surface
+// OrgAction is one of the thirteen role-checked verbs the org surface
 // understands. The vocabulary is closed (issue #190 / IAM-6 / ADR-061):
 // PR 5/6 add handlers that compose these constants — they do NOT add
 // new ad-hoc verbs.
@@ -88,6 +88,11 @@ const (
 	// Owners, admins, and developers may create; viewer and billing roles
 	// cannot provision infrastructure.
 	OrgActionCreateApp OrgAction = "org.create_app"
+
+	// OrgActionDeployApp gates image deployments to an app persisted in the
+	// active workspace. Owners, admins, and developers may deploy; viewer and
+	// billing roles cannot mutate infrastructure.
+	OrgActionDeployApp OrgAction = "org.deploy_app"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -106,6 +111,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionCreateApiKey,
 	OrgActionRevokeApiKey,
 	OrgActionCreateApp,
+	OrgActionDeployApp,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The
