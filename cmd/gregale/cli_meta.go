@@ -673,6 +673,7 @@ var cliCommands = []cliCommand{
 				{Name: "deploy-branches", Short: "comma-separated branch=environment mappings (default or registered environment)", Value: "MAPPINGS"},
 				{Name: "pinned-sha", Short: "pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag)", Value: "SHA"},
 				{Name: "pin-action", Short: "resolve the current v0 deploy Action tag to its commit SHA"},
+				{Name: "enable-action-updates", Short: "add a weekly GitHub Actions Dependabot updater"},
 				{Name: "workflow", Short: "workflow path relative to repository root", Value: "PATH"},
 				{Name: "preview", Short: "enable pull-request previews"},
 				{Name: "no-preview", Short: "disable pull-request previews"},
@@ -681,7 +682,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe (safe requires Pro/Scale)", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
-				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
+				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
 			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Positionals: []string{"<slug>"}, Flags: []cliFlag{

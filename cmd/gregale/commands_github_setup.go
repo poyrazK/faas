@@ -29,18 +29,22 @@ const (
 )
 
 type githubSetupReceipt struct {
-	App              string                           `json:"app"`
-	Repo             string                           `json:"repo"`
-	ProductionBranch string                           `json:"production_branch"`
-	WorkflowPath     string                           `json:"workflow_path"`
-	Rollout          string                           `json:"rollout"`
-	WorkflowChanged  bool                             `json:"workflow_changed"`
-	WorkflowWritten  bool                             `json:"workflow_written"`
-	DryRun           bool                             `json:"dry_run,omitempty"`
-	Binding          *api.InstallBindResponse         `json:"binding,omitempty"`
-	Policy           *api.GitHubDeploymentPolicy      `json:"policy,omitempty"`
-	PolicyPatch      *api.GitHubDeploymentPolicyPatch `json:"policy_patch,omitempty"`
-	WorkflowContent  string                           `json:"workflow_content,omitempty"`
+	App                  string                           `json:"app"`
+	Repo                 string                           `json:"repo"`
+	ProductionBranch     string                           `json:"production_branch"`
+	WorkflowPath         string                           `json:"workflow_path"`
+	Rollout              string                           `json:"rollout"`
+	WorkflowChanged      bool                             `json:"workflow_changed"`
+	WorkflowWritten      bool                             `json:"workflow_written"`
+	DryRun               bool                             `json:"dry_run,omitempty"`
+	Binding              *api.InstallBindResponse         `json:"binding,omitempty"`
+	Policy               *api.GitHubDeploymentPolicy      `json:"policy,omitempty"`
+	PolicyPatch          *api.GitHubDeploymentPolicyPatch `json:"policy_patch,omitempty"`
+	WorkflowContent      string                           `json:"workflow_content,omitempty"`
+	ActionUpdatesPath    string                           `json:"action_updates_path,omitempty"`
+	ActionUpdatesChanged bool                             `json:"action_updates_changed,omitempty"`
+	ActionUpdatesWritten bool                             `json:"action_updates_written,omitempty"`
+	ActionUpdatesContent string                           `json:"action_updates_content,omitempty"`
 }
 
 // cmdGithubSetup turns the existing GitHub bind, preview policy, and Actions
@@ -54,6 +58,7 @@ func cmdGithubSetup(args []string) int {
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag)")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
+	enableActionUpdates := fs.Bool("enable-action-updates", false, "add a weekly GitHub Actions Dependabot updater")
 	workflow := fs.String("workflow", defaultGithubSetupWorkflow, "workflow path relative to the repository root")
 	preview := fs.Bool("preview", false, "enable pull-request previews")
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
@@ -62,10 +67,10 @@ func cmdGithubSetup(args []string) int {
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
 	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe (safe requires Pro/Scale)")
-	dryRun := fs.Bool("dry-run", false, "show the workflow without writing or changing remote state")
+	dryRun := fs.Bool("dry-run", false, "show generated files without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
-	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force", "pin-action")
+	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force", "pin-action", "enable-action-updates")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -134,6 +139,13 @@ func cmdGithubSetup(args []string) int {
 		return printErr("Could not locate the Git repository", err)
 	}
 	workflowFile := filepath.Join(root, workflowPath)
+	var actionUpdates githubSetupFileChange
+	if *enableActionUpdates {
+		actionUpdates, err = prepareGithubActionsDependabot(filepath.Join(root, defaultGithubSetupDependabotPath))
+		if err != nil {
+			return printErr("Could not prepare GitHub Actions Dependabot updates", err)
+		}
+	}
 	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths, *previewServicePolicy)
 	if *dryRun {
 		if repoName == "" {
@@ -142,8 +154,8 @@ func cmdGithubSetup(args []string) int {
 		if branch == "" {
 			branch = "main"
 		}
-		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches, *pinnedSHA)
-		existing, exists, err := readGithubSetupWorkflow(workflowFile)
+		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches, *pinnedSHA, false)
+		existing, exists, err := readGithubSetupFile(workflowFile)
 		if err != nil {
 			return printErr("Could not inspect the workflow file", err)
 		}
@@ -161,6 +173,11 @@ func cmdGithubSetup(args []string) int {
 			DryRun:           true,
 			PolicyPatch:      policyPatch,
 			WorkflowContent:  desired,
+		}
+		if *enableActionUpdates {
+			receipt.ActionUpdatesPath = defaultGithubSetupDependabotPath
+			receipt.ActionUpdatesChanged = actionUpdates.Changed
+			receipt.ActionUpdatesContent = string(actionUpdates.Desired)
 		}
 		return renderGithubSetupReceipt(receipt, existing, exists)
 	}
@@ -207,8 +224,8 @@ func cmdGithubSetup(args []string) int {
 			return printErr("Could not pin the deploy Action", err)
 		}
 	}
-	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, actionSHA)
-	existing, exists, err := readGithubSetupWorkflow(workflowFile)
+	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, actionSHA, *pinAction)
+	existing, exists, err := readGithubSetupFile(workflowFile)
 	if err != nil {
 		return printErr("Could not inspect the workflow file", err)
 	}
@@ -224,6 +241,10 @@ func cmdGithubSetup(args []string) int {
 		Rollout:          *rollout,
 		WorkflowChanged:  changed,
 		PolicyPatch:      policyPatch,
+	}
+	if *enableActionUpdates {
+		receipt.ActionUpdatesPath = defaultGithubSetupDependabotPath
+		receipt.ActionUpdatesChanged = actionUpdates.Changed
 	}
 
 	bindingMutation := strings.TrimSpace(*repo) != "" || strings.TrimSpace(*productionBranch) != "" || strings.TrimSpace(*deployBranches) != ""
@@ -248,12 +269,28 @@ func cmdGithubSetup(args []string) int {
 		}
 		receipt.WorkflowWritten = true
 	}
+	if actionUpdates.Changed {
+		if err := writeGithubSetupFile(actionUpdates.Path, actionUpdates.Desired); err != nil {
+			if changed {
+				if rollbackErr := restoreGithubSetupFile(workflowFile, existing, exists); rollbackErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore workflow after Dependabot config write failure: %w", rollbackErr))
+				}
+			}
+			return printErr("Could not write GitHub Actions Dependabot config", err)
+		}
+		receipt.ActionUpdatesWritten = true
+	}
 	if policyPatch != nil {
 		policy, err := client.PatchGitHubDeploymentPolicy(ctx, positional[0], *policyPatch)
 		if err != nil {
 			if changed {
 				if rollbackErr := restoreGithubSetupWorkflow(workflowFile, existing, exists); rollbackErr != nil {
 					err = errors.Join(err, fmt.Errorf("restore workflow after policy failure: %w", rollbackErr))
+				}
+			}
+			if receipt.ActionUpdatesWritten {
+				if rollbackErr := restoreGithubSetupFile(actionUpdates.Path, actionUpdates.Existing, actionUpdates.Exists); rollbackErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore Dependabot config after policy failure: %w", rollbackErr))
 				}
 			}
 			return printErr("GitHub deployment policy update failed", err)
@@ -326,8 +363,12 @@ func parseGithubActionTagResolution(output string) (string, error) {
 }
 
 func restoreGithubSetupWorkflow(path string, previous []byte, existed bool) error {
+	return restoreGithubSetupFile(path, previous, existed)
+}
+
+func restoreGithubSetupFile(path string, previous []byte, existed bool) error {
 	if existed {
-		return writeGithubSetupWorkflow(path, previous)
+		return writeGithubSetupFile(path, previous)
 	}
 	return os.Remove(path)
 }
@@ -473,7 +514,7 @@ func validGithubSetupPreviewServicePolicy(policy string) bool {
 	return policy == githubSetupPreviewServicesDeny || policy == githubSetupPreviewServicesAllowMarked
 }
 
-func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches map[string]string, pinnedSHA string) string {
+func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches map[string]string, pinnedSHA string, actionVersionComment bool) string {
 	if branch == "" {
 		branch = "main"
 	}
@@ -483,6 +524,10 @@ func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches
 	actionRef := githubActionVersion
 	if pinnedSHA != "" {
 		actionRef = pinnedSHA
+	}
+	versionComment := ""
+	if actionVersionComment {
+		versionComment = " # " + githubActionVersion
 	}
 	rolloutInput := ""
 	if rollout == githubSetupRolloutSafe {
@@ -528,7 +573,7 @@ jobs:
       checks: write
       id-token: write
     steps:
-      - uses: %s/%s@%s
+      - uses: %s/%s@%s%s
         with:
           api-base: %s
           app: %s
@@ -537,7 +582,7 @@ jobs:
           environment: %s
           wait: "true"
           wait-timeout: "1200"
-%s`, app, repo, branch, githubActionRepo, githubActionPath, actionRef, branchFilters.String(), app, deploymentConcurrencyScope, workflowDispatchCondition, githubEnvironment, githubActionRepo, githubActionPath, actionRef, defaultAPIBase, app, deploymentEnvironment, rolloutInput)
+%s`, app, repo, branch, githubActionRepo, githubActionPath, actionRef, branchFilters.String(), app, deploymentConcurrencyScope, workflowDispatchCondition, githubEnvironment, githubActionRepo, githubActionPath, actionRef, versionComment, defaultAPIBase, app, deploymentEnvironment, rolloutInput)
 }
 
 func githubSetupWorkflowBranches(productionBranch string, deployBranches map[string]string) []string {
@@ -573,7 +618,7 @@ func githubSetupExpressionString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func readGithubSetupWorkflow(path string) ([]byte, bool, error) {
+func readGithubSetupFile(path string) ([]byte, bool, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -585,40 +630,7 @@ func readGithubSetupWorkflow(path string) ([]byte, bool, error) {
 }
 
 func writeGithubSetupWorkflow(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create workflow directory: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".gregale-workflow-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary workflow: %w", err)
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		cleanup()
-		return fmt.Errorf("set workflow permissions: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("write temporary workflow: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("sync workflow: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temporary workflow: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("commit workflow: %w", err)
-	}
-	return nil
+	return writeGithubSetupFile(path, data)
 }
 
 func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exists bool) int {
@@ -643,6 +655,19 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 	default:
 		_, _ = fmt.Fprintln(osStdout, "  file:              unchanged")
 	}
+	if receipt.ActionUpdatesPath != "" {
+		_, _ = fmt.Fprintf(osStdout, "  action_updates:    %s\n", receipt.ActionUpdatesPath)
+		switch {
+		case receipt.DryRun && receipt.ActionUpdatesChanged:
+			_, _ = fmt.Fprintln(osStdout, "  dependabot:        would be updated")
+		case receipt.DryRun:
+			_, _ = fmt.Fprintln(osStdout, "  dependabot:        already configured")
+		case receipt.ActionUpdatesWritten:
+			_, _ = fmt.Fprintln(osStdout, "  dependabot:        updated")
+		default:
+			_, _ = fmt.Fprintln(osStdout, "  dependabot:        already configured")
+		}
+	}
 	if receipt.Binding != nil {
 		_, _ = fmt.Fprintf(osStdout, "  binding:           %s\n", receipt.Binding.RepoFullName)
 	}
@@ -651,14 +676,24 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
 	}
-	if receipt.WorkflowWritten {
+	switch {
+	case receipt.WorkflowWritten && receipt.ActionUpdatesWritten:
+		_, _ = fmt.Fprintf(osStdout, "  next:              commit and push %s and %s to activate deploys and pin updates\n", receipt.WorkflowPath, receipt.ActionUpdatesPath)
+	case receipt.WorkflowWritten:
 		_, _ = fmt.Fprintf(osStdout, "  next:              commit and push %s to activate production deploys\n", receipt.WorkflowPath)
+	case receipt.ActionUpdatesWritten:
+		_, _ = fmt.Fprintf(osStdout, "  next:              commit and push %s to enable automatic Action updates\n", receipt.ActionUpdatesPath)
 	}
 	if receipt.DryRun {
 		_, _ = fmt.Fprintln(osStdout)
 		_, _ = fmt.Fprintln(osStdout, "Generated workflow:")
 		_, _ = fmt.Fprintln(osStdout)
 		_, _ = fmt.Fprint(osStdout, receipt.WorkflowContent)
+		if receipt.ActionUpdatesContent != "" {
+			_, _ = fmt.Fprintln(osStdout)
+			_, _ = fmt.Fprintf(osStdout, "\nDependabot config %s:\n\n", receipt.ActionUpdatesPath)
+			_, _ = fmt.Fprint(osStdout, receipt.ActionUpdatesContent)
+		}
 	}
 	return 0
 }

@@ -212,6 +212,10 @@ resolve the current `v0` commit automatically with `--pin-action`. The smaller
 `gregale deploy --github` snippet supports the same option. Both resolve the
 public tag over the network; `github setup` cannot combine it with `--dry-run`.
 Use `--pinned-sha` for a network-free preview or to pin a chosen commit.
+Generated auto-pins add a same-line `# v0` comment for Dependabot. Add
+`--enable-action-updates` to `gregale github setup <slug>` to merge a weekly
+GitHub Actions entry into `.github/dependabot.yml`; existing ecosystems are
+preserved, and `--dry-run` previews both files.
 
 ### What goes in the snippet
 

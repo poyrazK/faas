@@ -2323,6 +2323,8 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
 		t.Errorf("snippet did not resolve the current Action tag to commit %q; got:\n%s", sha, got)
+	} else if !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
+		t.Errorf("auto-pinned snippet lacks same-line Dependabot version metadata; got:\n%s", got)
 	}
 	stdout.Reset()
 	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action", "--pinned-sha", sha}); code == 0 {

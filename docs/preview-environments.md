@@ -229,6 +229,13 @@ gregale github setup checkout --repo OWNER/NAME --pin-action
 it cannot be combined with `--dry-run`. Pass a full commit with `--pinned-sha`
 when you need a network-free preview or want to choose a specific release.
 
+Add `--enable-action-updates` to merge a weekly `github-actions` updater into
+`.github/dependabot.yml`. Existing Dependabot ecosystems and their settings
+are preserved, and an existing root Actions updater is left as configured.
+When `--pin-action` generates the workflow, its same-line `# v0` comment lets
+Dependabot update the immutable SHA to the latest v0 release. With
+`--dry-run --enable-action-updates`, setup previews both generated files.
+
 Generated workflows serialize deployments by app and Gregale target scope.
 Pushes to separate mapped environments can proceed independently, while
 branches and tags targeting the same scope share a deployment queue.

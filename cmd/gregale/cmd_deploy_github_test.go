@@ -227,7 +227,7 @@ func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
 	}
 	const prefix = "# For production safety, see "
 	var docsURL string
-	for _, line := range strings.Split(renderGithubSnippet(githubSnippetEnv{}, "action-ref-canary", ""), "\n") {
+	for _, line := range strings.Split(renderGithubSnippet(githubSnippetEnv{}, "action-ref-canary", "", false), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			docsURL = strings.TrimSuffix(strings.TrimPrefix(line, prefix), ".")
 			break
@@ -389,7 +389,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderGithubSnippet(tc.env, tc.app, tc.pinnedSHA)
+			got := renderGithubSnippet(tc.env, tc.app, tc.pinnedSHA, false)
 			if !strings.HasPrefix(got, "# Gregale deploy") {
 				t.Fatalf("snippet missing leading sentinel; got:\n%s", got)
 			}
@@ -404,6 +404,22 @@ func TestRenderGithubSnippet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderGithubSnippetAddsDependabotVersionOnlyForAutoPins(t *testing.T) {
+	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	manual := renderGithubSnippet(githubSnippetEnv{}, "api", sha, false)
+	if strings.Contains(manual, "# v0") {
+		t.Fatalf("manual SHA pin was labeled as v0: %s", manual)
+	}
+	automatic := renderGithubSnippet(githubSnippetEnv{}, "api", sha, true)
+	if !strings.Contains(automatic, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
+		t.Fatalf("auto-pinned workflow lacks same-line Dependabot version metadata: %s", automatic)
+	}
+	var workflowYAML yaml.Node
+	if err := yaml.Unmarshal([]byte(automatic), &workflowYAML); err != nil {
+		t.Fatalf("auto-pinned workflow is invalid YAML: %v", err)
 	}
 }
 
