@@ -2138,9 +2138,9 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if _, _, ok := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, hostname(r.Host)); ok {
 		return false
 	}
-	rule := h.edgeRules.MatchRoute(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule, blocked := h.routeRuleForHost(r, appHost)
 	if rule == nil {
-		if h.metrics != nil {
+		if h.metrics != nil && !blocked {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
 		return false
@@ -2179,26 +2179,6 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 		}
 		return false
 	}
-	// The inbound host must itself belong to the rule's account. The target
-	// check above only proved the rule points at its own app; match_host is
-	// free-form, so without this any account could route another tenant's
-	// hostname (or "*") to an app it controls and serve that traffic.
-	if hostApp, found := h.backend.Lookup(r.Context(), appHost); !found || hostApp.AccountID != rule.AccountID {
-		if h.edgeRuleAudit != nil {
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &rule.AccountID, map[string]any{
-				"rule_id":         rule.ID,
-				"from_host":       r.Host,
-				"to_slug":         rule.TargetAppSlug,
-				"rule_account_id": rule.AccountID,
-				"reason":          "host_not_owned",
-			})
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
-			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
-		}
-		return false
-	}
 	// Happy path: audit + metric, then substitute.
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_matched", nil, map[string]any{
@@ -2216,6 +2196,45 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	}
 	*app = target
 	return true
+}
+
+// routeRuleForHost picks the kind=route rule for the inbound host. The
+// target check in matchAndSubstituteRoute only proves a rule points at its
+// own account's app; match_host is free-form, so a rule can also name a host
+// another account's app answers on (or "*"). Such a rule must neither route
+// that tenant's traffic nor, by winning the first-match pick, hide the
+// owner's own route rule, so the pick is repeated scoped to the host's
+// owner. A host no app claims (ADR-091's synthetic route host) keeps the
+// unscoped pick. blocked reports that a foreign rule was refused and no
+// owner rule replaced it; the refusal is already audited and counted.
+func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeRuleResolved, blocked bool) {
+	host := hostname(r.Host)
+	rule = h.edgeRules.MatchRoute(r.Context(), host, r.URL.Path, r.Method)
+	if rule == nil {
+		return nil, false
+	}
+	hostApp, found := h.backend.Lookup(r.Context(), appHost)
+	if !found || hostApp.AccountID == rule.AccountID {
+		return rule, false
+	}
+	if h.edgeRuleAudit != nil {
+		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &rule.AccountID, map[string]any{
+			"rule_id":         rule.ID,
+			"from_host":       r.Host,
+			"to_slug":         rule.TargetAppSlug,
+			"rule_account_id": rule.AccountID,
+			"reason":          "host_not_owned",
+		})
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
+		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
+	}
+	owned := h.edgeRules.MatchRoute(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), host, r.URL.Path, r.Method)
+	if owned == nil || owned.AccountID != hostApp.AccountID {
+		return nil, true
+	}
+	return owned, false
 }
 
 // matchAndApplyRewrite (ADR-089 / issue #561 PR 4) consults the

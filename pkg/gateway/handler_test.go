@@ -4408,11 +4408,15 @@ func (m routeRuleMatcher) MatchRoute(context.Context, string, string, string) *E
 func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
+		host        string
 		ruleAccount string
 		wantAudit   string
 	}{
-		{"foreign account", "acct-attacker", "edge_rule.route_blocked"},
-		{"owner account", "acct-1", "edge_rule.route_matched"},
+		{"foreign account", "jane-api.apps.dom", "acct-attacker", "edge_rule.route_blocked"},
+		{"owner account", "jane-api.apps.dom", "acct-1", "edge_rule.route_matched"},
+		// ADR-091: a host no app claims is routed by whichever account's
+		// rule names it; only a host another account owns is protected.
+		{"unclaimed host", "synthetic.example", "acct-attacker", "edge_rule.route_matched"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHandler(t)
@@ -4421,7 +4425,7 @@ func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 			h.WithEdgeRules(routeRuleMatcher{route: &EdgeRuleResolved{
 				ID: "rule-route", AccountID: tc.ruleAccount, TargetAppSlug: "target",
 			}}, func(context.Context, string) (App, bool) { return target, true }, audit)
-			req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/", nil)
 			req.Header.Set("X-Forwarded-For", "192.0.2.1")
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			audit.mu.Lock()
@@ -4436,6 +4440,48 @@ func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 				t.Fatalf("route audit = %v, want [%s]", kinds, tc.wantAudit)
 			}
 		})
+	}
+}
+
+// ownerScopedRouteMatcher filters by the recorded owner the way
+// gatewayd-internal's matcher does, then picks the first rule.
+type ownerScopedRouteMatcher struct {
+	stubEdgeRuleMatcher
+	rules []EdgeRuleResolved
+}
+
+func (m ownerScopedRouteMatcher) MatchRoute(ctx context.Context, _, _, _ string) *EdgeRuleResolved {
+	rules := OwnedEdgeRules(ctx, m.rules, func(r *EdgeRuleResolved) string { return r.AccountID })
+	if len(rules) == 0 {
+		return nil
+	}
+	return &rules[0]
+}
+
+// A foreign route rule that wins the first-match pick for the owner's host
+// must not hide the owner's own route rule.
+func TestForeignRouteRuleDoesNotShadowOwnersRoute(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	apps := map[string]App{
+		"attacker-app": {ID: "app-attacker", AccountID: "acct-attacker", Slug: "attacker-app", Plan: api.PlanPro},
+		"owner-app":    {ID: "app-owner", AccountID: "acct-1", Slug: "owner-app", Plan: api.PlanPro},
+	}
+	var resolved []string
+	h.WithEdgeRules(ownerScopedRouteMatcher{rules: []EdgeRuleResolved{
+		{ID: "foreign", AccountID: "acct-attacker", TargetAppSlug: "attacker-app"},
+		{ID: "own", AccountID: "acct-1", TargetAppSlug: "owner-app"},
+	}}, func(_ context.Context, slug string) (App, bool) {
+		resolved = append(resolved, slug)
+		app, ok := apps[slug]
+		return app, ok
+	}, &captureAuditor{})
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	app := App{}
+	if !h.matchAndSubstituteRoute(req, "jane-api.apps.dom", &app) {
+		t.Fatal("owner's route rule did not substitute")
+	}
+	if app.ID != "app-owner" || len(resolved) != 1 || resolved[0] != "owner-app" {
+		t.Fatalf("substituted %q after resolving %v, want only the owner's target", app.ID, resolved)
 	}
 }
 
