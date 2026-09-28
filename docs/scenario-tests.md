@@ -79,7 +79,9 @@ with hyphens changed to underscores). A key has `read` and `write` scopes by
 default; `scopes` can narrow or expand them. Send a key as an
 `Authorization: Bearer` token. Set `consumer_auth_mode: required` to have
 Gregale reject requests without a valid consumer key. Application assertions
-can then check that `customer-b` cannot retrieve `customer-a`'s export. The keys are never written
+can use both credentials to exercise the gateway's authentication and scope
+rules. Ownership checks still depend on the application's own identity model.
+The keys are never written
 to the report. The runner revokes the consumers during cleanup, and their keys
 expire one hour after the scenario timeout as a backstop. Consumer key plan
 limits apply. Applications with their own authentication scheme can create
