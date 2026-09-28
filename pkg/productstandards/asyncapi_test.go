@@ -51,7 +51,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"platformTenantSurfaceCertificateChanged": "platform_tenant.surface.certificate.changed",
 		"platformTenantSurfaceDeploymentChanged":  "platform_tenant.surface.deployment.changed",
 		"platformTenantCustomerLinked":            "platform_tenant.customer.linked",
-		"platformTenantCustomerOffboarded":         "platform_tenant.customer.offboarded",
+		"platformTenantCustomerOffboarded":        "platform_tenant.customer.offboarded",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -116,7 +116,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		"deliverPlatformTenantSurfaceCertificateChanged": "platformTenantSurfaceCertificateChanged",
 		"deliverPlatformTenantSurfaceDeploymentChanged":  "platformTenantSurfaceDeploymentChanged",
 		"deliverPlatformTenantCustomerLinked":            "platformTenantCustomerLinked",
-		"deliverPlatformTenantCustomerOffboarded":         "platformTenantCustomerOffboarded",
+		"deliverPlatformTenantCustomerOffboarded":        "platformTenantCustomerOffboarded",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
