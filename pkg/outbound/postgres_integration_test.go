@@ -397,6 +397,9 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 		t.Fatalf("create app: %v", err)
 	}
 	policy := api.DefaultOutboundRequestPolicy()
+	// Customer admissions use the persisted request timeout as their lease TTL.
+	// Keep this short so the crash-expiry half-open probe scenario can reclaim it.
+	policy.RequestTimeoutMS = 250
 	policy.CircuitBreakerFailureThreshold = 1
 	policy.CircuitBreakerOpenSeconds = 1
 	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
