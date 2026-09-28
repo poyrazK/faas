@@ -1,4 +1,4 @@
-# ADR-294: Tenant-scoped self-service customer offboarding
+# ADR-335: Tenant-scoped self-service customer offboarding
 
 **Status:** accepted
 **Date:** 2026-09-27
