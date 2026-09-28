@@ -123,6 +123,13 @@ func WaitForMigrationsApplied(
 
 		case _, ok := <-notifs:
 			if !ok {
+				// Cancellation closes the subscription channel as well as
+				// making ctx.Done selectable. When both are ready, select
+				// may choose this arm; preserve the caller's cancellation
+				// contract instead of reporting an unexpected close.
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				// SubscribeWithReconnect only closes the outer
 				// channel on ctx.Done; if we see !ok without a
 				// cancel, the pool is gone or the inner loop is
