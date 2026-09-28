@@ -170,6 +170,18 @@ cleanup success, failures, and deleted row counts are fleet-wide metrics.
 Alerts cover failed cleanup and storage above 5 GiB. Monthly partitioning
 remains an option if batched deletion cannot keep up with fleet volume.
 
+### 3.12 Dispatcher backpressure
+
+The dispatcher has 64 process-wide delivery slots in addition to its
+32-per-tick claim limit. It reserves slots before each database claim and
+requests only the currently free capacity. Empty and failed claims release
+unused reservations; every completed worker releases its slot. When all slots
+are occupied, the next tick leaves deliveries pending in the durable ledger
+instead of leasing more rows. Fleet metrics report running workers and whether
+all slots are allocated. The existing overdue-queue alert detects sustained
+backlogs while the saturation signal distinguishes capacity pressure from an
+idle or failing claim loop.
+
 ## Consequences
 
 Positive:
@@ -192,10 +204,11 @@ Negative / costs:
   rows are retained for 90 days and removed in bounded batches;
   active rows can still grow during an extended dispatch outage.
   The storage-size alert covers both delivery and attempt tables.
-- The 5-second tick + 32/tick cap is a deliberate batching
-  trade-off. Fair selection enumerates due accounts on each tick;
-  a much larger backlog may need a maintained queue-head index or
-  account cursor to keep that scan cheap.
+- The 5-second tick, 32/tick claim cap, and 64 in-flight slots are
+  deliberate batching and capacity trade-offs. Fair selection
+  enumerates due accounts on each tick; a much larger backlog may
+  need a maintained queue-head index or account cursor to keep that
+  scan cheap.
 - The dispatcher is a schedd-only goroutine today; future
   multi-schedd deployments (ADR-064 cross-node rebalance) would
   need a per-node cap-aware partition to avoid a thundering herd

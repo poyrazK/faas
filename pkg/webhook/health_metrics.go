@@ -16,6 +16,8 @@ type DeliveryHealthMetrics struct {
 	retentionFailures prometheus.Counter
 	prunedTotal       prometheus.Counter
 	storageBytes      prometheus.Gauge
+	inFlight          prometheus.Gauge
+	saturated         prometheus.Gauge
 }
 
 func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *DeliveryHealthMetrics {
@@ -48,9 +50,17 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 			Name: prefix + "_webhook_delivery_storage_bytes",
 			Help: "Postgres storage used by outbound webhook deliveries and attempt history, including indexes.",
 		}),
+		inFlight: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_delivery_inflight",
+			Help: "Outbound webhook delivery workers currently running in this schedd process.",
+		}),
+		saturated: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_delivery_saturated",
+			Help: "One when all outbound webhook dispatch slots are reserved or running, zero otherwise.",
+		}),
 	}
 	reg.MustRegister(m.overdueSeconds, m.deadTotal, m.pollSuccess, m.retentionSuccess,
-		m.retentionFailures, m.prunedTotal, m.storageBytes)
+		m.retentionFailures, m.prunedTotal, m.storageBytes, m.inFlight, m.saturated)
 	return m
 }
 
@@ -95,5 +105,17 @@ func (m *DeliveryHealthMetrics) markRetentionSucceeded(bytes int64) {
 	if m != nil {
 		m.storageBytes.Set(float64(bytes))
 		m.retentionSuccess.Set(1)
+	}
+}
+
+func (m *DeliveryHealthMetrics) setDispatchLoad(active, used, capacity int) {
+	if m == nil {
+		return
+	}
+	m.inFlight.Set(float64(active))
+	if capacity > 0 && used >= capacity {
+		m.saturated.Set(1)
+	} else {
+		m.saturated.Set(0)
 	}
 }

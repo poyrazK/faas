@@ -30,7 +30,7 @@ func TestDeliveryHealthMetrics_FleetOnly(t *testing.T) {
 		t.Fatalf("poll success = %v, want 0", got)
 	}
 	families, err := reg.Gather()
-	if err != nil || len(families) != 7 {
+	if err != nil || len(families) != 9 {
 		t.Fatalf("fleet metrics = %d families, err=%v", len(families), err)
 	}
 	for _, family := range families {

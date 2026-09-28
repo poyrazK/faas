@@ -20,7 +20,8 @@
 //     MarkAppWebhookDelivery{Succeeded,Failed,Dead} based on
 //     the outcome + retry budget.
 //
-//   - In-flight goroutines track through d.inflight (sync.WaitGroup).
+//   - A process-wide slot limit bounds claimed and in-flight deliveries
+//     across ticks. In-flight goroutines track through d.inflight (sync.WaitGroup).
 //     On ctx.Done() the Run loop blocks on d.inflight.Wait() with a
 //     10-second deadline (per cmd/schedd/main.go shutdown contract),
 //     so SIGTERM never loses an in-flight row.
@@ -73,12 +74,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-// Tunables. Default values match the issue #476 acceptance gates:
-// 32/tick, 5s tick, 10s drain on shutdown.
+// Tunables. The dispatcher claims up to 32 rows per five-second tick,
+// permits up to 64 rows to be claimed or in flight across ticks, and
+// drains for up to ten seconds on shutdown.
 const (
-	DefaultTick       = 5 * time.Second
-	DefaultCap        = 32
-	DefaultPerAttempt = 10 * time.Second
+	DefaultTick        = 5 * time.Second
+	DefaultCap         = 32
+	DefaultMaxInFlight = 64
+	DefaultPerAttempt  = 10 * time.Second
 	// DefaultDrainTimeout is the budget for in-flight goroutines to
 	// finish on ctx.Done(). Matches the cmd/schedd/main.go 10s
 	// shutdown pattern; the HTTP graceful stop timeout is 5s and the
@@ -218,6 +221,12 @@ type Dispatcher struct {
 	// Cap is the per-tick claim limit. Default 32.
 	Cap int
 
+	// maxInFlight bounds delivery work across ticks. Set before Run.
+	maxInFlight int
+	loadMu      sync.Mutex
+	reserved    int
+	active      int
+
 	// Backoffs overrides the per-retry-policy schedule. When nil,
 	// the dispatcher consults DefaultBackoffs. Tests install
 	// short schedules here so a 7-attempt path runs in <1s wall.
@@ -244,16 +253,17 @@ type Dispatcher struct {
 // setters (functional-options pattern, mirrors sched.NewDrain).
 func NewDispatcher(store state.Store, aud *audit.Auditor, log *slog.Logger) *Dispatcher {
 	return &Dispatcher{
-		store:      store,
-		auditor:    aud,
-		log:        log,
-		Sleeper:    time.Sleep,
-		Now:        time.Now,
-		Tick:       DefaultTick,
-		Cap:        DefaultCap,
-		PerAttempt: DefaultPerAttempt,
-		HTTPClient: nil,
-		Backoffs:   nil, // nil → consult DefaultBackoffs
+		store:       store,
+		auditor:     aud,
+		log:         log,
+		Sleeper:     time.Sleep,
+		Now:         time.Now,
+		Tick:        DefaultTick,
+		Cap:         DefaultCap,
+		maxInFlight: DefaultMaxInFlight,
+		PerAttempt:  DefaultPerAttempt,
+		HTTPClient:  nil,
+		Backoffs:    nil, // nil → consult DefaultBackoffs
 	}
 }
 
@@ -266,6 +276,14 @@ func (d *Dispatcher) WithTick(t time.Duration) *Dispatcher {
 // WithCap overrides the per-tick claim limit (tests).
 func (d *Dispatcher) WithCap(c int) *Dispatcher {
 	d.Cap = c
+	return d
+}
+
+// WithMaxInFlight sets the process-wide capacity before Run starts.
+func (d *Dispatcher) WithMaxInFlight(n int) *Dispatcher {
+	if n > 0 {
+		d.maxInFlight = n
+	}
 	return d
 }
 
@@ -358,23 +376,62 @@ func (d *Dispatcher) shutdown() error {
 // cycle is the per-tick drain walk. Private — public tests drive it
 // via Dispatcher.Run with a stubbed ticker.
 func (d *Dispatcher) cycle(ctx context.Context) {
+	limit := d.reserveClaimSlots()
+	if limit == 0 {
+		return
+	}
 	now := d.Now()
-	claimed, err := d.store.ClaimDueAppWebhookDeliveries(ctx, d.Cap, now)
+	claimed, err := d.store.ClaimDueAppWebhookDeliveries(ctx, limit, now)
 	if err != nil {
+		d.finishClaim(limit, 0)
 		d.log.Warn("webhook: claim", "err", err)
 		return
 	}
+	if len(claimed) > limit {
+		d.finishClaim(limit, 0)
+		d.log.Error("webhook: claim returned more rows than requested", "limit", limit, "returned", len(claimed))
+		return
+	}
+	d.inflight.Add(len(claimed))
+	d.finishClaim(limit, len(claimed))
 	for _, row := range claimed {
-		d.inflight.Add(1)
 		// Capture the loop variable — Go 1.22+ per-loop semantics
 		// make this explicit; we do it the explicit way for
 		// readability across Go versions.
 		row := row
 		go func() {
 			defer d.inflight.Done()
+			defer d.finishDelivery()
 			d.deliverOne(ctx, row)
 		}()
 	}
+}
+
+func (d *Dispatcher) reserveClaimSlots() int {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	limit := min(d.Cap, d.maxInFlight-d.reserved-d.active)
+	if limit < 0 {
+		limit = 0
+	}
+	d.reserved += limit
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
+	return limit
+}
+
+func (d *Dispatcher) finishClaim(reserved, claimed int) {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.reserved -= reserved
+	d.active += claimed
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
+}
+
+func (d *Dispatcher) finishDelivery() {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.active--
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
 }
 
 // deliverOne POSTs one row through pkg/webhookout.Dispatcher, then

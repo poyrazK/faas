@@ -23,6 +23,14 @@ The gauge resets to zero when no delivery is overdue. A sustained large queue
 may need more dispatch capacity; a small queue with growing age points to claim
 or worker failure.
 
+Schedd claims at most the free portion of its 64 delivery slots each tick.
+`schedd_webhook_delivery_inflight` shows running workers, and
+`schedd_webhook_delivery_saturated` is one when every slot is allocated
+(including a claim still being fetched). If saturation stays at one while the
+oldest-overdue age grows, inspect slow receivers and database write latency
+before increasing capacity. A backlog with no saturation points to claim
+failures or scheduler availability.
+
 ## Dead delivery spike
 
 `FaasWebhookDeliveryDeadSpike` means more than 20 deliveries were newly marked
