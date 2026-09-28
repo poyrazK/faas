@@ -12,6 +12,14 @@ export type EventFanoutFailureResponse = {
   subscription_id: string;
   state: 'failed';
   attempts: number;
+  /**
+   * Stable routing failure category; unknown covers failures recorded before classification was available. Optional for responses from older apid versions during rollout.
+   */
+  failure_code?: 'unknown' | 'invalid_subscription' | 'target_unavailable' | 'target_lookup_failed' | 'invocation_enqueue_failed' | 'internal_error';
+  /**
+   * True when the failure was caused by a transient lookup or enqueue error and replay may succeed without changing subscription configuration. Optional for responses from older apid versions during rollout.
+   */
+  retryable?: boolean;
   last_error: string;
   /**
    * When the event was accepted.

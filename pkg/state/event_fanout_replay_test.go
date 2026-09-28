@@ -40,7 +40,9 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	}
 	now := time.Now().UTC()
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, failedRecipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 3, LastError: "temporary outage", UpdatedAt: now}); err != nil {
+		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 3,
+			FailureCode: EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
+			LastError: "temporary outage", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, successfulRecipient.ID,
@@ -58,8 +60,9 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	if err != nil {
 		t.Fatalf("claim replay: %v", err)
 	}
-	if got := replayed.RecipientProgress[failedRecipient.ID]; got.State != PublishedEventRecipientPending || got.Attempts != 3 || got.LastError != "" {
-		t.Fatalf("replayed recipient progress = %+v, want pending with prior attempts and cleared error", got)
+	if got := replayed.RecipientProgress[failedRecipient.ID]; got.State != PublishedEventRecipientPending || got.Attempts != 3 ||
+		got.FailureCode != "" || got.Retryable || got.LastError != "" {
+		t.Fatalf("replayed recipient progress = %+v, want pending with prior attempts and cleared failure details", got)
 	}
 	if got := replayed.RecipientProgress[successfulRecipient.ID]; got.State != PublishedEventRecipientEnqueued || got.Attempts != 1 {
 		t.Fatalf("successful sibling progress = %+v, want unchanged enqueued outcome", got)
@@ -84,6 +87,49 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	}
 	if len(failures) != 0 {
 		t.Fatalf("failures after successful replay = %+v, want none", failures)
+	}
+}
+
+func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "fanout-classification@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := canonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-classification"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "order.created", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
+		[]byte(`{"id":"evt-classification","source":"orders","type":"order.created","data":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID,
+		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 12,
+			FailureCode: EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
+			LastError: "temporary outage", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "evt-classification")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 1 || failures[0].FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed || !failures[0].Retryable {
+		t.Fatalf("fanout failures = %+v, want invocation enqueue failure marked retryable", failures)
 	}
 }
 

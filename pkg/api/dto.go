@@ -252,6 +252,8 @@ type EventFanoutFailureResponse struct {
 	SubscriptionID string    `json:"subscription_id"`
 	State          string    `json:"state"`
 	Attempts       int       `json:"attempts"`
+	FailureCode    string    `json:"failure_code"`
+	Retryable      bool      `json:"retryable"`
 	LastError      string    `json:"last_error"`
 	CreatedAt      time.Time `json:"created_at"`
 	FailedAt       time.Time `json:"failed_at"`

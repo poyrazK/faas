@@ -615,9 +615,14 @@ deliveries.
 
 The same command also reports terminal recipient routing failures that
 occurred before Gregale created an invocation. These rows include the event,
-subscription, routing attempt count, failure time, and error. Use
-`--fanout-before` with `next_fanout_before` from `--json` to page through that
-failure history independently of invocation deliveries.
+subscription, routing attempt count, stable `failure_code`, `retryable` signal,
+failure time, and error. `invalid_subscription` and `target_unavailable` point
+to configuration or target state that should be fixed before replay;
+`target_lookup_failed` and `invocation_enqueue_failed` identify transient errors
+that may succeed on replay. Older failures recorded before classification was
+available use `unknown`. Use `--fanout-before` with `next_fanout_before` from
+`--json` to page through that failure history independently of invocation
+deliveries.
 
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:

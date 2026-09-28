@@ -203,6 +203,26 @@ func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
 	}
 }
 
+func TestCmdEventsDeliveries_RendersFanoutFailureClassification(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[],"fanout_failures":[{"event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":12,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","created_at":"2026-09-19T12:00:00Z","failed_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsDeliveries([]string{"invoice-worker", "--state", "failed"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"FAILURE_CODE\tRETRYABLE",
+		"evt-1\tbilling\tinvoice.paid\tsub-1\tfailed\t12\tinvocation_enqueue_failed\ttrue",
+		"temporary outage",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q: %s", want, out)
+		}
+	}
+}
+
 func TestCmdEventsDeliveries_JSONOutput(t *testing.T) {
 	resetJSONOut(t)
 	authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[]}`, http.StatusOK)

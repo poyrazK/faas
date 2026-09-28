@@ -140,10 +140,14 @@ func (s *server) listEventDeliveries(w http.ResponseWriter, r *http.Request, acc
 		failures = failures[:limit]
 	}
 	for _, failure := range failures {
+		failureCode := failure.FailureCode
+		if failureCode == "" {
+			failureCode = state.EventFanoutFailureCodeUnknown
+		}
 		out.FanoutFailures = append(out.FanoutFailures, api.EventFanoutFailureResponse{
 			EventID: failure.EventID, EventSource: failure.EventSource, EventType: failure.EventType,
 			SubscriptionID: failure.SubscriptionID, State: state.PublishedEventRecipientFailed,
-			Attempts: failure.Attempts, LastError: failure.LastError,
+			Attempts: failure.Attempts, FailureCode: failureCode, Retryable: failure.Retryable, LastError: failure.LastError,
 			CreatedAt: failure.CreatedAt, FailedAt: failure.FailedAt,
 		})
 	}

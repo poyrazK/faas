@@ -220,11 +220,12 @@ func cmdEventsDeliveries(args []string) int {
 	}
 	if len(resp.FanoutFailures) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "PRE-INVOCATION FANOUT FAILURES")
-		_, _ = fmt.Fprintln(osStdout, "EVENT\tSOURCE\tTYPE\tSUBSCRIPTION\tSTATE\tATTEMPTS\tFAILED\tERROR")
+		_, _ = fmt.Fprintln(osStdout, "EVENT\tSOURCE\tTYPE\tSUBSCRIPTION\tSTATE\tATTEMPTS\tFAILURE_CODE\tRETRYABLE\tFAILED\tERROR")
 		for _, failure := range resp.FanoutFailures {
-			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%t\t%s\t%s\n",
 				oneLine(failure.EventID), oneLine(failure.EventSource), oneLine(failure.EventType), oneLine(failure.SubscriptionID),
-				oneLine(failure.State), failure.Attempts, failure.FailedAt.Format(time.RFC3339), oneLine(failure.LastError),
+				oneLine(failure.State), failure.Attempts, oneLine(failure.FailureCode), failure.Retryable,
+				failure.FailedAt.Format(time.RFC3339), oneLine(failure.LastError),
 			)
 		}
 	}

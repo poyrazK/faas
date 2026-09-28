@@ -409,6 +409,129 @@ func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
 	}
 }
 
+type eventFanoutEnqueueFailureStore struct {
+	*state.MemStore
+}
+
+func (s eventFanoutEnqueueFailureStore) EnqueueInvocation(context.Context, state.Invocation) (state.Invocation, error) {
+	return state.Invocation{}, errors.New("temporary enqueue outage")
+}
+
+func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
+	t.Run("invalid subscription", func(t *testing.T) {
+		ctx := context.Background()
+		store := state.NewMemStore()
+		account, err := store.CreateAccount(ctx, "event-invalid-filter@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		accountID := mustCanonicalEventAccountID(t, account.ID)
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-invalid-filter"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
+			[]byte(`{"id":"evt-invalid-filter","source":"orders","type":"created","data":{}}`)); err != nil {
+			t.Fatal(err)
+		}
+		work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		work.RecipientSnapshot[0].Filter = json.RawMessage(`[]`)
+		loop := &Loop{engine: &Engine{store: store}}
+		if err := loop.routePublishedEventSnapshot(ctx, work); err != nil {
+			t.Fatalf("route snapshot: %v", err)
+		}
+		progress := work.RecipientProgress[subscription.ID]
+		if progress.State != state.PublishedEventRecipientFailed ||
+			progress.FailureCode != state.EventFanoutFailureCodeInvalidSubscription || progress.Retryable {
+			t.Fatalf("recipient progress = %+v, want invalid_subscription and retryable=false", progress)
+		}
+	})
+
+	t.Run("target unavailable", func(t *testing.T) {
+		ctx := context.Background()
+		store := state.NewMemStore()
+		account, err := store.CreateAccount(ctx, "event-missing-target@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		accountID := mustCanonicalEventAccountID(t, account.ID)
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-missing-target"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
+			[]byte(`{"id":"evt-missing-target","source":"orders","type":"created","data":{}}`)); err != nil {
+			t.Fatal(err)
+		}
+		work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		work.RecipientSnapshot[0].AppID = uuid.NewString()
+		loop := &Loop{engine: &Engine{store: store}}
+		if err := loop.routePublishedEventSnapshot(ctx, work); err != nil {
+			t.Fatalf("route snapshot: %v", err)
+		}
+		progress := work.RecipientProgress[subscription.ID]
+		if progress.State != state.PublishedEventRecipientFailed ||
+			progress.FailureCode != state.EventFanoutFailureCodeTargetUnavailable || progress.Retryable {
+			t.Fatalf("recipient progress = %+v, want target_unavailable and retryable=false", progress)
+		}
+	})
+}
+
+func TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	account, err := mem.CreateAccount(ctx, "event-transient-failure@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := mem.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-transient-failure"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, _, err := mem.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.AppendEvent(ctx, "apid", "event.published", &accountID,
+		[]byte(`{"id":"evt-transient-failure","source":"orders","type":"created","data":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	work, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: eventFanoutEnqueueFailureStore{MemStore: mem}}}
+	for attempt := 1; attempt <= eventFanoutRecipientMaxAttempts; attempt++ {
+		err := loop.routePublishedEventSnapshot(ctx, work)
+		if attempt < eventFanoutRecipientMaxAttempts && err == nil {
+			t.Fatalf("attempt %d error = nil, want retryable enqueue error", attempt)
+		}
+		if attempt == eventFanoutRecipientMaxAttempts && err != nil {
+			t.Fatalf("terminal attempt error = %v, want recipient failure captured without retrying receipt", err)
+		}
+	}
+	progress := work.RecipientProgress[subscription.ID]
+	if progress.State != state.PublishedEventRecipientFailed || progress.Attempts != eventFanoutRecipientMaxAttempts ||
+		progress.FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || !progress.Retryable {
+		t.Fatalf("recipient progress = %+v, want exhausted invocation enqueue failure marked retryable", progress)
+	}
+}
+
 func mustCanonicalEventAccountID(t *testing.T, id string) string {
 	t.Helper()
 	parsed, err := uuid.Parse(id)

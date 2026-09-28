@@ -28572,6 +28572,13 @@ components:
         subscription_id: { type: string, format: uuid }
         state: { type: string, enum: [failed] }
         attempts: { type: integer, minimum: 1 }
+        failure_code:
+          type: string
+          enum: [unknown, invalid_subscription, target_unavailable, target_lookup_failed, invocation_enqueue_failed, internal_error]
+          description: Stable routing failure category; unknown covers failures recorded before classification was available. Optional for responses from older apid versions during rollout.
+        retryable:
+          type: boolean
+          description: True when the failure was caused by a transient lookup or enqueue error and replay may succeed without changing subscription configuration. Optional for responses from older apid versions during rollout.
         last_error: { type: string }
         created_at: { type: string, format: date-time, description: When the event was accepted. }
         failed_at: { type: string, format: date-time, description: When recipient routing became terminal. }

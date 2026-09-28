@@ -7,10 +7,15 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.event_fanout_failure_response_failure_code import (
+    EventFanoutFailureResponseFailureCode,
+    check_event_fanout_failure_response_failure_code,
+)
 from ..models.event_fanout_failure_response_state import (
     EventFanoutFailureResponseState,
     check_event_fanout_failure_response_state,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EventFanoutFailureResponse")
 
@@ -30,6 +35,12 @@ class EventFanoutFailureResponse:
     """When the event was accepted."""
     failed_at: datetime.datetime
     """When recipient routing became terminal."""
+    failure_code: EventFanoutFailureResponseFailureCode | Unset = UNSET
+    """Stable routing failure category; unknown covers failures recorded before classification was available.
+    Optional for responses from older apid versions during rollout."""
+    retryable: bool | Unset = UNSET
+    """True when the failure was caused by a transient lookup or enqueue error and replay may succeed without
+    changing subscription configuration. Optional for responses from older apid versions during rollout."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = self.event_id
@@ -50,6 +61,12 @@ class EventFanoutFailureResponse:
 
         failed_at = self.failed_at.isoformat()
 
+        failure_code: str | Unset = UNSET
+        if not isinstance(self.failure_code, Unset):
+            failure_code = self.failure_code
+
+        retryable = self.retryable
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -65,6 +82,10 @@ class EventFanoutFailureResponse:
                 "failed_at": failed_at,
             }
         )
+        if failure_code is not UNSET:
+            field_dict["failure_code"] = failure_code
+        if retryable is not UNSET:
+            field_dict["retryable"] = retryable
 
         return field_dict
 
@@ -89,6 +110,15 @@ class EventFanoutFailureResponse:
 
         failed_at = datetime.datetime.fromisoformat(d.pop("failed_at"))
 
+        _failure_code = d.pop("failure_code", UNSET)
+        failure_code: EventFanoutFailureResponseFailureCode | Unset
+        if isinstance(_failure_code, Unset):
+            failure_code = UNSET
+        else:
+            failure_code = check_event_fanout_failure_response_failure_code(_failure_code)
+
+        retryable = d.pop("retryable", UNSET)
+
         event_fanout_failure_response = cls(
             event_id=event_id,
             event_source=event_source,
@@ -99,6 +129,8 @@ class EventFanoutFailureResponse:
             last_error=last_error,
             created_at=created_at,
             failed_at=failed_at,
+            failure_code=failure_code,
+            retryable=retryable,
         )
 
         return event_fanout_failure_response

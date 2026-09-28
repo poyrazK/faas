@@ -695,6 +695,7 @@ from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
+from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
 from .event_fanout_failure_response_state import EventFanoutFailureResponseState
 from .event_preview_subscription import EventPreviewSubscription
 from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
@@ -2485,6 +2486,7 @@ __all__ = (
     "EventDeliveryResponse",
     "EventDeliveryResponseState",
     "EventFanoutFailureResponse",
+    "EventFanoutFailureResponseFailureCode",
     "EventFanoutFailureResponseState",
     "EventPreviewSubscription",
     "EventPreviewSubscriptionFilter",

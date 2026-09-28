@@ -20,6 +20,23 @@ const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = 12
 
+type eventFanoutRouteError struct {
+	code      string
+	retryable bool
+	err       error
+}
+
+func (e *eventFanoutRouteError) Error() string { return e.err.Error() }
+func (e *eventFanoutRouteError) Unwrap() error { return e.err }
+
+func eventFanoutFailureDetails(err error) (string, bool) {
+	var routeErr *eventFanoutRouteError
+	if errors.As(err, &routeErr) {
+		return routeErr.code, routeErr.retryable
+	}
+	return state.EventFanoutFailureCodeInternal, false
+}
+
 // routePublishedEvent is the schedd-side fanout seam for the internal event
 // fabric. The publish endpoint persists the canonical envelope before sending
 // its advisory wake; this worker matches only subscriptions owned by the same
@@ -119,9 +136,11 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			outcome.State = state.PublishedEventRecipientFiltered
 		case !matched || errors.Is(routeErr, state.ErrNotFound):
 			outcome.State = state.PublishedEventRecipientFailed
+			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
 			outcome.LastError = routeErr.Error()
 		case outcome.Attempts >= eventFanoutRecipientMaxAttempts:
 			outcome.State = state.PublishedEventRecipientFailed
+			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
 			outcome.LastError = routeErr.Error()
 		default:
 			outcome.State = state.PublishedEventRecipientPending
@@ -148,7 +167,9 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 	matched, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source,
 		Type: row.Type, Filter: row.Filter}).Match(envelope)
 	if err != nil {
-		return false, fmt.Errorf("subscription %s: %w", row.ID, err)
+		return false, fmt.Errorf("subscription %s: %w", row.ID, &eventFanoutRouteError{
+			code: state.EventFanoutFailureCodeInvalidSubscription, err: err,
+		})
 	}
 	if !matched {
 		return false, nil
@@ -156,18 +177,26 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 	if requireActiveApp {
 		app, appErr := l.engine.store.AppByID(ctx, row.AppID)
 		if errors.Is(appErr, state.ErrNotFound) {
-			return true, fmt.Errorf("subscription %s target app is missing: %w", row.ID, state.ErrNotFound)
+			return true, fmt.Errorf("subscription %s target app is missing: %w", row.ID, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetUnavailable, err: state.ErrNotFound,
+			})
 		}
 		if appErr != nil {
-			return true, fmt.Errorf("subscription %s target app lookup: %w", row.ID, appErr)
+			return true, fmt.Errorf("subscription %s target app lookup: %w", row.ID, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetLookupFailed, retryable: true, err: appErr,
+			})
 		}
 		if app.Status == state.AppDeleted {
-			return true, fmt.Errorf("subscription %s target app is deleted: %w", row.ID, state.ErrNotFound)
+			return true, fmt.Errorf("subscription %s target app is deleted: %w", row.ID, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetUnavailable, err: state.ErrNotFound,
+			})
 		}
 		envelopeAccountID, eventAccountErr := uuid.Parse(envelope.AccountID)
 		appAccountID, appAccountErr := uuid.Parse(app.AccountID)
 		if eventAccountErr != nil || appAccountErr != nil || envelopeAccountID != appAccountID {
-			return true, fmt.Errorf("subscription %s target app account mismatch: %w", row.ID, state.ErrNotFound)
+			return true, fmt.Errorf("subscription %s target app account mismatch: %w", row.ID, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetUnavailable, err: state.ErrNotFound,
+			})
 		}
 	}
 	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
@@ -187,7 +216,9 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		},
 	))
 	if err != nil {
-		return true, fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, err)
+		return true, fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, &eventFanoutRouteError{
+			code: state.EventFanoutFailureCodeInternal, err: err,
+		})
 	}
 	_, err = l.engine.store.EnqueueInvocation(ctx, state.Invocation{
 		ID: invocationID, AppID: row.AppID, AccountID: row.AccountID,
@@ -196,7 +227,9 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
 	})
 	if err != nil && !errors.Is(err, state.ErrConflict) {
-		return true, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, err)
+		return true, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, &eventFanoutRouteError{
+			code: state.EventFanoutFailureCodeInvocationEnqueueFailed, retryable: true, err: err,
+		})
 	}
 	if err == nil && l.pool != nil {
 		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,

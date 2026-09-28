@@ -46,10 +46,12 @@ type PublishedEventRecipient struct {
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
 // one candidate. Invocation execution retries are tracked on the invocation.
 type PublishedEventRecipientProgress struct {
-	State     string    `json:"state"`
-	Attempts  int       `json:"attempts"`
-	LastError string    `json:"last_error,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	State       string    `json:"state"`
+	Attempts    int       `json:"attempts"`
+	FailureCode string    `json:"failure_code,omitempty"`
+	Retryable   bool      `json:"retryable,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -61,6 +63,8 @@ type EventFanoutFailure struct {
 	EventType      string
 	SubscriptionID string
 	Attempts       int
+	FailureCode    string
+	Retryable      bool
 	LastError      string
 	CreatedAt      time.Time
 	FailedAt       time.Time
@@ -80,6 +84,16 @@ const (
 	PublishedEventRecipientFiltered = "filtered"
 	PublishedEventRecipientEnqueued = "enqueued"
 	PublishedEventRecipientFailed   = "failed"
+)
+
+// Event fanout failure codes are a stable operator-facing classification.
+const (
+	EventFanoutFailureCodeUnknown                 = "unknown"
+	EventFanoutFailureCodeInvalidSubscription     = "invalid_subscription"
+	EventFanoutFailureCodeTargetUnavailable       = "target_unavailable"
+	EventFanoutFailureCodeTargetLookupFailed      = "target_lookup_failed"
+	EventFanoutFailureCodeInvocationEnqueueFailed = "invocation_enqueue_failed"
+	EventFanoutFailureCodeInternal                = "internal_error"
 )
 
 type PublishedEventWorkStore interface {
@@ -244,6 +258,8 @@ func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID strin
 	}
 	rows, err := s.pool.Query(ctx, `SELECT o.id, o.event_id, o.source, o.event_type,
 		p.key, COALESCE(NULLIF(p.outcome->>'attempts', '')::int, 0),
+		COALESCE(NULLIF(p.outcome->>'failure_code', ''), 'unknown'),
+		COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false),
 		COALESCE(p.outcome->>'last_error', ''), o.created_at,
 		COALESCE((p.outcome->>'updated_at')::timestamptz, o.created_at)
 	FROM event_fanout_outbox o
@@ -267,7 +283,8 @@ func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID strin
 	for rows.Next() {
 		var failure EventFanoutFailure
 		if err := rows.Scan(&failure.OutboxID, &failure.EventID, &failure.EventSource, &failure.EventType,
-			&failure.SubscriptionID, &failure.Attempts, &failure.LastError, &failure.CreatedAt, &failure.FailedAt); err != nil {
+			&failure.SubscriptionID, &failure.Attempts, &failure.FailureCode, &failure.Retryable,
+			&failure.LastError, &failure.CreatedAt, &failure.FailedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, failure)
@@ -526,9 +543,14 @@ func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string
 					(work.ID == before.OutboxID && recipient.ID >= before.SubscriptionID)))) {
 				continue
 			}
+			failureCode := progress.FailureCode
+			if failureCode == "" {
+				failureCode = EventFanoutFailureCodeUnknown
+			}
 			out = append(out, EventFanoutFailure{
 				OutboxID: work.ID, EventID: event.ID, EventSource: event.Source, EventType: event.Type,
-				SubscriptionID: recipient.ID, Attempts: progress.Attempts, LastError: progress.LastError,
+				SubscriptionID: recipient.ID, Attempts: progress.Attempts,
+				FailureCode: failureCode, Retryable: progress.Retryable, LastError: progress.LastError,
 				CreatedAt: work.CreatedAt, FailedAt: progress.UpdatedAt,
 			})
 		}
@@ -576,6 +598,8 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 			return ErrConflict
 		}
 		progress.State = PublishedEventRecipientPending
+		progress.FailureCode = ""
+		progress.Retryable = false
 		progress.LastError = ""
 		progress.UpdatedAt = time.Now().UTC()
 		work.RecipientProgress[subscriptionID] = progress
