@@ -2294,6 +2294,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dispatcher's drain.
 	webhookDispatcher := webhook.NewDispatcher(store, schedulerAuditor, log)
 	webhookDispatcher.HealthMetrics = webhook.NewDeliveryHealthMetrics(ops.Registry(), "schedd")
+	go (&webhook.RetentionWorker{
+		Store: store, Metrics: webhookDispatcher.HealthMetrics, Log: log,
+	}).Run(ctx)
 	webhookDispatcher.IdentityLoader = func() []*age.X25519Identity {
 		return append([]*age.X25519Identity(nil), hostAgeIdentities...)
 	}

@@ -688,3 +688,37 @@ func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(_ context.Context, now time
 	}
 	return oldest, nil
 }
+
+func (m *MemStore) PruneAppWebhookDeliveries(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		return 0, nil
+	}
+	var candidates []AppWebhookDelivery
+	for _, d := range m.appWebhookDeliveries {
+		if (d.Status == AppWebhookDeliverySucceeded || d.Status == AppWebhookDeliveryDead) && d.UpdatedAt.Before(cutoff) {
+			candidates = append(candidates, d)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].UpdatedAt.Before(candidates[j].UpdatedAt)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	for _, d := range candidates {
+		delete(m.appWebhookDeliveries, d.ID)
+		delete(m.appWebhookDeliveryAttempts, d.ID)
+		delete(m.appWebhookReplayGenerations, d.ID)
+		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", d.ID))
+	}
+	return int64(len(candidates)), nil
+}
+
+func (m *MemStore) AppWebhookDeliveryStorageBytes(context.Context) (int64, error) {
+	return 0, nil // In-memory state has no database relation to measure.
+}

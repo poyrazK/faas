@@ -715,6 +715,62 @@ func (s *PgStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now tim
 	return &at, nil
 }
 
+func (s *PgStore) PruneAppWebhookDeliveries(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	// A dead delivery can also have a unified dead-letter projection containing
+	// a copy of its payload. Lock that row first, matching unified replay's lock
+	// order, then lock the delivery. Skip either when busy so replay wins the
+	// race without deadlocking or leaving a stale projection behind. Select
+	// twice the deletion limit so a few locked rows do not stall a whole pass.
+	tag, err := s.pool.Exec(ctx, `
+		with candidates as materialized (
+			select id from app_webhook_deliveries
+			 where status in ('succeeded', 'dead') and updated_at < $1
+			 order by updated_at, id
+			 limit ($2 * 2)
+		), locked_projection as materialized (
+			select e.source_id from dead_letter_events e
+			 join candidates c on c.id = e.source_id
+			 where e.source = 'webhook_delivery'
+			 for update of e skip locked
+		), doomed as materialized (
+			select d.id from app_webhook_deliveries d
+			 join candidates c on c.id = d.id
+			 left join dead_letter_events e
+			   on e.source = 'webhook_delivery' and e.source_id = d.id
+			 where d.status in ('succeeded', 'dead') and d.updated_at < $1
+			   and (e.id is null or e.source_id in (select source_id from locked_projection))
+			 order by d.updated_at, d.id
+			 limit $2
+			 for update of d skip locked
+		), deleted_projection as (
+			delete from dead_letter_events e using doomed
+			 where e.source = 'webhook_delivery' and e.source_id = doomed.id
+			 returning e.id
+		)
+		delete from app_webhook_deliveries d using doomed
+		 where d.id = doomed.id
+	`, cutoff, limit)
+	if err != nil {
+		return 0, fmt.Errorf("state: prune webhook deliveries: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *PgStore) AppWebhookDeliveryStorageBytes(ctx context.Context) (int64, error) {
+	var bytes int64
+	err := s.pool.QueryRow(ctx, `
+		select pg_total_relation_size('app_webhook_deliveries'::regclass)
+		     + pg_total_relation_size('app_webhook_delivery_attempts'::regclass)
+	`).Scan(&bytes)
+	if err != nil {
+		return 0, fmt.Errorf("state: webhook delivery storage size: %w", err)
+	}
+	return bytes, nil
+}
+
 // ----------------------------------------------------------------------------
 // scanner helpers
 // ----------------------------------------------------------------------------

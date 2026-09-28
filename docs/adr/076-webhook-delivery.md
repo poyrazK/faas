@@ -154,6 +154,22 @@ minutes, a spike of more than 20 dead deliveries in ten minutes,
 and a failed poll. The poll-failure signal prevents a stale queue-age
 gauge from appearing healthy.
 
+### 3.11 Delivery retention
+
+Schedd deletes up to 500 terminal (`succeeded` or `dead`) deliveries each
+minute after 90 days since their last state update. A partial index on
+`(updated_at, id)` keeps selection bounded; `FOR UPDATE SKIP LOCKED` avoids
+waiting on concurrent replays or other schedulers. The attempt-history FK
+cascades on deletion. The unified dead-letter projection, which duplicates
+the payload, is removed in the same transaction if still present. The unified
+projection has its own shorter retention window. Active `pending` and
+`in_flight` rows are never pruned.
+Replaying a dead delivery updates its timestamp, so a recent dead delivery
+remains available for manual retry. Delivery and attempt storage bytes,
+cleanup success, failures, and deleted row counts are fleet-wide metrics.
+Alerts cover failed cleanup and storage above 5 GiB. Monthly partitioning
+remains an option if batched deletion cannot keep up with fleet volume.
+
 ## Consequences
 
 Positive:
@@ -172,13 +188,10 @@ Positive:
 
 Negative / costs:
 
-- One row per delivery means the table grows linearly with the
-  customer's webhook volume. The `succeeded` rows never get GC'd
-  today; a future cron (issue #476 follow-up) should partition by
-  month and detach partitions older than 90 days. The dashboard
-  alert `snapshot_fleet_avg_mb` does NOT cover this table — a
-  new `webhook_deliveries_table_mb` alert is queued for the
-  follow-up.
+- One row per delivery grows with customer webhook volume. Terminal
+  rows are retained for 90 days and removed in bounded batches;
+  active rows can still grow during an extended dispatch outage.
+  The storage-size alert covers both delivery and attempt tables.
 - The 5-second tick + 32/tick cap is a deliberate batching
   trade-off. Fair selection enumerates due accounts on each tick;
   a much larger backlog may need a maintained queue-head index or

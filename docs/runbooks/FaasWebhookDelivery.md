@@ -37,3 +37,33 @@ Retry dead deliveries only after the cause is resolved.
 delivery. Check database connectivity and the `webhook: delivery health poll`
 log. The overdue gauge retains its last value during a failed poll; treat it as
 stale until the success gauge returns to one.
+
+## Retention and storage
+
+Schedd deletes up to 500 `succeeded` or `dead` deliveries per minute once
+their last update is over 90 days old. Attempt history and any remaining
+unified dead-letter projection are deleted with each delivery. `pending` and
+`in_flight` deliveries remain until they finish. Dead deliveries can be
+replayed through the webhook retry API throughout the retention window. A replay
+updates the delivery timestamp and starts a new window when it finishes.
+
+`FaasWebhookDeliveryRetentionFailed` means the cleanup or storage query has
+failed for five minutes. Check `webhook: delivery retention pass` logs and
+database connectivity. The `schedd_webhook_delivery_retention_failures_total`
+counter records failed passes; `schedd_webhook_delivery_pruned_total` records
+removed delivery rows.
+
+`FaasWebhookDeliveryStorageLarge` means the delivery and attempt tables,
+including their indexes, exceed 5 GiB. Check the age and status mix:
+
+```sql
+SELECT status, count(*), min(updated_at), max(updated_at)
+FROM app_webhook_deliveries
+GROUP BY status;
+```
+
+If terminal rows older than 90 days remain, compare their count with the
+500-per-minute cleanup budget and check retention failures. If active rows
+dominate, investigate queue dispatch and receiver failures. PostgreSQL may
+reuse deleted space before its reported relation size falls; inspect vacuum
+and table bloat if counts decline but storage stays high.

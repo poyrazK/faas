@@ -68,6 +68,9 @@ its `app_id`, event, attempt count, status, and last response/error details.
 Only `dead` deliveries can be manually retried. The normal dispatcher uses
 the same retry and dead-letter policy as app webhooks. Rotate the receiver's
 secret in your receiver and Gregale together; the rotate response is masked.
+Succeeded and dead deliveries, including attempt history, are retained for
+90 days after their last update; pending and in-flight deliveries remain until
+they finish. Replay a dead delivery before its retention window expires.
 Deleting a receiver removes its delivery history, so export anything you need
 for audit before deletion.
 

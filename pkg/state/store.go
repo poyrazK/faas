@@ -6120,6 +6120,12 @@ type Store interface {
 	AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error)
 	// OldestOverdueAppWebhookDeliveryAt backs the fleet queue-age signal.
 	OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error)
+	// PruneAppWebhookDeliveries deletes at most limit terminal deliveries last
+	// updated before cutoff. Attempt history follows via cascade.
+	PruneAppWebhookDeliveries(ctx context.Context, cutoff time.Time, limit int) (int64, error)
+	// AppWebhookDeliveryStorageBytes measures the delivery and attempt tables,
+	// including indexes and TOAST storage (zero for MemStore).
+	AppWebhookDeliveryStorageBytes(ctx context.Context) (int64, error)
 
 	// --- ADR-096 customer-facing automatic error grouping ---
 	//

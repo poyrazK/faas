@@ -184,6 +184,30 @@ groups:
           description: "Schedd's queue health poll is failing, so the overdue-age signal may be stale. Check database connectivity and schedd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
 
+      - alert: FaasWebhookDeliveryRetentionFailed
+        expr: schedd_webhook_delivery_retention_success == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook delivery retention is failing"
+          description: "The last cleanup or storage-size poll failed. Check schedd's webhook retention log and database connectivity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookDeliveryStorageLarge
+        expr: schedd_webhook_delivery_storage_bytes > 5368709120
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook delivery storage exceeds 5 GiB"
+          description: "The delivery ledger and attempt history together exceed 5 GiB. Check cleanup progress, active backlog, and table bloat."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
   - name: faas_consumer_usage_delivery
     interval: 30s
     rules:
