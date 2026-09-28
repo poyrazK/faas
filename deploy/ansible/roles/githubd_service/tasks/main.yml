@@ -73,6 +73,55 @@
     owner: root
     group: root
     mode: "0644"
+
+# Source-ref promotion reads branch heads from imaged on compute nodes. Expose
+# githubd on the private mTLS gRPC listener only when the split-box inventory
+# supplies the deployment target; local development remains unix-socket-only.
+- name: githubd_service — require canonical split-box listener
+  ansible.builtin.assert:
+    that:
+      - faas_box_role == 'control-plane'
+      - faas_githubd_listen_addr is match('^tcp://0\\.0\\.0\\.0:50053$')
+    fail_msg: >-
+      split-box githubd requires faas_githubd_listen_addr=tcp://0.0.0.0:50053.
+  when: faas_githubd_listen_addr is defined
+
+- name: githubd_service — assert split-box mTLS leaves exist
+  ansible.builtin.stat:
+    path: "/etc/faas/tls/{{ item }}"
+  loop:
+    - githubd/server.crt
+    - githubd/server.key
+    - ca/ca.crt
+  register: faas_githubd_pki_stat
+  failed_when: not faas_githubd_pki_stat.stat.exists
+  when: faas_githubd_listen_addr is defined
+
+- name: githubd_service — grant githubd read access to its mTLS server key
+  ansible.builtin.file:
+    path: /etc/faas/tls/githubd/server.key
+    state: file
+    owner: root
+    group: faas
+    mode: "0440"
+  when: faas_githubd_listen_addr is defined
+
+- name: githubd_service — install split-box mTLS listener drop-in
+  notify: restart faas-githubd
+  ansible.builtin.template:
+    src: 99-faas-source-ref-mtls.conf.j2
+    dest: /etc/systemd/system/faas-githubd.service.d/99-faas-source-ref-mtls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_githubd_listen_addr is defined
+
+- name: githubd_service — remove stale split-box listener drop-in
+  notify: restart faas-githubd
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-githubd.service.d/99-faas-source-ref-mtls.conf
+    state: absent
+  when: faas_githubd_listen_addr is not defined
 # Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
 # shared block covers ALL new per-daemon secret files (githubd
 # owns githubd.env + app.pem; the rest are checked here as defense

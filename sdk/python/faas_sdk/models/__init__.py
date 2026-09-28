@@ -741,10 +741,13 @@ from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
+from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
+from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
+from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
@@ -1083,6 +1086,10 @@ from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
 from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
 from .platform_tenant_credential_metadata_scopes_item import PlatformTenantCredentialMetadataScopesItem
+from .platform_tenant_credential_policy_response import PlatformTenantCredentialPolicyResponse
+from .platform_tenant_credential_policy_response_allowed_scopes_item import (
+    PlatformTenantCredentialPolicyResponseAllowedScopesItem,
+)
 from .platform_tenant_credential_result import PlatformTenantCredentialResult
 from .platform_tenant_credential_result_action import PlatformTenantCredentialResultAction
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
@@ -1508,6 +1515,10 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
+from .set_platform_tenant_credential_policy_request_allowed_scopes_item import (
+    SetPlatformTenantCredentialPolicyRequestAllowedScopesItem,
+)
 from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostnamePolicyRequest
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
@@ -2461,10 +2472,13 @@ __all__ = (
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
+    "GitHubDeploymentPolicyPatchProductionTrigger",
     "GitHubDeploymentPolicyPreviewServicePolicy",
+    "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
+    "GitHubInstallStatusDeployBranches",
     "GitHubInstallStatusHealth",
     "GitHubInstallStatusState",
     "GitHubInstallStatusSyncResult",
@@ -2797,6 +2811,8 @@ __all__ = (
     "PlatformTenantCredentialIntentScopesItem",
     "PlatformTenantCredentialMetadata",
     "PlatformTenantCredentialMetadataScopesItem",
+    "PlatformTenantCredentialPolicyResponse",
+    "PlatformTenantCredentialPolicyResponseAllowedScopesItem",
     "PlatformTenantCredentialResult",
     "PlatformTenantCredentialResultAction",
     "PlatformTenantCredentialsResponse",
@@ -3182,6 +3198,8 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantCredentialPolicyRequest",
+    "SetPlatformTenantCredentialPolicyRequestAllowedScopesItem",
     "SetPlatformTenantHostnamePolicyRequest",
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",

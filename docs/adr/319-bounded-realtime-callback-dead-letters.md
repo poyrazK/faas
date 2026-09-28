@@ -1,4 +1,4 @@
-# ADR-303 · Bounded managed realtime callback dead letters
+# ADR-319 · Bounded managed realtime callback dead letters
 
 - **Status:** accepted
 - **Date:** 2026-09-27

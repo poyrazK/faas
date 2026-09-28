@@ -1,4 +1,4 @@
-# ADR-316 · Backoff-aware realtime callback replay monitoring
+# ADR-332 · Backoff-aware realtime callback replay monitoring
 
 - **Status:** accepted
 - **Date:** 2026-09-28

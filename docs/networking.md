@@ -531,17 +531,16 @@ same account, project, and PR. It never selects a preview from another PR,
 project, or account. The target preview's protocol and WebSocket settings are
 used exactly as they are on the public edge.
 
-Preview provisioning currently creates **one app**, derived from the app the
-PR touches, rather than cloning the whole project. A same-PR dependency may
-therefore be absent. In that case the gateway considers the production app
-and applies the project's production-dependency policy.
+Preview provisioning creates the bound app and the transitive `depends_on`
+workloads present at the PR head. A dependency that is absent from that
+closure can still resolve to the production app, so the gateway applies the
+project's production-dependency policy.
 
-New projects default to `preview_service_policy: deny`. A denied call returns
+All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before the proxy discovers or wakes the
-target. Projects that existed when this policy shipped were migration-backed
-to `allow_marked`, preserving their live behaviour. Opt an existing project
-into isolation with:
+target. Legacy `allow_marked` rows are migrated to `deny`. To configure the
+policy from a checkout, run:
 
 ```bash
 gregale github setup public-api --preview-service-policy deny

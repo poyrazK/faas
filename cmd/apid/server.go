@@ -1415,6 +1415,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/hostname-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantHostnamePolicy))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantCredentials))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credentials/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyPlatformTenantCredentials))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantCredentialPolicy)))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantCredentialPolicy))))
 	// Downstream tenant bearers are distinct, tenant-bound capabilities with
 	// explicit read or narrow hostname-management scopes. Plaintext is returned
 	// once and never cached.

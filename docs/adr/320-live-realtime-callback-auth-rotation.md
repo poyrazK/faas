@@ -1,4 +1,4 @@
-# ADR-304 · Live managed realtime callback credential rotation
+# ADR-320 · Live managed realtime callback credential rotation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

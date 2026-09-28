@@ -193,14 +193,15 @@ type MemStore struct {
 	consumerKeys map[string]ConsumerKey
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
-	apiConsumers                    map[string]APIConsumer
-	platformTenants                 map[string]PlatformTenant
-	platformTenantAccessTokens      map[string]PlatformTenantAccessToken
-	platformTenantAccessTokenByHash map[string]string
-	platformTenantBudgets           map[string]platformTenantBudgetRow
-	platformTenantHostnamePolicies  map[string]PlatformTenantHostnamePolicy
-	platformTenantByConsumer        map[string]string
-	platformTenantBySurface         map[string]string
+	apiConsumers                     map[string]APIConsumer
+	platformTenants                  map[string]PlatformTenant
+	platformTenantAccessTokens       map[string]PlatformTenantAccessToken
+	platformTenantAccessTokenByHash  map[string]string
+	platformTenantBudgets            map[string]platformTenantBudgetRow
+	platformTenantHostnamePolicies   map[string]PlatformTenantHostnamePolicy
+	platformTenantCredentialPolicies map[string]PlatformTenantCredentialPolicy
+	platformTenantByConsumer         map[string]string
+	platformTenantBySurface          map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
@@ -1079,16 +1080,17 @@ func NewMemStore() *MemStore {
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
-		consumerKeys:                    map[string]ConsumerKey{},
-		apiConsumers:                    map[string]APIConsumer{},
-		platformTenants:                 map[string]PlatformTenant{},
-		platformTenantAccessTokens:      map[string]PlatformTenantAccessToken{},
-		platformTenantAccessTokenByHash: map[string]string{},
-		platformTenantBudgets:           map[string]platformTenantBudgetRow{},
-		platformTenantHostnamePolicies:  map[string]PlatformTenantHostnamePolicy{},
-		platformTenantByConsumer:        map[string]string{},
-		platformTenantBySurface:         map[string]string{},
-		openAPISnapshots:                map[string]OpenAPISnapshot{},
+		consumerKeys:                     map[string]ConsumerKey{},
+		apiConsumers:                     map[string]APIConsumer{},
+		platformTenants:                  map[string]PlatformTenant{},
+		platformTenantAccessTokens:       map[string]PlatformTenantAccessToken{},
+		platformTenantAccessTokenByHash:  map[string]string{},
+		platformTenantBudgets:            map[string]platformTenantBudgetRow{},
+		platformTenantHostnamePolicies:   map[string]PlatformTenantHostnamePolicy{},
+		platformTenantCredentialPolicies: map[string]PlatformTenantCredentialPolicy{},
+		platformTenantByConsumer:         map[string]string{},
+		platformTenantBySurface:          map[string]string{},
+		openAPISnapshots:                 map[string]OpenAPISnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
 		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},
@@ -3306,7 +3308,7 @@ func (m *MemStore) ApplyProjectPlan(
 	observedApps := 0
 	for _, a := range m.apps {
 		if a.AccountID == project.AccountID && a.Status != AppDeleted &&
-			(a.Status == AppActive || a.Status == AppEvictedCold) {
+			(a.Status == AppActive || a.Status == AppEvictedCold) && a.PreviewOfSlug == "" {
 			observedApps++
 		}
 	}
@@ -3512,7 +3514,7 @@ func (m *MemStore) ApplyProjectReconcile(
 
 	observedApps := 0
 	for _, app := range m.apps {
-		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) {
+		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) && app.PreviewOfSlug == "" {
 			observedApps++
 		}
 	}
@@ -3860,11 +3862,12 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	//    predicates, including the separate developer-environment cap.
 	observed := 0
 	developer := IsDeveloperApp(app)
+	preview := IsPRPreviewApp(app)
 	for _, a := range m.apps {
 		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
 			continue
 		}
-		if developer != IsDeveloperApp(a) {
+		if developer != IsDeveloperApp(a) || preview != IsPRPreviewApp(a) {
 			continue
 		}
 		observed++
@@ -3877,6 +3880,12 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 			limit = limits.DeployedApps
 		}
 		kind = QuotaErrorKindDeveloperApps
+	} else if preview {
+		limit = limits.PreviewApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindPreviewApps
 	}
 	if observed >= limit {
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
@@ -5296,7 +5305,7 @@ func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) {
+		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) && !IsPRPreviewApp(a) {
 			n++
 		}
 	}
@@ -7907,6 +7916,14 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 }
 
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error) {
+	return m.markDeploymentLive(ctx, id, false)
+}
+
+func (m *MemStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return m.markDeploymentLive(ctx, id, true)
+}
+
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -7928,6 +7945,27 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if fenceGitDriven {
+		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
+			return ErrInvalidStateTransition
+		}
+		if d.Status == DeploySuperseded {
+			return ErrDeploymentSuperseded
+		}
+		if d.Status == DeployFailed {
+			return ErrInvalidStateTransition
+		}
+		if d.Status != DeployLive {
+			for _, other := range m.deployments {
+				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+					d.Status = DeploySuperseded
+					d.TrafficPercent = 0
+					m.deployments[id] = d
+					return ErrDeploymentSuperseded
+				}
+			}
+		}
 	}
 
 	// Build the post-transition rows locally first. The callback can fail
@@ -19700,6 +19738,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.platformTenants, tid)
 			delete(m.platformTenantBudgets, tid)
 			delete(m.platformTenantHostnamePolicies, tid)
+			delete(m.platformTenantCredentialPolicies, tid)
 		}
 	}
 	for surfaceID, tenantID := range m.platformTenantBySurface {

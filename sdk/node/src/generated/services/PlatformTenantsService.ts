@@ -23,6 +23,7 @@ import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTe
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
@@ -43,6 +44,7 @@ import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenant
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlatformTenantCredentialPolicyRequest.js';
 import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
@@ -312,6 +314,61 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         422: `Invalid suffixes or hostname limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's delegated credential policy.
+   * An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+   * @returns PlatformTenantCredentialPolicyResponse Current credential delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantCredentialPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's delegated credential policy.
+   * Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+   * @returns PlatformTenantCredentialPolicyResponse Updated credential delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantCredentialPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantCredentialPolicyRequest,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid scope set or per-consumer limit.`,
       },
     });
   }

@@ -468,6 +468,7 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	CodeSourceRefStale       = "source_ref_stale"
 	CodeAppLayerTooBig       = "app_layer_too_large"
 	CodeBuildUndetected      = "build_undetected"
 	CodeBuildOOM             = "build_oom"

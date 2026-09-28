@@ -158,6 +158,62 @@ func TestGithubDeployActionSafeRolloutWiring(t *testing.T) {
 	}
 }
 
+func TestGithubDeployActionEnvironmentWiring(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "action.yml"))
+	if err != nil {
+		t.Fatalf("read deploy Action metadata: %v", err)
+	}
+	var metadata struct {
+		Inputs map[string]struct {
+			Default string `yaml:"default"`
+		} `yaml:"inputs"`
+		Runs struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("parse deploy Action metadata: %v", err)
+	}
+	input, ok := metadata.Inputs["environment"]
+	if !ok || input.Default != "" {
+		t.Fatalf("environment input = %+v, present=%t; want optional empty default", input, ok)
+	}
+	for _, name := range []string{"Validate inputs", "Deploy"} {
+		found := false
+		for _, step := range metadata.Runs.Steps {
+			if step.Name == name {
+				found = true
+				if got := step.Env["INPUT_ENVIRONMENT"]; got != "${{ inputs.environment }}" {
+					t.Errorf("%s INPUT_ENVIRONMENT = %q", name, got)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("Action step %q not found", name)
+		}
+	}
+	runner, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "src", "run.sh"))
+	if err != nil {
+		t.Fatalf("read deploy Action runner: %v", err)
+	}
+	for _, want := range []string{
+		"INPUT_ENVIRONMENT",
+		"environment_args+=(--environment \"$INPUT_ENVIRONMENT\")",
+		"\"${environment_args[@]}\"",
+	} {
+		if !strings.Contains(string(runner), want) {
+			t.Errorf("deploy Action runner is missing environment wiring %q", want)
+		}
+	}
+}
+
 func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
 	root, err := findRepoRoot(".")
 	if err != nil {
@@ -207,7 +263,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"id-token: write",
 				"checks: write",
 				"https://api.gregale.dev",
-				"wait: \"false\"",
+				"wait: \"true\"",
 			},
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment

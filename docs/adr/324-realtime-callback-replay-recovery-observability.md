@@ -1,4 +1,4 @@
-# ADR-308 · Realtime callback replay recovery observability
+# ADR-324 · Realtime callback replay recovery observability
 
 - **Status:** accepted
 - **Date:** 2026-09-27

@@ -4149,6 +4149,48 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/platform-tenants/{id}/credential-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose downstream credential delegation policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantCredentialPolicy
+      summary: Read a customer's delegated credential policy.
+      description: An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+      responses:
+        '200':
+          description: Current credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantCredentialPolicy
+      summary: Replace a customer's delegated credential policy.
+      description: Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantCredentialPolicyRequest' }
+      responses:
+        '200':
+          description: Updated credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid scope set or per-consumer limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/platform-tenants/{id}/request-budget:
     parameters:
       - name: id
@@ -8654,8 +8696,8 @@ paths:
         Returns the project-level policy applied to source staging,
         pull-request previews, and preview-to-production internal service
         calls. A missing policy row resolves to the safe defaults for a new
-        project; projects created before preview service isolation was
-        introduced are migration-backed to the legacy allow_marked policy.
+        project. Legacy allow_marked compatibility rows are migrated to deny;
+        customers can explicitly opt back in when production calls are safe.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -22062,7 +22104,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy, production_trigger]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -22084,8 +22126,13 @@ components:
             Controls calls from project previews to production internal
             services. `deny` rejects the call before discovery or wake-up;
             `allow_marked` permits it and marks the request as preview-origin
-            traffic. Projects created before this policy was introduced are
-            migration-backed to `allow_marked`.
+            traffic. Legacy projects are migrated to `deny`; `allow_marked`
+            requires an explicit policy update.
+        production_trigger:
+          type: string
+          enum: [webhook, actions]
+          default: webhook
+          description: The single production deploy authority; GitHub App PR previews continue in either mode.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -22102,6 +22149,9 @@ components:
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
+        production_trigger:
+          type: string
+          enum: [webhook, actions]
 
     GitHubInstallMutationRequest:
       description: |
@@ -22131,6 +22181,10 @@ components:
         default_branch: { type: string }
         repo_full_name: { type: string }
         production_branch: { type: string }
+        deploy_branches:
+          type: object
+          additionalProperties: { type: string }
+          description: Configured GitHub branch-to-deployment-scope mappings for the project.
         binding_id: { type: string }
         linked_at: { type: [string, "null"], format: date-time }
         last_reconciled_at: { type: [string, "null"], format: date-time }
@@ -22272,13 +22326,14 @@ components:
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
+      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, preview_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        preview_apps: { type: integer, description: "Maximum live pull-request preview apps, separate from production apps." }
         deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
@@ -23822,6 +23877,31 @@ components:
           uniqueItems: true
           items: { type: string, enum: [read, write, admin] }
         expires_at: { type: string, format: date-time }
+
+    SetPlatformTenantCredentialPolicyRequest:
+      description: Explicit scopes and per-consumer key ceiling for tenant-bound credential self-service; empty scopes and zero disable it.
+      type: object
+      required: [allowed_scopes, max_keys_per_consumer]
+      properties:
+        allowed_scopes:
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+
+    PlatformTenantCredentialPolicyResponse:
+      description: Owner-configured scope allowlist and active-key ceiling for delegated credential management.
+      type: object
+      required: [tenant_id, enabled, allowed_scopes, max_keys_per_consumer]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        allowed_scopes:
+          type: array
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+        updated_at: { type: string, format: date-time }
 
     ApplyPlatformTenantCredentialsRequest:
       description: Additive key reconciliation and revocation in one transaction; provide at least one key or revocation.

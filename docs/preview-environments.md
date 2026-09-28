@@ -63,20 +63,24 @@ no per-PR cert provisioning, no DNS work.
 A reopened PR during the grace period bumps the row back to
 **Open** and the URL starts serving again on the next push.
 
+Before applying a PR webhook, Gregale verifies the current PR state and head
+with GitHub. Delayed updates for an older head and delayed close events after
+reopening are ignored. If two preview builds overlap, the older build cannot
+take traffic after a newer preview deployment has been accepted. See
+[ADR-312](adr/312-pr-preview-freshness.md).
+
 ## Quota
 
-Each preview workload consumes **one slot** of the customer's
-`DeployedAppMax`:
+Each preview workload consumes **one slot** of the separate
+`PreviewApps` allowance:
 
-- **Free** — 1 slot total (production + preview). Preview
-  attempts beyond the first get `429 deployed_app_capacity`.
-- **Hobby** — 5 slots.
-- **Pro** — 25 slots.
-- **Scale** — 100 slots.
+- **Free** — 1 preview slot in addition to the production app.
+- **Hobby** — 2 preview slots.
+- **Pro** — 5 preview slots.
+- **Scale** — 20 preview slots.
 
-This is the same ceiling production apps use; there is no
-separate preview cap. A preview with two app dependencies consumes three
-slots. The root and its dependency previews reserve those slots atomically:
+Production apps keep their own plan limit. A preview with two app dependencies
+consumes three slots. The root and its dependency previews reserve those slots atomically:
 if the full set does not fit, no new preview rows are kept and no builds are
 queued. Existing rows for the same PR are preserved on retries. The 7-day
 default TTL plus the 24h
@@ -178,10 +182,10 @@ The policy supports a repository-relative root directory for root workloads,
 ignored change paths (exact paths, one-segment globs, and trailing `/**`
 directory patterns), a preview enable switch, and a preview TTL from 1 hour
 to 30 days. It also controls whether previews can call production internal
-services. New projects default to `preview_service_policy: deny`; projects
-that existed when the policy shipped were migration-backed to `allow_marked`
-to avoid changing live traffic. All projects otherwise default to previews
-enabled, a 7-day TTL, no ignored paths, and the repository root.
+services. All projects default to `preview_service_policy: deny`. Legacy
+projects previously backfilled to `allow_marked` are migrated to `deny` and
+must explicitly opt in again if production calls are intended. Previews are
+enabled by default, with a 7-day TTL, no ignored paths, and the repository root.
 
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. Compare-API failures still use
@@ -191,8 +195,10 @@ must not be mistaken for an ignored change set.
 ## CLI bootstrap
 
 From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
-application, writes `.github/workflows/gregale.yml`, and leaves the existing
-preview defaults in place. Add `--preview`, `--no-preview`,
+application, writes `.github/workflows/gregale.yml`, selects Actions as the
+single production push deploy owner, and sets preview-to-production service
+calls to `deny`. The GitHub App continues to own PR previews. Add `--preview`,
+`--no-preview`,
 `--preview-ttl-hours`, `--preview-service-policy deny|allow_marked`,
 `--root-dir`, or `--ignore` to configure the project policy in the same
 command. Use `--rollout safe` to generate a production
@@ -200,12 +206,25 @@ workflow with the balanced health-gated rollout (Pro/Scale only); the default
 `standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
 to inspect the workflow without network or file changes; an existing different
 workflow is never overwritten unless `--force` is supplied. Production pushes
-and manual dispatches use the workflow, while pull-request previews continue to
-be managed by the connected GitHub integration.
+and manual dispatches use the workflow. Add `--deploy-branches staging=staging`
+to route pushes to the registered `staging` project environment; mappings
+already saved through `github bind` are reused when the flag is omitted. Passing
+the flag replaces the saved mapping. The workflow listens only to the configured
+production branch and mapped branches, and manual dispatch is limited to those
+branches. A `default` mapping uses the app's default scope and keeps the
+workflow's `production` GitHub Actions environment protections. Existing
+projects that do not run setup retain webhook-owned
+production deploys. To opt into production service calls from previews, pass
+`--preview-service-policy allow_marked` explicitly.
+
+Generated workflows serialize deployments by app and Gregale target scope.
+Pushes to separate mapped environments can proceed independently, while
+branches and tags targeting the same scope share a deployment queue.
 
 ## Related
 
 - ADR-095 (decision + schema + state machine rationale).
+- ADR-310 (production trigger ownership and separate preview quota).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -227,6 +246,13 @@ production app gets a preview-only sibling from the PR source, with no
 environment or credentials copied from the bound workload. If a production
 app for that workload appears later, subsequent pushes reuse that sibling. An
 existing non-deleted but inactive production dependency is still rejected.
+The root and existing production dependencies also start with a clean app
+environment: Gregale does not copy production environment values into PR
+previews. It injects the PR's declared internal service bindings after source
+scan. A new PR push clears environment values left on older preview rows.
+Configure preview-specific credentials separately before relying on a preview
+that needs external managed services; Gregale does not provision isolated
+databases or buckets for the PR.
 When a dependency preview is absent, the gateway considers the **production**
 service and its side effects are real if policy permits it.
 
@@ -250,15 +276,16 @@ developer previews and legacy PR previews with no recorded set. The CLI's
 `preview show` and `preview wait` use the recorded set when available and
 fall back to app-level status for those older previews.
 
-For new projects, Gregale denies that boundary by default. The proxy returns
+Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
 so the rejected call cannot consume production capacity or reach customer
-code. Existing projects retain the former behaviour until you opt them into
-strict isolation:
+code. The migration resets existing `allow_marked` policies to `deny`; a
+customer who intentionally uses preview-safe production dependencies can
+opt in again:
 
 ```bash
-gregale github setup checkout --preview-service-policy deny
+gregale github setup checkout --preview-service-policy allow_marked
 ```
 
 Use `--preview-service-policy allow_marked` only when the production dependency

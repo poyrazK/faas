@@ -1513,9 +1513,15 @@ type ProjectEnvironmentEdgeRule struct {
 
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
-// have a positive PR number and remain on the normal deployed-app quota.
+// have a positive PR number and have a separate bounded quota.
 func IsDeveloperApp(app App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
+// IsPRPreviewApp identifies a leased pull-request preview. It is separate
+// from both production and developer environments for quota accounting.
+func IsPRPreviewApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0
 }
 
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
@@ -2060,6 +2066,11 @@ type Deployment struct {
 	// migrations/00047). Empty for image/tarball deploys that don't
 	// have an upstream commit.
 	CommitSHA string
+	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
+	// for source-ref deployments. Empty/zero for pinned SHAs, tags, and all
+	// other deployment kinds; imaged checks the branch head before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).

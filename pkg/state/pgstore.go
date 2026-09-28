@@ -2382,13 +2382,14 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		return App{}, ErrConflict
 	}
 
-	// 3. Authoritative count under the lock. Developer environments use
-	//    their own cap; production apps and PR previews use DeployedApps.
+	// 3. Authoritative count under the lock. Production, developer, and PR
+	//    preview apps each use their own plan cap.
 	//    Keeping both counts inside the account lock closes the same TOCTOU
 	//    window for either quota family.
 	var observed int
 	developer := IsDeveloperApp(app)
-	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`
+	preview := IsPRPreviewApp(app)
+	countQuery := `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`
 	limit := limits.DeployedApps
 	kind := QuotaErrorKindApps
 	if developer {
@@ -2400,6 +2401,13 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 			limit = limits.DeployedApps
 		}
 		kind = QuotaErrorKindDeveloperApps
+	} else if preview {
+		countQuery = `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is not null and preview_pr_number > 0`
+		limit = limits.PreviewApps
+		if limit <= 0 {
+			limit = limits.DeployedApps
+		}
+		kind = QuotaErrorKindPreviewApps
 	}
 	if err := tx.QueryRow(ctx, countQuery, app.AccountID).Scan(&observed); err != nil {
 		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
@@ -3685,7 +3693,7 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 func (s *PgStore) CountDeployedApps(ctx context.Context, accountID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)`,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`,
 		accountID).Scan(&n)
 	return n, err
 }
@@ -5204,7 +5212,7 @@ func (s *PgStore) ApplyProjectPlan(
 	var observedApps int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from apps where account_id = $1
-		 and status in ('active','evicted_cold')`,
+		 and status in ('active','evicted_cold') and preview_of_slug is null`,
 		project.AccountID,
 	).Scan(&observedApps); err != nil {
 		return Project{}, nil, nil, fmt.Errorf("state: count apps for account %s: %w", project.AccountID, err)
@@ -5468,7 +5476,7 @@ func (s *PgStore) ApplyProjectReconcile(
 	}
 
 	var observedApps int
-	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`, project.AccountID).Scan(&observedApps); err != nil {
+	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold') and preview_of_slug is null`, project.AccountID).Scan(&observedApps); err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: count project apps: %w", err)
 	}
 	if observedApps-removes+creates > limits.DeployedApps {
@@ -6632,7 +6640,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-		                          override_readiness_probe, override_main_depends_on)
+		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6646,7 +6654,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6689,7 +6697,8 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
-		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn))
+		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn),
+		d.GitHubSourceRef, d.GitHubInstallationID)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -8736,6 +8745,14 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 }
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
+	return s.markDeploymentLive(ctx, id, false)
+}
+
+func (s *PgStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return s.markDeploymentLive(ctx, id, true)
+}
+
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
@@ -8771,6 +8788,34 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if fenceGitDriven {
+		if (dep.Kind != DeploymentKindGitHub && dep.Kind != DeploymentKindPreview) || dep.Revision <= 0 {
+			return ErrInvalidStateTransition
+		}
+		if dep.Status == DeploySuperseded {
+			return ErrDeploymentSuperseded
+		}
+		if dep.Status == DeployFailed {
+			return ErrInvalidStateTransition
+		}
+		if dep.Status != DeployLive {
+			var newer bool
+			if err := tx.QueryRow(ctx, `select exists (
+				select 1 from deployments where app_id = $1 and scope = $2 and revision > $3
+			)`, dep.AppID, normalizedDeploymentScope(dep.Scope), dep.Revision).Scan(&newer); err != nil {
+				return fmt.Errorf("state: check newer deployment revision: %w", err)
+			}
+			if newer {
+				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+					return fmt.Errorf("state: supersede stale Git-driven deployment: %w", err)
+				}
+				if err := tx.Commit(ctx); err != nil {
+					return fmt.Errorf("state: commit stale Git-driven deployment: %w", err)
+				}
+				return ErrDeploymentSuperseded
+			}
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		update crons
@@ -9764,7 +9809,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
-		                          override_readiness_probe, override_main_depends_on)
+		                          override_readiness_probe, override_main_depends_on,
+		                          github_source_ref, github_installation_id)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9778,7 +9824,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49)
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9808,7 +9854,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
-		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn))
+		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -23919,6 +23966,7 @@ const deploymentSelectColumnsWithRootfs = `
 	error_relevant_logs,
 	created_at,
 	coalesce(source_url,''), coalesce(commit_sha,''),
+	coalesce(github_source_ref,''), coalesce(github_installation_id,0),
 	coalesce(override_entrypoint, ARRAY[]::text[]),
 	coalesce(override_cmd, ARRAY[]::text[]),
 	override_env, override_env_secrets,
@@ -23979,6 +24027,7 @@ const deploymentSelectColumnsQualified = `
 	d.error_relevant_logs,
 	d.created_at,
 	coalesce(d.source_url,''), coalesce(d.commit_sha,''),
+	coalesce(d.github_source_ref,''), coalesce(d.github_installation_id,0),
 	coalesce(d.override_entrypoint, ARRAY[]::text[]),
 	coalesce(d.override_cmd, ARRAY[]::text[]),
 	d.override_env, d.override_env_secrets,
@@ -24091,6 +24140,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.ErrorRelevantLogs,
 		&d.CreatedAt,
 		&d.SourceURL, &d.CommitSHA,
+		&d.GitHubSourceRef, &d.GitHubInstallationID,
 		&d.OverrideEntrypoint, &d.OverrideCmd,
 		&d.OverrideEnv, &d.OverrideEnvSecrets,
 		&d.OverridePort, &d.OverrideHealthcheck,

@@ -1,4 +1,4 @@
-# ADR-313 · Realtime callback dead-letter inspection and replay
+# ADR-329 · Realtime callback dead-letter inspection and replay
 
 - **Status:** accepted
 - **Date:** 2026-09-27

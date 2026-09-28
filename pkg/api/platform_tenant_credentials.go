@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+const (
+	MaxPlatformTenantCredentialScopes = 3
+	MaxPlatformTenantKeysPerConsumer  = 100
+)
+
+type SetPlatformTenantCredentialPolicyRequest struct {
+	AllowedScopes      []string `json:"allowed_scopes"`
+	MaxKeysPerConsumer *int     `json:"max_keys_per_consumer"`
+}
+
+type PlatformTenantCredentialPolicyResponse struct {
+	TenantID           string     `json:"tenant_id"`
+	Enabled            bool       `json:"enabled"`
+	AllowedScopes      []string   `json:"allowed_scopes"`
+	MaxKeysPerConsumer int        `json:"max_keys_per_consumer"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+}
+
 // PlatformTenantCredentialIntent contains only public key metadata and the
 // SHA-256 digest of a client-generated key. Never send the plaintext key.
 type PlatformTenantCredentialIntent struct {
@@ -85,4 +103,16 @@ func (c *Client) ListPlatformTenantCredentials(ctx context.Context, tenantID str
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) GetPlatformTenantCredentialPolicy(ctx context.Context, tenantID string) (PlatformTenantCredentialPolicyResponse, error) {
+	var out PlatformTenantCredentialPolicyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/credential-policy"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) SetPlatformTenantCredentialPolicy(ctx context.Context, tenantID string, req SetPlatformTenantCredentialPolicyRequest) (PlatformTenantCredentialPolicyResponse, error) {
+	var out PlatformTenantCredentialPolicyResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/credential-policy"
+	return out, c.do(ctx, "PUT", path, req, &out)
 }

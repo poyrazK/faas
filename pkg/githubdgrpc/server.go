@@ -71,6 +71,7 @@ type Service interface {
 	// is hit; bytesStreamed is the post-cap cumulative count for
 	// the deployment row's source_bytes column.
 	StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (rc io.ReadCloser, resolvedCommitSHA string, truncated bool, bytesStreamed int64, err error)
+	GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (commitSHA string, found bool, err error)
 
 	ListRecoveryQueueItems(ctx context.Context, status string, limit int) (RecoveryQueueItems, error)
 	RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error)
@@ -522,6 +523,20 @@ func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream g
 	}
 }
 
+func (s *Server) GetBranchHead(ctx context.Context, req *githubdpb.GetBranchHeadRequest) (*githubdpb.GetBranchHeadResponse, error) {
+	const op = "GetBranchHead"
+	start := time.Now()
+	sha, found, err := s.svc.GetBranchHead(ctx, req.GetAccountId(), req.GetInstallationId(), req.GetRepoFullName(), req.GetBranch())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	if !found {
+		return nil, status.Error(codes.NotFound, "githubd: branch not found")
+	}
+	return &githubdpb.GetBranchHeadResponse{CommitSha: sha}, nil
+}
+
 // toStatusErr converts a Service error to a gRPC status error. It
 // preserves an existing *status.Status (so slice 1's codes.Unimplemented
 // survives the round-trip), wraps *api.Problem via grpcerr.ToStatus
@@ -622,6 +637,10 @@ func (UnimplementedService) MintInstallationToken(string, int64) (string, time.T
 // the codeload-streaming shape before PR-A lands.
 func (UnimplementedService) StreamSourceRef(context.Context, string, int64, string, string, int64) (io.ReadCloser, string, bool, int64, error) {
 	return nil, "", false, 0, status.Error(codes.Unimplemented, "githubd: StreamSourceRef not yet wired (DEPLOY-PROV-4)")
+}
+
+func (UnimplementedService) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
+	return "", false, status.Error(codes.Unimplemented, "githubd: GetBranchHead not yet wired")
 }
 
 func (UnimplementedService) ListRecoveryQueueItems(context.Context, string, int) (RecoveryQueueItems, error) {

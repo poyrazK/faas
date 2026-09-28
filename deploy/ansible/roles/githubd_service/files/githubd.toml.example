@@ -2,3 +2,5 @@
 # GitHub App credentials come from sealed.env.
 socket_path = "/run/faas/githubd.sock"
 http_addr = "127.0.0.1:8083"
+# Split-box fleets set the TCP listener and mTLS files via the managed
+# systemd drop-in. The empty TOML defaults preserve the local socket in dev.
