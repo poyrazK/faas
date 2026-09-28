@@ -1,12 +1,12 @@
-# ADR-286: Recipient-scoped event fanout recovery
+# ADR-347: Recipient-scoped event fanout recovery
 
 - Status: Accepted
 - Date: 2026-09-28
-- Amends: ADR-284, ADR-285
+- Amends: ADR-284, ADR-346
 
 ## Context
 
-ADR-285 freezes each new event's eligible subscription candidates. The outbox
+ADR-346 freezes each new event's eligible subscription candidates. The outbox
 still retried the whole event receipt when any one candidate failed to enqueue.
 Successful candidates were visited again on every retry, and a permanently
 invalid candidate could keep the receipt pending without a terminal outcome.
