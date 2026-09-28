@@ -28373,6 +28373,12 @@ func (s *PgStore) RequestTelemetryAnalyticsByDeployment(ctx context.Context, arg
 	return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsByRouteDeployment backs the bounded per-route
+// deployment allocation and CPU-comparison surface.
+func (s *PgStore) RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, s.pool, arg)
+}
+
 // RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {

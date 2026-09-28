@@ -192,6 +192,9 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	if err != nil {
 		return AppWebhook{}, err
 	}
+	if current.Scope == AppWebhookScopePlatformTenant && p.EventFilter != nil {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	if p.TargetURL != nil {
 		current.TargetURL = *p.TargetURL
 	}

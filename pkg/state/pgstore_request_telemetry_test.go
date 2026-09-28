@@ -244,6 +244,92 @@ func TestPgStoreRequestTelemetry_AnalyticsByDeploymentCPUIsRequestWeighted(t *te
 	}
 }
 
+func TestPgStoreRequestTelemetry_AnalyticsByRouteDeploymentBoundsAndWeights(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID := uuid.NewString()
+	appID := uuid.NewString()
+	deploymentIDs := map[string]string{
+		"v1": uuid.NewString(), "v2": uuid.NewString(), "v3": uuid.NewString(), "v4": uuid.NewString(),
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	type requestRow struct {
+		route, deployment, tag string
+		count, cpuMS           int32
+		cpuAvailable           bool
+	}
+	rows := []requestRow{
+		{route: "GET /checkout", deployment: "v1", tag: "v1", count: 2, cpuMS: 10, cpuAvailable: true},
+		{route: "GET /checkout", deployment: "v1", tag: "v1", count: 1, cpuMS: 40, cpuAvailable: true},
+		{route: "GET /checkout", deployment: "v2", tag: "v2", count: 4, cpuMS: 50, cpuAvailable: true},
+		{route: "GET /checkout", deployment: "v3", tag: "v3", count: 2},
+		{route: "GET /checkout", deployment: "v4", tag: "v4", count: 1},
+		{route: "GET /health", deployment: "v2", tag: "v2", count: 20, cpuMS: 5, cpuAvailable: true},
+	}
+	createdAt := map[string]string{
+		"v1": now.Add(-2 * time.Hour).Format(time.RFC3339Nano),
+		"v2": now.Add(-time.Hour).Format(time.RFC3339Nano),
+		"v3": now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+		"v4": now.Add(-15 * time.Minute).Format(time.RFC3339Nano),
+	}
+	for i, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentIDs[row.deployment]), Valid: true},
+			Route:        row.route, Method: "GET", Status: 200, LatencyMs: int32(10 + i),
+			ReceivedAt: pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:      row.count, UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			CommitSha: "sha-" + row.deployment, DeploymentTag: row.tag, DeploymentCreatedAt: createdAt[row.deployment],
+			GuestCpuTimeMs: row.cpuMS, GuestResourceUsageAvailable: row.cpuAvailable,
+		}); err != nil {
+			t.Fatalf("Insert request row %d: %v", i, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+		AppID:           pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:       pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:      pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedAt_2:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		DeploymentLimit: 2,
+		RouteLimit:      10,
+	})
+	if err != nil {
+		t.Fatalf("RequestTelemetryAnalyticsByRouteDeployment: %v", err)
+	}
+	byRouteDeployment := make(map[string]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, len(got))
+	for _, row := range got {
+		byRouteDeployment[row.Route+"/"+row.DeploymentID] = row
+	}
+	if len(got) != 4 {
+		t.Fatalf("got %d route/deployment rows (%+v), want checkout's top 2 + other and health's one deployment", len(got), got)
+	}
+	v1 := byRouteDeployment["GET /checkout/"+deploymentIDs["v1"]]
+	if v1.Requests != 3 || v1.GuestCpuMeasuredRequests != 3 || v1.GuestCpuAvgMs != 20 {
+		t.Fatalf("v1 route aggregate = %+v, want 3 requests, 3 measurements, 20ms weighted mean", v1)
+	}
+	v2 := byRouteDeployment["GET /checkout/"+deploymentIDs["v2"]]
+	if v2.Requests != 4 || v2.GuestCpuMeasuredRequests != 4 || v2.GuestCpuAvgMs != 50 {
+		t.Fatalf("v2 route aggregate = %+v, want 4 requests, 4 measurements, 50ms mean", v2)
+	}
+	other := byRouteDeployment["GET /checkout/__other__"]
+	if other.Requests != 3 || other.GuestCpuMeasuredRequests != 0 {
+		t.Fatalf("other route/deployment aggregate = %+v, want three requests without merged CPU data", other)
+	}
+
+	topOnly, err := store.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+		AppID:           pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:       pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:      pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedAt_2:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		DeploymentLimit: 5,
+		RouteLimit:      1,
+	})
+	if err != nil || len(topOnly) != 1 || topOnly[0].Route != "GET /health" {
+		t.Fatalf("top route limit = %+v, err=%v; want only highest-volume /health", topOnly, err)
+	}
+}
+
 // TestPgStoreRequestTelemetry_RoundTrip exercises the per-request
 // INSERT path and the per-app LIST path. The list is scoped by
 // (account_id, app_id, time window) per sqlc; the test inserts a

@@ -60,22 +60,27 @@ func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.Ident
 }
 
 type IntegrationConfig struct {
-	ID                       string        `toml:"id"`
-	AccountID                string        `toml:"account_id"`
-	Name                     string        `toml:"name"`
-	Origin                   string        `toml:"origin"`
-	TokenEnv                 string        `toml:"token_env"`
-	ProviderAuthorizationEnv string        `toml:"provider_authorization_env"`
-	CredentialSource         string        `toml:"credential_source"`
-	AllowedMethods           []string      `toml:"allowed_methods"`
-	AllowedPathPrefixes      []string      `toml:"allowed_path_prefixes"`
-	AppIDs                   []string      `toml:"app_ids"`
-	RatePerSecond            float64       `toml:"rate_per_second"`
-	Burst                    int           `toml:"burst"`
-	MaxInFlight              int           `toml:"max_in_flight"`
-	DailyRequestLimit        int64         `toml:"daily_request_limit"`
-	RequestTimeout           time.Duration `toml:"request_timeout"`
-	Enabled                  *bool         `toml:"enabled"`
+	ID                             string        `toml:"id"`
+	AccountID                      string        `toml:"account_id"`
+	Name                           string        `toml:"name"`
+	Origin                         string        `toml:"origin"`
+	TokenEnv                       string        `toml:"token_env"`
+	ProviderAuthorizationEnv       string        `toml:"provider_authorization_env"`
+	CredentialSource               string        `toml:"credential_source"`
+	AllowedMethods                 []string      `toml:"allowed_methods"`
+	AllowedPathPrefixes            []string      `toml:"allowed_path_prefixes"`
+	AppIDs                         []string      `toml:"app_ids"`
+	RatePerSecond                  float64       `toml:"rate_per_second"`
+	Burst                          int           `toml:"burst"`
+	MaxInFlight                    int           `toml:"max_in_flight"`
+	DailyRequestLimit              int64         `toml:"daily_request_limit"`
+	RequestTimeout                 time.Duration `toml:"request_timeout"`
+	MaxRetries                     int           `toml:"max_retries"`
+	ResponseCacheTTLSeconds        int           `toml:"response_cache_ttl_seconds"`
+	CircuitBreakerFailureThreshold int           `toml:"circuit_breaker_failure_threshold"`
+	CircuitBreakerOpenSeconds      int           `toml:"circuit_breaker_open_seconds"`
+	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
+	Enabled                        *bool         `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -187,6 +192,11 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			policy.ProviderAuthMode = outbound.ProviderAuthManaged
 		}
 		policy.CredentialSource = credentialSource
+		policy.MaxRetries = raw.MaxRetries
+		policy.ResponseCacheTTLSeconds = raw.ResponseCacheTTLSeconds
+		policy.CircuitBreakerFailureThreshold = raw.CircuitBreakerFailureThreshold
+		policy.CircuitBreakerOpenSeconds = raw.CircuitBreakerOpenSeconds
+		policy.RetryBudgetPerMinute = raw.RetryBudgetPerMinute
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit

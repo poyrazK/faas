@@ -84,8 +84,8 @@ def sync_detailed(
     Args:
         id (UUID):
         webhook_id (UUID):
-        body (UpdatePlatformTenantWebhookRequest): Update a tenant statement receiver. Rotate
-            secrets with the dedicated action.
+        body (UpdatePlatformTenantWebhookRequest): Update a tenant event receiver. Its event
+            filter is immutable; create a replacement to change subscribed events.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,8 +120,8 @@ def sync(
     Args:
         id (UUID):
         webhook_id (UUID):
-        body (UpdatePlatformTenantWebhookRequest): Update a tenant statement receiver. Rotate
-            secrets with the dedicated action.
+        body (UpdatePlatformTenantWebhookRequest): Update a tenant event receiver. Its event
+            filter is immutable; create a replacement to change subscribed events.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,8 +151,8 @@ async def asyncio_detailed(
     Args:
         id (UUID):
         webhook_id (UUID):
-        body (UpdatePlatformTenantWebhookRequest): Update a tenant statement receiver. Rotate
-            secrets with the dedicated action.
+        body (UpdatePlatformTenantWebhookRequest): Update a tenant event receiver. Its event
+            filter is immutable; create a replacement to change subscribed events.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,8 +185,8 @@ async def asyncio(
     Args:
         id (UUID):
         webhook_id (UUID):
-        body (UpdatePlatformTenantWebhookRequest): Update a tenant statement receiver. Rotate
-            secrets with the dedicated action.
+        body (UpdatePlatformTenantWebhookRequest): Update a tenant event receiver. Its event
+            filter is immutable; create a replacement to change subscribed events.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

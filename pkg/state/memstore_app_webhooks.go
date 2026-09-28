@@ -306,10 +306,10 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 		w.TargetURL = *p.TargetURL
 	}
 	if p.EventFilter != nil {
-		if w.Scope == AppWebhookScopeAccount && !validAccountReleaseWebhookFilter(*p.EventFilter) {
+		if w.Scope == AppWebhookScopePlatformTenant {
 			return AppWebhook{}, ErrInvalidAppWebhookScope
 		}
-		if w.Scope == AppWebhookScopePlatformTenant && !validPlatformTenantWebhookFilter(*p.EventFilter) {
+		if w.Scope == AppWebhookScopeAccount && !validAccountReleaseWebhookFilter(*p.EventFilter) {
 			return AppWebhook{}, ErrInvalidAppWebhookScope
 		}
 		w.EventFilter = append([]string(nil), *p.EventFilter...)

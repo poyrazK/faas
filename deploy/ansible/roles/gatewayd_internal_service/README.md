@@ -48,6 +48,15 @@ under `/var/lib/faas/log-drains` before delivery.
   `role.FromConfig` sentinel. Without this drop-in gatewayd-internal falls
   back to `RoleSingleBox` on a multi-host fleet and the per-daemon role
   gate is unenforced.
+- `99-faas-retry-budget.conf` — when `gatewayd_retry_budget_redis_url` is
+  supplied from a common Ansible Vault variable, projects the root-only
+  Redis URL through `LoadCredential` and enables the fleet-wide retry cap.
+  Set `gatewayd_retry_budget_required=true` on every gateway for the
+  activation pass; the role fails if any gateway lacks the URL. The URL is
+  never written into the drop-in or logged by Ansible. The optional URL
+  requires an operator-provisioned Redis service; this role does not
+  install Redis. Follow `docs/runbooks/FaasSharedRetryBudget.md` for the
+  rollout check and rollback procedure.
 
 ## Restart handler
 

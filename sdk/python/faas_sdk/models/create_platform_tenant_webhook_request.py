@@ -10,6 +10,10 @@ from ..models.create_platform_tenant_webhook_request_delivery_format import (
     CreatePlatformTenantWebhookRequestDeliveryFormat,
     check_create_platform_tenant_webhook_request_delivery_format,
 )
+from ..models.create_platform_tenant_webhook_request_event_filter_item import (
+    CreatePlatformTenantWebhookRequestEventFilterItem,
+    check_create_platform_tenant_webhook_request_event_filter_item,
+)
 from ..models.create_platform_tenant_webhook_request_retry_policy import (
     CreatePlatformTenantWebhookRequestRetryPolicy,
     check_create_platform_tenant_webhook_request_retry_policy,
@@ -21,7 +25,7 @@ T = TypeVar("T", bound="CreatePlatformTenantWebhookRequest")
 
 @_attrs_define
 class CreatePlatformTenantWebhookRequest:
-    """Create a receiver for this tenant's finalized cross-app billing statements.
+    """Create a receiver for this tenant's supported hostname, certificate, and finalized billing events.
 
     Example:
         {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
@@ -31,6 +35,8 @@ class CreatePlatformTenantWebhookRequest:
 
     target_url: str
     webhook_secret: str
+    event_filter: list[CreatePlatformTenantWebhookRequestEventFilterItem] | Unset = UNSET
+    """Events delivered to this receiver. Defaults to platform_tenant.statement.finalized when omitted."""
     retry_policy: CreatePlatformTenantWebhookRequestRetryPolicy | Unset = "default"
     delivery_format: CreatePlatformTenantWebhookRequestDeliveryFormat | Unset = "json"
     enabled: bool | Unset = True
@@ -40,6 +46,13 @@ class CreatePlatformTenantWebhookRequest:
         target_url = self.target_url
 
         webhook_secret = self.webhook_secret
+
+        event_filter: list[str] | Unset = UNSET
+        if not isinstance(self.event_filter, Unset):
+            event_filter = []
+            for event_filter_item_data in self.event_filter:
+                event_filter_item: str = event_filter_item_data
+                event_filter.append(event_filter_item)
 
         retry_policy: str | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
@@ -59,6 +72,8 @@ class CreatePlatformTenantWebhookRequest:
                 "webhook_secret": webhook_secret,
             }
         )
+        if event_filter is not UNSET:
+            field_dict["event_filter"] = event_filter
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
         if delivery_format is not UNSET:
@@ -74,6 +89,17 @@ class CreatePlatformTenantWebhookRequest:
         target_url = d.pop("target_url")
 
         webhook_secret = d.pop("webhook_secret")
+
+        _event_filter = d.pop("event_filter", UNSET)
+        event_filter: list[CreatePlatformTenantWebhookRequestEventFilterItem] | Unset = UNSET
+        if _event_filter is not UNSET:
+            event_filter = []
+            for event_filter_item_data in _event_filter:
+                event_filter_item = check_create_platform_tenant_webhook_request_event_filter_item(
+                    event_filter_item_data
+                )
+
+                event_filter.append(event_filter_item)
 
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: CreatePlatformTenantWebhookRequestRetryPolicy | Unset
@@ -94,6 +120,7 @@ class CreatePlatformTenantWebhookRequest:
         create_platform_tenant_webhook_request = cls(
             target_url=target_url,
             webhook_secret=webhook_secret,
+            event_filter=event_filter,
             retry_policy=retry_policy,
             delivery_format=delivery_format,
             enabled=enabled,

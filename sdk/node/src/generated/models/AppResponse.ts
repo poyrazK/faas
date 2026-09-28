@@ -16,6 +16,7 @@ import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -102,6 +103,7 @@ export type AppResponse = {
    * Declared same-account service dependencies injected into this workload as legacy `_URL` environment variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
    */
   service_bindings?: Array<AppServiceBinding>;
+  service_reliability?: ServiceReliabilityPolicies;
   /**
    * Effective internal-service authorization policy. Legacy apps without a stored value return `account`.
    */

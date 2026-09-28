@@ -1456,7 +1456,7 @@ paths:
     post:
       operationId: rotateObjectStorageComputeBinding
       summary: Rotate a compute binding credential
-      description: Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+      description: Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
       tags: [storage]
       responses:
         '200':
@@ -4708,6 +4708,23 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/activation:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfActivation
+      summary: Read this tenant's own redacted activation snapshot.
+      description: Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. Raw DNS and certificate errors, DNS challenge tokens, and app IDs are omitted.
+      responses:
+        '200':
+          description: Current activation state for the caller's linked surfaces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfActivationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/platform-tenant-self/usage:
@@ -20777,9 +20794,39 @@ components:
         burst: { type: integer, minimum: 1, maximum: 2000 }
         max_in_flight: { type: integer, minimum: 1, maximum: 1000 }
         request_timeout_ms: { type: integer, minimum: 1, maximum: 300000 }
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 2
+          default: 0
+          description: Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
+        response_cache_ttl_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
+        circuit_breaker_failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and requires circuit_breaker_open_seconds to be zero too.
+        circuit_breaker_open_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is allowed. Must be set with a nonzero failure threshold.
+        retry_budget_per_minute:
+          type: integer
+          minimum: 0
+          maximum: 3000
+          default: 0
+          description: Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling.
     PutOutboundRequestPolicyRequest:
       type: object
-      description: Replace all admission policy values for a customer-owned integration.
+      description: Replace admission policy values for a customer-owned integration.
       required: [request_policy]
       properties:
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
@@ -21474,7 +21521,7 @@ components:
         secret_access_key: { type: string }
         addressing_style: { type: string }
     ObjectStorageComputeBinding:
-      description: Provider-neutral app-to-bucket compute binding.
+      description: Provider-neutral app-to-bucket compute binding. Rotation responses and binding lists set rotation_pending while the previous key remains valid during a rolling runtime refresh.
       type: object
       required: [id, bucket_id, scope, prefix, credential, secret_keys]
       properties:
@@ -21484,6 +21531,7 @@ components:
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$' }
         credential: { $ref: '#/components/schemas/ObjectS3Credential' }
         secret_keys: { $ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys' }
+        rotation_pending: { type: boolean, description: Previous key is still valid until the rolling refresh has drained old instances. }
     ObjectStorageComputeBindingList:
       description: Active compute bindings for one logical bucket.
       type: object
@@ -22954,6 +23002,23 @@ components:
       type: string
       enum: [http, https]
 
+    ServiceReliabilityPolicy:
+      description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."
+      type: object
+      properties:
+        timeout_ms: { type: integer, minimum: 0, maximum: 300000 }
+        max_attempts: { type: integer, minimum: 0, maximum: 3 }
+        min_remaining_ms: { type: integer, minimum: 0, maximum: 30000 }
+        retry_budget_percent: { type: integer, minimum: 0, maximum: 100 }
+        allow_non_idempotent: { type: boolean }
+
+    ServiceReliabilityPolicies:
+      description: "Map of declared target service names to caller-owned reliability policies. Only names in this app's service bindings may appear."
+      type: object
+      maxProperties: 100
+      additionalProperties:
+        $ref: '#/components/schemas/ServiceReliabilityPolicy'
+
     ServiceCallScope:
       description: "Target-owned HTTP request grant for one logical service caller. A path prefix matches itself and slash-delimited descendants; ambiguous request paths fail closed."
       type: object
@@ -23156,6 +23221,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AppServiceBinding'
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective internal-service authorization policy. Legacy apps without a stored value return `account`."
@@ -23589,6 +23656,42 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantActivationSurfaceResponse' }
 
+    PlatformTenantSelfActivationHostnameResponse:
+      description: Hostname verification status for the tenant-bound downstream activation view; challenge material and raw errors are omitted.
+      type: object
+      required: [hostname, verified]
+      properties:
+        hostname: { type: string }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+
+    PlatformTenantSelfActivationSurfaceResponse:
+      description: Redacted state for one surface linked to the caller's platform tenant.
+      type: object
+      required: [id, name, status, cert_state, ready, hostnames]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [pending, active, suspended] }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: string, format: date-time }
+        ready: { type: boolean }
+        hostnames:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationHostnameResponse' }
+
+    PlatformTenantSelfActivationResponse:
+      description: Current read-only activation snapshot for the tenant bound to the bearer; ready requires every linked surface to be ready.
+      type: object
+      required: [status, enabled, ready, surfaces]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+        enabled: { type: boolean }
+        ready: { type: boolean }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationSurfaceResponse' }
+
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
       type: object
@@ -23789,7 +23892,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -23803,7 +23906,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -23820,7 +23923,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -24022,11 +24125,19 @@ components:
 
     CreatePlatformTenantWebhookRequest:
       type: object
-      description: Create a receiver for this tenant's finalized cross-app billing statements.
+      description: Create a receiver for this tenant's supported hostname, certificate, and finalized billing events.
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          description: Events delivered to this receiver. Defaults to platform_tenant.statement.finalized when omitted.
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          default: [platform_tenant.statement.finalized]
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -24036,7 +24147,7 @@ components:
 
     UpdatePlatformTenantWebhookRequest:
       type: object
-      description: Update a tenant statement receiver. Rotate secrets with the dedicated action.
+      description: Update a tenant event receiver. Its event filter is immutable; create a replacement to change subscribed events.
       minProperties: 1
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -24046,7 +24157,7 @@ components:
 
     PlatformTenantWebhookResponse:
       type: object
-      description: Tenant-scoped statement event receiver. The secret is never returned.
+      description: Tenant-scoped event receiver. The secret is never returned.
       required: [id, scope, platform_tenant_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -24057,7 +24168,10 @@ components:
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
           type: array
-          items: { type: string, enum: [platform_tenant.statement.finalized] }
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }
@@ -24342,6 +24456,9 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
+          description: "Optional timeout and retry overrides for service_binding_targets."
         service_binding_policy:
           type: string
           enum: [account, declared]
@@ -24794,6 +24911,11 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes."
+        service_reliability:
+          oneOf:
+            - $ref: '#/components/schemas/ServiceReliabilityPolicies'
+            - type: "null"
+          description: "Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears. Project-managed and preview apps reject this PATCH."
         service_binding_policy:
           type: [string, "null"]
           enum: [account, declared, null]
@@ -30495,6 +30617,9 @@ components:
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+        service_reliability:
+          $ref: '#/components/schemas/ServiceReliabilityPolicies'
+          description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
         service_binding_transport:
           $ref: '#/components/schemas/ServiceBindingTransport'
           description: "Canonical URL transport selected by Compose `x-gregale-service-transport`. Omitted preserves the established transport; new workloads default to `http`."
@@ -35193,8 +35318,32 @@ components:
           type: array
           description: "Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."
           items: { $ref: '#/components/schemas/RequestAnalyticsDependency' }
+        deployment_observations:
+          type: array
+          description: "At most the five highest-request deployments for this route/method, with request-share compute estimates and measured guest CPU comparisons against the preceding comparable revision."
+          items: { $ref: '#/components/schemas/RequestAnalyticsRouteDeploymentObservation' }
+        other_deployment_requests: { type: integer, format: int64, minimum: 0, description: "Route requests from deployments outside the top-five list." }
+        other_deployment_estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "This route's estimated compute value allocated to deployments outside the top-five list by request share." }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    RequestAnalyticsRouteDeploymentObservation:
+      type: object
+      description: "One route/method's bounded request and estimated-compute share for an immutable deployment. CPU comparisons are advisory, require at least 20 measured requests on both revisions, and remain sensitive to traffic mix."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents, guest_cpu_measured_requests, guest_cpu_regression]
+      properties:
+        deployment_id: { type: string, description: "Stable UUID identifying the immutable revision that served this route." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string, description: "RFC 3339 timestamp used to order same-route CPU comparisons." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        request_share_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "This route/deployment cell's share of all observed app requests in the window." }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route/deployment cell by request share; not an invoice amount." }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, description: "Request-weighted mean measured guest CPU time for this route under this deployment; supported Linux one-shot runtimes only." }
+        guest_cpu_measured_requests: { type: integer, format: int64, minimum: 0 }
+        guest_cpu_change_pct: { type: number, format: double, description: "Change in measured mean guest CPU/request from the preceding comparable deployment for this same route/method." }
+        guest_cpu_compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID of the preceding comparable revision." }
+        guest_cpu_regression: { type: boolean, description: "True when measured guest CPU/request rose by at least 25% from the preceding comparable revision." }
 
     RequestAnalyticsDependency:
       type: object
@@ -38218,6 +38367,36 @@ components:
         finalized_at: { type: string, format: date-time }
       additionalProperties: false
 
+    PlatformTenantHostnameVerifiedWebhookPayload:
+      type: object
+      description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, hostname_id, hostname, verified_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Stable customer reference selected by the platform owner. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        hostname_id: { type: string, format: uuid }
+        hostname: { type: string, minLength: 1 }
+        verified_at: { type: string, format: date-time }
+      additionalProperties: false
+
+    PlatformTenantSurfaceCertificateChangedWebhookPayload:
+      type: object
+      description: Persisted certificate-state transition for a surface explicitly linked to this tenant. Raw provider error text, certificates, and private keys are never included; use the activation snapshot for current diagnostic details.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, cert_state, cert_not_after, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: [string, "null"], format: date-time, description: Null unless a certificate expiry is recorded. }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+
     CreateInboundWebhookEndpointRequest:
       type: object
       description: Create a provider-verified endpoint whose accepted events become durable app invocations.
@@ -38299,7 +38478,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -38735,7 +38914,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:

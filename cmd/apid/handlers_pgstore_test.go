@@ -381,6 +381,139 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	}
 }
 
+func TestPGHandler_DebugRegressionWebhooksAreTransitionBased(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	ctx := context.Background()
+	app := seedPGApp(t, e, "pg-regression-webhooks")
+	deploymentID := uuid.New()
+
+	createHook := func(target string, filter []string) string {
+		t.Helper()
+		var id string
+		err := e.pool.QueryRow(ctx, `
+			insert into app_webhooks
+				(app_id, account_id, target_url, secret_sealed, event_filter, enabled)
+			values ($1, $2, $3, $4, $5, true)
+			returning id
+		`, app.ID, e.acct.ID, target, []byte("sealed-test-secret"), filter).Scan(&id)
+		if err != nil {
+			t.Fatalf("insert app webhook %s: %v", target, err)
+		}
+		return id
+	}
+	regressionEventsHook := createHook("https://all-regressions.example/hook", []string{
+		string(state.AppWebhookEventDebugRegressionDetected),
+		string(state.AppWebhookEventDebugRegressionResolved),
+	})
+	detectedOnlyHook := createHook("https://detected-regressions.example/hook", []string{
+		string(state.AppWebhookEventDebugRegressionDetected),
+	})
+
+	factor := pgtype.Numeric{}
+	if err := factor.Scan("1.50"); err != nil {
+		t.Fatal(err)
+	}
+	observation := sqlc.UpsertRegressionObservationParams{
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
+		Route:        "POST /checkout", P95Ms: 183, P95BaseMs: 122, AffectedCount: 823,
+		RegressionFactor: factor,
+	}
+	upsert := func() {
+		t.Helper()
+		if err := e.store.UpsertRegressionObservation(ctx, observation); err != nil {
+			t.Fatalf("UpsertRegressionObservation: %v", err)
+		}
+	}
+	upsert() // detected
+	upsert() // refresh only; must not enqueue another detected event
+
+	if _, err := e.pool.Exec(ctx, `
+		update debug_regression_observations
+		   set last_detected_at = now() - interval '2 hours'
+		 where app_id = $1 and deployment_id = $2 and route = $3
+	`, app.ID, deploymentID, observation.Route); err != nil {
+		t.Fatalf("age regression observation: %v", err)
+	}
+	resolved, err := e.store.ResolveStaleRegressionObservations(ctx, pgtype.Interval{
+		Microseconds: int64(time.Hour / time.Microsecond), Valid: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveStaleRegressionObservations: %v", err)
+	}
+	foundResolved := false
+	for _, row := range resolved {
+		if uuidFromPg(row.AppID) == app.ID && row.Route == observation.Route {
+			foundResolved = true
+		}
+	}
+	if !foundResolved {
+		t.Fatalf("stale resolver did not return app regression: %+v", resolved)
+	}
+	resolvedAgain, err := e.store.ResolveStaleRegressionObservations(ctx, pgtype.Interval{
+		Microseconds: int64(time.Hour / time.Microsecond), Valid: true,
+	})
+	if err != nil || len(resolvedAgain) != 0 {
+		t.Fatalf("repeat stale resolve = %v, %v; want no second transition", resolvedAgain, err)
+	}
+	upsert() // re-detection after recovery is a new lifecycle transition
+
+	check := func(hookID string, want map[string]int) {
+		t.Helper()
+		rows, err := e.pool.Query(ctx, `
+			select event, payload
+			  from app_webhook_deliveries
+		 where webhook_id = $1
+		 order by created_at, id
+		`, hookID)
+		if err != nil {
+			t.Fatalf("list deliveries for %s: %v", hookID, err)
+		}
+		defer rows.Close()
+		got := make(map[string]int)
+		for rows.Next() {
+			var event string
+			var payload []byte
+			if err := rows.Scan(&event, &payload); err != nil {
+				t.Fatalf("scan webhook delivery: %v", err)
+			}
+			got[event]++
+			if event != string(state.AppWebhookEventDebugRegressionDetected) && event != string(state.AppWebhookEventDebugRegressionResolved) {
+				t.Errorf("unexpected webhook event %q", event)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(payload, &body); err != nil {
+				t.Fatalf("decode webhook payload: %v", err)
+			}
+			transitionID, hasTransitionID := body["transition_id"].(string)
+			if body["app_id"] != app.ID || body["deployment_id"] != deploymentID.String() || body["route"] != observation.Route || !hasTransitionID || transitionID == "" {
+				t.Errorf("regression webhook payload missing lifecycle identity: %v", body)
+			}
+			for _, privateField := range []string{"user", "user_id", "source_ip", "trace", "span", "request_body"} {
+				if _, exists := body[privateField]; exists {
+					t.Errorf("regression webhook payload includes private field %q", privateField)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterate webhook deliveries: %v", err)
+		}
+		for event, count := range want {
+			if got[event] != count {
+				t.Errorf("%s deliveries for %s = %d, want %d (all=%v)", event, hookID, got[event], count, got)
+			}
+		}
+	}
+	check(regressionEventsHook, map[string]int{
+		string(state.AppWebhookEventDebugRegressionDetected): 2,
+		string(state.AppWebhookEventDebugRegressionResolved): 1,
+	})
+	check(detectedOnlyHook, map[string]int{
+		string(state.AppWebhookEventDebugRegressionDetected): 2,
+		string(state.AppWebhookEventDebugRegressionResolved): 0,
+	})
+}
+
 func TestPGHandler_DebuggerRequestListCursorWalkIsStable(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	app := seedPGApp(t, e, "pg-debugger-cursor")

@@ -76,6 +76,32 @@ type PlatformTenantActivationResponse struct {
 	Surfaces []PlatformTenantActivationSurfaceResponse `json:"surfaces"`
 }
 
+// PlatformTenantSelfActivationResponse is the downstream tenant's redacted
+// activation snapshot. It intentionally omits app IDs, DNS challenge tokens,
+// and raw DNS/certificate errors from the account-owner response.
+type PlatformTenantSelfActivationResponse struct {
+	Status   string                                        `json:"status"`
+	Enabled  bool                                          `json:"enabled"`
+	Ready    bool                                          `json:"ready"`
+	Surfaces []PlatformTenantSelfActivationSurfaceResponse `json:"surfaces"`
+}
+
+type PlatformTenantSelfActivationSurfaceResponse struct {
+	ID           string                                         `json:"id"`
+	Name         string                                         `json:"name"`
+	Status       string                                         `json:"status"`
+	CertState    string                                         `json:"cert_state"`
+	CertNotAfter string                                         `json:"cert_not_after,omitempty"`
+	Ready        bool                                           `json:"ready"`
+	Hostnames    []PlatformTenantSelfActivationHostnameResponse `json:"hostnames"`
+}
+
+type PlatformTenantSelfActivationHostnameResponse struct {
+	Hostname   string `json:"hostname"`
+	Verified   bool   `json:"verified"`
+	VerifiedAt string `json:"verified_at,omitempty"`
+}
+
 type ApplyPlatformTenantResponse struct {
 	TenantID    string                                `json:"tenant_id,omitempty"`
 	ExternalRef string                                `json:"external_ref"`
