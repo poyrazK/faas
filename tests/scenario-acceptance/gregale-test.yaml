@@ -1,0 +1,21 @@
+version: 1
+scenarios:
+  delivery-smoke:
+    project: scenario-acceptance
+    source: ./app
+    secrets:
+      SINK_URL: ${service.sink.url}/deliver
+      TEST_RUN_ID: ${run.id}
+    services:
+      sink:
+        fixture: delivery-sink
+        fail_first: 1
+    trigger: [node, test/trigger.mjs]
+    wait_for:
+      deliveries:
+        - service: sink
+          min_attempts: 2
+          last_status: 200
+    command: [node, test/assert.mjs]
+    simulation: [node, --test, test/app.test.mjs]
+    timeout: 10m

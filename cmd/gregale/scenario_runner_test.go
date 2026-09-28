@@ -208,6 +208,26 @@ func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
 	}
 }
 
+func TestScenarioAcceptanceFixtureManifestAndSource(t *testing.T) {
+	manifest := filepath.Join("..", "..", "tests", "scenario-acceptance", "gregale-test.yaml")
+	scenarios, dir, err := readTestManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario, ok := scenarios["delivery-smoke"]
+	if !ok || scenario.Services["sink"].Fixture != testDeliverySinkFixture || len(scenario.WaitFor.Deliveries) != 1 {
+		t.Fatalf("acceptance scenario = %+v", scenario)
+	}
+	source, err := resolveDeploySourceDir(dir, scenario.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := resolveDevSourceConfig(source)
+	if err != nil || config.shape != shapeApp {
+		t.Fatalf("acceptance app shape = (%+v, %v)", config, err)
+	}
+}
+
 type testServiceWakeFakeClient struct {
 	rows     []api.WakeTimelineJSONRow
 	selected string
