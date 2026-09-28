@@ -1251,7 +1251,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
-			{Name: "trace", Short: "Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)", Flags: []cliFlag{
+			{Name: "trace", Short: "Simulate composed edge-rule outcomes, request budget, throttle, retry, and circuit-breaker policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)", Flags: []cliFlag{
 				{Name: "config", Short: "load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags", Value: "file|-"},
 				{Name: "app", Short: "app slug (required unless --config is used)", Value: "slug"},
 				{Name: "url", Short: "absolute HTTP(S) request URL (required unless --config is used)", Value: "URL"},

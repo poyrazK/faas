@@ -103,6 +103,14 @@ budget are runtime state, so no retry or response outcome is inferred. The
 gateway retries transport failures only; it does not replay an application
 HTTP error status.
 
+For a matching `kind=circuit_breaker` rule, the trace reports the effective
+failure-ratio threshold, minimum observations, rolling window, and initial/max
+open intervals after applying the gateway's defensive defaults. This rule
+tunes the per-app instance breaker; it does not enable the breaker. The trace
+does not know whether the operator feature gate is enabled or inspect live
+per-instance counters, open/half-open state, or probe results, so target
+selection and a breaker outcome remain incomplete rather than inferred.
+
 ```json
 {
   "version": 1,

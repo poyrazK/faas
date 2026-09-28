@@ -1761,7 +1761,7 @@ List edge rules
 
 ### edge-rules trace
 
-Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
+Simulate composed edge-rule outcomes, request budget, throttle, retry, and circuit-breaker policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|

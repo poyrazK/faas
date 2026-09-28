@@ -1241,6 +1241,61 @@ func TestSimulateRetryRuleReportsPolicyWithoutPredictingReplay(t *testing.T) {
 	}
 }
 
+func TestSimulateCircuitBreakerRuleReportsPolicyWithoutPredictingState(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "breaker-rule", Enabled: true, Kind: "circuit_breaker", MatchHost: "example.com", MatchPath: "/orders/*", Priority: 4,
+		Action: json.RawMessage(`{"circuit_breaker":{"failure_threshold":0.25,"min_requests":20,"window_seconds":30,"open_seconds":10,"max_open_seconds":120}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders/42", Method: http.MethodPost, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_circuit_breaker_runtime_context" || result.Simulation.StoppedAt != "circuit_breaker" {
+		t.Fatalf("simulation = %#v; a configured breaker must not imply a live state", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "circuit_breaker_policy_candidate" || result.Simulation.Steps[0].RuleID != "breaker-rule" {
+		t.Fatalf("circuit-breaker step = %#v", result.Simulation.Steps)
+	}
+	policy := result.Simulation.Steps[0].CircuitBreakerPolicy
+	if policy == nil || policy.FailureThreshold != 0.25 || policy.MinRequests != 20 || policy.WindowSeconds != 30 || policy.OpenSeconds != 10 || policy.MaxOpenSeconds != 120 {
+		t.Fatalf("effective circuit-breaker policy = %#v", policy)
+	}
+	if !strings.Contains(result.Simulation.Reason, "operator feature gate") || !strings.Contains(result.Simulation.Reason, "open/half-open state") || !strings.Contains(result.Simulation.Reason, "target selection") {
+		t.Fatalf("circuit-breaker runtime caveat = %q", result.Simulation.Reason)
+	}
+	if result.Rules[0].Outcome != "circuit_breaker_policy_candidate" || result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.CircuitBreakerPolicy == nil {
+		t.Fatalf("per-rule circuit-breaker preview = %#v", result.Rules[0])
+	}
+	if !strings.Contains(result.Rules[0].OutcomeReason, "25% failure-ratio threshold") {
+		t.Fatalf("threshold explanation = %q", result.Rules[0].OutcomeReason)
+	}
+	if !strings.Contains(result.Scope, "half-open probe outcomes are not predicted") {
+		t.Fatalf("scope omits the circuit-breaker limitation: %q", result.Scope)
+	}
+}
+
+func TestSimulateCircuitBreakerRuleUsesGatewayDefaultsAndCeilingFallback(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "breaker-defaults", Enabled: true, Kind: "circuit_breaker", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"circuit_breaker":{"failure_threshold":0,"min_requests":0,"window_seconds":0,"open_seconds":15,"max_open_seconds":0}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders", Method: http.MethodGet, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].CircuitBreakerPolicy
+	if policy == nil || policy.FailureThreshold != api.EdgeRuleCircuitDefaultFailureThreshold || policy.MinRequests != api.EdgeRuleCircuitDefaultMinRequests || policy.WindowSeconds != api.EdgeRuleCircuitDefaultWindowSeconds || policy.OpenSeconds != 15 || policy.MaxOpenSeconds != 15 {
+		t.Fatalf("effective default/fallback policy = %#v", policy)
+	}
+	if !strings.Contains(result.Rules[0].OutcomeReason, "rolling 10-second window") || !strings.Contains(result.Rules[0].OutcomeReason, "backoff capped at 15 seconds") {
+		t.Fatalf("effective policy explanation = %q", result.Rules[0].OutcomeReason)
+	}
+}
+
 func TestSimulateRetryRuleUsesRuntimeDefaultsAndMethodGuard(t *testing.T) {
 	rule := api.EdgeRuleResponse{
 		ID: "retry-defaults", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "*",
