@@ -4155,11 +4155,17 @@ func prunePreAuthCounters(ctx context.Context, backend *state.PGRateLimitBackend
 		}
 		pruneCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		removed, err := backend.PrunePreAuthCounters(pruneCtx)
+		failureRemoved, failureErr := backend.PrunePreAuthFailureCounters(pruneCtx)
 		cancel()
 		if err != nil && log != nil {
 			log.Warn("gatewayd-internal: pre-auth counter prune failed", "error", err)
 		} else if removed > 0 && log != nil {
 			log.Debug("gatewayd-internal: pruned idle pre-auth counters", "removed", removed)
+		}
+		if failureErr != nil && log != nil {
+			log.Warn("gatewayd-internal: pre-auth failure counter prune failed", "error", failureErr)
+		} else if failureRemoved > 0 && log != nil {
+			log.Debug("gatewayd-internal: pruned idle pre-auth failure counters", "removed", failureRemoved)
 		}
 	}
 }

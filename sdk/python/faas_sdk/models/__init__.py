@@ -1191,6 +1191,7 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
+from .pre_auth_failed_response_limit_coordination import PreAuthFailedResponseLimitCoordination
 from .pre_auth_observations_response import PreAuthObservationsResponse
 from .pre_auth_observations_response_range import PreAuthObservationsResponseRange
 from .pre_auth_policy_observation import PreAuthPolicyObservation
@@ -2954,6 +2955,7 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreAuthFailedResponseLimit",
+    "PreAuthFailedResponseLimitCoordination",
     "PreAuthObservationsResponse",
     "PreAuthObservationsResponseRange",
     "PreAuthPolicyObservation",

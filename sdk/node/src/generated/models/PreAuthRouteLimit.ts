@@ -15,7 +15,7 @@ export type PreAuthRouteLimit = {
   requests_per_second: number;
   burst: number;
   /**
-   * Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local bucket. Failed-response budgets remain local.
+   * Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local bucket. Failed-response coordination is configured separately.
    */
   coordination?: 'local' | 'central';
   failed_responses?: PreAuthFailedResponseLimit;

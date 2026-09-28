@@ -36,7 +36,7 @@ class PreAuthRouteLimit:
     coordination: PreAuthRouteLimitCoordination | Unset = "local"
     """Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque
     source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local
-    bucket. Failed-response budgets remain local."""
+    bucket. Failed-response coordination is configured separately."""
     failed_responses: PreAuthFailedResponseLimit | Unset = UNSET
     """Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
     omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and

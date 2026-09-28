@@ -25438,7 +25438,7 @@ components:
           type: string
           enum: [local, central]
           default: local
-          description: "Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local bucket. Failed-response budgets remain local."
+          description: "Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local bucket. Failed-response coordination is configured separately."
         failed_responses:
           $ref: '#/components/schemas/PreAuthFailedResponseLimit'
         observe_targets:
@@ -25461,6 +25461,11 @@ components:
           minimum: 1
           maximum: 2000
           description: "Maximum consecutive failed responses; no greater than the parent route's burst."
+        coordination:
+          type: string
+          enum: [local, central]
+          default: local
+          description: "Optional shared failed-response budget across gateway replicas. Defaults to local. Central mode checks one of 1,024 opaque source shards before compute and records selected application failures afterward. Concurrent failures can incur bounded debt. On database errors the replica-local bucket remains active."
         statuses:
           type: array
           maxItems: 4

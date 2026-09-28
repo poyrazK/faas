@@ -15,6 +15,10 @@ export type PreAuthFailedResponseLimit = {
    */
   burst: number;
   /**
+   * Optional shared failed-response budget across gateway replicas. Defaults to local. Central mode checks one of 1,024 opaque source shards before compute and records selected application failures afterward. Concurrent failures can incur bounded debt. On database errors the replica-local bucket remains active.
+   */
+  coordination?: 'local' | 'central';
+  /**
    * Selected application response statuses. Defaults to [401, 403]. Only 4xx codes except 429 are supported.
    */
   statuses?: Array<number>;

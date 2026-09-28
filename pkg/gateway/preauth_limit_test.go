@@ -26,10 +26,12 @@ type countingConsumerAuthStore struct {
 }
 
 type sharedPreAuthCentral struct {
-	mu     sync.Mutex
-	tokens map[string]int
-	keys   []string
-	err    error
+	mu            sync.Mutex
+	tokens        map[string]int
+	keys          []string
+	err           error
+	failureTokens map[string]int
+	failureErr    error
 }
 
 func (b *sharedPreAuthCentral) ConsumeToken(_ context.Context, scope, subjectID, plan string, _, burst float64) (int, bool, error) {
@@ -59,6 +61,37 @@ func (*sharedPreAuthCentral) PeekToken(context.Context, string, string, string) 
 	return 0, nil
 }
 func (*sharedPreAuthCentral) Invalidate(string, string, string) {}
+
+func (b *sharedPreAuthCentral) CheckPreAuthFailure(_ context.Context, subjectID, plan string, _ float64, _ int) (bool, int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.failureErr != nil {
+		return false, 0, b.failureErr
+	}
+	remaining, found := b.failureTokens[subjectID+"/"+plan]
+	if !found || remaining >= 1 {
+		return true, 0, nil
+	}
+	return false, 60, nil
+}
+
+func (b *sharedPreAuthCentral) RecordPreAuthFailure(_ context.Context, subjectID, plan string, _ float64, burst int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.failureErr != nil {
+		return b.failureErr
+	}
+	if b.failureTokens == nil {
+		b.failureTokens = make(map[string]int)
+	}
+	key := subjectID + "/" + plan
+	remaining, found := b.failureTokens[key]
+	if !found {
+		remaining = burst
+	}
+	b.failureTokens[key] = max(-burst, remaining-1)
+	return nil
+}
 
 func TestPreAuthCentralMirrorDoesNotDoubleRefill(t *testing.T) {
 	l := newPreAuthSourceLimiter()
@@ -577,6 +610,92 @@ func TestPreAuthFailedResponsesChargeConcurrentFailures(t *testing.T) {
 	fixed = fixed.Add(24 * time.Second)
 	if available, _ := l.AvailableRate("app-1\x00POST /login\x00failures", "192.0.2.1", rate, 1); !available {
 		t.Fatal("failure debt did not refill")
+	}
+}
+
+func TestPreAuthCentralFailuresShareBudgetAcrossReplicas(t *testing.T) {
+	shared := &sharedPreAuthCentral{}
+	var originCalls atomic.Int32
+	var originStatus atomic.Int32
+	originStatus.Store(http.StatusOK)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		originCalls.Add(1)
+		w.WriteHeader(int(originStatus.Load()))
+	}))
+	t.Cleanup(upstream.Close)
+	newReplica := func() *Handler {
+		h, b, _ := newTestHandler(t)
+		b.upstream = upstream.Listener.Addr().String()
+		b.setLegacyHot()
+		b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+			Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 100, Burst: 100,
+			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+				FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2,
+					Coordination: api.PreAuthCoordinationCentral}}},
+		}
+		h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+		h.WithPreAuthCentralBackend(shared)
+		return h
+	}
+	first, second := newReplica(), newReplica()
+	request := func(h *Handler) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(first); rec.Code != http.StatusOK {
+		t.Fatalf("successful response = %d: %s", rec.Code, rec.Body.String())
+	}
+	originStatus.Store(http.StatusUnauthorized)
+	for i := 0; i < 2; i++ {
+		if rec := request(first); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("first replica failure %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := request(second); rec.Code != http.StatusTooManyRequests || rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth-failures" {
+		t.Fatalf("second replica bypassed failure budget: code=%d headers=%v", rec.Code, rec.Header())
+	}
+	if got := originCalls.Load(); got != 3 {
+		t.Fatalf("blocked request reached origin: %d calls", got)
+	}
+}
+
+func TestPreAuthCentralFailureFallbackDebtSurvivesRecovery(t *testing.T) {
+	shared := &sharedPreAuthCentral{failureErr: fmt.Errorf("central unavailable")}
+	h, b, _ := newTestHandler(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(upstream.Close)
+	b.upstream = upstream.Listener.Addr().String()
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 100, Burst: 100,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2,
+				Coordination: api.PreAuthCoordinationCentral}}},
+	}
+	h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+	h.WithPreAuthCentralBackend(shared)
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for i := 0; i < 2; i++ {
+		if rec := request(); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("fallback failure %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	shared.mu.Lock()
+	shared.failureErr = nil
+	shared.mu.Unlock()
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("recovery forgave local failure debt: %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -606,6 +606,10 @@ func TestPreAuthFailedResponseLimitValidation(t *testing.T) {
 	if err := valid.Validate(PlanFree); err != nil {
 		t.Fatalf("explicit application failure statuses should be valid: %v", err)
 	}
+	valid.Routes[0].FailedResponses.Coordination = PreAuthCoordinationCentral
+	if err := valid.Validate(PlanFree); err != nil {
+		t.Fatalf("central failed-response coordination should be valid: %v", err)
+	}
 	cases := []struct {
 		name   string
 		failed PreAuthFailedResponseLimit
@@ -617,6 +621,7 @@ func TestPreAuthFailedResponseLimitValidation(t *testing.T) {
 		{"server_error_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{500}}},
 		{"duplicate_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{401, 401}}},
 		{"too_many_statuses", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{400, 401, 403, 404, 422}}},
+		{"invalid_coordination", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Coordination: "global"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -81,6 +81,8 @@ type preAuthFailureContext struct {
 	policyID       string
 	policyIndex    int
 	observeTargets bool
+	centralSubject string
+	plan           string
 	source         string
 	rps            float64
 	burst          int
@@ -300,15 +302,23 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		failure := preAuthFailureContext{
 			appID: app.ID, policyID: app.ID + "\x00" + matched.Method + " " + matched.Path + "\x00failures",
 			policyIndex: matchedIndex, observeTargets: matched.ObserveTargets,
+			plan:   string(app.Plan),
 			source: source, rps: float64(min(failed.FailuresPerMinute, min(matched.RequestsPerSecond, rps)*60)) / 60,
 			burst: min(failed.Burst, min(matched.Burst, burst)), statusN: min(len(failed.Statuses), 4),
+		}
+		if failed.Coordination == api.PreAuthCoordinationCentral {
+			failure.centralSubject = dimensionalCentralSubjectID(failure.policyID, "source_ip", source, preAuthCentralShards)
 		}
 		copy(failure.statuses[:], failed.Statuses)
 		// Preserve the verified source and public route through edge header
 		// mutation and path rewriting; only a proxied application response
 		// can spend this budget after the request completes.
 		*r = *r.WithContext(context.WithValue(r.Context(), preAuthFailureContextKey{}, failure))
-		if available, retryAfter := h.preAuthLimiter.AvailableRate(failure.policyID, source, failure.rps, failure.burst); !available {
+		available, retryAfter := h.preAuthLimiter.AvailableRate(failure.policyID, source, failure.rps, failure.burst)
+		if failure.centralSubject != "" {
+			available, retryAfter = h.checkCentralPreAuthFailure(r.Context(), failure, available, retryAfter)
+		}
+		if !available {
 			if config.Mode == api.PreAuthRateLimitObserve {
 				policy := "failures_" + strconv.Itoa(matchedIndex)
 				shadow.add(policy)
@@ -386,6 +396,30 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
+func (h *Handler) checkCentralPreAuthFailure(ctx context.Context, failure preAuthFailureContext, localAllowed bool, localRetry int) (bool, int) {
+	backend, ok := h.preAuthCentral.(CentralFailureBackend)
+	if !ok || backend == nil {
+		h.observeCentralRateLimitDegraded(ctx, rateLimitScopePreAuth, errPreAuthCentralUnavailable)
+		if h.metrics != nil {
+			h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_central_fallback")
+		}
+		return localAllowed, localRetry
+	}
+	consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	defer cancel()
+	centralAllowed, centralRetry, err := backend.CheckPreAuthFailure(consultCtx, failure.centralSubject, failure.plan, failure.rps, failure.burst)
+	if err != nil {
+		h.observeCentralRateLimitDegraded(ctx, rateLimitScopePreAuth, err)
+		if h.metrics != nil {
+			h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_central_fallback")
+		}
+		return localAllowed, localRetry
+	}
+	// A local failure can have been recorded while the central store was
+	// unavailable. Keep that debt after recovery rather than forgiving it.
+	return centralAllowed && localAllowed, max(centralRetry, localRetry)
+}
+
 // allowCentralPreAuthRoute consults one bounded shared counter after spending
 // the local fallback token. A central decision is authoritative; database
 // errors fall back to the already spent local bucket and are observable.
@@ -439,6 +473,26 @@ func (h *Handler) recordPreAuthFailedResponse(r *http.Request, status int) {
 		return
 	}
 	h.preAuthLimiter.RecordRate(failure.policyID, failure.source, failure.rps, failure.burst)
+	if failure.centralSubject != "" {
+		backend, ok := h.preAuthCentral.(CentralFailureBackend)
+		if !ok || backend == nil {
+			h.observeCentralRateLimitDegraded(r.Context(), rateLimitScopePreAuth, errPreAuthCentralUnavailable)
+			if h.metrics != nil {
+				h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_central_fallback")
+			}
+		} else {
+			// A disconnect must not cancel recording a completed app failure.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), centralConsultTimeout)
+			err := backend.RecordPreAuthFailure(ctx, failure.centralSubject, failure.plan, failure.rps, failure.burst)
+			cancel()
+			if err != nil {
+				h.observeCentralRateLimitDegraded(r.Context(), rateLimitScopePreAuth, err)
+				if h.metrics != nil {
+					h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_central_fallback")
+				}
+			}
+		}
+	}
 	if h.metrics != nil {
 		h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_recorded")
 	}

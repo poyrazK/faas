@@ -262,9 +262,10 @@ type PreAuthRouteLimit struct {
 // The gateway rejects subsequent requests from the same trusted source after
 // the source spends this budget; successful responses never spend it.
 type PreAuthFailedResponseLimit struct {
-	FailuresPerMinute int   `json:"failures_per_minute"`
-	Burst             int   `json:"burst"`
-	Statuses          []int `json:"statuses,omitempty"` // defaults to 401 and 403
+	FailuresPerMinute int    `json:"failures_per_minute"`
+	Burst             int    `json:"burst"`
+	Statuses          []int  `json:"statuses,omitempty"`     // defaults to 401 and 403
+	Coordination      string `json:"coordination,omitempty"` // local (default) | central
 }
 
 const (
@@ -326,6 +327,9 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 			return fmt.Errorf("pre_auth_rate_limit.routes %s %s must not exceed the app-wide rate and burst", route.Method, route.Path)
 		}
 		if failed := route.FailedResponses; failed != nil {
+			if failed.Coordination != "" && failed.Coordination != PreAuthCoordinationLocal && failed.Coordination != PreAuthCoordinationCentral {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses coordination must be local or central", route.Method, route.Path)
+			}
 			if failed.FailuresPerMinute < 1 || failed.FailuresPerMinute > route.RequestsPerSecond*60 ||
 				failed.Burst < 1 || failed.Burst > route.Burst {
 				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses exceeds the route rate or burst", route.Method, route.Path)

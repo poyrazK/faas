@@ -82,6 +82,14 @@ type CentralBackend interface {
 	Invalidate(scope, subjectID, plan string)
 }
 
+// CentralFailureBackend is optional because response-driven counters need a
+// check before compute and a separate, debt-preserving record after an app
+// failure. Request token backends need not implement this extension.
+type CentralFailureBackend interface {
+	CheckPreAuthFailure(ctx context.Context, subjectID, plan string, rps float64, burst int) (allowed bool, retryAfter int, err error)
+	RecordPreAuthFailure(ctx context.Context, subjectID, plan string, rps float64, burst int) error
+}
+
 // noopCentralBackend is the default CentralBackend — it never
 // reaches Postgres, so the Limiter's behaviour is identical to the
 // pre-Phase-4 in-process map (ADR-104 amendment 4 wording: "central

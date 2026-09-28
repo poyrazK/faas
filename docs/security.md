@@ -104,9 +104,25 @@ application responses count: a gateway authentication denial, cached response,
 or wake error does not. After the budget is spent, enforce mode returns a
 `429` before authentication or VM wake, with
 `x-faas-rate-limit-scope: pre-auth-failures` and a calculated `Retry-After`.
-The budget is local to each gateway replica, and a source shared by many
-legitimate users still shares it. Observe mode records would-block decisions
-while continuing to serve the route.
+By default the budget is local to each gateway replica. Set
+`failed_responses.coordination` to `"central"` for a fleet-wide budget on the
+same exact route:
+
+```json
+{"pre_auth_rate_limit":{"mode":"observe","requests_per_second":20,"burst":40,"routes":[{"method":"POST","path":"/login","requests_per_second":20,"burst":40,"failed_responses":{"failures_per_minute":5,"burst":3,"coordination":"central"}}]}}
+```
+
+Central failure coordination checks one shared counter before compute on
+each matching request, then records one token only after a selected proxied
+application response. Concurrent failures can create bounded token debt, so
+the next request remains blocked until it refills. The same verified source
+and route map to one of 1,024 opaque source shards on every replica; no raw IP
+is stored in the counter. Colliding sources and users behind a shared NAT
+share allowance. Idle failure counters are pruned after seven days. A central
+error falls back to the local source bucket, which continues recording
+failures and remains active after recovery. This option is independent of the
+route's request `coordination` setting. Observe mode records would-block
+decisions while continuing to serve the route.
 
 To observe distributed failures against the same application login target,
 set `observe_targets: true` on a `POST` route with `failed_responses` and
@@ -152,7 +168,7 @@ policy IDs, never client IPs or paths. Prometheus unavailability returns
 `source: "degraded: ..."` and zero counts; these are unavailable data, not a
 clean result. As with the limiter, measurements come from all gateway
 replicas scraped by Prometheus. Enforcement is replica-local except for exact
-routes that opt into central request coordination.
+routes that opt into central request or failed-response coordination.
 
 The source is the client IP verified by the public gateway, which replaces
 incoming `X-Forwarded-For` before passing the request to the internal gateway.
@@ -162,15 +178,17 @@ app-wide policy, each route override, and each failure budget) and 65,536 per
 gateway;
 further addresses share that policy's overflow bucket until an inactive bucket can
 be safely evicted.
-The app-wide and failed-response guards are local to each gateway replica,
-so those thresholds are early abuse brakes rather than fleet-wide quotas.
+The app-wide guard and default failed-response guard are local to each gateway
+replica. Central failed-response coordination shares a bounded route budget
+across replicas.
 Existing app and account limits continue to cap aggregate request rates.
 Shared corporate/NAT IPs also share a source bucket; use `observe` to choose
 a suitable threshold.
 
 `gateway_pre_auth_rate_limit_total{app,outcome}` reports `would_block`,
 `blocked`, `route_would_block`, `route_blocked`, `failure_recorded`,
-`failure_would_block`, `failure_blocked`, `central_fallback`, and `untrusted_source`
+`failure_would_block`, `failure_blocked`, `central_fallback`,
+`failure_central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
 ## Quarantine recovery
