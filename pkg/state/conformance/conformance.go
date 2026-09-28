@@ -100,6 +100,7 @@ func Run(t *testing.T, open Open) {
 		{"delete_api_key_is_account_scoped", testDeleteAPIKeyIsAccountScoped},
 		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
 		{"deploy_token_authentication", testDeployTokenAuthentication},
+		{"api_key_rotation_grace", testAPIKeyRotationGrace},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

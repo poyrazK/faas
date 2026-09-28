@@ -422,7 +422,6 @@ LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
 LookupRuntimeSnapshot
 MTDSpendEurCents
-MarkAPIKeyRevoked
 MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
@@ -541,7 +540,6 @@ RevokeAPIConsumer
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation
-RotateAPIKey
 RotateOrgAPIKey
 RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp

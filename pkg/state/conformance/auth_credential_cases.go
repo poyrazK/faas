@@ -198,3 +198,50 @@ func testDeployTokenAuthentication(t *testing.T, fx *Fixture) {
 		t.Fatal("CreateDeployToken for another account's app succeeded")
 	}
 }
+
+// testAPIKeyRotationGrace pins rotation: the successor authenticates at
+// once, the predecessor keeps working only inside the grace window, a
+// zero grace retires it immediately, and a revoked key stops at once.
+func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
+	oldHash := randomTokenHash(t)
+	old, err := fx.Store.CreateAPIKey(fx.Ctx, fx.Account.ID, oldHash, "rotate", api.ScopesAdminOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newHash := randomTokenHash(t)
+	successor, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, old.ID, newHash, "rotate-next", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	if len(successor.Scopes) != 1 || successor.Scopes[0] != api.ScopeAdmin {
+		t.Fatalf("successor scopes = %v, want the predecessor's [admin]", successor.Scopes)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, newHash); err != nil {
+		t.Fatalf("AuthenticateKey(successor): %v", err)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, oldHash); err != nil {
+		t.Fatalf("AuthenticateKey(predecessor inside grace): %v", err)
+	}
+
+	immediateHash := randomTokenHash(t)
+	immediate, err := fx.Store.CreateAPIKey(fx.Ctx, fx.Account.ID, immediateHash, "rotate-now", api.ScopesAdminOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, immediate.ID, randomTokenHash(t), "rotate-now-next", 0); err != nil {
+		t.Fatalf("RotateAPIKey(no grace): %v", err)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, immediateHash); err == nil {
+		t.Fatal("predecessor rotated with no grace still authenticates")
+	}
+
+	if _, err := fx.Store.MarkAPIKeyRevoked(fx.Ctx, fx.Account.ID, successor.ID); err != nil {
+		t.Fatalf("MarkAPIKeyRevoked: %v", err)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, newHash); err == nil {
+		t.Fatal("revoked key still authenticates")
+	}
+	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, successor.ID, randomTokenHash(t), "revived", time.Hour); err == nil {
+		t.Fatal("RotateAPIKey revived a revoked key")
+	}
+}
