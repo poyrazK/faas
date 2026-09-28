@@ -65,7 +65,12 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			}
 			for _, child := range s.Subcommands {
 				_, _ = fmt.Fprintf(w, "#### %s %s %s\n\n%s\n\n", c.Name, s.Name, child.Name, mdText(child.Short))
-				_, _ = fmt.Fprintf(w, "`gregale %s %s %s [flags]`\n\n", c.Name, s.Name, child.Name)
+				parts := []string{"gregale", c.Name, s.Name, child.Name}
+				parts = append(parts, child.Positionals...)
+				for _, f := range child.Flags {
+					parts = append(parts, mdFlagSyntax(f))
+				}
+				_, _ = fmt.Fprintf(w, "`%s`\n\n", strings.Join(parts, " "))
 				if len(child.Flags) > 0 {
 					mdFlagTable(w, child.Flags)
 				}

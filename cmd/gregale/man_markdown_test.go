@@ -62,6 +62,24 @@ func TestMarkdownReferenceShape(t *testing.T) {
 	}
 }
 
+func TestMarkdownReferenceNestedSubcommandSynopsisIncludesPositionals(t *testing.T) {
+	var buf bytes.Buffer
+	renderMarkdownReference(&buf, []cliCommand{{
+		Name: "bindings",
+		Subcommands: []cliSub{{
+			Name: "object-storage",
+			Subcommands: []cliSub{{
+				Name:        "rotate",
+				Short:       "Rotate one storage binding",
+				Positionals: []string{"<app>", "<bucket>", "<binding-id>"},
+			}},
+		}},
+	}})
+	if !strings.Contains(buf.String(), "`gregale bindings object-storage rotate <app> <bucket> <binding-id>`") {
+		t.Fatalf("nested command synopsis missing positionals:\n%s", buf.String())
+	}
+}
+
 func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 	var buf bytes.Buffer
 	renderMarkdownReference(&buf, []cliCommand{{

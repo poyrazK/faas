@@ -312,9 +312,18 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List bindings, verify connectivity, or smoke-test a pinned private service deployment",
+		Short:       "Inspect app bindings, manage storage credentials, or verify private services",
 		Positionals: []string{"<app>"},
 		Subcommands: []cliSub{
+			{
+				Name:  "object-storage",
+				Short: "Manage app-to-bucket compute bindings",
+				Subcommands: []cliSub{
+					{Name: "list", Short: "List safe binding metadata", Positionals: []string{"<app>", "<bucket>"}, Examples: []string{"gregale bindings object-storage list my-api assets"}},
+					{Name: "rotate", Short: "Rotate a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage rotate my-api assets BINDING_ID"}},
+					{Name: "revoke", Short: "Revoke a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage revoke my-api assets BINDING_ID"}},
+				},
+			},
 			{
 				Name:        "verify",
 				Short:       "Check DNS, TLS, authorization, and live routing for one or all bound services",
