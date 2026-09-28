@@ -1,4 +1,4 @@
--- filename: 20260928175453000_project_environment_qualification_config_identity.sql
+-- filename: 20260928221258962_project_environment_qualification_config_identity.sql
 
 -- +goose Up
 ALTER TABLE project_environment_qualifications

@@ -1,4 +1,4 @@
--- filename: 20260928193000000_project_environment_qualification_secret_revisions.sql
+-- filename: 20260928221259822_project_environment_qualification_secret_revisions.sql
 
 -- +goose Up
 ALTER TABLE project_environment_qualifications
