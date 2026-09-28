@@ -4,6 +4,7 @@ package migrations_test
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"strings"
 	"testing"
@@ -149,8 +150,15 @@ func TestMigrations_OrgActivityDeploymentBackfill(t *testing.T) {
 			t.Errorf("unsafe legacy field %q copied into activity data %s", forbidden, data)
 		}
 	}
-	if !strings.Contains(string(data), `"phase":"requested"`) || !strings.Contains(string(data), `"source":"source_ref"`) {
-		t.Errorf("safe metadata = %s, want request phase and source_ref source", data)
+	var safeMetadata struct {
+		Phase  string `json:"phase"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(data, &safeMetadata); err != nil {
+		t.Fatalf("decode safe metadata %s: %v", data, err)
+	}
+	if safeMetadata.Phase != "requested" || safeMetadata.Source != "source_ref" {
+		t.Errorf("safe metadata phase/source = %q/%q, want requested/source_ref", safeMetadata.Phase, safeMetadata.Source)
 	}
 
 	assertImportedCount := func(want int, deploymentID string) {
