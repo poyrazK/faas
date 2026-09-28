@@ -92,6 +92,16 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 	}
 }
 
+func TestDeployPreflightListenerShowsTCPReadinessForImage(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{Slug: "demo", Source: simpleapp.SourceImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := deployPreflightListener(nil, &plan), ":3000 · TCP listener readiness"; got != want {
+		t.Fatalf("listener = %q, want %q", got, want)
+	}
+}
+
 func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	var out bytes.Buffer
 	renderDeployPreflight(&out, deployPreflightSummary{

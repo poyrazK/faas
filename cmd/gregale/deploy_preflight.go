@@ -207,7 +207,7 @@ func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) strin
 		return "health GET " + health
 	}
 	if health == "" {
-		return fmt.Sprintf(":%d", port)
+		return fmt.Sprintf(":%d · TCP listener readiness", port)
 	}
 	return fmt.Sprintf(":%d · health GET %s", port, health)
 }
