@@ -1,4 +1,4 @@
-# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, ADR-290, ADR-291, and ADR-292).
+# Synthetic coverage for managed realtime callback alerts (ADR-286, ADR-288, ADR-289, ADR-290, ADR-291, ADR-292, and ADR-296).
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -156,13 +156,11 @@ tests:
         alertname: FaasRealtimeCallbackReplayRestarting
 
   - interval: 30s
-    name: "old pending callbacks with no replay progress fire"
+    name: "ready callbacks with no replay attempts fire"
     input_series:
-      - series: 'realtimed_callback_pending{job="realtimed",instance="compute-a:9107"}'
+      - series: 'realtimed_callback_replay_ready{job="realtimed",instance="compute-a:9107"}'
         values: '1x31'
-      - series: 'realtimed_callback_oldest_pending_age_seconds{job="realtimed",instance="compute-a:9107"}'
-        values: '600x31'
-      - series: 'realtimed_callback_replay_deliveries_total{job="realtimed",instance="compute-a:9107"}'
+      - series: 'realtimed_callback_replay_attempts_total{job="realtimed",instance="compute-a:9107"}'
         values: '0x31'
     alert_rule_test:
       - eval_time: 15m
@@ -176,18 +174,35 @@ tests:
               family: realtime_callbacks
             exp_annotations:
               summary: "Realtime callback replay has stalled"
-              description: "The node has pending callbacks older than five minutes but no successful replay deliveries in the last five minutes. Check realtimed logs, callback receiver failures, and outbox disk health."
+              description: "The node has callbacks eligible for replay but no replay attempts in the last five minutes. Check the replay supervisor, realtimed logs, and outbox disk health."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
   - interval: 30s
-    name: "successful replay progress keeps the alert quiet"
+    name: "scheduled backoff with old pending work stays quiet"
     input_series:
       - series: 'realtimed_callback_pending{job="realtimed",instance="compute-a:9107"}'
         values: '1x31'
       - series: 'realtimed_callback_oldest_pending_age_seconds{job="realtimed",instance="compute-a:9107"}'
         values: '600x31'
-      - series: 'realtimed_callback_replay_deliveries_total{job="realtimed",instance="compute-a:9107"}'
+      - series: 'realtimed_callback_replay_ready{job="realtimed",instance="compute-a:9107"}'
+        values: '0x31'
+      - series: 'realtimed_callback_replay_delayed{job="realtimed",instance="compute-a:9107"}'
+        values: '1x31'
+      - series: 'realtimed_callback_replay_attempts_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasRealtimeCallbackReplayStalled
+
+  - interval: 30s
+    name: "failed replay attempts keep the stalled alert quiet"
+    input_series:
+      - series: 'realtimed_callback_replay_ready{job="realtimed",instance="compute-a:9107"}'
+        values: '1x31'
+      - series: 'realtimed_callback_replay_attempts_total{job="realtimed",instance="compute-a:9107"}'
         values: '0+1x30'
+      - series: 'realtimed_callback_replay_deliveries_total{job="realtimed",instance="compute-a:9107"}'
+        values: '0x31'
     alert_rule_test:
       - eval_time: 15m
         alertname: FaasRealtimeCallbackReplayStalled
@@ -195,11 +210,9 @@ tests:
   - interval: 30s
     name: "empty outbox keeps the alert quiet"
     input_series:
-      - series: 'realtimed_callback_pending{job="realtimed",instance="compute-a:9107"}'
+      - series: 'realtimed_callback_replay_ready{job="realtimed",instance="compute-a:9107"}'
         values: '0x31'
-      - series: 'realtimed_callback_oldest_pending_age_seconds{job="realtimed",instance="compute-a:9107"}'
-        values: '0x31'
-      - series: 'realtimed_callback_replay_deliveries_total{job="realtimed",instance="compute-a:9107"}'
+      - series: 'realtimed_callback_replay_attempts_total{job="realtimed",instance="compute-a:9107"}'
         values: '0x31'
     alert_rule_test:
       - eval_time: 15m
