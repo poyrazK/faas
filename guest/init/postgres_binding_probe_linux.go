@@ -88,6 +88,8 @@ func runPostgresBindingProbe(ctx context.Context, report api.PostgresBindingProb
 	config, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
 		report.Configuration = api.PostgresBindingProbeCheck{Status: "failed", Detail: "database connection URL could not be parsed"}
+		report.Connection = api.PostgresBindingProbeCheck{Status: "not_checked"}
+		report.Query = api.PostgresBindingProbeCheck{Status: "not_checked"}
 		report.Error = "database connection configuration is invalid"
 		return report
 	}
