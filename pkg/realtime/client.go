@@ -160,6 +160,34 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	return response, err
 }
 
+// ListCallbackDeadLetters returns metadata only; callback payloads and bearer
+// credentials remain on the daemon's node-local spool.
+func (c *Client) ListCallbackDeadLetters(ctx context.Context, after string, limit int) (CallbackDeadLetterPage, error) {
+	if limit < 0 {
+		return CallbackDeadLetterPage{}, fmt.Errorf("realtime: invalid callback dead-letter page size %d", limit)
+	}
+	query := url.Values{}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/internal/callbacks/dead-letters"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response CallbackDeadLetterPage
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+// ReplayCallbackDeadLetter returns one event to the pending outbox. The
+// original event ID is retained so callback handlers can deduplicate retries.
+func (c *Client) ReplayCallbackDeadLetter(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/internal/callbacks/dead-letters/"+pathPart(id)+":replay", nil, nil)
+}
+
 func encodeMessage(message Message) string {
 	return base64.StdEncoding.EncodeToString(message.Data)
 }
