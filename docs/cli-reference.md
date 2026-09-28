@@ -1673,7 +1673,7 @@ List edge rules
 
 ### edge-rules trace
 
-Simulate composed edge-rule outcomes and effective request-budget candidates; --config loads reusable JSON scenarios (see edge-rule-trace docs)
+Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|
