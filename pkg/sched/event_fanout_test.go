@@ -404,7 +404,7 @@ func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
 	if len(invocations) != 0 {
 		t.Fatalf("pre-migration receipt delivered to removed subscription: %d invocations", len(invocations))
 	}
-	if _, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC()); err != state.ErrNotFound {
+	if _, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("legacy receipt was not acknowledged: %v", err)
 	}
 }
