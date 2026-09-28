@@ -12741,9 +12741,10 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 	return out, nil
 }
 
-// ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection.
-// MemStore keeps the filter in-process so handler tests exercise the same
-// account/app isolation and cursor semantics as production.
+// ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection,
+// including original event invocations and their replays. MemStore keeps the
+// filter in-process so handler tests exercise the same account/app isolation
+// and cursor semantics as production.
 func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventSource, eventID, deliveryState string) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -12754,7 +12755,8 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 	if before != "" {
 		var ok bool
 		cursor, ok = m.invocations[before]
-		if !ok || cursor.AppID != appID || cursor.Source != InvocationAsyncInvoke {
+		if !ok || cursor.AppID != appID ||
+			(cursor.Source != InvocationAsyncInvoke && cursor.Source != InvocationReplay) {
 			return []Invocation{}, nil
 		}
 		var cursorHeaders map[string]string
@@ -12767,7 +12769,7 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != InvocationAsyncInvoke {
+		if inv.AppID != appID || (inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay) {
 			continue
 		}
 		if before != "" && (inv.CreatedAt.After(cursor.CreatedAt) ||

@@ -433,7 +433,7 @@ var cliCommands = []cliCommand{
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest"},
-			{Name: "deliveries", Short: "Inspect event deliveries and pre-invocation fanout failures", Flags: []cliFlag{
+			{Name: "deliveries", Short: "Inspect event deliveries, replays, and pre-invocation fanout failures", Flags: []cliFlag{
 				{Name: "event-source", Short: "narrow event filter to one published source; requires --event-id", Value: "SOURCE"},
 				{Name: "event-id", Short: "filter by published event id", Value: "ID"},
 				{Name: "state", Short: "filter by delivery state; failed includes recipient fanout failures", Value: "STATE"},

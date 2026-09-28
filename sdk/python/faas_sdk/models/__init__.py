@@ -697,6 +697,7 @@ from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
+from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
 from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
@@ -2504,6 +2505,7 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
+    "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
     "EventFanoutFailureResponse",
     "EventFanoutFailureResponseFailureCode",

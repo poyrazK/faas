@@ -17901,7 +17901,8 @@ paths:
       operationId: listEventDeliveries
       summary: Inspect event delivery lifecycle for an app.
       description: |
-        Returns event-triggered invocation metadata and terminal fanout
+        Returns original event-triggered invocation metadata, operator replay
+        invocations carrying event identity headers, and terminal fanout
         recipient failures, each newest first. The projections include the
         published event identity, subscription, lifecycle state, attempts,
         and last error without returning payloads. The two histories have
@@ -28639,12 +28640,16 @@ components:
           items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
 
     EventDeliveryResponse:
-      description: Metadata-only lifecycle projection for one event-triggered invocation.
+      description: Metadata-only lifecycle projection for one event-triggered invocation or its replay.
       type: object
       additionalProperties: false
-      required: [invocation_id, event_id, event_source, event_type, state, attempts, created_at]
+      required: [invocation_id, invocation_source, event_id, event_source, event_type, state, attempts, created_at]
       properties:
         invocation_id: { type: string, format: uuid }
+        invocation_source:
+          type: string
+          enum: [async_invoke, replay]
+          description: Whether this is the original event invocation or an operator replay.
         event_id: { type: string }
         event_source: { type: string }
         event_type: { type: string }

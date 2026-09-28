@@ -128,16 +128,17 @@ func eventDeliveryResponse(inv state.Invocation) (api.EventDeliveryResponse, boo
 		return api.EventDeliveryResponse{}, false
 	}
 	return api.EventDeliveryResponse{
-		InvocationID:   inv.ID,
-		EventID:        eventID,
-		EventSource:    headers["x-gregale-event-source"],
-		EventType:      headers["x-gregale-event-type"],
-		SubscriptionID: headers["x-gregale-event-subscription-id"],
-		State:          string(inv.State),
-		Attempts:       inv.Attempts,
-		LastError:      inv.LastError,
-		CreatedAt:      inv.CreatedAt,
-		CompletedAt:    inv.CompletedAt,
+		InvocationID:     inv.ID,
+		InvocationSource: string(inv.Source),
+		EventID:          eventID,
+		EventSource:      headers["x-gregale-event-source"],
+		EventType:        headers["x-gregale-event-type"],
+		SubscriptionID:   headers["x-gregale-event-subscription-id"],
+		State:            string(inv.State),
+		Attempts:         inv.Attempts,
+		LastError:        inv.LastError,
+		CreatedAt:        inv.CreatedAt,
+		CompletedAt:      inv.CompletedAt,
 	}, true
 }
 

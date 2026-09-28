@@ -226,21 +226,22 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
-// EventDeliveryResponse is the safe, metadata-only projection of an
-// event-triggered invocation. Payloads and handler results stay behind the
-// per-invocation endpoint; this view answers the operational question of
-// whether a published event reached a worker.
+// EventDeliveryResponse is the safe, metadata-only projection of an original
+// event-triggered invocation or its replay. Payloads and handler results stay
+// behind the per-invocation endpoint; this view answers whether a published
+// event reached a worker and whether the row is a replay.
 type EventDeliveryResponse struct {
-	InvocationID   string     `json:"invocation_id"`
-	EventID        string     `json:"event_id"`
-	EventSource    string     `json:"event_source"`
-	EventType      string     `json:"event_type"`
-	SubscriptionID string     `json:"subscription_id,omitempty"`
-	State          string     `json:"state"`
-	Attempts       int        `json:"attempts"`
-	LastError      string     `json:"last_error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	InvocationID     string     `json:"invocation_id"`
+	InvocationSource string     `json:"invocation_source"`
+	EventID          string     `json:"event_id"`
+	EventSource      string     `json:"event_source"`
+	EventType        string     `json:"event_type"`
+	SubscriptionID   string     `json:"subscription_id,omitempty"`
+	State            string     `json:"state"`
+	Attempts         int        `json:"attempts"`
+	LastError        string     `json:"last_error,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 }
 
 // EventFanoutFailureResponse describes a recipient that terminally failed

@@ -15781,17 +15781,17 @@ func (s *PgStore) ListInvocationsForApp(ctx context.Context, appID string, state
 	return scanInvocations(rows)
 }
 
-// ListEventDeliveriesForApp returns the app's event-triggered invocations,
-// newest first. Event fan-out stamps source and id in headers; filtering there
-// keeps ordinary async invokes out of the delivery view. The optional event
-// identity and state filters are exact matches.
+// ListEventDeliveriesForApp returns the app's event-triggered invocations and
+// their replays, newest first. Event fan-out and invocation replay carry source
+// and ID in headers; filtering there keeps ordinary invocations out of the
+// delivery view. The optional event identity and state filters are exact matches.
 func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, limit int, before, eventSource, eventID, deliveryState string) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	base := ` from invocations
 		where app_id = $1
-		  and source = 'async_invoke'
+		  and source in ('async_invoke', 'replay')
 		  and headers ? 'x-gregale-event-id'
 		  and ($2 = '' or headers->>'x-gregale-event-source' = $2)
 		  and ($3 = '' or headers->>'x-gregale-event-id' = $3)
@@ -15807,7 +15807,7 @@ func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, l
 			  and (created_at, id) < (
 				  select created_at, id from invocations
 				  where id = $5 and app_id = $1
-				    and source = 'async_invoke'
+				    and source in ('async_invoke', 'replay')
 				    and headers ? 'x-gregale-event-id'
 				    and ($2 = '' or headers->>'x-gregale-event-source' = $2)
 				    and ($3 = '' or headers->>'x-gregale-event-id' = $3))

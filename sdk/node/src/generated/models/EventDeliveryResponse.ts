@@ -3,10 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Metadata-only lifecycle projection for one event-triggered invocation.
+ * Metadata-only lifecycle projection for one event-triggered invocation or its replay.
  */
 export type EventDeliveryResponse = {
   invocation_id: string;
+  /**
+   * Whether this is the original event invocation or an operator replay.
+   */
+  invocation_source: 'async_invoke' | 'replay';
   event_id: string;
   event_source: string;
   event_type: string;

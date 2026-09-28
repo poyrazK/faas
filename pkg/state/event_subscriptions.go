@@ -46,9 +46,10 @@ type EventSubscriptionMatcherStore interface {
 
 // EventDeliveryStore exposes the bounded, app-scoped read used by the
 // customer event-delivery inspection surface. Implementations only return
-// invocations carrying the canonical event identity headers; ordinary async
-// invokes therefore stay out of this view. The optional source and ID filters
-// select one identity, while an ID-only filter may match several sources.
+// original and replay invocations carrying the canonical event identity
+// headers; ordinary invocations therefore stay out of this view. The optional
+// source and ID filters select one identity, while an ID-only filter may match
+// several sources.
 type EventDeliveryStore interface {
 	ListEventDeliveriesForApp(context.Context, string, int, string, string, string, string) ([]Invocation, error)
 }

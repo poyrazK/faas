@@ -247,10 +247,11 @@ func cmdEventsDeliveries(args []string) int {
 		return 0
 	}
 	if len(resp.Deliveries) > 0 {
-		_, _ = fmt.Fprintln(osStdout, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
+		_, _ = fmt.Fprintln(osStdout, "INVOCATION\tINVOCATION_SOURCE\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
 		for _, delivery := range resp.Deliveries {
-			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 				delivery.InvocationID,
+				delivery.InvocationSource,
 				delivery.EventID,
 				delivery.EventSource,
 				delivery.EventType,

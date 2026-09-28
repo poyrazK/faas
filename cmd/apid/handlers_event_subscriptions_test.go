@@ -56,6 +56,9 @@ func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
 	if out.Deliveries[0].LastError != "worker unavailable" {
 		t.Fatalf("last_error = %q", out.Deliveries[0].LastError)
 	}
+	if out.Deliveries[0].InvocationSource != string(state.InvocationAsyncInvoke) {
+		t.Fatalf("invocation_source = %q, want async_invoke", out.Deliveries[0].InvocationSource)
+	}
 
 	rec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -153,6 +156,78 @@ func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
 	legacyRec = e.do(t, http.MethodGet, "/v1/apps/delivery-app/event-deliveries?event_id=evt-1&before="+legacyRawCursor, nil, nil)
 	if legacyRec.Code != http.StatusOK {
 		t.Fatalf("legacy raw cursor status = %d, want 200; body=%s", legacyRec.Code, legacyRec.Body.String())
+	}
+}
+
+func TestListEventDeliveries_IncludesEventReplaysButExcludesOrdinaryReplays(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "delivery-replay-app")
+	ctx := context.Background()
+	seedFailed := func(headers json.RawMessage) string {
+		t.Helper()
+		inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+			Method: "POST", Path: "/", Headers: headers,
+			Payload: json.RawMessage(`{"amount":1}`), DueAt: time.Now().UTC(), CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("enqueue invocation: %v", err)
+		}
+		if _, err := e.store.ClaimInvocation(ctx, inv.ID, "delivery-replay-test", 30); err != nil {
+			t.Fatalf("claim invocation %s: %v", inv.ID, err)
+		}
+		if err := e.store.FailInvocation(ctx, inv.ID, "worker unavailable", 0, 0); err != nil {
+			t.Fatalf("fail invocation %s: %v", inv.ID, err)
+		}
+		return inv.ID
+	}
+	eventInvocationID := seedFailed(json.RawMessage(`{"x-gregale-event-id":"evt-replay-visible","x-gregale-event-source":"orders.us","x-gregale-event-type":"order.created","x-gregale-event-subscription-id":"sub-replay"}`))
+	ordinaryInvocationID := seedFailed(json.RawMessage(`{"x-user":"ordinary"}`))
+
+	var eventReplay api.AsyncInvokeResponse
+	rec := e.do(t, http.MethodPost, "/v1/invocations/"+eventInvocationID+"/replay", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("event replay status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &eventReplay); err != nil {
+		t.Fatalf("decode event replay response: %v", err)
+	}
+	var ordinaryReplay api.AsyncInvokeResponse
+	rec = e.do(t, http.MethodPost, "/v1/invocations/"+ordinaryInvocationID+"/replay", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("ordinary replay status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ordinaryReplay); err != nil {
+		t.Fatalf("decode ordinary replay response: %v", err)
+	}
+
+	path := "/v1/apps/delivery-replay-app/event-deliveries?event_source=orders.us&event_id=evt-replay-visible"
+	rec = e.do(t, http.MethodGet, path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("event delivery list status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var listed api.EventDeliveryListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode event delivery list: %v", err)
+	}
+	if len(listed.Deliveries) != 2 {
+		t.Fatalf("event deliveries = %+v, want original plus replay", listed.Deliveries)
+	}
+	byID := make(map[string]api.EventDeliveryResponse, len(listed.Deliveries))
+	for _, delivery := range listed.Deliveries {
+		byID[delivery.InvocationID] = delivery
+		if delivery.EventID != "evt-replay-visible" || delivery.EventSource != "orders.us" {
+			t.Errorf("delivery identity = %s/%s, want orders.us/evt-replay-visible", delivery.EventSource, delivery.EventID)
+		}
+	}
+	if got := byID[eventInvocationID].InvocationSource; got != string(state.InvocationAsyncInvoke) {
+		t.Errorf("original invocation source = %q, want async_invoke", got)
+	}
+	if got := byID[eventReplay.ID].InvocationSource; got != string(state.InvocationReplay) {
+		t.Errorf("replayed invocation source = %q, want replay", got)
+	}
+	if _, included := byID[ordinaryReplay.ID]; included {
+		t.Errorf("ordinary replay %s appeared in event delivery history", ordinaryReplay.ID)
 	}
 }
 

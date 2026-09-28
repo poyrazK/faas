@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.event_delivery_response_invocation_source import (
+    EventDeliveryResponseInvocationSource,
+    check_event_delivery_response_invocation_source,
+)
 from ..models.event_delivery_response_state import EventDeliveryResponseState, check_event_delivery_response_state
 from ..types import UNSET, Unset
 
@@ -15,9 +19,11 @@ T = TypeVar("T", bound="EventDeliveryResponse")
 
 @_attrs_define
 class EventDeliveryResponse:
-    """Metadata-only lifecycle projection for one event-triggered invocation."""
+    """Metadata-only lifecycle projection for one event-triggered invocation or its replay."""
 
     invocation_id: UUID
+    invocation_source: EventDeliveryResponseInvocationSource
+    """Whether this is the original event invocation or an operator replay."""
     event_id: str
     event_source: str
     event_type: str
@@ -30,6 +36,8 @@ class EventDeliveryResponse:
 
     def to_dict(self) -> dict[str, Any]:
         invocation_id = str(self.invocation_id)
+
+        invocation_source: str = self.invocation_source
 
         event_id = self.event_id
 
@@ -62,6 +70,7 @@ class EventDeliveryResponse:
         field_dict.update(
             {
                 "invocation_id": invocation_id,
+                "invocation_source": invocation_source,
                 "event_id": event_id,
                 "event_source": event_source,
                 "event_type": event_type,
@@ -83,6 +92,8 @@ class EventDeliveryResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         invocation_id = UUID(d.pop("invocation_id"))
+
+        invocation_source = check_event_delivery_response_invocation_source(d.pop("invocation_source"))
 
         event_id = d.pop("event_id")
 
@@ -124,6 +135,7 @@ class EventDeliveryResponse:
 
         event_delivery_response = cls(
             invocation_id=invocation_id,
+            invocation_source=invocation_source,
             event_id=event_id,
             event_source=event_source,
             event_type=event_type,

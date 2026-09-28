@@ -112,7 +112,8 @@ def sync_detailed(
 ) -> Response[EventDeliveryListResponse | Problem]:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata and terminal fanout
+     Returns original event-triggered invocation metadata, operator replay
+    invocations carrying event identity headers, and terminal fanout
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
@@ -166,7 +167,8 @@ def sync(
 ) -> EventDeliveryListResponse | Problem | None:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata and terminal fanout
+     Returns original event-triggered invocation metadata, operator replay
+    invocations carrying event identity headers, and terminal fanout
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
@@ -215,7 +217,8 @@ async def asyncio_detailed(
 ) -> Response[EventDeliveryListResponse | Problem]:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata and terminal fanout
+     Returns original event-triggered invocation metadata, operator replay
+    invocations carrying event identity headers, and terminal fanout
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have
@@ -267,7 +270,8 @@ async def asyncio(
 ) -> EventDeliveryListResponse | Problem | None:
     """Inspect event delivery lifecycle for an app.
 
-     Returns event-triggered invocation metadata and terminal fanout
+     Returns original event-triggered invocation metadata, operator replay
+    invocations carrying event identity headers, and terminal fanout
     recipient failures, each newest first. The projections include the
     published event identity, subscription, lifecycle state, attempts,
     and last error without returning payloads. The two histories have

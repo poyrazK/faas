@@ -358,7 +358,7 @@ List subscriptions reconciled from the app manifest
 
 ### events deliveries
 
-Inspect event deliveries and pre-invocation fanout failures
+Inspect event deliveries, replays, and pre-invocation fanout failures
 
 | Flag | Meaning | |
 |---|---|---|

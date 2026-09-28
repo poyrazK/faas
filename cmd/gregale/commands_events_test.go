@@ -191,7 +191,7 @@ func TestCmdEventsSubscriptions_JSONOutput(t *testing.T) {
 
 func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"inv-1"}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","invocation_source":"replay","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"delivery-cursor"}`, http.StatusOK)
 	stdout, restore := swapStdout(t)
 	defer restore()
 	if code := cmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-1", "--state", "failed", "--limit", "1"}); code != 0 {
@@ -203,7 +203,7 @@ func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
 	if f.sawQuery != "event_id=evt-1&event_source=billing&limit=1&state=failed" {
 		t.Fatalf("query=%q", f.sawQuery)
 	}
-	if got := stdout.String(); !strings.Contains(got, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR") || !strings.Contains(got, "inv-1\tevt-1\tbilling\tinvoice.paid\tfailed\t3") || !strings.Contains(got, "worker unavailable") {
+	if got := stdout.String(); !strings.Contains(got, "INVOCATION\tINVOCATION_SOURCE\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR") || !strings.Contains(got, "inv-1\treplay\tevt-1\tbilling\tinvoice.paid\tfailed\t3") || !strings.Contains(got, "worker unavailable") {
 		t.Fatalf("stdout=%q", got)
 	}
 }
