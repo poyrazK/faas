@@ -44,7 +44,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"path"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -1426,7 +1428,7 @@ func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string, request
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, path)
+			ok, _ := protectivePathMatch(r.PathGlob, path)
 			if !ok {
 				continue
 			}
@@ -1446,7 +1448,7 @@ func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string, requestHe
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, path)
+			ok, _ := protectivePathMatch(r.PathGlob, path)
 			if !ok {
 				continue
 			}
@@ -1497,7 +1499,7 @@ func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string, request
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, path)
+			ok, _ := protectivePathMatch(r.PathGlob, path)
 			if !ok {
 				continue
 			}
@@ -1534,6 +1536,24 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 		return r
 	}
 	return nil
+}
+
+// protectivePathMatch is pathGlobMatch for gates that deny (kind=jwt, ip,
+// geo): the rule applies when the raw path OR its dot-segment/duplicate-
+// slash normalized form matches. Frameworks that normalize before routing
+// would otherwise serve /public/../admin/x or //admin/x as /admin/x while
+// the gate compared the raw string and let it through unchecked. Matching
+// both forms only ever adds protection.
+func protectivePathMatch(glob, p string) (bool, error) {
+	ok, err := pathGlobMatch(glob, p)
+	if ok || err != nil {
+		return ok, err
+	}
+	cleaned := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
+	if cleaned == p {
+		return false, nil
+	}
+	return pathGlobMatch(glob, cleaned)
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

@@ -1291,4 +1291,15 @@ func TestProtectiveRulesCoverNestedPaths(t *testing.T) {
 	if got := PickFirstJWTMatch(jwt, "/administrator/x", http.MethodGet); got != nil {
 		t.Errorf("kind=jwt /admin/* matched a sibling prefix")
 	}
+	// Dot segments and duplicate slashes that a normalizing framework
+	// routes to /admin/... must not slip past the gate either.
+	for _, p := range []string{"/public/../admin/x", "//admin/x", "\\admin\\x"} {
+		if got := PickFirstJWTMatch(jwt, p, http.MethodGet); got == nil {
+			t.Errorf("kind=jwt /admin/* did not match normalized %q", p)
+		}
+	}
+	// Non-denying kinds keep raw-path semantics.
+	if got := PickFirstHeadersMatch([]EdgeRuleHeadersResolved{{ID: "h", PathGlob: "/admin/*"}}, "/public/../admin/x", http.MethodGet); got != nil {
+		t.Errorf("kind=headers matched a dot-segment path")
+	}
 }
