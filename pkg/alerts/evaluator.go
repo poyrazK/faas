@@ -441,7 +441,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthObservationsPath(ctx, rule))
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -955,19 +955,28 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // the canonical map across both sides, we guarantee the dashboard
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
-func (e *Evaluator) preAuthObservationsPath(ctx context.Context, rule state.AlertRule) string {
+type preAuthPaths struct {
+	observations string
+	dashboard    string
+}
+
+func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.AlertRule) preAuthPaths {
 	if rule.Metric != state.AlertMetricPreAuthTargetThreshold || rule.AppID == "" {
-		return ""
+		return preAuthPaths{}
 	}
 	app, err := e.store.AppByID(ctx, rule.AppID)
 	if err != nil || app.AccountID != rule.AccountID || app.Slug == "" {
 		e.log.Warn("alerts: cannot resolve app for pre-auth observations link", "rule", rule.ID, "error", err)
-		return ""
+		return preAuthPaths{}
 	}
-	return "/v1/apps/" + url.PathEscape(app.Slug) + "/pre-auth-observations?range=" + url.QueryEscape(string(rule.WindowSpec))
+	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
+	return preAuthPaths{
+		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
+		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
+	}
 }
 
-func buildPayload(rule state.AlertRule, observed float64, observationsPath string) ([]byte, map[string]any, error) {
+func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -981,8 +990,9 @@ func buildPayload(rule state.AlertRule, observed float64, observationsPath strin
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
 	}
-	if observationsPath != "" {
-		m["observations_path"] = observationsPath
+	if paths.observations != "" {
+		m["observations_path"] = paths.observations
+		m["dashboard_path"] = paths.dashboard
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

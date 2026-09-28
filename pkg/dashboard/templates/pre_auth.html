@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 0 1.5rem; max-width: 1000px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0 2rem; }
+    h2 { border-top: 1px solid #ddd; padding-top: 1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .scroll { overflow-x: auto; }
+    .notice { padding: 0.7rem 0.9rem; border-radius: 4px; background: #e0f2fe; color: #0c4a6e; }
+    .degraded { padding: 0.7rem 0.9rem; border-radius: 4px; background: #fee2e2; color: #991b1b; }
+    .muted { color: #6b7280; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    footer { border-top: 1px solid #ddd; padding: 1.5rem 0; color: #6b7280; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Gregale</strong>
+    <nav aria-label="Dashboard"><a href="/dashboard/apps">Apps</a><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a></nav>
+  </header>
+  <main>
+    <h1>Pre-auth protection · <code>{{.Data.AppSlug}}</code></h1>
+    <p>Read-only view of requests assessed before authentication and compute. Configure the policy through the app API or manifest.</p>
+
+    <h2>Configured policy</h2>
+    {{if .Data.Configured}}
+      <p>Mode: <strong>{{.Data.Config.Mode}}</strong> · App source budget: <strong>{{.Data.Config.RequestsPerSecond}} requests/s</strong>, burst <strong>{{.Data.Config.Burst}}</strong>.</p>
+      <p class="muted">These are configured values. The gateway clamps them to plan limits if the app changes plans.</p>
+      {{if .Data.Config.Routes}}
+      <div class="scroll"><table>
+        <thead><tr><th>Route</th><th>Source budget</th><th>Coordination</th><th>Failed-response budget</th><th>Target observation</th></tr></thead>
+        <tbody>{{range .Data.Config.Routes}}<tr>
+          <td><code>{{.Method}} {{.Path}}</code></td>
+          <td>{{.RequestsPerSecond}} requests/s · burst {{.Burst}}</td>
+          <td>{{if .Coordination}}{{.Coordination}}{{else}}local{{end}}</td>
+          <td>{{with .FailedResponses}}{{.FailuresPerMinute}} failures/min · burst {{.Burst}} · statuses {{if .Statuses}}{{range $i, $status := .Statuses}}{{if $i}}, {{end}}{{$status}}{{end}}{{else}}401, 403{{end}} · {{if .Coordination}}{{.Coordination}}{{else}}local{{end}}{{else}}Off{{end}}</td>
+          <td>{{if .ObserveTargets}}On{{else}}Off{{end}}</td>
+        </tr>{{end}}</tbody>
+      </table></div>
+      {{else}}<p class="muted">No route overrides. Only the app source budget is active.</p>{{end}}
+    {{else}}
+      <p class="notice">Pre-auth protection is off for this app. No requests are rejected or observed by this policy.</p>
+    {{end}}
+
+    <h2>Observations</h2>
+    <form method="GET" action="/dashboard/apps/{{.Data.AppSlug}}/pre-auth">
+      <label for="range">Window</label>
+      <select id="range" name="range">{{range .Data.RangeOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Value}}</option>{{end}}</select>
+      <button type="submit">Apply</button>
+    </form>
+    <p><a href="/v1/apps/{{.Data.AppSlug}}/pre-auth-observations?range={{.Data.Observations.Range}}">View the JSON observations for this window</a></p>
+    {{if .Data.Configured}}
+      <p class="muted">As of {{.Data.Observations.AsOf}} · Source: {{.Data.Observations.Source}}</p>
+      <p class="muted">Policy slots are mapped to the current route list. After changing route order or paths, use a window starting after that change.</p>
+    {{end}}
+    {{if ne .Data.Observations.Source "prometheus"}}
+      <p class="degraded" role="alert">Observation data is unavailable. Zero values cannot be interpreted as no traffic. {{.Data.Observations.Source}}</p>
+    {{else if not .Data.Configured}}
+      <p class="muted">Enable an observe-mode policy to collect pre-auth observations.</p>
+    {{else}}
+      {{if eq .Data.Config.Mode "enforce"}}<p class="notice">Would-block response classes are collected in observe mode. Enforced 429 responses do not appear in that table; target failure signals can still be recorded.</p>{{end}}
+      {{if .Data.NoActivity}}<p class="notice">No observation events were recorded in this window.</p>{{end}}
+      {{if .Data.DecisionPolicies}}
+      <div class="scroll"><table>
+        <thead><tr><th>Policy</th><th>Route</th><th>Would block</th><th>2xx</th><th>3xx</th><th>4xx</th><th>5xx</th><th>Unknown</th></tr></thead>
+        <tbody>{{range .Data.DecisionPolicies}}<tr>
+          <td>{{.Kind}}</td><td>{{if .Path}}<code>{{.Method}} {{.Path}}</code>{{else}}App-wide{{end}}</td>
+          <td>{{.WouldBlock}}</td><td>{{.Result2xx}}</td><td>{{.Result3xx}}</td><td>{{.Result4xx}}</td><td>{{.Result5xx}}</td><td>{{.ResultUnknown}}</td>
+        </tr>{{end}}</tbody>
+      </table></div>
+      <p class="muted">Response classes describe requests that would have been blocked in observe mode. A 2xx response can suggest a false positive; verify with application logs.</p>
+      {{end}}
+      {{if .Data.TargetPolicies}}
+      <h3>Login target signals</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Route</th><th>Selected failures</th><th>Threshold events</th><th>Missing digest</th><th>Invalid digest</th><th>Local fallback</th></tr></thead>
+        <tbody>{{range .Data.TargetPolicies}}<tr>
+          <td><code>{{.Method}} {{.Path}}</code></td><td>{{.TargetFailures}}</td><td>{{.TargetThreshold}}</td>
+          <td>{{.TargetMissing}}</td><td>{{.TargetInvalid}}</td><td>{{.TargetFallback}}</td>
+        </tr>{{end}}</tbody>
+      </table></div>
+      <p class="muted">Target threshold is approximate because bounded shards can collide. No login identifier or target digest is shown. This signal never locks an account.</p>
+      <p><a href="/dashboard/apps/{{.Data.AppSlug}}#alert-presets">Configure the login target alert preset →</a></p>
+      {{end}}
+    {{end}}
+    <p><a href="/docs/security#optional-pre-auth-source-limit">Read the pre-auth protection guide</a></p>
+  </main>
+  <footer>Gregale · pre-auth protection</footer>
+</body>
+</html>

@@ -1298,6 +1298,25 @@ type AppDetailData struct {
 	Presets []AlertPresetItem
 }
 
+// PreAuthProtectionData is the read-only per-app protection view. The policy
+// and observation DTOs come from the same contracts as the public API; no
+// source identity or login-target digest is included.
+type PreAuthProtectionData struct {
+	AppSlug          string
+	Config           *api.PreAuthRateLimitConfig
+	Configured       bool
+	Observations     api.PreAuthObservationsResponse
+	RangeOptions     []PreAuthRangeOption
+	DecisionPolicies []api.PreAuthPolicyObservation
+	TargetPolicies   []api.PreAuthPolicyObservation
+	NoActivity       bool
+}
+
+type PreAuthRangeOption struct {
+	Value    string
+	Selected bool
+}
+
 // GitHubConnectionView is the safe customer-facing projection of a GitHub
 // installation and app binding. It intentionally contains no installation
 // credentials; the CSRF token is only the short-lived form envelope used by

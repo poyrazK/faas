@@ -57,6 +57,9 @@ func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
 	if got := event.Payload["observations_path"]; got != "/v1/apps/login-api/pre-auth-observations?range=15m" {
 		t.Fatalf("observations_path=%v", got)
 	}
+	if got := event.Payload["dashboard_path"]; got != "/dashboard/apps/login-api/pre-auth?range=15m" {
+		t.Fatalf("dashboard_path=%v", got)
+	}
 }
 
 // TestBuildTestAlertEvent_PayloadDiscriminator pins the

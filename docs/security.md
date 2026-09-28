@@ -157,6 +157,11 @@ rule's threshold and cooldown. The alert payload contains an
 `/v1/apps/my-app/pre-auth-observations?range=15m` for investigation. It never
 contains the login identifier or its digest. The signal is approximate, so
 review the observations and application login logs before changing policy.
+The alert also includes `dashboard_path`, which opens the read-only pre-auth
+protection view for the same app and window. The dashboard shows the current
+policy, would-block response classes, target signals, and a distinct degraded
+telemetry state. Select a window there to compare recent observations; a 2xx
+response is only a possible false-positive signal.
 This preset and metric support webhook notifications only; neither can run a
 deployment action or lock an account. If Prometheus is unavailable, the alert
 rule reports a degraded source and does not fire.

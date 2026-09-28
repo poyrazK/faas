@@ -165,6 +165,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 				s.renderAppEdgeRules(w, r, log, acct, eslug, nil, nil)
 				return
 			}
+			if pslug, ok := parseAppPreAuthPath(slug); ok {
+				s.renderAppPreAuth(w, r, log, acct, pslug)
+				return
+			}
 			// G7 / issue #1397 — queue state, pending samples, and
 			// dead-letter replay for one app. The account-level jobs
 			// page remains the canonical landing surface.

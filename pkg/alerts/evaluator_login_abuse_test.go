@@ -46,6 +46,9 @@ func TestLoginTargetAlertSendsObservationLinkWithoutDeploymentAction(t *testing.
 	if got["observations_path"] != "/v1/apps/alert-app/pre-auth-observations?range=15m" || got["metric"] != "pre_auth_target_threshold" {
 		t.Fatalf("alert payload=%v, missing observations path or metric", got)
 	}
+	if got["dashboard_path"] != "/dashboard/apps/alert-app/pre-auth?range=15m" {
+		t.Fatalf("alert payload=%v, missing dashboard path", got)
+	}
 	for key := range got {
 		if strings.Contains(key, "target_digest") || strings.Contains(key, "login_identifier") {
 			t.Fatalf("payload includes sensitive key %q", key)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -28,6 +29,13 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 			"invalid range", "range must be one of: "+strings.Join(appmetrics.Ranges(), ", ")))
 		return
 	}
+	writeJSON(w, http.StatusOK, s.appPreAuthObservations(r.Context(), app, rng))
+}
+
+// appPreAuthObservations is shared by the public JSON endpoint and the
+// read-only dashboard. Both surfaces use the same policy scope and degraded
+// source semantics without a loopback HTTP request.
+func (s *server) appPreAuthObservations(ctx context.Context, app state.App, rng string) api.PreAuthObservationsResponse {
 	resp := api.PreAuthObservationsResponse{
 		AppID: app.ID, Range: rng, Source: appmetrics.SourcePrometheus,
 		AsOf:     time.Now().UTC().Format(time.RFC3339Nano),
@@ -36,8 +44,7 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 	if config := app.Manifest.PreAuthRateLimit; config != nil && config.Mode != api.PreAuthRateLimitOff {
 		if (config.Mode != api.PreAuthRateLimitObserve && config.Mode != api.PreAuthRateLimitEnforce) || config.ValidateRoutes() != nil {
 			resp.Source = appmetrics.SourceDegradedPrefix + "invalid pre-auth policy"
-			writeJSON(w, http.StatusOK, resp)
-			return
+			return resp
 		}
 		resp.Policies = append(resp.Policies, api.PreAuthPolicyObservation{PolicyID: "app", Kind: "app"})
 		for i, route := range config.Routes {
@@ -58,25 +65,21 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if len(resp.Policies) == 0 {
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	if s.promqlClient == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	if strings.ContainsAny(app.ID, "\"\\\r\n") {
 		resp.Source = appmetrics.SourceDegradedPrefix + "invalid app id"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	query := fmt.Sprintf(`sum by (policy, outcome) (increase(gateway_pre_auth_policy_shadow_total{app=%q}[%s]))`, app.ID, rng)
-	samples, err := s.promqlClient.QueryVector(r.Context(), query)
+	samples, err := s.promqlClient.QueryVector(ctx, query)
 	if err != nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus unavailable"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	byPolicy := make(map[string]*api.PreAuthPolicyObservation, len(resp.Policies))
 	for i := range resp.Policies {
@@ -113,5 +116,5 @@ func (s *server) getAppPreAuthObservations(w http.ResponseWriter, r *http.Reques
 			policy.TargetFallback = count
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
