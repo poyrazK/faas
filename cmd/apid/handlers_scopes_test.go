@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -170,6 +171,27 @@ func TestScopeMatrix(t *testing.T) {
 		rec := e.do(t, http.MethodGet, "/v1/usage", nil, nil)
 		if rec.Code == http.StatusForbidden {
 			t.Fatalf("usage:read GET /v1/usage was 403: %s", rec.Body)
+		}
+	})
+
+	t.Run("narrow-keys/session-inventory-forbidden", func(t *testing.T) {
+		// The session list exposes the owner's sign-in IPs and user
+		// agents; only admin keys (and cookie sessions) may read it.
+		for _, scope := range []string{api.ScopeUsageRead, api.ScopeAppsRead, api.ScopeDeployWrite} {
+			e := setupWithScopes(t, []string{scope})
+			if _, err := e.store.CreateSession(context.Background(),
+				"11111111-1111-4111-8111-111111111111", e.acct.ID, "203.0.113.9", "Firefox"); err != nil {
+				t.Fatal(err)
+			}
+			rec := e.do(t, http.MethodGet, "/v1/auth/sessions", nil, nil)
+			assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+			if strings.Contains(rec.Body.String(), "203.0.113.9") {
+				t.Fatalf("%s key leaked a session IP: %s", scope, rec.Body)
+			}
+		}
+		admin := setupWithScopes(t, []string{api.ScopeAdmin})
+		if rec := admin.do(t, http.MethodGet, "/v1/auth/sessions", nil, nil); rec.Code != http.StatusOK {
+			t.Fatalf("admin key GET /v1/auth/sessions = %d, want 200: %s", rec.Code, rec.Body)
 		}
 	})
 

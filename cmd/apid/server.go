@@ -1372,9 +1372,13 @@ func (s *server) handler() http.Handler {
 	// wildcard DELETE /v1/auth/sessions/{id} is matched by the
 	// prefix-check seam in isMFAAllowlisted.
 	mux.HandleFunc("POST /v1/auth/logout", s.auth(s.requireMFA(s.logout)))
-	mux.HandleFunc("GET /v1/auth/sessions", s.auth(s.requireMFA(s.listSessions)))
-	mux.HandleFunc("DELETE /v1/auth/sessions/{id}", s.auth(s.requireMFA(s.revokeSession)))
-	mux.HandleFunc("POST /v1/auth/sessions/revoke_all", s.auth(s.requireMFA(s.revokeAllSessions)))
+	// The session inventory carries the owner's sign-in IPs and user
+	// agents, so a narrow automation key (usage:read, deploy:write, an
+	// OIDC CI token) must not read or revoke it. Cookie principals are
+	// implicitly admin, so the dashboard is unaffected.
+	mux.HandleFunc("GET /v1/auth/sessions", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listSessions))))
+	mux.HandleFunc("DELETE /v1/auth/sessions/{id}", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeSession))))
+	mux.HandleFunc("POST /v1/auth/sessions/revoke_all", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeAllSessions))))
 	mux.HandleFunc("GET /v1/auth/csrf", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.issueCSRFToken))))
 
 	// Apps. Internal metrics discovery is mounted only on the dedicated
