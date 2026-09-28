@@ -3,6 +3,7 @@
 export const GREGALE_REVISION_HEADER = 'X-Gregale-Revision';
 export const GREGALE_RELEASE_HEADER = 'X-Gregale-Release';
 export const GREGALE_RELEASE_COOKIE = '__Host-gregale_release';
+export const GREGALE_RELEASE_SUBPROTOCOL_PREFIX = 'gregale.release.';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -19,11 +20,15 @@ export interface GregaleBrowserFetchOptions {
   fetch?: typeof globalThis.fetch;
   /** Base URL for relative inputs when running outside a browser. */
   baseURL?: string | URL;
+  /** Optional WebSocket constructor, primarily useful for tests. */
+  webSocketFactory?: (url: string | URL, protocols?: string | string[]) => WebSocket;
 }
 
 export interface GregaleBrowserFetchClient {
   /** Fetch wrapper that captures and pins this client instance's release. */
   fetch: typeof globalThis.fetch;
+  /** Opens a WebSocket and carries this client's release to managed origins. */
+  webSocket(url: string | URL, protocols?: string | string[]): WebSocket;
   /** The release captured from the first eligible Gregale response. */
   readonly release: string | undefined;
   /** Explicitly drop the pin, for example when the application reloads. */
@@ -79,6 +84,27 @@ function requestURL(input: RequestInfo | URL, baseURL?: string): URL | undefined
     // Leave URL validation and the corresponding error to the native fetch.
     return undefined;
   }
+}
+
+function webSocketURL(input: string | URL, baseURL?: string): URL {
+  let url: URL;
+  try {
+    url = new URL(input instanceof URL ? input.href : input, baseURL);
+  } catch {
+    throw new TypeError('WebSocket URL must be absolute or resolvable against the browser/base URL');
+  }
+  if (url.protocol === 'http:') url.protocol = 'ws:';
+  else if (url.protocol === 'https:') url.protocol = 'wss:';
+  else if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+    throw new TypeError(`Gregale WebSocket URL must use ws or wss: ${url.href}`);
+  }
+  return url;
+}
+
+function managedHTTPOrigin(webSocketURL: URL): string {
+  const origin = new URL(webSocketURL.href);
+  origin.protocol = webSocketURL.protocol === 'wss:' ? 'https:' : 'http:';
+  return origin.origin;
 }
 
 function requestHeaders(input: RequestInfo | URL, init?: RequestInit): Headers {
@@ -146,6 +172,29 @@ export function createGregaleBrowserFetch(options: GregaleBrowserFetchOptions = 
   let releaseDiscovery: Promise<void> | undefined;
   let releaseGeneration = 0;
 
+  const webSocket = (input: string | URL, protocols?: string | string[]): WebSocket => {
+    const url = webSocketURL(input, baseURL);
+    const openSocket = (socketProtocols?: string | string[]): WebSocket => {
+      if (options.webSocketFactory) return options.webSocketFactory(url.href, socketProtocols);
+      const WebSocketConstructor = globalThis.WebSocket;
+      if (typeof WebSocketConstructor !== 'function') throw new TypeError('a WebSocket implementation is required');
+      return new WebSocketConstructor(url.href, socketProtocols);
+    };
+    if (!managedOrigins.has(managedHTTPOrigin(url))) {
+      return openSocket(protocols);
+    }
+
+    if (!currentRelease) {
+      throw new Error('Gregale release is not known for this managed WebSocket; seed initialRelease or make a managed fetch first');
+    }
+    const appProtocols = protocols === undefined ? [] : typeof protocols === 'string' ? [protocols] : [...protocols];
+    if (appProtocols.some((protocol) => protocol.startsWith(GREGALE_RELEASE_SUBPROTOCOL_PREFIX))) {
+      throw new TypeError(`${GREGALE_RELEASE_SUBPROTOCOL_PREFIX} is reserved for Gregale release pinning`);
+    }
+    const pinnedProtocols = [...appProtocols, `${GREGALE_RELEASE_SUBPROTOCOL_PREFIX}${currentRelease}`];
+    return openSocket(pinnedProtocols);
+  };
+
   const wrappedFetch: typeof globalThis.fetch = async (input, init) => {
     const url = requestURL(input, baseURL);
     if (!url || !managedOrigins.has(url.origin)) {
@@ -197,6 +246,7 @@ export function createGregaleBrowserFetch(options: GregaleBrowserFetchOptions = 
 
   return {
     fetch: wrappedFetch,
+    webSocket,
     get release() {
       return currentRelease;
     },

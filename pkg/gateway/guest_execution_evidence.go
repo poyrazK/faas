@@ -165,6 +165,13 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(name), "Sec-WebSocket-Protocol") {
+		var keep bool
+		value, keep = stripManagedReleaseSubprotocol(value)
+		if !keep {
+			return
+		}
+	}
 	if guestSetsManagedVersionCookie(ctx, name, value) {
 		return
 	}

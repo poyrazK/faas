@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -78,6 +79,66 @@ func managedReleaseContextCookieValue(r *http.Request) (value string, present, d
 		}
 	}
 	return value, present, false
+}
+
+// consumeManagedReleaseSubprotocol extracts the reserved browser release
+// carrier from a WebSocket handshake and removes it before guest forwarding.
+// Application protocols retain their original order. The prefix is reserved;
+// malformed or duplicate values fail closed rather than becoming app protocols.
+func consumeManagedReleaseSubprotocol(r *http.Request) (releaseID string, present, invalid bool) {
+	if r == nil {
+		return "", false, false
+	}
+	var appProtocols []string
+	for _, value := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, item := range strings.Split(value, ",") {
+			protocol := strings.TrimSpace(item)
+			if !strings.HasPrefix(protocol, api.ManagedReleaseSubprotocolPrefix) {
+				if protocol != "" {
+					appProtocols = append(appProtocols, protocol)
+				}
+				continue
+			}
+			if present {
+				invalid = true
+				continue
+			}
+			present = true
+			value := strings.TrimPrefix(protocol, api.ManagedReleaseSubprotocolPrefix)
+			parsed, err := uuid.Parse(value)
+			if len(value) != 36 || err != nil {
+				invalid = true
+				continue
+			}
+			releaseID = parsed.String()
+		}
+	}
+	if !present {
+		return "", false, false
+	}
+	r.Header.Del("Sec-WebSocket-Protocol")
+	if len(appProtocols) > 0 {
+		r.Header.Set("Sec-WebSocket-Protocol", strings.Join(appProtocols, ", "))
+	}
+	return releaseID, true, invalid
+}
+
+// stripManagedReleaseSubprotocol removes a guest attempt to negotiate the
+// platform's reserved carrier back to the browser. Application subprotocols
+// in the same header remain visible.
+func stripManagedReleaseSubprotocol(value string) (string, bool) {
+	var protocols []string
+	for _, item := range strings.Split(value, ",") {
+		protocol := strings.TrimSpace(item)
+		if protocol == "" || strings.HasPrefix(protocol, api.ManagedReleaseSubprotocolPrefix) {
+			continue
+		}
+		protocols = append(protocols, protocol)
+	}
+	if len(protocols) == 0 {
+		return "", false
+	}
+	return strings.Join(protocols, ", "), true
 }
 
 // stripManagedReleaseContextCookie keeps the platform bootstrap value out of

@@ -1,6 +1,6 @@
 # ADR-259 · Expiring revision pins and project release sets
 
-- **Status:** implemented for HTTP ingress, static browser bootstrap, same-host browser WebSocket reconnects, durable invocations, managed service calls, and graph-aware environment promotion
+- **Status:** implemented for HTTP ingress, static browser bootstrap, same-host and SDK-pinned cross-host browser WebSocket reconnects, durable invocations, managed service calls, and graph-aware environment promotion
 - **Date:** 2026-09-25
 - **Decision:** An app may opt into `revision_pin_ttl_seconds` (maximum seven
   days). When a stable, canary, or service rollout replaces a live deployment,
@@ -34,7 +34,14 @@
   active graph. Since the browser WebSocket API cannot attach custom headers,
   the gateway also reads the cookie on same-host WebSocket reconnect handshakes
   before stripping it from the guest request; ordinary requests do not use the
-  cookie as a pin.
+  cookie as a pin. For cross-host browser sockets, the browser SDK carries the
+  UUID as a reserved `gregale.release.<uuid>` `Sec-WebSocket-Protocol` token.
+  The gateway consumes the token before guest forwarding and filters it from
+  the guest's negotiated response, preserving application protocols. The
+  release token is a routing identifier, not a secret, and is not placed in a
+  URL. The SDK only adds it for configured managed origins and refuses to open
+  such a socket until the release is known. Ordinary native `WebSocket` calls
+  do not automatically pin cross-host endpoints.
 - **Internal routing:** Managed service calls retain same-account and declared
   binding authorization. The guest bridge resolves the caller app and exact
   deployment from its source IP; a release is usable only if that deployment
@@ -88,8 +95,10 @@
   calls and non-browser clients that do not replay a release header are not
   automatically pinned. Static browser HTTP clients need the Gregale browser
   SDK to read and forward the bootstrap cookie; same-host browser WebSocket
-  clients send it automatically, but cross-host WebSocket endpoints do not
-  receive the host-only cookie. WebSocket connections already established on a
+  clients send it automatically, and the browser SDK can pin cross-host
+  WebSocket handshakes through the reserved subprotocol. Other clients must
+  replay the release header or use the same-host cookie where applicable.
+  WebSocket connections already established on a
   selected deployment stay there until disconnect; reconnects must carry the
   pin. Deployment artifacts must remain available through the
   configured TTL. Disabling an app's revision TTL rejects direct revision pins

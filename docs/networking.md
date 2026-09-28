@@ -423,6 +423,19 @@ strips the cookie before forwarding. The SPA and WebSocket endpoint must use
 the same hostname for the host-only cookie to be sent. Already-open sockets
 stay on their selected deployment until they disconnect.
 
+For a browser socket on a separate managed API hostname, use the Node SDK's
+browser adapter `webSocket(url, protocols)` helper after it has learned the
+release or has been seeded from SSR/bootstrap. The helper adds the reserved
+`gregale.release.<release-uuid>` WebSocket subprotocol; the gateway consumes it
+before the app handshake, preserves application subprotocols, and filters the
+reserved token from the guest response. The release is not placed in the URL.
+The target origin must be included in `managedOrigins`, and opening a managed
+socket before the adapter knows a release fails instead of silently routing to
+the active graph. Plain native `WebSocket` calls and non-browser clients need a
+same-host bootstrap cookie or another explicit pin mechanism. This carrier is
+for the handshake only; an established socket stays on its selected deployment
+until it disconnects.
+
 For a multi-workload project, publish a complete release set after all member
 deployments are ready. An incompatible new service deployment can be deployed
 with an explicit 0% traffic weight first; publishing the new graph activates

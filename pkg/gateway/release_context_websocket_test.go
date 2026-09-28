@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -92,6 +93,90 @@ func TestProjectWebSocketUsesReleaseContextCookieAndStripsIt(t *testing.T) {
 	}
 	if guestCookie != "session=keep" {
 		t.Fatalf("guest cookie = %q, want only application cookie", guestCookie)
+	}
+}
+
+func TestProjectWebSocketUsesReleaseSubprotocolAndStripsIt(t *testing.T) {
+	h, _, _, oldReleaseID, _, oldDeploymentID, _ := newProjectReleaseCookieHandler(t)
+	var selected Target
+	var guestProtocols, guestRelease string
+	h.WithRawForwarding(func(target Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			selected = target
+			guestProtocols = r.Header.Get("Sec-WebSocket-Protocol")
+			guestRelease = r.Header.Get(api.ReleaseHeader)
+			w.WriteHeader(http.StatusSwitchingProtocols)
+		})
+	})
+
+	r := projectWebSocketRequest("")
+	r.Header.Set("Sec-WebSocket-Protocol", "graphql-transport-ws, "+api.ManagedReleaseSubprotocolPrefix+oldReleaseID)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusSwitchingProtocols || selected.DeploymentID != oldDeploymentID {
+		t.Fatalf("websocket status=%d deployment=%q, want 101 and old deployment %q", rec.Code, selected.DeploymentID, oldDeploymentID)
+	}
+	if guestRelease != oldReleaseID || rec.Header().Get(api.ReleaseHeader) != oldReleaseID {
+		t.Fatalf("guest release=%q response release=%q, want %q", guestRelease, rec.Header().Get(api.ReleaseHeader), oldReleaseID)
+	}
+	if guestProtocols != "graphql-transport-ws" {
+		t.Fatalf("guest websocket protocols=%q, want only the application protocol", guestProtocols)
+	}
+}
+
+func TestProjectWebSocketReleaseSubprotocolFailsClosed(t *testing.T) {
+	tests := []struct {
+		name       string
+		protocols  string
+		release    string
+		wantStatus int
+	}{
+		{name: "malformed", protocols: "graphql-transport-ws, " + api.ManagedReleaseSubprotocolPrefix + "not-a-release", wantStatus: http.StatusBadRequest},
+		{name: "duplicate", protocols: api.ManagedReleaseSubprotocolPrefix + uuid.NewString() + ", " + api.ManagedReleaseSubprotocolPrefix + uuid.NewString(), wantStatus: http.StatusBadRequest},
+		{name: "expired", protocols: api.ManagedReleaseSubprotocolPrefix + uuid.NewString(), wantStatus: http.StatusGone},
+		{name: "conflicts with explicit release", protocols: api.ManagedReleaseSubprotocolPrefix + uuid.NewString(), release: uuid.NewString(), wantStatus: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _, _, _, _, _, _ := newProjectReleaseCookieHandler(t)
+			var rawCalls int
+			h.WithRawForwarding(func(Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					rawCalls++
+					w.WriteHeader(http.StatusSwitchingProtocols)
+				})
+			})
+			r := projectWebSocketRequest("")
+			r.Header.Set("Sec-WebSocket-Protocol", tt.protocols)
+			if tt.release != "" {
+				r.Header.Set(api.ReleaseHeader, tt.release)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status=%d body=%q, want %d", rec.Code, rec.Body.String(), tt.wantStatus)
+			}
+			if rawCalls != 0 {
+				t.Fatalf("raw websocket forwarder called %d times for rejected release subprotocol", rawCalls)
+			}
+		})
+	}
+}
+
+func TestGuestWebSocketResponseCannotNegotiateManagedReleaseSubprotocol(t *testing.T) {
+	dst := make(http.Header)
+	forwardedResponseHeaderWithUpgrade(context.Background(), dst, "Sec-WebSocket-Protocol",
+		"graphql-transport-ws, "+api.ManagedReleaseSubprotocolPrefix+uuid.NewString(), true)
+	if got := dst.Get("Sec-WebSocket-Protocol"); got != "graphql-transport-ws" {
+		t.Fatalf("forwarded websocket protocols=%q, want only the application protocol", got)
+	}
+
+	dst = make(http.Header)
+	forwardedResponseHeaderWithUpgrade(context.Background(), dst, "Sec-WebSocket-Protocol",
+		api.ManagedReleaseSubprotocolPrefix+uuid.NewString(), true)
+	if dst.Get("Sec-WebSocket-Protocol") != "" {
+		t.Fatalf("forwarded reserved-only websocket protocol = %q, want header omitted", dst.Get("Sec-WebSocket-Protocol"))
 	}
 }
 

@@ -5,6 +5,7 @@ import {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
   GREGALE_RELEASE_COOKIE,
+  GREGALE_RELEASE_SUBPROTOCOL_PREFIX,
   GREGALE_REVISION_HEADER,
 } from '../src/browser.js';
 import { gregaleReleaseMetaTag } from '../src/release-context.js';
@@ -169,6 +170,66 @@ test('does not combine a caller revision pin with the project release', async ()
   assert.equal(sent.get(GREGALE_REVISION_HEADER), 'deployment-specific-pin');
   assert.equal(sent.has(GREGALE_RELEASE_HEADER), false);
   assert.equal(callerHeaders.has(GREGALE_RELEASE_HEADER), false);
+});
+
+test('pins managed cross-origin WebSockets with a reserved subprotocol without mutating app protocols', () => {
+  const calls: Array<{ url: string | URL; protocols?: string | string[] }> = [];
+  const appProtocols = ['graphql-transport-ws', 'chat'];
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    initialRelease: RELEASE_A,
+    webSocketFactory: (url, protocols) => {
+      calls.push({ url, protocols });
+      return {} as WebSocket;
+    },
+  });
+
+  client.webSocket('wss://api.example.test/socket', appProtocols);
+
+  assert.equal(calls[0]?.url, 'wss://api.example.test/socket');
+  assert.deepEqual(calls[0]?.protocols, [
+    'graphql-transport-ws',
+    'chat',
+    `${GREGALE_RELEASE_SUBPROTOCOL_PREFIX}${RELEASE_A}`,
+  ]);
+  assert.deepEqual(appProtocols, ['graphql-transport-ws', 'chat']);
+});
+
+test('does not add release subprotocols to unmanaged WebSockets', () => {
+  const calls: Array<{ url: string | URL; protocols?: string | string[] }> = [];
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    initialRelease: RELEASE_A,
+    webSocketFactory: (url, protocols) => {
+      calls.push({ url, protocols });
+      return {} as WebSocket;
+    },
+  });
+
+  client.webSocket('wss://third-party.example.test/socket', 'graphql-transport-ws');
+
+  assert.equal(calls[0]?.url, 'wss://third-party.example.test/socket');
+  assert.equal(calls[0]?.protocols, 'graphql-transport-ws');
+});
+
+test('requires a known release and reserves its WebSocket subprotocol namespace', () => {
+  const client = createGregaleBrowserFetch({
+    managedOrigins: [API_ORIGIN],
+    webSocketFactory: () => ({} as WebSocket),
+  });
+
+  assert.throws(
+    () => client.webSocket('wss://api.example.test/socket'),
+    /release is not known/,
+  );
+  assert.throws(
+    () => createGregaleBrowserFetch({
+      managedOrigins: [API_ORIGIN],
+      initialRelease: RELEASE_A,
+      webSocketFactory: () => ({} as WebSocket),
+    }).webSocket('wss://api.example.test/socket', `${GREGALE_RELEASE_SUBPROTOCOL_PREFIX}${RELEASE_B}`),
+    /reserved for Gregale release pinning/,
+  );
 });
 
 test('returns release-expired responses unchanged and keeps the pin until explicit reset', async () => {
