@@ -347,6 +347,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environments":                                     "CreateProjectEnvironment",
 	"GET /v1/projects/{slug}/environments/{environment}":                        "GetProjectEnvironment",
 	"PATCH /v1/projects/{slug}/environments/{environment}":                      "UpdateProjectEnvironment",
+	"POST /v1/projects/{slug}/environments/{environment}/qualifications":        "CreateProjectEnvironmentQualification",
 	"GET /v1/projects/{slug}/environments/{environment}/releases":               "GetProjectEnvironmentReleases",
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets":           "ListProjectReleaseSets",
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/active":    "GetActiveProjectReleaseSet",

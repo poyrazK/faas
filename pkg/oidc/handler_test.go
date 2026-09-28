@@ -162,6 +162,7 @@ func (m *memTokenStore) Insert(_ context.Context, t *ExchangedToken) (string, er
 		t.ID = "fake-token-" + hex.EncodeToString(t.TokenHash[:8])
 	}
 	cp := *t
+	cp.Scopes = append([]string(nil), t.Scopes...)
 	m.tokens[string(t.TokenHash)] = &cp
 	return t.ID, nil
 }
@@ -177,6 +178,7 @@ func (m *memTokenStore) GetByHash(_ context.Context, hash []byte) (*ExchangedTok
 		return nil, ErrTokenNotFound
 	}
 	cp := *row
+	cp.Scopes = append([]string(nil), row.Scopes...)
 	return &cp, nil
 }
 
@@ -334,6 +336,9 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 	if resp.ExpiresIn != int(OIDCBearerTTL.Seconds()) {
 		t.Errorf("ExpiresIn: got %d, want %d", resp.ExpiresIn, int(OIDCBearerTTL.Seconds()))
 	}
+	if !equalStringSlices(resp.Scopes, []string{api.ScopeDeployWrite}) {
+		t.Errorf("default OIDC scopes = %v, want [%s]", resp.Scopes, api.ScopeDeployWrite)
+	}
 	if v.calls == 0 {
 		t.Errorf("expected verifier to be called")
 	}
@@ -350,6 +355,76 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 	if !found {
 		t.Errorf("expected %q audit event, got %+v", KindAuthTokenExchanged, audit.events)
 	}
+}
+
+func TestServeHTTP_EnvironmentPreflightCapabilityIsNarrow(t *testing.T) {
+	t.Parallel()
+	h, policies, tokens, _, _ := newHarness(t, nil)
+	if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+		AccountID: testAcctID, IssuerURL: testIssuer,
+		JWKSURL: testIssuer + ".well-known/jwks", Audience: []string{"faas.example.com"},
+		Algorithms: []string{"RS256"}, AuditLogin: "octo@example.com",
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github", Token: makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com", Capability: CapabilityEnvironmentPreflight,
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp ExchangeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := []string{api.ScopeProjectEnvironmentRead, api.ScopeProjectEnvironmentQualify}
+	if !equalStringSlices(resp.Scopes, want) {
+		t.Fatalf("response scopes = %v, want %v", resp.Scopes, want)
+	}
+	row, err := tokens.GetByHash(context.Background(), api.HashAPIKey(resp.Bearer))
+	if err != nil {
+		t.Fatalf("load exchanged token: %v", err)
+	}
+	if !equalStringSlices(row.ToAPIKey().Scopes, want) {
+		t.Fatalf("principal scopes = %v, want %v", row.ToAPIKey().Scopes, want)
+	}
+	for _, scope := range row.ToAPIKey().Scopes {
+		if scope == api.ScopeDeployWrite || scope == api.ScopeSecretsRead || scope == api.ScopeSecretsWrite {
+			t.Errorf("preflight capability unexpectedly grants %q", scope)
+		}
+	}
+}
+
+func TestServeHTTP_UnknownCapabilityRejected(t *testing.T) {
+	t.Parallel()
+	h, _, tokens, _, _ := newHarness(t, nil)
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github", Token: makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com", Capability: "admin",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(tokens.tokens) != 0 {
+		t.Fatalf("unknown capability minted %d token(s)", len(tokens.tokens))
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestServeHTTP_RFC8693FormExchange(t *testing.T) {

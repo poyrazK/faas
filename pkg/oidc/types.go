@@ -14,12 +14,13 @@
 //
 // Trust policies are account-scoped, 1:N per (account_id, issuer_url).
 // Auto-create on first exchange so customers don't have to touch the
-// dashboard before their first CI deploy (ADR-101 §6). Scope is
-// hard-coded deploy:write (ADR-101 customer-locked decision) — a CI
-// token cannot read secrets, env, MFA-protected admin.
+// dashboard before their first CI deploy (ADR-101 §6). The default
+// capability remains deploy:write; the environment-preflight profile is a
+// separate, narrower read-and-qualify capability.
 package oidc
 
 import (
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -64,14 +65,30 @@ type ExchangedToken = state.OIDCExchangedToken
 // state for 5-min TTL tokens; the row disappears via TTL or FK
 // CASCADE, both of which surface as ErrNotFound to the lookup.
 
-// OIDCBearerScopes is the closed scope set an OIDC-derived bearer
-// carries. Hard-coded per ADR-101 customer-locked decision — CI
-// tokens can ONLY deploy. Reads, secret access, MFA-protected
-// admin actions still require a normal API key with MFA.
+// CapabilityEnvironmentPreflight requests the narrow read-and-qualify
+// authority required by environment preflight. It cannot deploy, promote,
+// inspect secrets, or change environment configuration.
+const CapabilityEnvironmentPreflight = "environment-preflight"
+
+// OIDCBearerScopes is the default closed scope set for an OIDC-derived
+// bearer. The historical default remains deploy-only.
 func OIDCBearerScopes() []string {
 	// Returns a fresh slice per call so callers can mutate freely
 	// (mirrors state.APIKey.Scopes slice semantics).
 	return []string{"deploy:write"}
+}
+
+// OIDCBearerScopesForCapability maps a closed capability name to fixed
+// scopes. Clients cannot request arbitrary scopes through OIDC exchange.
+func OIDCBearerScopesForCapability(capability string) ([]string, error) {
+	switch capability {
+	case "":
+		return OIDCBearerScopes(), nil
+	case CapabilityEnvironmentPreflight:
+		return []string{"project_environments:read", "project_environments:qualify"}, nil
+	default:
+		return nil, errors.New("unsupported OIDC capability")
+	}
 }
 
 // ExchangeRequest is the JSON body of POST /v1/auth/oidc/exchange.
@@ -82,21 +99,23 @@ func OIDCBearerScopes() []string {
 // exchange still succeeds but the audit row has app=NULL; CI scripts
 // that deploy the same repo to multiple apps pass App explicitly.
 type ExchangeRequest struct {
-	Provider string `json:"provider"`      // 'github' | 'gitlab' | 'circleci' | 'oidc' (generic)
-	Token    string `json:"token"`         // raw IdP-issued JWT
-	Audience string `json:"aud"`           // the aud claim the customer pinned in the action
-	App      string `json:"app,omitempty"` // optional app slug for audit attribution
+	Provider   string `json:"provider"`      // 'github' | 'gitlab' | 'circleci' | 'oidc' (generic)
+	Token      string `json:"token"`         // raw IdP-issued JWT
+	Audience   string `json:"aud"`           // the aud claim the customer pinned in the action
+	App        string `json:"app,omitempty"` // optional app slug for audit attribution
+	Capability string `json:"capability,omitempty"`
 }
 
 // ExchangeResponse is what /v1/auth/oidc/exchange returns on success.
 // Bearer is the fp_oidc_<48 hex> opaque token to put in
-// Authorization: Bearer … on the subsequent deploy call. ExpiresIn
-// is the seconds-until-expiry for the caller's convenience (matches
-// AWS STS AssumeRoleWithWebIdentity shape).
+// Authorization: Bearer … on routes permitted by the returned scope
+// profile. ExpiresIn is the seconds-until-expiry for the caller's convenience
+// (matches AWS STS AssumeRoleWithWebIdentity shape).
 type ExchangeResponse struct {
-	Bearer    string `json:"bearer"`
-	ExpiresIn int    `json:"expires_in"`
-	TokenID   string `json:"token_id"` // opaque row id; useful for log correlation
+	Bearer    string   `json:"bearer"`
+	ExpiresIn int      `json:"expires_in"`
+	TokenID   string   `json:"token_id"` // opaque row id; useful for log correlation
+	Scopes    []string `json:"scopes,omitempty"`
 }
 
 // time alias so the handler can use time helpers without re-importing

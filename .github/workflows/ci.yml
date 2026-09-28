@@ -882,6 +882,8 @@ jobs:
         run: make shell-quoting-check-test
       - name: Gregale Action push-head guard
         run: make deploy-action-head-check
+      - name: Gregale environment preflight Action contract
+        run: make environment-preflight-action-check
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----

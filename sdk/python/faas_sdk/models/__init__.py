@@ -422,6 +422,10 @@ from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
+from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
+from .create_project_environment_qualification_request_secret_revision_hashes import (
+    CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
+)
 from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
@@ -1316,6 +1320,17 @@ from .project_environment_promotion_summary_response_verification_status import 
 )
 from .project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 from .project_environment_promotion_workload_response_status import ProjectEnvironmentPromotionWorkloadResponseStatus
+from .project_environment_qualification_check import ProjectEnvironmentQualificationCheck
+from .project_environment_qualification_check_name import ProjectEnvironmentQualificationCheckName
+from .project_environment_qualification_check_status import ProjectEnvironmentQualificationCheckStatus
+from .project_environment_qualification_response import ProjectEnvironmentQualificationResponse
+from .project_environment_qualification_response_secret_revision_hashes import (
+    ProjectEnvironmentQualificationResponseSecretRevisionHashes,
+)
+from .project_environment_qualification_response_status import ProjectEnvironmentQualificationResponseStatus
+from .project_environment_qualification_result import ProjectEnvironmentQualificationResult
+from .project_environment_qualification_result_error_code import ProjectEnvironmentQualificationResultErrorCode
+from .project_environment_qualification_result_status import ProjectEnvironmentQualificationResultStatus
 from .project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
 from .project_environment_release_diff_response_kind import ProjectEnvironmentReleaseDiffResponseKind
 from .project_environment_release_list_response import ProjectEnvironmentReleaseListResponse
@@ -2211,6 +2226,8 @@ __all__ = (
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
     "CreateProjectEnvironmentApprovalRequest",
+    "CreateProjectEnvironmentQualificationRequest",
+    "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -3059,6 +3076,15 @@ __all__ = (
     "ProjectEnvironmentPromotionSummaryResponseVerificationStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",
+    "ProjectEnvironmentQualificationCheck",
+    "ProjectEnvironmentQualificationCheckName",
+    "ProjectEnvironmentQualificationCheckStatus",
+    "ProjectEnvironmentQualificationResponse",
+    "ProjectEnvironmentQualificationResponseSecretRevisionHashes",
+    "ProjectEnvironmentQualificationResponseStatus",
+    "ProjectEnvironmentQualificationResult",
+    "ProjectEnvironmentQualificationResultErrorCode",
+    "ProjectEnvironmentQualificationResultStatus",
     "ProjectEnvironmentReleaseDiffResponse",
     "ProjectEnvironmentReleaseDiffResponseKind",
     "ProjectEnvironmentReleaseListResponse",

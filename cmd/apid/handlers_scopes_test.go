@@ -123,6 +123,37 @@ func TestScopeMatrix(t *testing.T) {
 		}, nil)
 		assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
 	})
+	t.Run("environment-preflight-scope-is-narrow", func(t *testing.T) {
+		e := setupWithScopes(t, []string{api.ScopeProjectEnvironmentRead, api.ScopeProjectEnvironmentQualify})
+		for _, request := range []struct {
+			method string
+			path   string
+			body   any
+		}{
+			{method: http.MethodGet, path: "/v1/projects/missing/environments/staging/state"},
+			{method: http.MethodGet, path: "/v1/projects/missing/environments/production/promotion-preview?from=staging"},
+			{method: http.MethodGet, path: "/v1/deployments/missing/url"},
+			{method: http.MethodPost, path: "/v1/projects/missing/environments/staging/qualifications", body: map[string]any{}},
+		} {
+			rec := e.do(t, request.method, request.path, request.body, nil)
+			if rec.Code == http.StatusForbidden {
+				t.Errorf("preflight scope rejected %s %s: %s", request.method, request.path, rec.Body)
+			}
+		}
+		for _, request := range []struct {
+			method string
+			path   string
+			body   any
+		}{
+			{method: http.MethodGet, path: "/v1/apps"},
+			{method: http.MethodGet, path: "/v1/apps/shop/secrets"},
+			{method: http.MethodPost, path: "/v1/apps", body: api.CreateAppRequest{Slug: "not-authorized"}},
+			{method: http.MethodPost, path: "/v1/projects/shop/environments", body: map[string]any{"slug": "new-env"}},
+		} {
+			rec := e.do(t, request.method, request.path, request.body, nil)
+			assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+		}
+	})
 	t.Run("admin-key/GET-allowed", func(t *testing.T) {
 		e := setupWithScopes(t, api.ScopesAdminOnly)
 		rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)

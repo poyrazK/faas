@@ -1847,7 +1847,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions", Subcommands: []cliSub{
 				{Name: "list", Short: "List environments"},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
@@ -1855,6 +1855,15 @@ var cliCommands = []cliCommand{
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
 				{Name: "release-sets", Short: "List release graphs and their retention deadlines", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}},
 				{Name: "releases", Short: "List live workload deployments"},
+				{Name: "qualify", Short: "Run health and smoke GET probes against exact active release-set deployments", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "profile", Short: "YAML probe profile defining every release-set workload", Value: "FILE", Req: true},
+				}},
+				{Name: "preflight", Short: "Qualify the source release and check promotion readiness for CI", Positionals: []string{"<project-slug>"}, Flags: []cliFlag{
+					{Name: "from", Short: "source environment to qualify and promote", Value: "ENV", Req: true},
+					{Name: "to", Short: "target environment to check", Value: "ENV", Req: true},
+					{Name: "profile", Short: "YAML probe profile defining every source workload", Value: "FILE", Req: true},
+					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
+				}},
 				{Name: "history", Short: "List environment promotions"},
 				{Name: "config", Short: "Manage environment configuration"},
 				{Name: "routes", Short: "Manage environment routes"},

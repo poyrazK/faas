@@ -1752,6 +1752,7 @@ type OidcExchangedToken struct {
 	Subject   string
 	Audience  []string
 	Jti       pgtype.Text
+	Scopes    []string
 	CreatedAt pgtype.Timestamptz
 }
 
@@ -1915,6 +1916,21 @@ type ProjectEnvironmentCleanupJob struct {
 	LeaseToken      string
 	LeaseUntil      pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentQualification struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	EnvironmentSlug      string
+	ReleaseSetID         pgtype.UUID
+	ConfigurationVersion int64
+	ConfigurationHash    string
+	SecretRevisionHashes []byte
+	Status               string
+	Checks               []byte
+	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
 }
 
 type ProjectReleaseMember struct {

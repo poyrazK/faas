@@ -1280,7 +1280,7 @@ CREATE TABLE public.api_keys (
     created_ip inet,
     created_ua text,
     parent_key_id uuid,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -3620,6 +3620,7 @@ CREATE TABLE public.oidc_exchanged_tokens (
     subject text NOT NULL,
     audience text[] NOT NULL,
     jti text,
+    scopes text[] DEFAULT ARRAY['deploy:write'::text] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -5622,6 +5623,14 @@ ALTER TABLE ONLY public.oauth_links
 
 ALTER TABLE ONLY public.oidc_exchanged_tokens
     ADD CONSTRAINT oidc_exchanged_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: oidc_exchanged_tokens oidc_exchanged_tokens_scopes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.oidc_exchanged_tokens
+    ADD CONSTRAINT oidc_exchanged_tokens_scopes_check CHECK (((scopes <@ ARRAY['deploy:write'::text, 'project_environments:read'::text, 'project_environments:qualify'::text]) AND (cardinality(scopes) > 0)));
 
 
 --
@@ -10714,6 +10723,9 @@ CREATE TABLE IF NOT EXISTS project_release_sets (
     CONSTRAINT project_release_set_expiry_state CHECK (
         (active AND expires_at IS NULL) OR (NOT active AND expires_at IS NOT NULL))
 );
+ALTER TABLE ONLY public.project_release_sets
+    ADD CONSTRAINT project_release_sets_qualification_identity_uniq
+    UNIQUE (id, project_id, environment_slug);
 CREATE UNIQUE INDEX IF NOT EXISTS project_release_sets_active_uniq
     ON project_release_sets (project_id, environment_slug) WHERE active;
 CREATE INDEX IF NOT EXISTS project_release_sets_expiry_idx ON project_release_sets (expires_at);
@@ -10726,6 +10738,41 @@ CREATE TABLE IF NOT EXISTS project_release_members (
 );
 CREATE INDEX IF NOT EXISTS project_release_members_deployment_idx
     ON project_release_members (deployment_id, release_id);
+
+CREATE TABLE public.project_environment_qualifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    release_set_id uuid NOT NULL,
+    configuration_version bigint DEFAULT '-1'::integer NOT NULL,
+    configuration_hash text DEFAULT ''::text NOT NULL,
+    secret_revision_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text NOT NULL,
+    checks jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT project_environment_qualifications_status_check CHECK ((status = ANY (ARRAY['passed'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_qualifications_checks_shape CHECK (((jsonb_typeof(checks) = 'array'::text) AND (jsonb_array_length(checks) = 2) AND ((checks @> '[{"name": "health", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "health", "status": "failed"}]'::jsonb)) AND ((checks @> '[{"name": "smoke", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) AND (status = CASE WHEN ((checks @> '[{"name": "health", "status": "failed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) THEN 'failed'::text ELSE 'passed'::text END))),
+    CONSTRAINT project_environment_qualifications_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval))))
+);
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_results_shape CHECK (((checks @> '[{"name": "health", "results": [{}]}]'::jsonb) AND (checks @> '[{"name": "smoke", "results": [{}]}]'::jsonb)));
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_configuration_identity_check CHECK ((((configuration_version = '-1'::integer) AND (configuration_hash = ''::text)) OR ((configuration_version >= 0) AND (configuration_hash ~ '^[a-f0-9]{64}$'::text))));
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_secret_revisions_object_check CHECK ((jsonb_typeof(secret_revision_hashes) = 'object'::text));
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_environment_fkey FOREIGN KEY (project_id, environment_slug) REFERENCES public.project_environments(project_id, slug) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_environment_qualifications
+    ADD CONSTRAINT project_environment_qualifications_release_fkey FOREIGN KEY (release_set_id, project_id, environment_slug) REFERENCES public.project_release_sets(id, project_id, environment_slug) ON DELETE CASCADE;
+CREATE INDEX project_environment_qualifications_latest_idx ON public.project_environment_qualifications USING btree (account_id, project_id, environment_slug, release_set_id, created_at DESC, id DESC);
 
 
 CREATE INDEX project_release_sets_history_idx ON project_release_sets (project_id, environment_slug, created_at DESC, id DESC);

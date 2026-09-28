@@ -455,6 +455,26 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
+			var qualification state.ProjectEnvironmentQualification
+			if activeEnvironment == "staging" {
+				previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				previewReq.SetPathValue("environment", "production")
+				srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+				var blocked api.ProjectEnvironmentPromotionPreviewResponse
+				if previewRec.Code != http.StatusOK || json.Unmarshal(previewRec.Body.Bytes(), &blocked) != nil ||
+					blocked.CanPromote || !blocked.QualificationRequired || blocked.Qualification != nil {
+					t.Fatalf("unqualified graph preview should be blocked: status=%d preview=%+v body=%s", previewRec.Code, blocked, previewRec.Body.String())
+				}
+				createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", release.ID, "failed", "passed")
+				previewReq, previewRec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				previewReq.SetPathValue("environment", "production")
+				srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+				if previewRec.Code != http.StatusOK || json.Unmarshal(previewRec.Body.Bytes(), &blocked) != nil ||
+					blocked.CanPromote || blocked.Qualification == nil || blocked.Qualification.Status != "failed" {
+					t.Fatalf("failed graph qualification should block preview: status=%d preview=%+v body=%s", previewRec.Code, blocked, previewRec.Body.String())
+				}
+				qualification = createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", release.ID, "passed", "passed")
+			}
 
 			req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 			req.SetPathValue("environment", "production")
@@ -468,6 +488,10 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 			}
 			if !preview.CanPromote || len(preview.BlockingReasons) != 0 || !preview.ReleaseGraphMode || preview.ReleaseTTLSeconds != 1800 {
 				t.Fatalf("active release graph was not accepted for graph promotion: %+v", preview)
+			}
+			if activeEnvironment == "staging" && (preview.Qualification == nil || preview.Qualification.ID != qualification.ID ||
+				preview.Qualification.Status != "passed" || !preview.QualificationRequired) {
+				t.Fatalf("promotion preview did not bind the passing qualification: %+v", preview.Qualification)
 			}
 			graph := preview.FromReleaseSet
 			if activeEnvironment == "production" {
@@ -489,6 +513,26 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 			}
 			if wire.FromReleaseSetID != fromReleaseID || wire.ToReleaseSetID != toReleaseID {
 				t.Fatalf("promotion token release ids = %q/%q, want %q/%q", wire.FromReleaseSetID, wire.ToReleaseSetID, fromReleaseID, toReleaseID)
+			}
+			if activeEnvironment == "staging" {
+				values, configHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+					AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "staging",
+					ConfigHash: configHash, Values: values,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				driftReq, driftRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				driftReq.SetPathValue("environment", "production")
+				srv.previewProjectEnvironmentPromotion(driftRec, driftReq, acct)
+				var driftPreview api.ProjectEnvironmentPromotionPreviewResponse
+				if driftRec.Code != http.StatusOK || json.Unmarshal(driftRec.Body.Bytes(), &driftPreview) != nil ||
+					driftPreview.CanPromote || !strings.Contains(strings.Join(driftPreview.BlockingReasons, " "), "configuration changed after qualification") {
+					t.Fatalf("source config drift did not invalidate qualification: status=%d preview=%+v body=%s", driftRec.Code, driftPreview, driftRec.Body.String())
+				}
 			}
 		})
 	}
@@ -519,10 +563,12 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 	if err := store.MarkDeploymentLive(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
-		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: source.ID}}); err != nil {
+	sourceGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: source.ID}})
+	if err != nil {
 		t.Fatal(err)
 	}
+	createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", sourceGraph.ID, "passed", "passed")
 	previous, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Scope: "production", SourceSHA256: "graph-production-v1", Status: state.DeployPending,
 	})
@@ -644,10 +690,12 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	if err := store.MarkDeploymentLive(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
-		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: source.ID}}); err != nil {
+	sourceGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: source.ID}})
+	if err != nil {
 		t.Fatal(err)
 	}
+	createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", sourceGraph.ID, "passed", "passed")
 	previous, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Scope: "production", SourceSHA256: "fallback-production", Status: state.DeployPending,
 	})
@@ -780,6 +828,7 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	qualification := createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", sourceGraph.ID, "passed", "passed")
 	// Newer direct releases must not replace the exact source/target members
 	// selected by active graph pointers during preview.
 	createLive("staging", "sha256:source-newer", "source-newer")
@@ -834,7 +883,7 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if promotion.SourceReleaseSetID != sourceGraph.ID || promotion.PreviousTargetReleaseSetID != previousTargetGraph.ID ||
+	if promotion.SourceReleaseSetID != sourceGraph.ID || promotion.SourceQualificationID != qualification.ID || promotion.PreviousTargetReleaseSetID != previousTargetGraph.ID ||
 		promotion.TargetReleaseSetID == "" || promotion.TargetReleaseSetID == previousTargetGraph.ID || len(workloads) != 1 ||
 		!promotion.SyncConfig || promotion.SourceConfigHash != sourceConfigHash ||
 		promotion.PreviousTargetConfigHash != previousConfigHash || promotion.TargetConfigVersion <= previousConfig.Version {
@@ -886,12 +935,12 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T) {
 	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
 	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		false, "release-source-a", "release-target", nil)
+		false, "release-source-a", "release-target", "qualification-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		false, "release-source-b", "release-target", nil)
+		false, "release-source-b", "release-target", "qualification-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -964,4 +1013,93 @@ func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("past_due promotion created deployments: before=%d after=%d", len(before), len(after))
 	}
+}
+
+func TestProjectEnvironmentPromotionHashIncludesQualificationIdentity(t *testing.T) {
+	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
+	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+		false, "release-source", "release-target", "qualification-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+		false, "release-source", "release-target", "qualification-b", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("promotion identity did not change when source qualification changed")
+	}
+}
+
+func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.MemStore, acct state.Account, project state.Project, environment, releaseSetID, health, smoke string) state.ProjectEnvironmentQualification {
+	t.Helper()
+	ctx := context.Background()
+	configurationVersion := int64(0)
+	configurationHash := api.EmptyProjectEnvironmentConfigHash()
+	configuration, configErr := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, environment)
+	if configErr == nil {
+		configurationVersion, configurationHash = configuration.Version, configuration.ConfigHash
+	} else if !errors.Is(configErr, state.ErrNotFound) {
+		t.Fatal(configErr)
+	}
+	release, err := store.ProjectReleaseSetByID(ctx, acct.ID, project.ID, environment, releaseSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultsForStatus := func(checkStatus string) []state.ProjectEnvironmentQualificationResult {
+		results := make([]state.ProjectEnvironmentQualificationResult, 0, len(release.Members))
+		for _, member := range release.Members {
+			app, err := store.AppByID(ctx, member.AppID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := state.ProjectEnvironmentQualificationResult{
+				WorkloadSlug: app.Slug, DeploymentID: member.DeploymentID, Status: "passed",
+			}
+			status := 204
+			if checkStatus == "failed" {
+				result.Status = "failed"
+				result.ErrorCode = "unexpected_status"
+				status = 503
+			}
+			result.HTTPStatus = &status
+			results = append(results, result)
+		}
+		return results
+	}
+	secretRevisionHashes := make(map[string]string, len(release.Members))
+	for _, member := range release.Members {
+		app, err := store.AppByID(ctx, member.AppID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secrets, err := store.ListAppSecretsInScope(ctx, acct.ID, app.ID, environment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revisions := make([]api.ProjectEnvironmentSecretRevision, 0, len(secrets))
+		for _, secret := range secrets {
+			managedBy, bindingID := projectEnvironmentSecretOwner(secret)
+			revisions = append(revisions, api.ProjectEnvironmentSecretRevision{
+				Key: secret.Key, Version: secret.SecretVersion, ManagedBy: managedBy,
+				BindingID: bindingID, CredentialGeneration: secret.ManagedCredentialGeneration,
+			})
+		}
+		hash, err := api.ProjectEnvironmentSecretRevisionHash(revisions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secretRevisionHashes[app.Slug] = hash
+	}
+	qualification, err := store.CreateProjectEnvironmentQualification(context.Background(), acct.ID, project.ID, environment, releaseSetID, configurationVersion, configurationHash,
+		secretRevisionHashes,
+		[]state.ProjectEnvironmentQualificationCheck{
+			{Name: "health", Status: health, Results: resultsForStatus(health)},
+			{Name: "smoke", Status: smoke, Results: resultsForStatus(smoke)},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return qualification
 }

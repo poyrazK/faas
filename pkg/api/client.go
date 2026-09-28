@@ -1633,6 +1633,14 @@ func (c *Client) PublishProjectReleaseSet(ctx context.Context, projectSlug, envi
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
 }
 
+// CreateProjectEnvironmentQualification records closed-schema health and
+// smoke results for the exact active source release set.
+func (c *Client) CreateProjectEnvironmentQualification(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentQualificationRequest) (ProjectEnvironmentQualificationResponse, error) {
+	var out ProjectEnvironmentQualificationResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/qualifications"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
 // GetProjectEnvironmentState returns the effective configuration, release,
 // variable, safe secret metadata, and managed bindings for one environment.
 func (c *Client) GetProjectEnvironmentState(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentStateResponse, error) {

@@ -471,6 +471,7 @@ func (s *PgStore) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (Acco
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		TokenHash: row.TokenHash,
+		Scopes:    row.Scopes,
 		ExpiresAt: timeFromPgtype(row.ExpiresAt),
 		IssuerURL: row.IssuerUrl,
 		Subject:   row.Subject,
@@ -647,10 +648,15 @@ func (s *PgStore) InsertOIDCExchangedToken(ctx context.Context, t *OIDCExchanged
 	if err != nil {
 		return "", ErrNotFound
 	}
+	scopes := t.Scopes
+	if len(scopes) == 0 {
+		scopes = []string{api.ScopeDeployWrite}
+	}
 	q := sqlc.New()
 	row, err := q.InsertOIDCExchangedToken(ctx, s.pool, sqlc.InsertOIDCExchangedTokenParams{
 		AccountID: pgtypeFromUUID(accountUUID),
 		TokenHash: t.TokenHash,
+		Scopes:    scopes,
 		ExpiresAt: pgtypeFromTime(t.ExpiresAt),
 		IssuerUrl: t.IssuerURL,
 		Subject:   t.Subject,
@@ -28475,6 +28481,7 @@ func oidcExchangedTokenFromRow(row sqlc.GetOIDCExchangedTokenByHashRow) *OIDCExc
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		TokenHash: row.TokenHash,
+		Scopes:    row.Scopes,
 		ExpiresAt: timeFromPgtype(row.ExpiresAt),
 		IssuerURL: row.IssuerUrl,
 		Subject:   row.Subject,

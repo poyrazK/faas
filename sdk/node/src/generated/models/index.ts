@@ -209,6 +209,7 @@ export type { CreatePreviewRequest } from './CreatePreviewRequest.js';
 export type { CreatePrivateNetworkPeeringRequest } from './CreatePrivateNetworkPeeringRequest.js';
 export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
+export type { CreateProjectEnvironmentQualificationRequest } from './CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
 export type { CreateTCPListenerRequest } from './CreateTCPListenerRequest.js';
@@ -668,6 +669,9 @@ export type { ProjectEnvironmentPromotionStatusResponse } from './ProjectEnviron
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
 export type { ProjectEnvironmentPromotionSummaryResponse } from './ProjectEnvironmentPromotionSummaryResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvironmentPromotionWorkloadResponse.js';
+export type { ProjectEnvironmentQualificationCheck } from './ProjectEnvironmentQualificationCheck.js';
+export type { ProjectEnvironmentQualificationResponse } from './ProjectEnvironmentQualificationResponse.js';
+export type { ProjectEnvironmentQualificationResult } from './ProjectEnvironmentQualificationResult.js';
 export type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 export type { ProjectEnvironmentReleaseListResponse } from './ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';

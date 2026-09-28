@@ -14261,6 +14261,52 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/qualifications:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose source environment release is being qualified.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Source environment containing the exact active release set.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    post:
+      tags: [projects]
+      operationId: createProjectEnvironmentQualification
+      summary: Record health and smoke results for an active release set.
+      description: |
+        Records a closed-schema qualification receipt for the exact active
+        release-set ID, non-secret source configuration version/hash, and
+        per-workload secret revision fingerprints. Fingerprints include only
+        revision metadata and managed credential generations, never secret
+        values or value hashes.
+        Each health and smoke result identifies every workload's exact
+        deployment and contains only its HTTP status or a bounded error code;
+        response bodies and secrets are never stored. The API rejects probes
+        if the release set, configuration, or secret revisions change before
+        receipt creation.
+        Receipts expire after 24 hours and cannot qualify a later release set
+        or configuration or secret revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentQualificationRequest' }
+      responses:
+        '201':
+          description: Qualification receipt, expiring 24 hours after creation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQualificationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/release-sets/active:
     parameters:
       - name: slug
@@ -14598,6 +14644,9 @@ paths:
         `sync_config=true` opts into applying the source's non-secret
         configuration snapshot with the release graph, and is blocked unless
         the target already has an active release graph for atomic cutover.
+        Protected-target promotions from an active source release set also
+        require the latest passing health and smoke qualification, which is
+        bound to that immutable release-set ID and expires after 24 hours.
       responses:
         '200':
           description: Promotion preview and immutable promotion identity.
@@ -31102,8 +31151,88 @@ components:
           minimum: 1
           maximum: 604800
           description: Compatibility window used by the promoted release graph.
+        qualification_required:
+          type: boolean
+          description: True when a protected-target promotion requires a fresh source qualification.
+        qualification:
+          allOf:
+            - $ref: '#/components/schemas/ProjectEnvironmentQualificationResponse'
+          description: Latest qualification for the active source release set, including failed or expired receipts.
         promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         promotion_token: { type: string, minLength: 1 }
+
+    CreateProjectEnvironmentQualificationRequest:
+      description: Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and per-workload secret revision fingerprints.
+      type: object
+      additionalProperties: false
+      required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
+      properties:
+        release_set_id: { type: string, format: uuid }
+        configuration_version: { type: integer, minimum: 0 }
+        configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        secret_revision_hashes:
+          type: object
+          minProperties: 1
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
+        checks:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQualificationCheck' }
+
+    ProjectEnvironmentQualificationCheck:
+      description: Aggregate result plus one exact-deployment probe outcome per workload.
+      type: object
+      additionalProperties: false
+      required: [name, status, results]
+      properties:
+        name: { type: string, enum: [health, smoke] }
+        status: { type: string, enum: [passed, failed] }
+        results:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQualificationResult' }
+
+    ProjectEnvironmentQualificationResult:
+      description: Non-secret GET probe result tied to one workload deployment in the active release set.
+      type: object
+      additionalProperties: false
+      required: [workload_slug, deployment_id, status]
+      properties:
+        workload_slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [passed, failed] }
+        http_status: { type: integer, minimum: 100, maximum: 599 }
+        error_code: { type: string, enum: [preview_unavailable, request_failed, unexpected_status] }
+
+    ProjectEnvironmentQualificationResponse:
+      description: Non-secret, 24-hour qualification receipt for an immutable release set and the exact source configuration and per-workload secret revision snapshots probed.
+      type: object
+      required: [id, environment, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, status, checks, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        environment: { type: string }
+        release_set_id: { type: string, format: uuid }
+        configuration_version:
+          type: integer
+          minimum: -1
+          description: Version tested; -1 marks a legacy receipt that predates configuration binding and cannot qualify for promotion.
+        configuration_hash:
+          type: string
+          description: SHA-256 of canonical non-secret environment configuration; empty only for a legacy receipt that cannot qualify for promotion.
+        secret_revision_hashes:
+          type: object
+          description: Opaque per-workload fingerprints of secret keys, version metadata, and managed credential generations; no secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status: { type: string, enum: [passed, failed] }
+        checks:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQualificationCheck' }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
 
     CreateProjectEnvironmentRequest:
       description: Request to register or clone a named project environment.
@@ -37898,6 +38027,10 @@ components:
         app:
           type: string
           description: "Optional app slug for audit attribution. Empty skips the audit app attribution."
+        capability:
+          type: string
+          enum: [environment-preflight]
+          description: "Optional closed OIDC capability profile. Omit to retain the historical deploy:write bearer; environment-preflight grants only project-environment read and qualification scopes."
     OIDCExchangeResponse:
       description: "Body for `POST /v1/auth/oidc/exchange` success response."
       type: object
@@ -37905,7 +38038,7 @@ components:
       properties:
         bearer:
           type: string
-          description: "Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on the deploy routes."
+          description: "Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on routes allowed by the returned scope profile."
         expires_in:
           type: integer
           description: "Seconds until the bearer expires (300 today)."
@@ -37913,6 +38046,10 @@ components:
         token_id:
           type: string
           description: "Opaque row id (UUID). Useful for log correlation / audit reads."
+        scopes:
+          type: array
+          items: { type: string }
+          description: "The fixed scopes granted to this bearer."
 
     OAuthTokenExchangeRequest:
       description: |

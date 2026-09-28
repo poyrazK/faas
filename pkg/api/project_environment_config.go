@@ -16,7 +16,16 @@ import (
 // because it is carried in plan previews and compared before apply.
 const MaxProjectEnvironmentConfigBytes = 64 << 10
 
-var projectEnvironmentConfigKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+var (
+	projectEnvironmentConfigKeyRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+	projectEnvironmentConfigHashRE = regexp.MustCompile(`^[a-f0-9]{64}$`)
+)
+
+// ValidProjectEnvironmentConfigHash reports whether hash is a canonical
+// SHA-256 digest produced by NormalizeProjectEnvironmentConfig.
+func ValidProjectEnvironmentConfigHash(hash string) bool {
+	return projectEnvironmentConfigHashRE.MatchString(hash)
+}
 
 // NormalizeProjectEnvironmentConfig validates and canonicalizes a project
 // environment's non-secret configuration. Canonical bytes are stable across

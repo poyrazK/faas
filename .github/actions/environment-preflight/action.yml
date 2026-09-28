@@ -1,0 +1,70 @@
+name: "Gregale environment preflight"
+description: "Qualify a Gregale source environment and gate promotion to a target environment"
+author: "Gregale"
+
+inputs:
+  api-key:
+    description: "Optional Gregale API key with only project_environments:read and project_environments:qualify scopes. Omit to use GitHub OIDC."
+    required: false
+    default: ""
+  oidc-audience:
+    description: "Audience requested from GitHub and sent to Gregale's OIDC exchange"
+    required: false
+    default: "gregale"
+  api-base:
+    description: "Gregale API base URL"
+    required: false
+    default: "https://api.gregale.dev"
+  project:
+    description: "Gregale project slug"
+    required: true
+  from:
+    description: "Source environment to qualify"
+    required: true
+  to:
+    description: "Target environment to check for promotion"
+    required: true
+  profile:
+    description: "Path to the checked-in YAML qualification profile"
+    required: true
+  sync-config:
+    description: "Include non-secret source configuration in the promotion preview"
+    required: false
+    default: "false"
+
+outputs:
+  status:
+    description: "Preflight result: ready, blocked, or failed"
+    value: ${{ steps.preflight.outputs.status }}
+  qualification-id:
+    description: "Qualification receipt recorded for the source release set"
+    value: ${{ steps.preflight.outputs.qualification-id }}
+  can-promote:
+    description: "Whether the server promotion preview allows promotion"
+    value: ${{ steps.preflight.outputs.can-promote }}
+  approval-required:
+    description: "Whether promotion still requires a separate approval"
+    value: ${{ steps.preflight.outputs.approval-required }}
+  blocking-reasons:
+    description: "JSON array of blockers from the promotion preview"
+    value: ${{ steps.preflight.outputs.blocking-reasons }}
+  cli-version:
+    description: "Version of the bundled Gregale CLI"
+    value: ${{ steps.preflight.outputs.cli-version }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: preflight
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        INPUT_API_BASE: ${{ inputs.api-base }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_FROM: ${{ inputs.from }}
+        INPUT_TO: ${{ inputs.to }}
+        INPUT_PROFILE: ${{ inputs.profile }}
+        INPUT_SYNC_CONFIG: ${{ inputs.sync-config }}
+      run: bash "$ACTION_PATH/src/run.sh"

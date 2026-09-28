@@ -505,6 +505,63 @@ page size defaults to 50, with a maximum of 100. Pass `next_before` back through
 `--before` to continue. Historical visibility does not extend a graph's routing
 eligibility or retain deleted artifacts.
 
+### Qualify a staged release before protected promotion
+
+Protected-target promotion from an active source release set is gated on the
+latest passing `health` and `smoke` qualification for that exact release-set
+ID, non-secret configuration version/hash, and per-workload secret revision
+fingerprints. Receipts expire after 24 hours; publishing a new release set,
+changing source configuration, or rotating a source secret requires new
+checks. `qualify` snapshots the active graph, configuration identity, and
+secret revision metadata,
+resolves each member's exact deployment preview URL, and runs both configured
+GET probes before recording the receipt. The API rejects the result if either
+the release set, configuration, or secret revisions changed while probes were
+running. Fingerprints cover secret key/version metadata and managed credential
+generations only; they never contain secret values or value hashes. Add
+`gregale-qualification.yaml` to the project repository:
+
+```yaml
+version: 1
+timeout_seconds: 5
+workloads:
+  api:
+    health_path: /healthz
+    smoke_path: /ready
+  billing:
+    health_path: /healthz
+    smoke_path: /ready
+```
+
+Then run:
+
+```sh
+gregale projects environments qualify shop staging --profile gregale-qualification.yaml
+gregale projects environments preview shop --from staging --to production
+gregale projects environments preflight shop --from staging --to production \
+  --profile gregale-qualification.yaml --json
+```
+
+`preflight` runs the source qualification and promotion preview together. It
+exits non-zero when probes fail, the qualification is stale/unresolved, or the
+server says promotion is blocked. Its JSON output contains the receipt summary
+and blockers, but omits secret-revision fingerprints and the opaque promotion
+token. The [GitHub Actions environment-preflight Action](../.github/actions/environment-preflight/README.md)
+uses a five-minute OIDC bearer with only `project_environments:read` and
+`project_environments:qualify`; the later promotion command still rechecks
+policy and the latest qualification on the server.
+
+The profile must define exactly the workloads in the active release set. Each
+probe is an HTTPS GET with normal TLS verification; redirects and non-2xx
+responses fail. The receipt binds each outcome to its deployment ID and records
+the tested configuration version and canonical hash, plus opaque per-workload
+secret revision fingerprints. It stores only the
+workload, status, HTTP status, and a bounded error code—never response bodies,
+headers, configuration values, or secrets. A failed or expired receipt, or one
+whose configuration or secret revisions are stale, blocks promotion until a
+newer passing qualification is recorded. Promotions without an active source
+release set retain their existing behavior.
+
 The read API uses the same project/environment scope as publication:
 
 - `GET /v1/projects/{slug}/environments/{environment}/release-sets`

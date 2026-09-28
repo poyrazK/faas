@@ -102,6 +102,9 @@ def sync_detailed(
     `sync_config=true` opts into applying the source's non-secret
     configuration snapshot with the release graph, and is blocked unless
     the target already has an active release graph for atomic cutover.
+    Protected-target promotions from an active source release set also
+    require the latest passing health and smoke qualification, which is
+    bound to that immutable release-set ID and expires after 24 hours.
 
     Args:
         slug (str):
@@ -149,6 +152,9 @@ def sync(
     `sync_config=true` opts into applying the source's non-secret
     configuration snapshot with the release graph, and is blocked unless
     the target already has an active release graph for atomic cutover.
+    Protected-target promotions from an active source release set also
+    require the latest passing health and smoke qualification, which is
+    bound to that immutable release-set ID and expires after 24 hours.
 
     Args:
         slug (str):
@@ -191,6 +197,9 @@ async def asyncio_detailed(
     `sync_config=true` opts into applying the source's non-secret
     configuration snapshot with the release graph, and is blocked unless
     the target already has an active release graph for atomic cutover.
+    Protected-target promotions from an active source release set also
+    require the latest passing health and smoke qualification, which is
+    bound to that immutable release-set ID and expires after 24 hours.
 
     Args:
         slug (str):
@@ -236,6 +245,9 @@ async def asyncio(
     `sync_config=true` opts into applying the source's non-secret
     configuration snapshot with the release graph, and is blocked unless
     the target already has an active release graph for atomic cutover.
+    Protected-target promotions from an active source release set also
+    require the latest passing health and smoke qualification, which is
+    bound to that immutable release-set ID and expires after 24 hours.
 
     Args:
         slug (str):

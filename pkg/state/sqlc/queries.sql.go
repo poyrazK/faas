@@ -3790,7 +3790,7 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now()
@@ -3805,6 +3805,7 @@ type GetOIDCExchangedTokenByHashRow struct {
 	Subject   string
 	Audience  []string
 	Jti       string
+	Scopes    []string
 	CreatedAt pgtype.Timestamptz
 }
 
@@ -3823,6 +3824,7 @@ func (q *Queries) GetOIDCExchangedTokenByHash(ctx context.Context, db DBTX, toke
 		&i.Subject,
 		&i.Audience,
 		&i.Jti,
+		&i.Scopes,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -4501,10 +4503,10 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti)
-values ($1, $2, $3, $4, $5, $6, $7)
+     audience, jti, scopes)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 returning id, account_id, token_hash, expires_at, issuer_url,
-          subject, audience, coalesce(jti, '') as jti,
+          subject, audience, coalesce(jti, '') as jti, scopes,
           created_at
 `
 
@@ -4516,6 +4518,7 @@ type InsertOIDCExchangedTokenParams struct {
 	Subject   string
 	Audience  []string
 	Jti       pgtype.Text
+	Scopes    []string
 }
 
 type InsertOIDCExchangedTokenRow struct {
@@ -4527,6 +4530,7 @@ type InsertOIDCExchangedTokenRow struct {
 	Subject   string
 	Audience  []string
 	Jti       string
+	Scopes    []string
 	CreatedAt pgtype.Timestamptz
 }
 
@@ -4541,6 +4545,7 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		arg.Subject,
 		arg.Audience,
 		arg.Jti,
+		arg.Scopes,
 	)
 	var i InsertOIDCExchangedTokenRow
 	err := row.Scan(
@@ -4552,6 +4557,7 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		&i.Subject,
 		&i.Audience,
 		&i.Jti,
+		&i.Scopes,
 		&i.CreatedAt,
 	)
 	return i, err

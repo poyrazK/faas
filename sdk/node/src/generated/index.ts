@@ -214,6 +214,7 @@ export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
 export type { CreatePrivateNetworkPeeringRequest } from './models/CreatePrivateNetworkPeeringRequest.js';
 export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
+export type { CreateProjectEnvironmentQualificationRequest } from './models/CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
 export type { CreateTCPListenerRequest } from './models/CreateTCPListenerRequest.js';
@@ -674,6 +675,9 @@ export type { ProjectEnvironmentPromotionStatusResponse } from './models/Project
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './models/ProjectEnvironmentPromotionStatusWorkloadResponse.js';
 export type { ProjectEnvironmentPromotionSummaryResponse } from './models/ProjectEnvironmentPromotionSummaryResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './models/ProjectEnvironmentPromotionWorkloadResponse.js';
+export type { ProjectEnvironmentQualificationCheck } from './models/ProjectEnvironmentQualificationCheck.js';
+export type { ProjectEnvironmentQualificationResponse } from './models/ProjectEnvironmentQualificationResponse.js';
+export type { ProjectEnvironmentQualificationResult } from './models/ProjectEnvironmentQualificationResult.js';
 export type { ProjectEnvironmentReleaseDiffResponse } from './models/ProjectEnvironmentReleaseDiffResponse.js';
 export type { ProjectEnvironmentReleaseListResponse } from './models/ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './models/ProjectEnvironmentReleaseWorkloadResponse.js';

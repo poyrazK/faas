@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -60,6 +60,10 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentReleaseSets(args[1:])
 	case "releases", "release":
 		return cmdProjectsEnvironmentReleases(args[1:])
+	case "qualify":
+		return cmdProjectsEnvironmentQualify(args[1:])
+	case "preflight":
+		return cmdProjectsEnvironmentPreflight(args[1:])
 	case "history":
 		return cmdProjectsEnvironmentHistory(args[1:])
 	case "config":
@@ -82,6 +86,47 @@ func cmdProjectsEnvironments(args []string) int {
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironmentQualify(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-qualify", flag.ContinueOnError)
+	profile := fs.String("profile", "", "YAML probe profile for every workload in the active release set")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) ||
+		!api.ValidProjectEnvironmentSlug(positional[1]) || strings.TrimSpace(*profile) == "" {
+		PrintUsage(os.Stderr, "usage: gregale projects environments qualify <project-slug> <environment-slug> --profile <FILE>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	qualification, err := qualifyProjectEnvironmentWithProfile(context.Background(), client, positional[0], positional[1], strings.TrimSpace(*profile))
+	if err != nil {
+		return printErr("Could not record environment qualification", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(qualification))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Qualification %s for %s/%s %s (release set %s; config v%d %s; expires %s)\n",
+		qualification.ID, positional[0], positional[1], qualification.Status,
+		qualification.ReleaseSetID, qualification.ConfigurationVersion, qualification.ConfigurationHash,
+		qualification.ExpiresAt.UTC().Format(time.RFC3339))
+	for _, check := range qualification.Checks {
+		for _, result := range check.Results {
+			outcome := result.Status
+			if result.HTTPStatus != nil {
+				outcome += fmt.Sprintf(" HTTP %d", *result.HTTPStatus)
+			} else if result.ErrorCode != "" {
+				outcome += " (" + result.ErrorCode + ")"
+			}
+			_, _ = fmt.Fprintf(osStdout, "  %-6s %-24s %s\n", check.Name, result.WorkloadSlug, outcome)
+		}
+	}
+	if qualification.Status != "passed" {
+		return 1
+	}
+	return 0
 }
 
 func cmdProjectsEnvironmentReleases(args []string) int {

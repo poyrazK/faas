@@ -283,6 +283,10 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
+.PHONY: environment-preflight-action-check
+environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
+	@bash scripts/ci/test_environment_preflight_action.sh
+
 .PHONY: canary-alert-test
 canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
 	bash scripts/ops/canary_alert_test.sh
@@ -1288,6 +1292,8 @@ pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@$(MAKE) sqlc-check
 	@echo "==> pre-pr: egress-check (nftables render + Go cross-check)"
 	@$(MAKE) egress-check
+	@echo "==> pre-pr: environment-preflight-action-check (OIDC scopes + promotion gate contract)"
+	@$(MAKE) environment-preflight-action-check
 	@echo "==> pre-pr: sdk-gen (node + python SDK regenerated, no diff)"
 	@$(MAKE) sdk-gen
 	@echo "pre-pr: OK (every drift gate clean)"

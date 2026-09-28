@@ -1819,7 +1819,7 @@ func (s *server) handler() http.Handler {
 	// never 403; non-preview-active rows return 200 with Alive=
 	// false so the dashboard renders the closed-state chip
 	// without a second round-trip.
-	mux.HandleFunc("GET /v1/deployments/{id}/url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentURL))))
+	mux.HandleFunc("GET /v1/deployments/{id}/url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getDeploymentURL))))
 	// Issue #557 closure / ADR-072 — PATCH the per-deployment floor
 	// (MinInstances). Reuses the deploy-write scope (the only mutable
 	// field is the floor; image / digest / overrides / sidecars stay
@@ -2082,11 +2082,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironment))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectReleaseSets))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/active", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getActiveProjectReleaseSet))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseSet))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
-	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentState))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentState))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironment))))
@@ -2095,7 +2096,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentConfig))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentConfig)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironmentConfig))))
-	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewProjectEnvironmentPromotion))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotion))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.approveProjectEnvironment)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/approvals/{approval}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentApprovalStatus))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))

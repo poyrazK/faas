@@ -796,6 +796,7 @@ type MemStore struct {
 	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies       map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
+	projectEnvironmentQualifications     map[string][]ProjectEnvironmentQualification
 	projectReleaseSets                   map[string]ProjectReleaseSet
 	activeProjectReleaseSets             map[string]string
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
@@ -1284,6 +1285,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
 		projectEnvironmentEdgePolicies:       map[string]ProjectEnvironmentEdgePolicy{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
+		projectEnvironmentQualifications:     map[string][]ProjectEnvironmentQualification{},
 		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
@@ -1696,7 +1698,12 @@ func (m *MemStore) InsertOIDCExchangedToken(_ context.Context, t *OIDCExchangedT
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
 	}
-	m.oidcExchangedTokens[hex.EncodeToString(t.TokenHash)] = *t
+	row := *t
+	row.Scopes = append([]string(nil), t.Scopes...)
+	if len(row.Scopes) == 0 {
+		row.Scopes = []string{api.ScopeDeployWrite}
+	}
+	m.oidcExchangedTokens[hex.EncodeToString(t.TokenHash)] = row
 	return t.ID, nil
 }
 
@@ -1716,6 +1723,7 @@ func (m *MemStore) GetOIDCExchangedTokenByHash(_ context.Context, hash []byte) (
 		return nil, ErrNotFound
 	}
 	cp := row
+	cp.Scopes = append([]string(nil), row.Scopes...)
 	return &cp, nil
 }
 

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
+import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
@@ -18,6 +19,7 @@ import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectE
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
+import type { ProjectEnvironmentQualificationResponse } from '../models/ProjectEnvironmentQualificationResponse.js';
 import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
@@ -695,6 +697,60 @@ export class ProjectsService {
     });
   }
   /**
+   * Record health and smoke results for an active release set.
+   * Records a closed-schema qualification receipt for the exact active
+   * release-set ID, non-secret source configuration version/hash, and
+   * per-workload secret revision fingerprints. Fingerprints include only
+   * revision metadata and managed credential generations, never secret
+   * values or value hashes.
+   * Each health and smoke result identifies every workload's exact
+   * deployment and contains only its HTTP status or a bounded error code;
+   * response bodies and secrets are never stored. The API rejects probes
+   * if the release set, configuration, or secret revisions change before
+   * receipt creation.
+   * Receipts expire after 24 hours and cannot qualify a later release set
+   * or configuration or secret revision.
+   *
+   * @returns ProjectEnvironmentQualificationResponse Qualification receipt, expiring 24 hours after creation.
+   * @throws ApiError
+   */
+  public static createProjectEnvironmentQualification({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project whose source environment release is being qualified.
+     */
+    slug: string,
+    /**
+     * Source environment containing the exact active release set.
+     */
+    environment: string,
+    requestBody: CreateProjectEnvironmentQualificationRequest,
+  }): CancelablePromise<ProjectEnvironmentQualificationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/qualifications',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Get the active project release graph.
    * Returns 404 when no active release exists in this project environment.
    * @returns ProjectReleaseSetResponse Currently active release graph and its immutable deployment membership.
@@ -1094,6 +1150,9 @@ export class ProjectsService {
    * `sync_config=true` opts into applying the source's non-secret
    * configuration snapshot with the release graph, and is blocked unless
    * the target already has an active release graph for atomic cutover.
+   * Protected-target promotions from an active source release set also
+   * require the latest passing health and smoke qualification, which is
+   * bound to that immutable release-set ID and expires after 24 hours.
    *
    * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview and immutable promotion identity.
    * @throws ApiError

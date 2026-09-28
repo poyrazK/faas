@@ -2701,7 +2701,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
 
 #### projects environments list
 
@@ -2749,6 +2749,29 @@ List release graphs and their retention deadlines
 List live workload deployments
 
 `gregale projects environments releases`
+
+#### projects environments qualify
+
+Run health and smoke GET probes against exact active release-set deployments
+
+`gregale projects environments qualify <project-slug> <environment-slug> --profile <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--profile <FILE>` | YAML probe profile defining every release-set workload | required |
+
+#### projects environments preflight
+
+Qualify the source release and check promotion readiness for CI
+
+`gregale projects environments preflight <project-slug> --from <ENV> --to <ENV> --profile <FILE> [--sync-config]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment to qualify and promote | required |
+| `--to <ENV>` | target environment to check | required |
+| `--profile <FILE>` | YAML probe profile defining every source workload | required |
+| `--sync-config` | include non-secret source config in the promotion preview |  |
 
 #### projects environments history
 

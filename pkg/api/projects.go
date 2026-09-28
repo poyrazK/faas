@@ -470,22 +470,68 @@ type ProjectEnvironmentPromotionChange struct {
 // ProjectEnvironmentPromotionPreviewResponse is a read-only promotion plan
 // between two registered environments in one project.
 type ProjectEnvironmentPromotionPreviewResponse struct {
-	ProjectSlug            string                               `json:"project_slug"`
-	FromEnvironment        string                               `json:"from_environment"`
-	ToEnvironment          string                               `json:"to_environment"`
-	SyncConfig             bool                                 `json:"sync_config,omitempty"`
-	ToEnvironmentProtected bool                                 `json:"to_environment_protected"`
-	ApprovalRequired       bool                                 `json:"approval_required"`
-	CanPromote             bool                                 `json:"can_promote"`
-	BlockingReasons        []string                             `json:"blocking_reasons,omitempty"`
-	ConfigDiff             ProjectEnvironmentConfigDiffResponse `json:"config_diff"`
-	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
-	FromReleaseSet         *ProjectReleaseSetResponse           `json:"from_release_set,omitempty"`
-	ToReleaseSet           *ProjectReleaseSetResponse           `json:"to_release_set,omitempty"`
-	ReleaseGraphMode       bool                                 `json:"release_graph_mode"`
-	ReleaseTTLSeconds      int                                  `json:"release_ttl_seconds,omitempty"`
-	PromotionHash          string                               `json:"promotion_hash"`
-	PromotionToken         string                               `json:"promotion_token"`
+	ProjectSlug            string                                   `json:"project_slug"`
+	FromEnvironment        string                                   `json:"from_environment"`
+	ToEnvironment          string                                   `json:"to_environment"`
+	SyncConfig             bool                                     `json:"sync_config,omitempty"`
+	ToEnvironmentProtected bool                                     `json:"to_environment_protected"`
+	ApprovalRequired       bool                                     `json:"approval_required"`
+	CanPromote             bool                                     `json:"can_promote"`
+	BlockingReasons        []string                                 `json:"blocking_reasons,omitempty"`
+	ConfigDiff             ProjectEnvironmentConfigDiffResponse     `json:"config_diff"`
+	Changes                []ProjectEnvironmentPromotionChange      `json:"changes"`
+	FromReleaseSet         *ProjectReleaseSetResponse               `json:"from_release_set,omitempty"`
+	ToReleaseSet           *ProjectReleaseSetResponse               `json:"to_release_set,omitempty"`
+	ReleaseGraphMode       bool                                     `json:"release_graph_mode"`
+	ReleaseTTLSeconds      int                                      `json:"release_ttl_seconds,omitempty"`
+	QualificationRequired  bool                                     `json:"qualification_required,omitempty"`
+	Qualification          *ProjectEnvironmentQualificationResponse `json:"qualification,omitempty"`
+	PromotionHash          string                                   `json:"promotion_hash"`
+	PromotionToken         string                                   `json:"promotion_token"`
+}
+
+// ProjectEnvironmentQualificationCheck is a closed-schema result submitted
+// for one required check. Free-form logs are intentionally not accepted.
+type ProjectEnvironmentQualificationCheck struct {
+	Name    string                                  `json:"name"`
+	Status  string                                  `json:"status"`
+	Results []ProjectEnvironmentQualificationResult `json:"results"`
+}
+
+// ProjectEnvironmentQualificationResult is one non-secret probe outcome
+// against a workload's exact deployment in a release set.
+type ProjectEnvironmentQualificationResult struct {
+	WorkloadSlug string `json:"workload_slug"`
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+	HTTPStatus   *int   `json:"http_status,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+}
+
+// CreateProjectEnvironmentQualificationRequest records bounded probes for one
+// active release set and the exact non-secret environment configuration tested.
+type CreateProjectEnvironmentQualificationRequest struct {
+	ReleaseSetID         string                                 `json:"release_set_id"`
+	ConfigurationVersion int64                                  `json:"configuration_version"`
+	ConfigurationHash    string                                 `json:"configuration_hash"`
+	SecretRevisionHashes map[string]string                      `json:"secret_revision_hashes"`
+	Checks               []ProjectEnvironmentQualificationCheck `json:"checks"`
+}
+
+// ProjectEnvironmentQualificationResponse identifies a short-lived
+// qualification for one immutable release set and configuration snapshot. It
+// contains no secret data.
+type ProjectEnvironmentQualificationResponse struct {
+	ID                   string                                 `json:"id"`
+	Environment          string                                 `json:"environment"`
+	ReleaseSetID         string                                 `json:"release_set_id"`
+	ConfigurationVersion int64                                  `json:"configuration_version"`
+	ConfigurationHash    string                                 `json:"configuration_hash"`
+	SecretRevisionHashes map[string]string                      `json:"secret_revision_hashes"`
+	Status               string                                 `json:"status"`
+	Checks               []ProjectEnvironmentQualificationCheck `json:"checks"`
+	CreatedAt            time.Time                              `json:"created_at"`
+	ExpiresAt            time.Time                              `json:"expires_at"`
 }
 
 // PromoteProjectEnvironmentRequest executes a previously previewed

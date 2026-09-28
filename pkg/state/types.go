@@ -6674,6 +6674,7 @@ type ProjectEnvironmentPromotion struct {
 	PromotionHash                string
 	ReleaseGraphMode             bool
 	SourceReleaseSetID           string
+	SourceQualificationID        string
 	PreviousTargetReleaseSetID   string
 	TargetReleaseSetID           string
 	RestoredTargetReleaseSetID   string
@@ -8034,6 +8035,7 @@ type OIDCExchangedToken struct {
 	ID        string
 	AccountID string
 	TokenHash []byte
+	Scopes    []string
 	ExpiresAt time.Time
 	IssuerURL string
 	Subject   string
@@ -8059,10 +8061,16 @@ type OIDCExchangedToken struct {
 // method set must be on the canonical type. The pkg/oidc-side
 // alias gets the method for free.
 func (e OIDCExchangedToken) ToAPIKey() APIKey {
+	scopes := append([]string(nil), e.Scopes...)
+	if len(scopes) == 0 {
+		// Legacy rows and tests created before the scopes column existed
+		// retain the original OIDC deploy-only capability.
+		scopes = []string{api.ScopeDeployWrite}
+	}
 	return APIKey{
 		ID:        e.ID,
 		AccountID: e.AccountID,
-		Scopes:    []string{"deploy:write"},
+		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
 	}
 }

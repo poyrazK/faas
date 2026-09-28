@@ -56,6 +56,11 @@ curl -X POST https://api.example.com/v1/auth/oidc/exchange \
 ```
 
 The response uses the OAuth token shape (`access_token`, `token_type`,
-`issued_token_type`, `expires_in`, and `scope`). Gregale's profile issues only
-`deploy:write` bearer tokens; the existing JSON body (`provider`, `token`, and
-`aud`) remains available for clients that use the original contract.
+`issued_token_type`, `expires_in`, and `scope`). This RFC 8693 profile remains
+deploy-only. The legacy JSON body (`provider`, `token`, and `aud`) also remains
+available and defaults to the same deploy-only bearer. Its optional closed
+`capability: environment-preflight` profile instead grants only
+`project_environments:read` and `project_environments:qualify`. The
+environment-preflight GitHub Action uses that profile to qualify a source
+release set and check promotion policy without receiving deployment or secret
+permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).

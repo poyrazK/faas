@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
+import type { ProjectEnvironmentQualificationResponse } from './ProjectEnvironmentQualificationResponse.js';
 import type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';
 /**
  * Read-only promotion preview between two registered project environments.
@@ -38,6 +39,14 @@ export type ProjectEnvironmentPromotionPreviewResponse = {
    * Compatibility window used by the promoted release graph.
    */
   release_ttl_seconds?: number;
+  /**
+   * True when a protected-target promotion requires a fresh source qualification.
+   */
+  qualification_required?: boolean;
+  /**
+   * Latest qualification for the active source release set, including failed or expired receipts.
+   */
+  qualification?: ProjectEnvironmentQualificationResponse;
   promotion_hash: string;
   promotion_token: string;
 };

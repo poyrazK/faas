@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
     from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+    from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
     from ..models.project_release_set_response import ProjectReleaseSetResponse
 
 
@@ -45,6 +46,11 @@ class ProjectEnvironmentPromotionPreviewResponse:
     expires_at is set."""
     release_ttl_seconds: int | Unset = UNSET
     """Compatibility window used by the promoted release graph."""
+    qualification_required: bool | Unset = UNSET
+    """True when a protected-target promotion requires a fresh source qualification."""
+    qualification: ProjectEnvironmentQualificationResponse | Unset = UNSET
+    """Non-secret, 24-hour qualification receipt for an immutable release set and the exact source configuration
+    and per-workload secret revision snapshots probed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +95,12 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         release_ttl_seconds = self.release_ttl_seconds
 
+        qualification_required = self.qualification_required
+
+        qualification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.qualification, Unset):
+            qualification = self.qualification.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -116,6 +128,10 @@ class ProjectEnvironmentPromotionPreviewResponse:
             field_dict["to_release_set"] = to_release_set
         if release_ttl_seconds is not UNSET:
             field_dict["release_ttl_seconds"] = release_ttl_seconds
+        if qualification_required is not UNSET:
+            field_dict["qualification_required"] = qualification_required
+        if qualification is not UNSET:
+            field_dict["qualification"] = qualification
 
         return field_dict
 
@@ -123,6 +139,7 @@ class ProjectEnvironmentPromotionPreviewResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
         from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+        from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
         from ..models.project_release_set_response import ProjectReleaseSetResponse
 
         d = dict(src_dict)
@@ -173,6 +190,15 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         release_ttl_seconds = d.pop("release_ttl_seconds", UNSET)
 
+        qualification_required = d.pop("qualification_required", UNSET)
+
+        _qualification = d.pop("qualification", UNSET)
+        qualification: ProjectEnvironmentQualificationResponse | Unset
+        if isinstance(_qualification, Unset):
+            qualification = UNSET
+        else:
+            qualification = ProjectEnvironmentQualificationResponse.from_dict(_qualification)
+
         project_environment_promotion_preview_response = cls(
             project_slug=project_slug,
             from_environment=from_environment,
@@ -190,6 +216,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
             from_release_set=from_release_set,
             to_release_set=to_release_set,
             release_ttl_seconds=release_ttl_seconds,
+            qualification_required=qualification_required,
+            qualification=qualification,
         )
 
         project_environment_promotion_preview_response.additional_properties = d

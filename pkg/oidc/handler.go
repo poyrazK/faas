@@ -216,9 +216,16 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Token = strings.TrimSpace(req.Token)
 	req.Audience = strings.TrimSpace(req.Audience)
+	req.Capability = strings.TrimSpace(req.Capability)
 	if req.Provider == "" || req.Token == "" || req.Audience == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Validation failed", "provider, token, and aud are required"))
+		return
+	}
+	scopes, err := OIDCBearerScopesForCapability(req.Capability)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Validation failed", err.Error()))
 		return
 	}
 
@@ -327,6 +334,7 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		Subject:   claims.Subject,
 		Audience:  claims.Aud,
 		JTI:       claims.JTI,
+		Scopes:    scopes,
 	}
 	// Insert returns the server-minted row id (gen_random_uuid at
 	// the SQL layer; uuid.NewString in memstore). The id is the
@@ -349,12 +357,14 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 			"subject":     claims.Subject,
 			"subject_jti": claims.JTI,
 			"expires_at":  row.ExpiresAt,
+			"scopes":      scopes,
 		})
 	}
 	writeJSON(w, http.StatusOK, ExchangeResponse{
 		Bearer:    plaintext,
 		ExpiresIn: int(math.Ceil(expiresAt.Sub(now).Seconds())),
 		TokenID:   tokenID,
+		Scopes:    scopes,
 	})
 }
 

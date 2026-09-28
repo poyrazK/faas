@@ -1931,10 +1931,10 @@ limit 1;
 -- Returns the full row (with created_at server-stamped).
 insert into oidc_exchanged_tokens
     (account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti)
-values ($1, $2, $3, $4, $5, $6, $7)
+     audience, jti, scopes)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 returning id, account_id, token_hash, expires_at, issuer_url,
-          subject, audience, coalesce(jti, '') as jti,
+          subject, audience, coalesce(jti, '') as jti, scopes,
           created_at;
 
 -- name: GetOIDCExchangedTokenByHash :one
@@ -1942,7 +1942,7 @@ returning id, account_id, token_hash, expires_at, issuer_url,
 -- layer so the pg contract is "WHERE expires_at > NOW()". The
 -- MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now();

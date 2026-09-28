@@ -240,6 +240,7 @@ func TestIsValidScope(t *testing.T) {
 		ScopeDelayedTasksRead, ScopeDelayedTasksWrite,
 		ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 		ScopeManagedPostgresManage, ScopeManagedPostgresRead,
+		ScopeProjectEnvironmentRead, ScopeProjectEnvironmentQualify,
 		ScopeGithubManage,
 	}
 	for _, s := range valid {
@@ -286,6 +287,8 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	mustContain("ScopesStorageListSurface", ScopesStorageListSurface, ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite)
 	mustContain("ScopesManagedPostgresManageSurface", ScopesManagedPostgresManageSurface, ScopeAdmin, ScopeManagedPostgresManage)
 	mustContain("ScopesManagedPostgresReadSurface", ScopesManagedPostgresReadSurface, ScopeAdmin, ScopeManagedPostgresRead)
+	mustContain("ScopesProjectEnvironmentReadSurface", ScopesProjectEnvironmentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeProjectEnvironmentRead)
+	mustContain("ScopesProjectEnvironmentQualifySurface", ScopesProjectEnvironmentQualifySurface, ScopeAdmin, ScopeDeployWrite, ScopeProjectEnvironmentQualify)
 	mustContain("ScopesGithubManageSurface", ScopesGithubManageSurface, ScopeAdmin, ScopeGithubManage)
 	mustContain("ScopesDelayedTasksReadSurface", ScopesDelayedTasksReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopeDelayedTasksRead, ScopeDelayedTasksWrite)
 	mustContain("ScopesDelayedTasksWriteSurface", ScopesDelayedTasksWriteSurface, ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite)
