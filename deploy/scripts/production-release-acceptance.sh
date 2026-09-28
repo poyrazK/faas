@@ -97,6 +97,118 @@ verify_receipt() {
 		--connect-timeout 3 --max-time 10 "${app_url%/}/" >/dev/null
 }
 
+assert_policy_bool() {
+	local file="$1" field="$2" expected="$3"
+	jq -e --arg field "$field" --argjson expected "$expected" '.[$field] == $expected' "$file" >/dev/null || {
+		echo "app policy receipt has unexpected $field (wanted $expected)" >&2
+		jq -c --arg field "$field" '{slug, ($field): .[$field]}' "$file" >&2
+		return 1
+	}
+}
+
+read_app_policy() {
+	local slug="$1" output="$2"
+	FAAS_JSON=1 "$GREGALE_BIN" app "$slug" --json >"$output"
+}
+
+set_app_policy() {
+	local slug="$1" output="$2"
+	shift 2
+	FAAS_JSON=1 "$GREGALE_BIN" app "$slug" "$@" --json >"$output"
+}
+
+wait_for_http_status() {
+	local url="$1" expected="$2" headers="$3" body="$4" status=""
+	for _ in $(seq 1 15); do
+		status="$(curl --silent --show-error --connect-timeout 3 --max-time 10 \
+			--dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url" 2>/dev/null || true)"
+		if [[ "$status" == "$expected" ]]; then
+			return 0
+		fi
+		sleep 2
+	done
+	echo "${url} returned HTTP ${status}, wanted ${expected}" >&2
+	if [[ -s "$headers" ]]; then
+		sed -n '1p' "$headers" >&2
+	fi
+	if [[ -s "$body" ]]; then
+		head -c 1024 "$body" >&2
+		echo >&2
+	fi
+	return 1
+}
+
+verify_app_policy_controls() {
+	local slug="$1"
+	local app_url="https://${slug}.${FAAS_APPS_DOMAIN}"
+	local original="$workdir/${slug}-policy-original.json"
+	local receipt="$workdir/${slug}-policy-receipt.json"
+	local headers="$workdir/${slug}-policy-headers"
+	local body="$workdir/${slug}-policy-body"
+
+	read_app_policy "$slug" "$original"
+	# Release acceptance deploys a fresh Scale-plan app. Pin its documented
+	# defaults so this contract always exercises a real transition and a later
+	# default change gets reviewed alongside the CLI behavior.
+	jq -e '
+		.maintenance_mode == false and
+		.streaming_enabled == true and
+		.websocket_enabled == true and
+		.route_metrics_enabled == true and
+		.consumer_auth_mode == "optional"
+	' "$original" >/dev/null || {
+		echo "fresh acceptance app has unexpected policy defaults" >&2
+		jq -c '{slug, maintenance_mode, streaming_enabled, websocket_enabled, route_metrics_enabled, consumer_auth_mode}' "$original" >&2
+		return 1
+	}
+
+	# The maintenance toggle must reach the public gateway, produce its
+	# documented 503 response, and return the app to its original state.
+	set_app_policy "$slug" "$receipt" --maintenance
+	assert_policy_bool "$receipt" maintenance_mode true
+	wait_for_http_status "${app_url%/}/" 503 "$headers" "$body"
+	grep -qi '^Retry-After:' "$headers"
+	jq -e '.code == "app_maintenance_mode"' "$body" >/dev/null
+	set_app_policy "$slug" "$receipt" --no-maintenance
+	assert_policy_bool "$receipt" maintenance_mode false
+	wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+
+	# Consumer auth is an independent gateway gate. Verify anonymous traffic is
+	# rejected in required mode, then restore the original optional mode.
+	set_app_policy "$slug" "$receipt" --consumer-auth-mode required
+	jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
+	wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
+	jq -e '.code == "consumer_key_required"' "$body" >/dev/null
+	set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
+	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
+	wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+
+	# Toggle the three plan-enabled transport/telemetry settings together and
+	# read back each value. A disabled WebSocket upgrade has a deterministic
+	# 501 response, which proves the gateway consumed the new app policy.
+	set_app_policy "$slug" "$receipt" --no-streaming-enabled --no-websocket --no-route-metrics
+	assert_policy_bool "$receipt" streaming_enabled false
+	assert_policy_bool "$receipt" websocket_enabled false
+	assert_policy_bool "$receipt" route_metrics_enabled false
+	local ws_status
+	ws_status="$(curl --http1.1 --silent --show-error --connect-timeout 3 --max-time 10 \
+		--dump-header "$headers" --output "$body" --write-out '%{http_code}' \
+		-H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+		-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+		"${app_url%/}/" 2>/dev/null || true)"
+	[[ "$ws_status" == 501 ]]
+	grep -qi '^x-faas-error-reason: websocket_not_on_plan' "$headers"
+
+	# Restore every changed value and verify the CLI readback matches the saved
+	# response before the acceptance app is removed by cleanup.
+	set_app_policy "$slug" "$receipt" --streaming-enabled --websocket-enabled --route-metrics
+	assert_policy_bool "$receipt" maintenance_mode false
+	assert_policy_bool "$receipt" streaming_enabled true
+	assert_policy_bool "$receipt" websocket_enabled true
+	assert_policy_bool "$receipt" route_metrics_enabled true
+	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
+}
+
 # Submit both execution shapes. Placement is capacity-ranked, not round-robin,
 # so this first wave proves both shapes but cannot guarantee node coverage.
 pids=()
@@ -121,6 +233,11 @@ done
 for output in "${outputs[@]}"; do
 	verify_receipt "$output"
 done
+
+# The released customer binary owns the complete app-policy mutation path.
+# Exercise it against one fresh production app before placement and rollout
+# checks, then restore every tested setting before the app is deleted.
+verify_app_policy_controls "${slugs[0]}"
 
 slug_csv="$(IFS=,; echo "${slugs[*]}")"
 placement_file="$workdir/placement.json"
