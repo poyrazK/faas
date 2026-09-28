@@ -41,6 +41,9 @@ receiver match an event, each gets an independent delivery ID and retry state.
 
 ## Verify each delivery
 
+The Go, Node.js, and Python SDKs provide receiver-side signature verification
+helpers and examples in [Verify outbound Gregale webhooks](webhook-receiver-verification.md).
+
 Read the raw request body, `X-Faas-Webhook-Timestamp`, and
 `X-Faas-Delivery-Id`. Compute HMAC-SHA256 with the stored secret over the
 exact bytes `<unix_timestamp>.<delivery_id>.<raw_body>`, then compare its hex

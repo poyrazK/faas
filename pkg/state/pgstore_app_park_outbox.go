@@ -20,13 +20,13 @@ func (s *PgStore) BeginAppParkTransition(ctx context.Context, appID string, expe
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current AppStatus
-	var transitionID string
+	var transitionID, wakeTransitionID string
 	err = tx.QueryRow(ctx, `
-		select status, coalesce(park_transition_id::text, '')
+		select status, coalesce(park_transition_id::text, ''), coalesce(wake_transition_id::text, '')
 		  from apps
 		 where id = $1::uuid
 		 for update
-	`, appID).Scan(&current, &transitionID)
+	`, appID).Scan(&current, &transitionID, &wakeTransitionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppParkTransition{}, false, ErrNotFound
 	}
@@ -41,6 +41,14 @@ func (s *PgStore) BeginAppParkTransition(ctx context.Context, appID string, expe
 	}
 
 	transitionID = uuid.NewString()
+	if wakeTransitionID != "" {
+		if _, err := tx.Exec(ctx, `
+			update app_wake_transitions set superseded_at = now()
+			 where id = $1::uuid and completed_at is null and superseded_at is null
+		`, wakeTransitionID); err != nil {
+			return AppParkTransition{}, false, fmt.Errorf("state: supersede app wake transition for park: %w", err)
+		}
+	}
 	if _, err := tx.Exec(ctx, `delete from app_park_transitions where app_id = $1::uuid`, appID); err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: replace old app park transition: %w", err)
 	}
@@ -51,7 +59,7 @@ func (s *PgStore) BeginAppParkTransition(ctx context.Context, appID string, expe
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
-		   set status = $2, park_transition_id = $3::uuid
+		   set status = $2, park_transition_id = $3::uuid, wake_transition_id = null
 		 where id = $1::uuid
 	`, appID, string(AppEvictedCold), transitionID); err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: update app park status: %w", err)

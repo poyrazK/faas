@@ -66,3 +66,37 @@ func TestPgAppParkTransitionRecoveryAndRetry(t *testing.T) {
 		t.Fatalf("deliveries after second park = %d, %v; want two", len(deliveries), err)
 	}
 }
+
+func TestPgAppLifecycleTransitionHealthTracksPendingOnly(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	if _, changed, err := store.BeginAppParkTransition(ctx, appID, state.AppActive); err != nil || !changed {
+		t.Fatalf("begin park transition changed=%v err=%v", changed, err)
+	}
+	health, err := store.AppLifecycleTransitionHealth(ctx)
+	if err != nil || health.ParkPendingCount != 1 || health.ParkOldestPendingAt == nil || health.WakePendingCount != 0 {
+		t.Fatalf("pending park health = %+v, %v", health, err)
+	}
+	if n, err := store.DrainDrainedAppParkTransitions(ctx, 16); err != nil || n != 1 {
+		t.Fatalf("complete park transition = %d, %v", n, err)
+	}
+	parked, err := store.AppLifecycleTransitionHealth(ctx)
+	if err != nil || parked.ParkPendingCount != 0 || parked.ParkOldestPendingAt != nil {
+		t.Fatalf("completed park health = %+v, %v", parked, err)
+	}
+	wake, changed, err := store.BeginAppWakeTransition(ctx, appID)
+	if err != nil || !changed {
+		t.Fatalf("begin wake transition = %+v changed=%v err=%v", wake, changed, err)
+	}
+	waking, err := store.AppLifecycleTransitionHealth(ctx)
+	if err != nil || waking.WakePendingCount != 1 || waking.WakeOldestPendingAt == nil || waking.ParkPendingCount != 0 {
+		t.Fatalf("pending wake health = %+v, %v", waking, err)
+	}
+	if aborted, err := store.AbortAppWakeTransition(ctx, wake.ID); err != nil || !aborted {
+		t.Fatalf("abort wake transition = %v, %v", aborted, err)
+	}
+	terminal, err := store.AppLifecycleTransitionHealth(ctx)
+	if err != nil || terminal.WakePendingCount != 0 || terminal.WakeOldestPendingAt != nil {
+		t.Fatalf("terminal wake health = %+v, %v", terminal, err)
+	}
+}

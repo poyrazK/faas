@@ -2178,6 +2178,20 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	leaderCtx = withRequestedWakeID(leaderCtx, requestedWakeID(ctx))
 	out := CoordOutcome{}
 	lifecycleChanged := false
+	wakeTransitions, hasWakeTransitions := e.store.(state.AppWakeTransitionStore)
+	var wakeTransition state.AppWakeTransition
+	rollbackWake := func() {
+		if !lifecycleChanged {
+			return
+		}
+		if hasWakeTransitions && wakeTransition.ID != "" {
+			if _, abortErr := wakeTransitions.AbortAppWakeTransition(context.WithoutCancel(leaderCtx), wakeTransition.ID); abortErr != nil {
+				e.log.Warn("sched: roll back failed app wake transition", "app", appID, "transition", wakeTransition.ID, "err", abortErr)
+			}
+			return
+		}
+		_, _ = compareAndSetAppStatus(context.WithoutCancel(leaderCtx), e.store, appID, state.AppActive, state.AppEvictedCold)
+	}
 	defer func() {
 		call.Complete(out)
 		e.wakeCoord.Release(appID, call)
@@ -2188,7 +2202,11 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// coordinator leader can claim, so concurrent/replayed wakes produce one
 	// lifecycle event.
 	if loadedApp != nil && loadedApp.Status == state.AppEvictedCold {
-		lifecycleChanged, err = compareAndSetAppStatus(leaderCtx, e.store, appID, state.AppEvictedCold, state.AppActive)
+		if hasWakeTransitions {
+			wakeTransition, lifecycleChanged, err = wakeTransitions.BeginAppWakeTransition(leaderCtx, appID)
+		} else {
+			lifecycleChanged, err = compareAndSetAppStatus(leaderCtx, e.store, appID, state.AppEvictedCold, state.AppActive)
+		}
 		if err != nil {
 			out.Err = fmt.Errorf("sched: EnsureWake: activate parked app: %w", err)
 			return out, out.Err
@@ -2197,9 +2215,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	//nolint:contextcheck // leader wake uses the detached, TTL-bounded context.
 	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
-		if lifecycleChanged {
-			_, _ = compareAndSetAppStatus(context.WithoutCancel(leaderCtx), e.store, appID, state.AppActive, state.AppEvictedCold)
-		}
+		rollbackWake()
 		out.Err = err
 		return out, err
 	}
@@ -2212,9 +2228,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// against the existing live targets (per the AdmitInstance
 	// AtCapacity contract).
 	if len(results) == 0 || results[0].AtCapacity {
-		if lifecycleChanged {
-			_, _ = compareAndSetAppStatus(context.WithoutCancel(leaderCtx), e.store, appID, state.AppActive, state.AppEvictedCold)
-		}
+		rollbackWake()
 		out.Err = ErrAtCapacity
 		return out, ErrAtCapacity
 	}
@@ -2245,6 +2259,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 		out.Additional = append(out.Additional, coordinateWakeResult(result))
 	}
 	if lifecycleChanged && out.Instance != nil {
+		eventRecorded := false
 		payload := map[string]any{
 			"app_id":      appID,
 			"slug":        loadedApp.Slug,
@@ -2253,10 +2268,28 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 			"wake_id":     out.Instance.WakeID,
 			"occurred_at": time.Now().UTC(),
 		}
-		if err := webhook.Emit(leaderCtx, e.store, appID, state.AppWebhookEventAppWoken, payload); err != nil {
+		if hasWakeTransitions && wakeTransition.ID != "" {
+			completed, completeErr := wakeTransitions.CompleteReadyAppWakeTransition(
+				leaderCtx, wakeTransition.ID, out.Instance.InstanceID, out.Instance.WakeID,
+			)
+			if completeErr != nil {
+				e.log.Warn("sched: complete ready app wake transition", "app", appID, "transition", wakeTransition.ID, "err", completeErr)
+			} else if completed {
+				eventRecorded = true
+				if outbox, ok := e.store.(state.AppWebhookEventOutboxStore); ok {
+					if _, relayErr := outbox.RelayAppWebhookEventOutboxSource(leaderCtx, state.AppWebhookEventAppWoken, wakeTransition.ID); relayErr != nil {
+						e.log.Warn("sched: relay app.woken webhook outbox", "app", appID, "transition", wakeTransition.ID, "err", relayErr)
+					}
+				}
+			} else {
+				e.log.Debug("sched: app wake transition no longer current at readiness", "app", appID, "transition", wakeTransition.ID)
+			}
+		} else if err := webhook.Emit(leaderCtx, e.store, appID, state.AppWebhookEventAppWoken, payload); err != nil {
 			e.log.Warn("sched: enqueue app.woken webhook", "app", appID, "wake_id", out.Instance.WakeID, "err", err)
+		} else {
+			eventRecorded = true
 		}
-		if e.audit != nil {
+		if eventRecorded && e.audit != nil {
 			e.audit.Emit(leaderCtx, "app.woken", &loadedApp.AccountID, payload)
 		}
 	}

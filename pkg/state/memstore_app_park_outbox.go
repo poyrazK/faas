@@ -42,6 +42,7 @@ func (m *MemStore) BeginAppParkTransition(_ context.Context, appID string, expec
 		AppParkTransition: AppParkTransition{ID: id, AppID: appID},
 		RequestedAt:       now,
 	}
+	m.clearCurrentAppWakeTransitionLocked(appID)
 	m.appParkTransitions[id] = transition
 	m.appParkTransitionByApp[appID] = id
 	changed := app.Status != AppEvictedCold

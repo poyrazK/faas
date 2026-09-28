@@ -10,18 +10,24 @@ import (
 // DeliveryHealthMetrics exposes fleet-wide signals only. Customer and webhook
 // identifiers never appear as metric labels.
 type DeliveryHealthMetrics struct {
-	overdueSeconds    prometheus.Gauge
-	heldDueCount      prometheus.Gauge
-	heldDueSeconds    prometheus.Gauge
-	deadTotal         prometheus.Counter
-	pollSuccess       prometheus.Gauge
-	outboxSuccess     prometheus.Gauge
-	retentionSuccess  prometheus.Gauge
-	retentionFailures prometheus.Counter
-	prunedTotal       prometheus.Counter
-	storageBytes      prometheus.Gauge
-	inFlight          prometheus.Gauge
-	saturated         prometheus.Gauge
+	overdueSeconds                  prometheus.Gauge
+	heldDueCount                    prometheus.Gauge
+	heldDueSeconds                  prometheus.Gauge
+	deadTotal                       prometheus.Counter
+	pollSuccess                     prometheus.Gauge
+	outboxSuccess                   prometheus.Gauge
+	retentionSuccess                prometheus.Gauge
+	retentionFailures               prometheus.Counter
+	prunedTotal                     prometheus.Counter
+	storageBytes                    prometheus.Gauge
+	inFlight                        prometheus.Gauge
+	saturated                       prometheus.Gauge
+	lifecycleTransitionPendingCount *prometheus.GaugeVec
+	lifecycleTransitionOldestAge    *prometheus.GaugeVec
+	lifecycleTransitionPollSuccess  prometheus.Gauge
+	eventOutboxPendingCount         prometheus.Gauge
+	eventOutboxOldestAge            prometheus.Gauge
+	eventOutboxPollSuccess          prometheus.Gauge
 }
 
 func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *DeliveryHealthMetrics {
@@ -74,9 +80,35 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 			Name: prefix + "_webhook_delivery_saturated",
 			Help: "One when all outbound webhook dispatch slots are reserved or running, zero otherwise.",
 		}),
+		lifecycleTransitionPendingCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prefix + "_app_lifecycle_transition_pending_count",
+			Help: "Number of pending app wake or park lifecycle transitions.",
+		}, []string{"kind"}),
+		lifecycleTransitionOldestAge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prefix + "_app_lifecycle_transition_oldest_pending_seconds",
+			Help: "Age of the oldest pending app wake or park lifecycle transition, or zero when none are pending.",
+		}, []string{"kind"}),
+		lifecycleTransitionPollSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_app_lifecycle_transition_health_poll_success",
+			Help: "One when the last app lifecycle transition health poll succeeded, zero on read failure or unsupported store.",
+		}),
+		eventOutboxPendingCount: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_event_outbox_pending_count",
+			Help: "Transactional outbound webhook events waiting to be relayed into per-webhook deliveries.",
+		}),
+		eventOutboxOldestAge: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_event_outbox_oldest_pending_seconds",
+			Help: "Age of the oldest transactional outbound webhook event waiting for relay, or zero when none are pending.",
+		}),
+		eventOutboxPollSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_event_outbox_health_poll_success",
+			Help: "One when the last transactional webhook event outbox health poll succeeded, zero on read failure or unsupported store.",
+		}),
 	}
 	reg.MustRegister(m.overdueSeconds, m.heldDueCount, m.heldDueSeconds, m.deadTotal, m.pollSuccess, m.outboxSuccess, m.retentionSuccess,
-		m.retentionFailures, m.prunedTotal, m.storageBytes, m.inFlight, m.saturated)
+		m.retentionFailures, m.prunedTotal, m.storageBytes, m.inFlight, m.saturated,
+		m.lifecycleTransitionPendingCount, m.lifecycleTransitionOldestAge, m.lifecycleTransitionPollSuccess,
+		m.eventOutboxPendingCount, m.eventOutboxOldestAge, m.eventOutboxPollSuccess)
 	return m
 }
 
@@ -100,6 +132,38 @@ func webhookDeliveryAgeSeconds(now time.Time, oldest *time.Time) float64 {
 func (m *DeliveryHealthMetrics) markPollFailed() {
 	if m != nil {
 		m.pollSuccess.Set(0)
+	}
+}
+
+func (m *DeliveryHealthMetrics) setLifecycleTransitionHealth(now time.Time, health state.AppLifecycleTransitionHealth) {
+	if m == nil {
+		return
+	}
+	m.lifecycleTransitionPendingCount.WithLabelValues("park").Set(float64(health.ParkPendingCount))
+	m.lifecycleTransitionOldestAge.WithLabelValues("park").Set(webhookDeliveryAgeSeconds(now, health.ParkOldestPendingAt))
+	m.lifecycleTransitionPendingCount.WithLabelValues("wake").Set(float64(health.WakePendingCount))
+	m.lifecycleTransitionOldestAge.WithLabelValues("wake").Set(webhookDeliveryAgeSeconds(now, health.WakeOldestPendingAt))
+	m.lifecycleTransitionPollSuccess.Set(1)
+}
+
+func (m *DeliveryHealthMetrics) markLifecycleTransitionPollFailed() {
+	if m != nil {
+		m.lifecycleTransitionPollSuccess.Set(0)
+	}
+}
+
+func (m *DeliveryHealthMetrics) setEventOutboxHealth(now time.Time, health state.AppWebhookEventOutboxHealth) {
+	if m == nil {
+		return
+	}
+	m.eventOutboxPendingCount.Set(float64(health.PendingCount))
+	m.eventOutboxOldestAge.Set(webhookDeliveryAgeSeconds(now, health.OldestPendingAt))
+	m.eventOutboxPollSuccess.Set(1)
+}
+
+func (m *DeliveryHealthMetrics) markEventOutboxPollFailed() {
+	if m != nil {
+		m.eventOutboxPollSuccess.Set(0)
 	}
 }
 

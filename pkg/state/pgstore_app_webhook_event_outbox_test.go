@@ -49,6 +49,10 @@ func TestPgUsageStatementWebhookOutboxRestartAndConcurrentRelay(t *testing.T) {
 	if err := pool.QueryRow(ctx, `select count(*) from app_webhook_event_outbox where source_id = $1`, statement.ID).Scan(&pending); err != nil || pending != 1 {
 		t.Fatalf("committed outbox events = %d, %v", pending, err)
 	}
+	health, err := store.AppWebhookEventOutboxHealth(ctx)
+	if err != nil || health.PendingCount != 1 || health.OldestPendingAt == nil {
+		t.Fatalf("pending event outbox health = %+v, %v", health, err)
+	}
 	lateInput := pgSampleWebhook(accountID, appID)
 	lateInput.EventFilter = []string{string(state.AppWebhookEventUsageStatementFinalized)}
 	lateHook, err := store.CreateAppWebhook(ctx, lateInput)
@@ -61,6 +65,10 @@ func TestPgUsageStatementWebhookOutboxRestartAndConcurrentRelay(t *testing.T) {
 	}
 	if n, err := store.DrainAppWebhookEventOutbox(ctx, 16); err != nil || n != 0 {
 		t.Fatalf("repeat relay = %d, %v", n, err)
+	}
+	cleared, err := store.AppWebhookEventOutboxHealth(ctx)
+	if err != nil || cleared.PendingCount != 0 || cleared.OldestPendingAt != nil {
+		t.Fatalf("empty event outbox health = %+v, %v", cleared, err)
 	}
 	deliveries, _, err := store.ListAppWebhookDeliveries(ctx, appID, hook.ID, 10, "")
 	if err != nil || len(deliveries) != 1 {

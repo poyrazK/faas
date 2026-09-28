@@ -4,6 +4,11 @@
 > [`api/openapi.yaml`](../../api/openapi.yaml), wrapped in a hand-written
 > façade that ships retry, RFC 7807 error sentinels, idempotency, and SSE.
 
+The SDK includes `verifyWebhook` for verifying signed outbound Gregale
+webhook requests. See
+[`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
+for usage and delivery-ID deduplication guidance.
+
 > **Heads-up: publish state.** The manifest name is now the conventional
 > scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
 > — a typo that npm rejects outright, since an unscoped name may not contain

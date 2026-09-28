@@ -106,3 +106,17 @@ export {
   type ServiceCallerVerifierOptions,
   type VerifiedServiceCaller,
 } from './servicecaller.js';
+
+// Outbound webhook receiver verification (Node-only; not re-exported by ./browser).
+export {
+  verifyWebhook,
+  WebhookVerificationError,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  WEBHOOK_DELIVERY_ID_HEADER,
+  DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS,
+  type WebhookHeaders,
+  type WebhookVerificationErrorCode,
+  type VerifiedWebhook,
+  type VerifyWebhookOptions,
+} from './webhook.js';

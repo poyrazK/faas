@@ -205,7 +205,55 @@ groups:
           family: outbound_webhooks
         annotations:
           summary: "Transactional webhook events are not reaching the delivery ledger"
-          description: "Schedd could not reconcile a drained app park or relay a transactional webhook event. Pending source records remain durable until recovery."
+          description: "Schedd could not reconcile a ready app wake or drained app park, or relay a transactional webhook event. Pending source records remain durable until recovery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookEventOutboxBacklog
+        expr: schedd_webhook_event_outbox_oldest_pending_seconds > 300
+        for: 1m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Transactional webhook event outbox is falling behind"
+          description: "The oldest committed webhook event has waited over five minutes to fan out into delivery rows. Check the pending count, relay logs, and database health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookEventOutboxHealthPollFailed
+        expr: schedd_webhook_event_outbox_health_poll_success == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Transactional webhook event outbox health cannot be read"
+          description: "Schedd's event outbox backlog poll is failing, so its pending-age metrics may be stale. Check database connectivity and schedd logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasAppLifecycleTransitionStalled
+        expr: schedd_app_lifecycle_transition_oldest_pending_seconds > 300
+        for: 1m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_lifecycle
+        annotations:
+          summary: "App {{ $labels.kind }} lifecycle transition is stalled"
+          description: "A durable app {{ $labels.kind }} transition has remained incomplete for over five minutes. Check the pending transition rows, lifecycle state, and schedd reconciliation logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasAppLifecycleTransitionHealthPollFailed
+        expr: schedd_app_lifecycle_transition_health_poll_success == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_lifecycle
+        annotations:
+          summary: "App lifecycle transition health cannot be read"
+          description: "Schedd's pending wake and park transition poll is failing, so the transition age metrics may be stale. Check database connectivity and schedd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
 
       - alert: FaasWebhookDeliveryRetentionFailed

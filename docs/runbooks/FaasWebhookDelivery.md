@@ -90,11 +90,13 @@ poll; treat them as stale until the success gauge returns to one.
 
 ## Event outbox relay failure
 
-`FaasWebhookEventOutboxRelayFailed` means a drained app park could not be
-reconciled or a transactional webhook event could not reach the delivery
-ledger. Usage statement events remain in `app_webhook_event_outbox`; incomplete
-park requests remain in `app_park_transitions`. Check schedd logs for
-`webhook: reconcile drained app parks` or `webhook: event outbox relay` and
+`FaasWebhookEventOutboxRelayFailed` means a ready app wake or drained app park
+could not be reconciled, or a transactional webhook event could not reach the
+delivery ledger. Usage statement events remain in `app_webhook_event_outbox`;
+incomplete lifecycle transitions remain in `app_park_transitions` or
+`app_wake_transitions`. Check schedd logs for
+`webhook: reconcile ready app wakes`,
+`webhook: reconcile drained app parks`, or `webhook: event outbox relay` and
 database availability. Once recovered, the event outbox row is removed in the
 same transaction that creates delivery rows.
 
@@ -112,10 +114,64 @@ ORDER BY p.requested_at;
 
 The request handlers also attempt immediate relay after statement finalization
 or app drain, so empty queues are normal. A park transition may legitimately
-wait while live instances drain. If the gauge is zero but both queries show no
-pending rows, inspect the relay error before assuming events were lost. Avoid
-manually inserting delivery rows; the unique event/subscription key and replay
-worker own fan-out.
+wait while live instances drain. Avoid manually inserting delivery rows; the
+unique event/subscription key and relay own fan-out.
+
+`FaasWebhookEventOutboxBacklog` fires when the oldest committed event has
+waited over five minutes for one minute. Compare
+`schedd_webhook_event_outbox_pending_count` and
+`schedd_webhook_event_outbox_oldest_pending_seconds` with the outbox query
+above. The relay handles bounded batches every dispatcher cycle, so a growing
+count with a successful relay signal indicates incoming events are outpacing
+fan-out capacity. Check database latency and schedd dispatch-cycle logs before
+raising the batch size.
+
+`FaasWebhookEventOutboxHealthPollFailed` means schedd cannot read the pending
+outbox snapshot for five minutes. The count and age gauges retain their last
+values on poll failure; check Postgres and the `webhook: event outbox health
+poll` log, then trust those gauges again when the poll-success metric returns
+to one.
+
+## Stalled app lifecycle transition
+
+`FaasAppLifecycleTransitionStalled` fires when the oldest pending park or wake
+transition is over five minutes old for one minute. Normal wake startup
+is bounded by 35 seconds and a park request's drain context is bounded by two
+minutes, so this threshold leaves room for ordinary lifecycle work while
+surfacing transitions that have stopped progressing. The `kind` label is
+`wake` or `park`. Check `schedd_app_lifecycle_transition_pending_count` and
+`schedd_app_lifecycle_transition_oldest_pending_seconds`; trust them only while
+`schedd_app_lifecycle_transition_health_poll_success` is one.
+
+Inspect pending source rows and verify they still own the app's current
+transition:
+
+```sql
+SELECT 'park' AS kind, p.app_id, p.id AS transition_id, p.requested_at,
+       a.status, a.park_transition_id AS current_transition_id
+FROM app_park_transitions p
+LEFT JOIN apps a ON a.id = p.app_id
+WHERE p.completed_at IS NULL AND p.superseded_at IS NULL
+UNION ALL
+SELECT 'wake' AS kind, w.app_id, w.id AS transition_id, w.requested_at,
+       a.status, a.wake_transition_id AS current_transition_id
+FROM app_wake_transitions w
+LEFT JOIN apps a ON a.id = w.app_id
+WHERE w.completed_at IS NULL AND w.superseded_at IS NULL
+ORDER BY requested_at;
+```
+
+For a wake, check whether the app has a running instance and whether the
+account is active. For a park, check whether any live instance remains. Review
+schedd logs for `webhook: reconcile ready app wakes`,
+`webhook: reconcile drained app parks`, or `webhook: app lifecycle transition
+health poll`. The dispatcher retries durable transitions on its regular
+cycle; do not complete or supersede rows manually while schedd is running.
+
+`FaasAppLifecycleTransitionHealthPollFailed` means the database snapshot
+could not be read for five minutes. Transition age metrics retain their last
+values after a failed poll. Check Postgres availability and schedd logs, then
+recheck the gauges after the poll-success metric returns to one.
 
 ## Retention and storage
 

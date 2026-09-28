@@ -32,6 +32,10 @@ at the moment of extraction). The daemon's `go.mod` is `go 1.25.13`,
 but the SDK stays on 1.23 so a customer pinned to an older Go
 toolchain can still consume it.
 
+The SDK also verifies inbound Gregale webhook deliveries. See
+[`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
+for raw-body handling and delivery-ID deduplication guidance.
+
 ## Quick start
 
 ```go

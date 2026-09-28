@@ -3817,6 +3817,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		   max_concurrency = coalesce($5, max_concurrency),
 		   status          = coalesce($6, status),
 		   park_transition_id = case when $6 is not null and $6 <> 'evicted_cold' then null else park_transition_id end,
+		   wake_transition_id = case when $6::text is not null and $6::text <> 'active' then null else wake_transition_id end,
 		   manifest        = case when $7 then $8::jsonb else manifest end,
 		   min_instances   = case
 		                        when $27 then $28
@@ -4101,7 +4102,8 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
-		        park_transition_id = case when $3 <> 'evicted_cold' then null else park_transition_id end
+		        park_transition_id = case when $3 <> 'evicted_cold' then null else park_transition_id end,
+		        wake_transition_id = case when $3 <> 'active' then null else wake_transition_id end
 		  where id = $1 and status = $2`,
 		id, string(from), string(to),
 	)

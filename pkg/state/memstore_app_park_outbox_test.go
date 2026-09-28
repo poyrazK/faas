@@ -79,3 +79,29 @@ func TestMemAppParkTransitionRecoversAndDedupesAcrossCycles(t *testing.T) {
 		t.Fatalf("park transition IDs are not UUIDs: %q %q", transition.ID, second.ID)
 	}
 }
+
+func TestMemAppWebhookEventOutboxHealthTracksPendingOnly(t *testing.T) {
+	store, ctx, account, app := webhookFixture(t)
+	hook := memSampleWebhook(account.ID, app.ID)
+	hook.EventFilter = []string{string(AppWebhookEventAppParked)}
+	if _, err := store.CreateAppWebhook(ctx, hook); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive); err != nil || !changed {
+		t.Fatalf("begin park transition changed=%v err=%v", changed, err)
+	}
+	if n, err := store.DrainDrainedAppParkTransitions(ctx, 16); err != nil || n != 1 {
+		t.Fatalf("complete park transition = %d, %v", n, err)
+	}
+	health, err := store.AppWebhookEventOutboxHealth(ctx)
+	if err != nil || health.PendingCount != 1 || health.OldestPendingAt == nil {
+		t.Fatalf("pending event outbox health = %+v, %v", health, err)
+	}
+	if n, err := store.DrainAppWebhookEventOutbox(ctx, 16); err != nil || n != 1 {
+		t.Fatalf("relay pending event = %d, %v", n, err)
+	}
+	cleared, err := store.AppWebhookEventOutboxHealth(ctx)
+	if err != nil || cleared.PendingCount != 0 || cleared.OldestPendingAt != nil {
+		t.Fatalf("empty event outbox health = %+v, %v", cleared, err)
+	}
+}

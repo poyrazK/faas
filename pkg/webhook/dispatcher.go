@@ -396,9 +396,27 @@ func (d *Dispatcher) refreshHealth(ctx context.Context) {
 	if err != nil {
 		d.HealthMetrics.markPollFailed()
 		d.log.Warn("webhook: delivery health poll", "err", err)
-		return
+	} else {
+		d.HealthMetrics.setFleetQueueHealth(now, health)
 	}
-	d.HealthMetrics.setFleetQueueHealth(now, health)
+	transitions, ok := d.store.(state.AppLifecycleTransitionHealthStore)
+	if !ok {
+		d.HealthMetrics.markLifecycleTransitionPollFailed()
+	} else if transitionHealth, err := transitions.AppLifecycleTransitionHealth(ctx); err != nil {
+		d.HealthMetrics.markLifecycleTransitionPollFailed()
+		d.log.Warn("webhook: app lifecycle transition health poll", "err", err)
+	} else {
+		d.HealthMetrics.setLifecycleTransitionHealth(now, transitionHealth)
+	}
+	outbox, ok := d.store.(state.AppWebhookEventOutboxHealthStore)
+	if !ok {
+		d.HealthMetrics.markEventOutboxPollFailed()
+	} else if outboxHealth, err := outbox.AppWebhookEventOutboxHealth(ctx); err != nil {
+		d.HealthMetrics.markEventOutboxPollFailed()
+		d.log.Warn("webhook: event outbox health poll", "err", err)
+	} else {
+		d.HealthMetrics.setEventOutboxHealth(now, outboxHealth)
+	}
 }
 
 // shutdown blocks until in-flight goroutines finish or the 10s
@@ -428,12 +446,19 @@ func (d *Dispatcher) cycle(ctx context.Context) {
 			d.log.Warn("webhook: reconcile drained app parks", "err", err)
 		}
 	}
+	wakeRelayOK := true
+	if wakes, ok := d.store.(state.AppWakeTransitionStore); ok {
+		if _, err := wakes.DrainReadyAppWakeTransitions(ctx, 16); err != nil {
+			wakeRelayOK = false
+			d.log.Warn("webhook: reconcile ready app wakes", "err", err)
+		}
+	}
 	if outbox, ok := d.store.(state.AppWebhookEventOutboxStore); ok {
 		if _, err := outbox.DrainAppWebhookEventOutbox(ctx, 16); err != nil {
 			d.HealthMetrics.setOutboxRelaySuccess(false)
 			d.log.Warn("webhook: event outbox relay", "err", err)
 		} else {
-			d.HealthMetrics.setOutboxRelaySuccess(parkRelayOK)
+			d.HealthMetrics.setOutboxRelaySuccess(parkRelayOK && wakeRelayOK)
 		}
 	}
 	limit := d.reserveClaimSlots()

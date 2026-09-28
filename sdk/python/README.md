@@ -1,6 +1,11 @@
 # faas_sdk
 A client library for accessing the Gregale FaaS REST API
 
+The SDK includes `verify_webhook` for verifying signed outbound Gregale
+webhook requests. See
+[`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
+for usage and delivery-ID deduplication guidance.
+
 ## Agent execution streams
 
 The `FaaSClient` façade includes a typed, resumable iterator for disposable

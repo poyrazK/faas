@@ -621,6 +621,8 @@ type MemStore struct {
 	appWebhookEventOutbox      map[string]appWebhookOutboxEvent
 	appParkTransitionByApp     map[string]string
 	appParkTransitions         map[string]memAppParkTransition
+	appWakeTransitionByApp     map[string]string
+	appWakeTransitions         map[string]memAppWakeTransition
 	// apiConsumerUsageStatementHandoffs is keyed by statement ID. A statement
 	// can be handed off at most once, while the implementation also rejects
 	// reuse of an external invoice reference within an account.
@@ -1176,6 +1178,8 @@ func NewMemStore() *MemStore {
 		appWebhookEventOutbox:             map[string]appWebhookOutboxEvent{},
 		appParkTransitionByApp:            map[string]string{},
 		appParkTransitions:                map[string]memAppParkTransition{},
+		appWakeTransitionByApp:            map[string]string{},
+		appWakeTransitions:                map[string]memAppWakeTransition{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
 		platformTenantStatements:          map[string]PlatformTenantStatement{},
 		platformTenantStatementHandoffs:   map[string]PlatformTenantStatementHandoff{},
@@ -5512,6 +5516,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 		if *p.Status != AppEvictedCold {
 			m.clearCurrentAppParkTransitionLocked(id)
 		}
+		if *p.Status != AppActive {
+			m.clearCurrentAppWakeTransitionLocked(id)
+		}
 	}
 	if p.Manifest != nil {
 		a.Manifest = *p.Manifest
@@ -5837,6 +5844,9 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 	a.Status = to
 	if to != AppEvictedCold {
 		m.clearCurrentAppParkTransitionLocked(id)
+	}
+	if to != AppActive {
+		m.clearCurrentAppWakeTransitionLocked(id)
 	}
 	m.apps[id] = a
 	return true, nil

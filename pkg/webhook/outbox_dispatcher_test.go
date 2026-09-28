@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"testing"
@@ -74,5 +75,56 @@ func TestDispatcherCycleCompletesDrainedAppParkTransition(t *testing.T) {
 	deliveries, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 10, "")
 	if err != nil || len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppParked {
 		t.Fatalf("recovered parked deliveries = %+v, %v", deliveries, err)
+	}
+}
+
+func TestDispatcherCycleCompletesReadyAppWakeTransition(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "wake-outbox-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "wake-outbox-" + uuid.NewString(), RAMMB: 512, Status: state.AppEvictedCold,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(ctx, state.AppWebhook{
+		AccountID: account.ID, AppID: app.ID, TargetURL: "https://example.com/woken",
+		EventFilter: []string{string(state.AppWebhookEventAppWoken)}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, changed, err := store.BeginAppWakeTransition(ctx, app.ID)
+	if err != nil || !changed {
+		t.Fatalf("begin wake transition = %+v changed=%v err=%v", transition, changed, err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:ready-wake", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node-1", uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDispatcher(store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d.Cap = 0 // prove recovery and relay run without delivery claim slots
+	d.cycle(ctx)
+	d.cycle(ctx)
+	deliveries, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken {
+		t.Fatalf("recovered woken deliveries = %+v, %v", deliveries, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(deliveries[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["instance_id"] != instance.ID {
+		t.Fatalf("recovered app.woken payload = %+v", payload)
 	}
 }
