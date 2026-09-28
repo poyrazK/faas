@@ -364,6 +364,78 @@ func TestDashboardHandler_OrgActivityFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func TestDashboardHandler_OrgAppInventoryShowsOnlySafeWorkspaceSummaries(t *testing.T) {
+	srv, cookie, store, _ := newAuthedDashboardServerFull(t)
+	owner, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("load owner account: %v", err)
+	}
+	org, err := store.CreateOrg(t.Context(), state.Org{Slug: "apps-dashboard-test", Name: "Apps Dashboard Test"})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, owner.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatalf("add owner membership: %v", err)
+	}
+	collaborator, err := store.CreateAccount(t.Context(), "collaborator-dashboard@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("create collaborator: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, collaborator.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatalf("add collaborator membership: %v", err)
+	}
+	foreignOrg, err := store.CreateOrg(t.Context(), state.Org{Slug: "apps-foreign-test", Name: "Foreign Workspace"})
+	if err != nil {
+		t.Fatalf("create foreign workspace: %v", err)
+	}
+
+	createdAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	workspaceApps := []state.App{
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "owner-workspace-service", Type: state.AppTypeApp, Runtime: "node22", CreatedAt: createdAt, Manifest: state.AppManifest{Env: map[string]string{"PRIVATE_TOKEN": "not-for-org-dashboard"}}},
+		{AccountID: collaborator.ID, OrgID: org.ID, Slug: "collaborator-function", Type: state.AppTypeFunction, Runtime: "python313", CreatedAt: createdAt.Add(time.Minute)},
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "deleted-workspace-app", Status: state.AppDeleted},
+		{AccountID: owner.ID, OrgID: foreignOrg.ID, Slug: "foreign-workspace-app"},
+		{AccountID: owner.ID, Slug: "unattributed-app"},
+	}
+	var hiddenIDs []string
+	for _, app := range workspaceApps {
+		created, err := store.CreateApp(t.Context(), app)
+		if err != nil {
+			t.Fatalf("create app %q: %v", app.Slug, err)
+		}
+		if app.Status == state.AppDeleted || app.OrgID != org.ID {
+			hiddenIDs = append(hiddenIDs, created.ID)
+		}
+	}
+
+	record := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboard/orgs/"+org.Slug, nil)
+	request.AddCookie(cookie)
+	srv.ServeHTTP(record, request)
+	if record.Code != http.StatusOK {
+		t.Fatalf("org detail status=%d body=%s", record.Code, record.Body.String())
+	}
+	body := record.Body.String()
+	for _, want := range []string{"<h2>Apps</h2>", "owner-workspace-service", "collaborator-function", "node22", "python313", "active", "app", "function"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org detail missing %q\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"deleted-workspace-app", "foreign-workspace-app", "unattributed-app", "not-for-org-dashboard", owner.ID, collaborator.ID} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("org detail unexpectedly contains %q\n%s", unwanted, body)
+		}
+	}
+	for _, id := range hiddenIDs {
+		if strings.Contains(body, id) {
+			t.Errorf("org detail exposed app id %q", id)
+		}
+	}
+	if strings.Contains(body, `href="/dashboard/apps/owner-workspace-service"`) || strings.Contains(body, `href="/dashboard/apps/collaborator-function"`) {
+		t.Errorf("org app summaries link into creator-scoped app routes\n%s", body)
+	}
+}
+
 func appendDashboardActivity(t *testing.T, store *state.MemStore, orgID uuid.UUID, occurredAt time.Time, kind string, actor state.OrgActivityActorType, resource, sourceID string) {
 	t.Helper()
 	_, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{

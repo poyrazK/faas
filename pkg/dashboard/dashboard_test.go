@@ -634,6 +634,10 @@ func TestRender_OrgsPage(t *testing.T) {
 		Data: dashboard.OrgDetailData{
 			Org:         dashboard.OrgListItem{Slug: "acme", Name: "Acme Co", Plan: "scale", Role: "owner", SeatUsed: 2, SeatLimit: 200},
 			CallersRole: "owner",
+			Apps: []dashboard.OrgAppItem{
+				{Slug: "payments", Type: "app", Runtime: "node22", Status: "active", CreatedAt: "2026-09-28 10:00 UTC"},
+				{Slug: "worker", Type: "function", Runtime: "python313", Status: "active", CreatedAt: "2026-09-28 10:01 UTC"},
+			},
 			Members: []dashboard.OrgMemberItem{
 				{AccountID: "a1", Email: "ops@acme.test", Role: "owner", JoinedAt: "2026-01-04"},
 				{AccountID: "a2", Email: "eng@acme.test", Role: "admin", JoinedAt: "2026-02-09"},
@@ -660,6 +664,11 @@ func TestRender_OrgsPage(t *testing.T) {
 		"<strong>scale</strong>",
 		"Your role: <strong>owner</strong>",
 		"<strong>2</strong> / <strong>200</strong>",
+		// Workspace app inventory is a display-only safe summary.
+		"<h2>Apps</h2>",
+		"<code>payments</code>",
+		"python313",
+		"2026-09-28 10:00 UTC",
 		// Members table.
 		"ops@acme.test",
 		"eng@acme.test",

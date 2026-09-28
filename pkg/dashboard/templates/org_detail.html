@@ -65,6 +65,30 @@
         </div>
       {{end}}
 
+      <h2>Apps</h2>
+      {{if $d.AppsError}}
+        <p class="muted">Apps could not be loaded: {{$d.AppsError}}</p>
+      {{else if $d.Apps}}
+        <table>
+          <thead>
+            <tr><th>App</th><th>Type</th><th>Runtime</th><th>Status</th><th>Created</th></tr>
+          </thead>
+          <tbody>
+            {{range $d.Apps}}
+              <tr>
+                <td><code>{{.Slug}}</code></td>
+                <td>{{.Type}}</td>
+                <td>{{if .Runtime}}{{.Runtime}}{{else}}<span class="muted">—</span>{{end}}</td>
+                <td><span class="badge">{{.Status}}</span></td>
+                <td>{{.CreatedAt}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="muted">No apps are attributed to this organization yet.</p>
+      {{end}}
+
       <h2>Activity</h2>
       <p class="muted">Recent infrastructure changes across this organization.</p>
       <form class="activity-filters" method="get" action="/dashboard/orgs/{{$d.Org.Slug}}">

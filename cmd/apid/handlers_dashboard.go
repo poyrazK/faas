@@ -2588,6 +2588,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		data.Invitations = items
 	}
+	populateOrgApps(r.Context(), log, s.store, org, &data)
 	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
 
 	page := dashboard.Page{
@@ -2598,6 +2599,32 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
+	}
+}
+
+// populateOrgApps loads only the safe summary fields for apps whose persisted
+// organization matches this already-authorized org detail page.
+func populateOrgApps(ctx context.Context, log *slog.Logger, store state.Store, org state.Org, data *dashboard.OrgDetailData) {
+	lister, ok := store.(state.OrgAppLister)
+	if !ok {
+		data.AppsError = "app inventory is unavailable for this storage backend"
+		return
+	}
+	apps, err := lister.ListAppsByOrg(ctx, org.ID)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: ListAppsByOrg", "org_id", org.ID, "err", err)
+		data.AppsError = "app inventory is temporarily unavailable"
+		return
+	}
+	data.Apps = make([]dashboard.OrgAppItem, 0, len(apps))
+	for _, app := range apps {
+		if app.OrgID != org.ID || app.Status == state.AppDeleted {
+			continue
+		}
+		data.Apps = append(data.Apps, dashboard.OrgAppItem{
+			Slug: app.Slug, Type: string(app.Type), Runtime: app.Runtime,
+			Status: string(app.Status), CreatedAt: app.CreatedAt.UTC().Format("2006-01-02 15:04 MST"),
+		})
 	}
 }
 
