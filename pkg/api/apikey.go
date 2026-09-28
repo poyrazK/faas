@@ -390,9 +390,10 @@ const (
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
-	ScopePlatformTenantUsageRead      = "platform_tenant:usage:read"
-	ScopePlatformTenantStatementsRead = "platform_tenant:statements:read"
-	ScopePlatformTenantActivationRead = "platform_tenant:activation:read"
+	ScopePlatformTenantUsageRead       = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead  = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead  = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage = "platform_tenant:hostnames:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -551,7 +552,8 @@ var (
 	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
 	ScopesGithubManageSurface          = []string{ScopeAdmin, ScopeGithubManage}
 	// Tenant-self scopes are intentionally not satisfied by account admin keys.
-	ScopesPlatformTenantUsageReadSurface      = []string{ScopePlatformTenantUsageRead}
-	ScopesPlatformTenantStatementsReadSurface = []string{ScopePlatformTenantStatementsRead}
-	ScopesPlatformTenantActivationReadSurface = []string{ScopePlatformTenantActivationRead}
+	ScopesPlatformTenantUsageReadSurface       = []string{ScopePlatformTenantUsageRead}
+	ScopesPlatformTenantStatementsReadSurface  = []string{ScopePlatformTenantStatementsRead}
+	ScopesPlatformTenantActivationReadSurface  = []string{ScopePlatformTenantActivationRead}
+	ScopesPlatformTenantHostnamesManageSurface = []string{ScopePlatformTenantHostnamesManage}
 )

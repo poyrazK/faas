@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,9 +33,42 @@ type PlatformTenantHostnamePolicyStore interface {
 	SetPlatformTenantHostnamePolicy(context.Context, string, string, []string, int) (PlatformTenantHostnamePolicy, error)
 }
 
+type PlatformTenantDelegatedHostnameResult struct {
+	Hostname TenantHostname
+	Action   string
+}
+
+type PlatformTenantDelegatedHostnameQuotaError struct {
+	Limit    int
+	Observed int
+}
+
+func (e *PlatformTenantDelegatedHostnameQuotaError) Error() string {
+	return "state: platform tenant delegated hostname limit exceeded"
+}
+
+func (e *PlatformTenantDelegatedHostnameQuotaError) Is(target error) bool {
+	_, ok := target.(*PlatformTenantDelegatedHostnameQuotaError)
+	return ok
+}
+
 var (
-	_ PlatformTenantHostnamePolicyStore = (*PgStore)(nil)
-	_ PlatformTenantHostnamePolicyStore = (*MemStore)(nil)
+	ErrPlatformTenantHostnameDelegationDisabled = errors.New("state: platform tenant hostname delegation is disabled")
+	ErrPlatformTenantHostnameSuffixNotAllowed   = errors.New("state: hostname is outside the platform tenant delegation policy")
+	ErrPlatformTenantSuspended                  = errors.New("state: platform tenant is suspended")
+)
+
+// PlatformTenantDelegatedHostnameStore atomically checks the tenant policy and
+// creates or replays a tenant-owned hostname intent.
+type PlatformTenantDelegatedHostnameStore interface {
+	CreatePlatformTenantDelegatedHostname(context.Context, string, string, string, string, string, api.Limits) (PlatformTenantDelegatedHostnameResult, error)
+}
+
+var (
+	_ PlatformTenantHostnamePolicyStore    = (*PgStore)(nil)
+	_ PlatformTenantHostnamePolicyStore    = (*MemStore)(nil)
+	_ PlatformTenantDelegatedHostnameStore = (*PgStore)(nil)
+	_ PlatformTenantDelegatedHostnameStore = (*MemStore)(nil)
 )
 
 func validPlatformTenantHostnamePolicy(accountID, tenantID string, suffixes []string, maxHostnames int) bool {
@@ -110,4 +145,87 @@ func samePlatformTenantStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func platformTenantHostnameAllowed(hostname string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if hostname == suffix || len(hostname) > len(suffix) && hostname[len(hostname)-len(suffix)-1] == '.' && hostname[len(hostname)-len(suffix):] == suffix {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MemStore) CreatePlatformTenantDelegatedHostname(_ context.Context, accountID, tenantID, surfaceID, hostname, challengeToken string, limits api.Limits) (PlatformTenantDelegatedHostnameResult, error) {
+	hostname = surfaceHostnameCanonical(hostname)
+	if !validPlatformTenantHostnamePolicy(accountID, tenantID, nil, 0) || !validPlatformTenantHostname(hostname) ||
+		!validUUID(surfaceID) || challengeToken == "" || limits.TenantHostnamesPerSurface < 1 {
+		return PlatformTenantDelegatedHostnameResult{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenant, ok := m.platformTenants[tenantID]
+	if !ok || tenant.AccountID != accountID {
+		return PlatformTenantDelegatedHostnameResult{}, ErrNotFound
+	}
+	if tenant.Status != PlatformTenantActive {
+		return PlatformTenantDelegatedHostnameResult{}, ErrPlatformTenantSuspended
+	}
+	surface, ok := m.tenantSurfaces[surfaceID]
+	if !ok || surface.AccountID != accountID || surface.Status == SurfaceStatusDeleted || m.platformTenantBySurface[surfaceID] != tenantID {
+		return PlatformTenantDelegatedHostnameResult{}, ErrNotFound
+	}
+	if existing, ok := m.tenantHostnames[hostname]; ok {
+		if existing.SurfaceID != surfaceID {
+			return PlatformTenantDelegatedHostnameResult{}, ErrConflict
+		}
+		return PlatformTenantDelegatedHostnameResult{Hostname: existing, Action: "unchanged"}, nil
+	}
+	policy, ok := m.platformTenantHostnamePolicies[tenantID]
+	if !ok || len(policy.AllowedSuffixes) == 0 || policy.MaxHostnames == 0 {
+		return PlatformTenantDelegatedHostnameResult{}, ErrPlatformTenantHostnameDelegationDisabled
+	}
+	if !platformTenantHostnameAllowed(hostname, policy.AllowedSuffixes) {
+		return PlatformTenantDelegatedHostnameResult{}, ErrPlatformTenantHostnameSuffixNotAllowed
+	}
+	if existing, ok := m.tenantHostnames[strings.ToLower(hostname)]; ok {
+		if existing.SurfaceID != surfaceID {
+			return PlatformTenantDelegatedHostnameResult{}, ErrConflict
+		}
+		return PlatformTenantDelegatedHostnameResult{Hostname: existing, Action: "unchanged"}, nil
+	}
+	seen := make(map[string]struct{})
+	tenantObserved, surfaceVerified := 0, 0
+	for _, existing := range m.tenantHostnames {
+		if _, duplicate := seen[existing.ID]; duplicate {
+			continue
+		}
+		seen[existing.ID] = struct{}{}
+		linked := m.platformTenantBySurface[existing.SurfaceID]
+		if linked != tenantID {
+			continue
+		}
+		if parent := m.tenantSurfaces[existing.SurfaceID]; parent.Status != SurfaceStatusDeleted {
+			tenantObserved++
+		}
+		if existing.SurfaceID == surfaceID && existing.Verified() {
+			surfaceVerified++
+		}
+	}
+	if tenantObserved >= policy.MaxHostnames {
+		return PlatformTenantDelegatedHostnameResult{}, &PlatformTenantDelegatedHostnameQuotaError{Limit: policy.MaxHostnames, Observed: tenantObserved}
+	}
+	if surfaceVerified >= limits.TenantHostnamesPerSurface {
+		return PlatformTenantDelegatedHostnameResult{}, &TenantHostnameQuotaError{Limit: limits.TenantHostnamesPerSurface,
+			Observed: surfaceVerified, SurfaceID: surfaceID}
+	}
+	now := time.Now().UTC()
+	created := TenantHostname{ID: uuid.NewString(), SurfaceID: surfaceID, Hostname: hostname,
+		ChallengeToken: challengeToken, CreatedAt: now}
+	m.tenantHostnames[hostname], m.tenantHostnames[strings.ToLower(hostname)] = created, created
+	return PlatformTenantDelegatedHostnameResult{Hostname: created, Action: "created"}, nil
+}
+
+func surfaceHostnameCanonical(hostname string) string {
+	return strings.ToLower(strings.TrimSpace(hostname))
 }

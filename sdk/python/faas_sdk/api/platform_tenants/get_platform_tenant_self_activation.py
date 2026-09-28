@@ -6,7 +6,6 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.platform_tenant_self_activation_response import PlatformTenantSelfActivationResponse
-from ...models.problem import Problem
 from ...types import Response
 
 
@@ -22,31 +21,11 @@ def _get_kwargs() -> dict[str, Any]:
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> PlatformTenantSelfActivationResponse | Problem | None:
+) -> PlatformTenantSelfActivationResponse | None:
     if response.status_code == 200:
         response_200 = PlatformTenantSelfActivationResponse.from_dict(response.json())
 
         return response_200
-
-    if response.status_code == 401:
-        response_401 = Problem.from_dict(response.json())
-
-        return response_401
-
-    if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
-
-        return response_402
-
-    if response.status_code == 403:
-        response_403 = Problem.from_dict(response.json())
-
-        return response_403
-
-    if response.status_code == 404:
-        response_404 = Problem.from_dict(response.json())
-
-        return response_404
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -56,7 +35,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[PlatformTenantSelfActivationResponse | Problem]:
+) -> Response[PlatformTenantSelfActivationResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -68,7 +47,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[PlatformTenantSelfActivationResponse | Problem]:
+) -> Response[PlatformTenantSelfActivationResponse]:
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
@@ -81,7 +60,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[PlatformTenantSelfActivationResponse | Problem]
+        Response[PlatformTenantSelfActivationResponse]
     """
 
     kwargs = _get_kwargs()
@@ -96,7 +75,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-) -> PlatformTenantSelfActivationResponse | Problem | None:
+) -> PlatformTenantSelfActivationResponse | None:
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
@@ -109,7 +88,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        PlatformTenantSelfActivationResponse | Problem
+        PlatformTenantSelfActivationResponse
     """
 
     return sync_detailed(
@@ -120,7 +99,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[PlatformTenantSelfActivationResponse | Problem]:
+) -> Response[PlatformTenantSelfActivationResponse]:
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
@@ -133,7 +112,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[PlatformTenantSelfActivationResponse | Problem]
+        Response[PlatformTenantSelfActivationResponse]
     """
 
     kwargs = _get_kwargs()
@@ -146,7 +125,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-) -> PlatformTenantSelfActivationResponse | Problem | None:
+) -> PlatformTenantSelfActivationResponse | None:
     """Read this tenant's own redacted activation snapshot.
 
      Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived
@@ -159,7 +138,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        PlatformTenantSelfActivationResponse | Problem
+        PlatformTenantSelfActivationResponse
     """
 
     return (

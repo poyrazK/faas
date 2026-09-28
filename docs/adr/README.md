@@ -54,22 +54,23 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 315 | [Backoff-aware realtime callback replay monitoring](315-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
-| 314 | [Realtime callback replay scheduling index](314-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
-| 313 | [Realtime callback retry backoff](313-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
-| 312 | [Realtime callback dead-letter inspection and replay](312-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |
-| 311 | [Realtime callbacks without durable delivery](311-realtime-callbacks-without-durable-delivery.md) | accepted | Close sockets when direct HTTP message callbacks fail without an outbox |
-| 310 | [Realtime callback outbox admission failure handling](310-realtime-callback-outbox-admission-failures.md) | accepted | Stop socket reads and page when callback events cannot be durably admitted due to storage errors |
-| 309 | [Realtime callback outbox backpressure](309-realtime-callback-outbox-backpressure.md) | accepted | Retry admission while space frees; close overloaded sockets with 1013 and count rejected callbacks |
-| 308 | [Realtime callback outbox capacity warning](308-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
-| 307 | [Realtime callback replay recovery observability](307-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
-| 306 | [Managed realtime callback replay supervision](306-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
-| 305 | [Managed realtime callback backlog observability](305-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
-| 304 | [Bounded parallel managed realtime callback replay](304-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
-| 303 | [Live managed realtime callback credential rotation](303-live-realtime-callback-auth-rotation.md) | accepted | Rotate callback credentials on active realtime connections without reconnecting clients |
-| 302 | [Bounded managed realtime callback dead letters](302-bounded-realtime-callback-dead-letters.md) | accepted | Retain callback dead letters within a byte cap and expose durable recovery state |
-| 301 | [Persistent managed realtime callback outbox](301-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
-| 300 | [Managed realtime revocation and delivery outcomes](300-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 316 | [Backoff-aware realtime callback replay monitoring](316-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
+| 315 | [Realtime callback replay scheduling index](315-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
+| 314 | [Realtime callback retry backoff](314-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
+| 313 | [Realtime callback dead-letter inspection and replay](313-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |
+| 312 | [Realtime callbacks without durable delivery](312-realtime-callbacks-without-durable-delivery.md) | accepted | Close sockets when direct HTTP message callbacks fail without an outbox |
+| 311 | [Realtime callback outbox admission failure handling](311-realtime-callback-outbox-admission-failures.md) | accepted | Stop socket reads and page when callback events cannot be durably admitted due to storage errors |
+| 310 | [Realtime callback outbox backpressure](310-realtime-callback-outbox-backpressure.md) | accepted | Retry admission while space frees; close overloaded sockets with 1013 and count rejected callbacks |
+| 309 | [Realtime callback outbox capacity warning](309-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
+| 308 | [Realtime callback replay recovery observability](308-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
+| 307 | [Managed realtime callback replay supervision](307-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
+| 306 | [Managed realtime callback backlog observability](306-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
+| 305 | [Bounded parallel managed realtime callback replay](305-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
+| 304 | [Live managed realtime callback credential rotation](304-live-realtime-callback-auth-rotation.md) | accepted | Rotate callback credentials on active realtime connections without reconnecting clients |
+| 303 | [Bounded managed realtime callback dead letters](303-bounded-realtime-callback-dead-letters.md) | accepted | Retain callback dead letters within a byte cap and expose durable recovery state |
+| 302 | [Persistent managed realtime callback outbox](302-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
+| 301 | [Managed realtime revocation and delivery outcomes](301-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
 | 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
 | 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
 | 297 | [Shared outbound provider cooldown](297-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |

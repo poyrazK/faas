@@ -25,6 +25,21 @@ type PlatformTenantHostnamePolicyResponse struct {
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
 }
 
+type CreatePlatformTenantSelfHostnameRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Hostname  string `json:"hostname"`
+}
+
+type PlatformTenantSelfHostnameResponse struct {
+	SurfaceID      string `json:"surface_id"`
+	Hostname       string `json:"hostname"`
+	Action         string `json:"action"`
+	Verified       bool   `json:"verified"`
+	VerifiedAt     string `json:"verified_at,omitempty"`
+	TXTRecord      string `json:"txt_record"`
+	ChallengeToken string `json:"challenge_token,omitempty"`
+}
+
 // ApplyPlatformTenantRequest adds missing consumers and links existing surfaces
 // without removing resources omitted from the bundle. Certificate issuance
 // remains asynchronous and consumer keys are separate operations.

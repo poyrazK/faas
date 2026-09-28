@@ -1,4 +1,4 @@
-# ADR-308 · Realtime callback outbox capacity warning
+# ADR-309 · Realtime callback outbox capacity warning
 
 - **Status:** accepted
 - **Date:** 2026-09-27

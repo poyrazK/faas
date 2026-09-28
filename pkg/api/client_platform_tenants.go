@@ -131,6 +131,11 @@ func (c *Client) GetPlatformTenantSelfActivation(ctx context.Context) (PlatformT
 	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/activation", nil, &out)
 }
 
+func (c *Client) CreatePlatformTenantSelfHostname(ctx context.Context, req CreatePlatformTenantSelfHostnameRequest) (PlatformTenantSelfHostnameResponse, error) {
+	var out PlatformTenantSelfHostnameResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/hostnames", req, &out)
+}
+
 // ListPlatformTenantSelfStatements returns only finalized statements owned by
 // the tenant represented by the caller's access token.
 func (c *Client) ListPlatformTenantSelfStatements(ctx context.Context, start, end time.Time, limit, offset int) (PlatformTenantSelfStatementListResponse, error) {

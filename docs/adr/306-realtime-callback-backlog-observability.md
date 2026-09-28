@@ -1,4 +1,4 @@
-# ADR-305 · Managed realtime callback backlog observability
+# ADR-306 · Managed realtime callback backlog observability
 
 - **Status:** accepted
 - **Date:** 2026-09-27

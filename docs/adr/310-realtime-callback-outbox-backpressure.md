@@ -1,4 +1,4 @@
-# ADR-309 · Realtime callback outbox backpressure
+# ADR-310 · Realtime callback outbox backpressure
 
 - **Status:** accepted
 - **Date:** 2026-09-27
