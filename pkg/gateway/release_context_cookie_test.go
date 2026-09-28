@@ -1,3 +1,4 @@
+// adr: 259 — static browser clients inherit the release selected for their document.
 package gateway
 
 import (
