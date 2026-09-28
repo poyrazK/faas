@@ -40,10 +40,14 @@ this phase; the shorter HTTP-app cold-boot watchdog does not apply.
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3
+gregale jobs run nightly --tasks 10 --parallelism 3 --arg=--dataset --arg=2026-09
+gregale jobs run nightly --parallelism 2 --input=shard-a=s3://my-bucket/a --input=shard-b=s3://my-bucket/b
+gregale jobs run nightly --tasks 20 --flexible --eligible-at=2026-10-01T00:00:00Z --latest-start-at=2026-10-01T04:00:00Z
 gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 gregale jobs update nightly-export --schedule "30 3 * * *"
 gregale jobs update nightly-export --unschedule
 gregale jobs runs nightly
+gregale jobs tasks nightly RUN_ID
 gregale jobs retry nightly RUN_ID 0
 gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
 ```
@@ -60,6 +64,58 @@ replayed as a burst. `--unschedule` returns the job to batch-only operation.
 the account live-job limit. Only claimed tasks create VMs. Each claim checks
 the run parallelism and account live limit atomically across scheduler replicas;
 remaining tasks stay queued until capacity opens.
+
+`--arg` may be repeated to replace the job command's arguments for one run.
+The executable stays the same. The API accepts `arguments: []` to remove all
+trailing arguments. Each new run captures its effective command, retry budget,
+and task timeout, so those values remain stable in run history. A task receives
+`GREGALE_RUN_ID`, `GREGALE_TASK_INDEX` (zero-based),
+`GREGALE_TASK_ATTEMPT` (one-based), and `GREGALE_TASK_COUNT` in its environment.
+Gregale sets these values after job and run environment overrides are merged.
+Run environment overrides must use valid customer variable names and fit the
+account plan's variable count and value size limits; the `GREGALE_` prefix is
+reserved for platform identity.
+
+An ordered `inputs` array in `POST /v1/jobs/{name}/runs`, or repeated CLI
+`--input ID=REF`, creates one task per entry. The stable zero-based task index
+and unique `input_id` are retained on the task record across retries.
+The run records manifest version `1` and a SHA-256 digest of the ordered input
+array; numeric fan-out runs use version `0`.
+`GREGALE_INPUT_ID` and `GREGALE_INPUT_REF` identify the assigned input inside
+the guest. Gregale treats the reference as an opaque string; the image must
+have its own access to the referenced data. Numeric `--tasks` runs remain
+available when input binding is unnecessary.
+
+`--flexible` accepts a start window of at most 24 hours. `--eligible-at`
+defaults to the time the run is accepted; `--latest-start-at` is required.
+Standard queued tasks have dispatch priority. Flexible tasks become eligible
+within their window when capacity is available. Each compute node reserves
+capacity for one 512 MB, one-vCPU app wake before admitting flexible work.
+Gregale cancels each task
+that has not started by the latest-start time and retains its task record with
+an expiry message; running tasks keep their normal timeout. The latest-start
+time is an admission limit, not a completion deadline. Flexible runs currently
+use the same pricing as standard runs.
+
+Runs use `continue` failure policy by default: other eligible tasks continue
+after one task exhausts its retries. `--fail-fast` cancels tasks that have not
+started once a task fails permanently; tasks already running may finish. The
+run and task records retain each successful or failed input outcome.
+
+For structured results, the task writes a JSON manifest to the path in
+`GREGALE_OUTPUT_MANIFEST_PATH` before exiting successfully:
+
+```json
+{"version":1,"artifacts":[{"name":"result","uri":"s3://my-results/shard-a.parquet","size_bytes":1234,"sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]}
+```
+
+Gregale validates the bounded manifest and retains it on the task record;
+`GET /v1/jobs/{name}/runs/{id}/tasks` returns `output_manifest` for successful
+tasks. Artifact bytes stay in the object store chosen by the image. The image
+must upload them and provide the checksum before writing the manifest. An
+invalid manifest causes the task attempt to fail, so it follows the configured
+retry policy. Gregale validates the manifest metadata; it does not fetch the
+artifact or independently check the checksum.
 
 Job definitions cannot be edited or deleted while a run has queued or claimed
 tasks. This prevents customer edits from changing the image reference, command,

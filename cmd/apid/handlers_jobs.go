@@ -97,27 +97,38 @@ func jobResponse(j state.Job) api.JobResponse {
 // appears as a misleading zero in list/detail output.
 func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 	resp := api.JobRunResponse{
-		ID:              r.ID,
-		JobID:           r.JobID,
-		AccountID:       r.AccountID,
-		TriggerKind:     r.TriggerKind,
-		Tasks:           r.Tasks,
-		Parallelism:     r.Parallelism,
-		AggregateStatus: r.AggregateStatus,
-		TasksSucceeded:  r.TasksSucceeded,
-		TasksFailed:     r.TasksFailed,
-		TasksCancelled:  r.TasksCancelled,
-		TasksRunning:    r.TasksRunning,
-		DeadLetterCount: r.DeadLetterCount,
-		CreatedAt:       r.CreatedAt.UTC().Format(time.RFC3339),
-		RetryMax:        job.RetryMax,
-		TaskTimeoutSec:  job.TaskTimeoutS,
+		ID:                   r.ID,
+		JobID:                r.JobID,
+		AccountID:            r.AccountID,
+		TriggerKind:          r.TriggerKind,
+		Tasks:                r.Tasks,
+		InputManifestVersion: r.InputManifestVersion,
+		InputDigest:          r.InputDigest,
+		Parallelism:          r.Parallelism,
+		ExecutionClass:       r.ExecutionClass,
+		FailurePolicy:        r.FailurePolicy,
+		AggregateStatus:      r.AggregateStatus,
+		TasksSucceeded:       r.TasksSucceeded,
+		TasksFailed:          r.TasksFailed,
+		TasksCancelled:       r.TasksCancelled,
+		TasksRunning:         r.TasksRunning,
+		DeadLetterCount:      r.DeadLetterCount,
+		CreatedAt:            r.CreatedAt.UTC().Format(time.RFC3339),
+		RetryMax:             job.RetryMax,
+		TaskTimeoutSec:       job.TaskTimeoutS,
+		Command:              append([]string(nil), r.Command...),
 	}
 	if r.RetryMax != nil {
 		resp.RetryMax = *r.RetryMax
 	}
 	if r.TaskTimeoutS != nil {
 		resp.TaskTimeoutSec = *r.TaskTimeoutS
+	}
+	if r.Command == nil { // rows created before command snapshots
+		resp.Command = append([]string{}, job.Command...)
+	}
+	if resp.Command == nil {
+		resp.Command = []string{}
 	}
 	if r.EnvOverrides != nil {
 		var env map[string]string
@@ -127,6 +138,12 @@ func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 	}
 	if r.StartedAt != nil && !r.StartedAt.IsZero() {
 		resp.StartedAt = r.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if r.EligibleAt != nil {
+		resp.EligibleAt = r.EligibleAt.UTC().Format(time.RFC3339)
+	}
+	if r.LatestStartAt != nil {
+		resp.LatestStartAt = r.LatestStartAt.UTC().Format(time.RFC3339)
 	}
 	if r.FinishedAt != nil && !r.FinishedAt.IsZero() {
 		resp.FinishedAt = r.FinishedAt.UTC().Format(time.RFC3339)
@@ -149,11 +166,14 @@ func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 // error_class as "" (no chip) rather than a JSON null.
 func jobTaskResponse(t state.JobTask) api.JobTaskResponse {
 	resp := api.JobTaskResponse{
-		RunID:     t.RunID,
-		TaskIndex: t.TaskIndex,
-		Status:    t.Status,
-		Attempt:   t.Attempt,
-		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
+		RunID:          t.RunID,
+		TaskIndex:      t.TaskIndex,
+		InputID:        t.InputID,
+		InputRef:       t.InputRef,
+		OutputManifest: t.OutputManifest,
+		Status:         t.Status,
+		Attempt:        t.Attempt,
+		CreatedAt:      t.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if t.InstanceID != nil {
 		resp.InstanceID = *t.InstanceID
@@ -1009,9 +1029,66 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			"Job image unavailable", "update image_ref to retry materialization before creating a run"))
 		return
 	}
+	inputs := make([]state.JobInput, 0, len(req.Inputs))
+	if len(req.Inputs) > 0 {
+		if req.Tasks != 0 && req.Tasks != len(req.Inputs) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid tasks", "tasks must equal the number of declared inputs"))
+			return
+		}
+		req.Tasks = len(req.Inputs)
+		seen := make(map[string]struct{}, len(req.Inputs))
+		for _, input := range req.Inputs {
+			if input.ID == "" || len(input.ID) > 128 || !utf8.ValidString(input.ID) || strings.TrimSpace(input.ID) != input.ID || strings.ContainsRune(input.ID, 0) ||
+				input.Ref == "" || len(input.Ref) > 2048 || !utf8.ValidString(input.Ref) || strings.ContainsRune(input.Ref, 0) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid input", "each input needs a nonempty input_id (up to 128 bytes) and input_ref (up to 2048 bytes)"))
+				return
+			}
+			if _, duplicate := seen[input.ID]; duplicate {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Duplicate input_id", "input_id values must be unique within a run"))
+				return
+			}
+			seen[input.ID] = struct{}{}
+			inputs = append(inputs, state.JobInput{ID: input.ID, Ref: input.Ref})
+		}
+	}
 	if req.Tasks < 1 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid tasks", "tasks must be >= 1"))
+		return
+	}
+	executionClass := req.ExecutionClass
+	if executionClass == "" {
+		executionClass = "standard"
+	}
+	var eligibleAt, latestStartAt *time.Time
+	if executionClass == "flexible" {
+		now := time.Now().UTC()
+		eligible := now
+		if req.EligibleAt != nil && req.EligibleAt.After(now) {
+			eligible = req.EligibleAt.UTC()
+		}
+		if req.LatestStartAt == nil || !req.LatestStartAt.After(eligible) || req.LatestStartAt.Sub(eligible) > 24*time.Hour {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid flexible window", "latest_start_at must be after eligible_at and within 24 hours"))
+			return
+		}
+		latest := req.LatestStartAt.UTC()
+		eligibleAt, latestStartAt = &eligible, &latest
+	} else if executionClass != "standard" || req.EligibleAt != nil || req.LatestStartAt != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid execution class", "standard runs cannot specify a start window"))
+		return
+	}
+	failurePolicy := req.FailurePolicy
+	if failurePolicy == "" {
+		failurePolicy = "continue"
+	}
+	if failurePolicy != "continue" && failurePolicy != "fail_fast" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid failure policy", "failure_policy must be continue or fail_fast"))
 		return
 	}
 	idx := acct.Plan.PlanIndex()
@@ -1055,16 +1132,55 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 	}
+	if req.Arguments != nil {
+		if len(j.Command) == 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid arguments", "job command must have an executable to override arguments"))
+			return
+		}
+		if len(*req.Arguments)+1 > 64 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid arguments", "command may contain at most 64 entries"))
+			return
+		}
+		for _, arg := range *req.Arguments {
+			if strings.ContainsRune(arg, 0) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid arguments", "arguments cannot contain a NUL byte"))
+				return
+			}
+		}
+	}
 	// Tasks are queued work, not live concurrency. A run may contain more
 	// tasks than the account can execute at once; the atomic dispatch claim
 	// enforces both the per-run parallelism and account live-instance cap.
+	limits, _ := api.LimitsFor(acct.Plan)
+	if len(req.EnvOverrides) > limits.EnvVarsMax {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid env_overrides", "too many per-run environment variables"))
+		return
+	}
+	for key, value := range req.EnvOverrides {
+		if prob := api.ValidateEnvKey(key); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if strings.HasPrefix(key, "GREGALE_") || !utf8.ValidString(value) || strings.ContainsRune(value, 0) || len(value) > limits.EnvValueMaxBytes {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid env_overrides", "run environment variables must use customer keys and fit the plan value limit"))
+			return
+		}
+	}
 	envOverrides, prob := encodeEnvOverrides(req.EnvOverrides)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
-		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks)
+		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks,
+		state.JobRunOptions{CommandArgs: req.Arguments, Inputs: inputs,
+			ExecutionClass: executionClass, EligibleAt: eligibleAt, LatestStartAt: latestStartAt,
+			FailurePolicy: failurePolicy})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -1174,6 +1290,11 @@ func (s *server) retryJobTask(w http.ResponseWriter, r *http.Request, acct state
 	}
 	now := time.Now().UTC()
 	nextAttemptAt := now.Add(api.JobRetryDelay(task.Attempt))
+	if run.ExecutionClass == "flexible" && (run.LatestStartAt == nil || !nextAttemptAt.Before(*run.LatestStartAt)) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Flexible start window expired", "retry this input in a new run with a new start window"))
+		return
+	}
 	if err := s.store.JobTaskRetry(r.Context(), runID, taskIdx, nextAttemptAt); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrJobTaskNotRetriable(runID, strconv.Itoa(taskIdx), task.Status))

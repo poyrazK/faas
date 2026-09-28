@@ -184,7 +184,11 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		// have been rejected by the precondition above.
 		if r.VCPU > 0 {
 			used := usedVCPU[n.ID]
-			if used+int64(r.VCPU) > int64(n.VCPUBudget) {
+			budget := n.VCPUBudget
+			if r.Kind == KindJob && r.Flexible {
+				budget -= flexibleAppReserveVCPU
+			}
+			if used+int64(r.VCPU) > int64(budget) {
 				continue // this node can't fit the vCPU
 			}
 		}
@@ -195,12 +199,19 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		// with CPUMillicores=0 retain the previous behavior.
 		if r.CPUMillicores > 0 {
 			budget := cpuBudgetMillicores(n)
+			if r.Kind == KindJob && r.Flexible {
+				budget -= flexibleAppReserveCPUMillicores
+			}
 			if budget <= 0 || usedCPUMillicores[n.ID]+int64(r.CPUMillicores) > budget {
 				continue
 			}
 		}
 		used := usedMB[n.ID]
-		if used+billable > int64(n.AdmissionCeilingMB) {
+		ramCeiling := n.AdmissionCeilingMB
+		if r.Kind == KindJob && r.Flexible {
+			ramCeiling -= flexibleAppReserveRAMMB
+		}
+		if used+billable > int64(ramCeiling) {
 			continue // this node can't fit the request
 		}
 		candidates = append(candidates, n)

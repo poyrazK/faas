@@ -435,7 +435,8 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 				t.Fatalf("WaitJobExit instance = %q, want job-1", instance)
 			}
 			waited = deadline
-			return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease-1"}, nil
+			return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease-1",
+				OutputManifest: []byte(`{"version":1,"artifacts":[]}`)}, nil
 		},
 	}
 	cli, _ := newServer(t, f)
@@ -455,7 +456,8 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitJobExit: %v", err)
 	}
-	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" {
+	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" ||
+		resp.GetOutputManifestJson() != `{"version":1,"artifacts":[]}` {
 		t.Fatalf("JobExitResponse = %+v", resp)
 	}
 	if waited != fcvm.JobDestroyWaitDefault {

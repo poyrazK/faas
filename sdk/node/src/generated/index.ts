@@ -423,6 +423,7 @@ export type { JobRegistryCredentialListResponse } from './models/JobRegistryCred
 export type { JobRegistryCredentialResponse } from './models/JobRegistryCredentialResponse.js';
 export type { JobResponse } from './models/JobResponse.js';
 export type { JobRunCancelledResponse } from './models/JobRunCancelledResponse.js';
+export type { JobRunInput } from './models/JobRunInput.js';
 export type { JobRunResponse } from './models/JobRunResponse.js';
 export type { JobTaskLogResponse } from './models/JobTaskLogResponse.js';
 export type { JobTaskResponse } from './models/JobTaskResponse.js';

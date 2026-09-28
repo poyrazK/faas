@@ -14,6 +14,7 @@ package sched
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -827,6 +828,7 @@ func (c *VMMClient) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitR
 		Signal:             int(resp.GetSignal()),
 		FinishedAtUnixNano: resp.GetFinishedAtUnixNano(),
 		LeaseToken:         resp.GetLeaseToken(),
+		OutputManifest:     json.RawMessage(resp.GetOutputManifestJson()),
 	}, nil
 }
 

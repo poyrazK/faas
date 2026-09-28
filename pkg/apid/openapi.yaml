@@ -30605,21 +30605,42 @@ components:
 
     CreateJobRunRequest:
       description: |
-        Atomic fan-out via `generate_series` CTE in pgstore; the
-        handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        Atomic fan-out into indexed task records; supply either `tasks` or
+        an ordered `inputs` array. The handler validates the count against `Plan.JobMaxTasksPerRun`
         (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
         (parallelism / retry_max / task_timeout_sec) inherit from
         the job when null.
       type: object
-      required: [tasks]
       properties:
         tasks: { type: integer, minimum: 1, maximum: 5000, example: 100 }
+        inputs:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          description: "Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count. References are opaque and fetched by the customer image."
+          items: { $ref: '#/components/schemas/JobRunInput' }
+        execution_class: { type: string, enum: [standard, flexible], default: standard }
+        failure_policy: { type: string, enum: [continue, fail_fast], default: continue }
+        eligible_at: { type: string, format: date-time, description: "Earliest admission time for flexible tasks; defaults to now." }
+        latest_start_at: { type: string, format: date-time, description: "Required for flexible runs. Unstarted tasks expire at this time; completion is not guaranteed by this time." }
         parallelism: { type: integer, minimum: 1, example: 10 }
         retry_max: { type: integer, minimum: 0, example: 3 }
         task_timeout_sec: { type: integer, minimum: 1, example: 600 }
         env_overrides:
           type: object
           additionalProperties: { type: string }
+        arguments:
+          type: array
+          maxItems: 63
+          description: "Replace the command arguments for this run, retaining its executable. Empty array removes trailing arguments."
+          items: { type: string }
+
+    JobRunInput:
+      type: object
+      required: [input_id, input_ref]
+      properties:
+        input_id: { type: string, minLength: 1, maxLength: 128 }
+        input_ref: { type: string, minLength: 1, maxLength: 2048 }
 
     JobResponse:
       description: "Wire projection of state.Job."
@@ -30656,7 +30677,7 @@ components:
     JobRunResponse:
       description: "Wire projection of state.JobRun. Aggregate counters are recomputed by schedd after every terminal task transition."
       type: object
-      required: [id, job_id, account_id, trigger_kind, tasks, parallelism, aggregate_status, tasks_succeeded, tasks_failed, tasks_cancelled, tasks_running, dead_letter_count, created_at]
+      required: [id, job_id, account_id, trigger_kind, tasks, parallelism, execution_class, failure_policy, aggregate_status, tasks_succeeded, tasks_failed, tasks_cancelled, tasks_running, dead_letter_count, created_at]
       properties:
         id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
@@ -30666,9 +30687,19 @@ components:
           type: object
           additionalProperties: { type: string }
         tasks: { type: integer }
+        input_manifest_version: { type: integer, description: "0 for numeric fan-out, 1 for the ordered inline input manifest." }
+        input_digest: { type: string, description: "SHA-256 of the canonical ordered input manifest." }
         parallelism: { type: integer }
+        execution_class: { type: string, enum: [standard, flexible] }
+        failure_policy: { type: string, enum: [continue, fail_fast] }
+        eligible_at: { type: string, format: date-time }
+        latest_start_at: { type: string, format: date-time }
         retry_max: { type: integer }
         task_timeout_sec: { type: integer }
+        command:
+          type: array
+          description: "Command captured at run creation."
+          items: { type: string }
         aggregate_status: { type: string, enum: [queued, running, succeeded, failed, cancelled, dead_letter] }
         tasks_succeeded: { type: integer }
         tasks_failed: { type: integer }
@@ -30686,6 +30717,23 @@ components:
       properties:
         run_id: { type: string, format: uuid }
         task_index: { type: integer, minimum: 0 }
+        input_id: { type: string, description: "Stable declared input identity for this task." }
+        input_ref: { type: string, description: "Opaque input reference passed to the guest." }
+        output_manifest:
+          type: object
+          description: "Versioned artifact references published by a successful task. Gregale retains metadata, not artifact bytes."
+          properties:
+            version: { type: integer, enum: [1] }
+            artifacts:
+              type: array
+              items:
+                type: object
+                required: [name, uri, size_bytes, sha256]
+                properties:
+                  name: { type: string }
+                  uri: { type: string }
+                  size_bytes: { type: integer, format: int64 }
+                  sha256: { type: string }
         status: { type: string, enum: [queued, claimed, succeeded, failed, timeout, cancelled, oom] }
         attempt: { type: integer, minimum: 1 }
         instance_id: { type: string, format: uuid }

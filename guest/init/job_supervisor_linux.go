@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"golang.org/x/sys/unix"
 )
 
@@ -160,7 +161,18 @@ func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Durat
 			// the complete process group, so no child survives terminal reporting.
 			_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 			reapJobChildren(250 * time.Millisecond)
-			return jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
+			payload := jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
+			if payload.ErrorClass == "succeeded" && m.Env["GREGALE_OUTPUT_MANIFEST_PATH"] != "" {
+				output, err := readGuestJobOutputManifest(m.Env["GREGALE_OUTPUT_MANIFEST_PATH"])
+				if err != nil {
+					log.Error("runJob: invalid output manifest", "err", err)
+					payload.ExitCode = 65
+					payload.ErrorClass = "failed"
+				} else {
+					payload.OutputManifest = output
+				}
+			}
+			return payload
 		case <-timeoutC:
 			reason = jobTimedOut
 			stopSignal = syscall.SIGTERM
@@ -365,6 +377,25 @@ func jobExitPayloadFromWait(waitResult jobWaitResult, reason jobTerminationReaso
 		FinishedAtUnixNano: time.Now().UnixNano(),
 		LeaseToken:         leaseToken,
 	}
+}
+
+func readGuestJobOutputManifest(path string) (json.RawMessage, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, jobresult.MaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := jobresult.Validate(raw); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
 }
 
 // loadJobManifest reads + decodes /etc/faas/job.json from the

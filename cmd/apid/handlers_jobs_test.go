@@ -423,6 +423,108 @@ func TestCreateJobRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateJobRunArgumentOverride(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "argument-run-job", "ghcr.io/example/worker:v1")
+	arguments := []string{"--dataset", "one"}
+	rec := e.do(t, "POST", "/v1/jobs/argument-run-job/runs", api.CreateJobRunRequest{
+		Tasks: 1, Arguments: &arguments,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST run with arguments = %d: %s", rec.Code, rec.Body.String())
+	}
+	var run api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Command) != 3 || run.Command[0] != "/bin/sh" || run.Command[1] != "--dataset" || run.Command[2] != "one" {
+		t.Fatalf("captured command = %v", run.Command)
+	}
+	if run.RetryMax != 3 || run.TaskTimeoutSec != 300 {
+		t.Fatalf("captured policy = retry %d timeout %d", run.RetryMax, run.TaskTimeoutSec)
+	}
+}
+
+func TestCreateJobRunRejectsPlatformEnvironmentOverride(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "env-run-job", "ghcr.io/example/worker:v1")
+	for _, env := range []map[string]string{
+		{"GREGALE_TASK_INDEX": "999"},
+		{"BAD-KEY": "value"},
+		{"INPUT": "bad\x00value"},
+	} {
+		rec := e.do(t, "POST", "/v1/jobs/env-run-job/runs", api.CreateJobRunRequest{
+			Tasks: 1, EnvOverrides: env,
+		}, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("run with env %v = %d, want 400: %s", env, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestCreateJobRunDeclaredInputs(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "input-run-job", "ghcr.io/example/worker:v1")
+	inputs := []api.JobRunInput{{ID: "a", Ref: "s3://data/a"}, {ID: "b", Ref: "s3://data/b"}}
+	rec := e.do(t, "POST", "/v1/jobs/input-run-job/runs", api.CreateJobRunRequest{Inputs: inputs}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST input run = %d: %s", rec.Code, rec.Body.String())
+	}
+	var run api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Tasks != 2 {
+		t.Fatalf("run tasks = %d, want 2", run.Tasks)
+	}
+	if run.InputManifestVersion != 1 || !strings.HasPrefix(run.InputDigest, "sha256:") {
+		t.Fatalf("manifest fingerprint = version %d digest %q", run.InputManifestVersion, run.InputDigest)
+	}
+	rec = e.do(t, "GET", "/v1/jobs/input-run-job/runs/"+run.ID+"/tasks", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET tasks = %d: %s", rec.Code, rec.Body.String())
+	}
+	var tasks api.ListJobTasksResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks.Tasks) != 2 || tasks.Tasks[0].InputID != "a" || tasks.Tasks[0].InputRef != "s3://data/a" || tasks.Tasks[1].InputID != "b" {
+		t.Fatalf("task inputs = %+v", tasks.Tasks)
+	}
+	rec = e.do(t, "POST", "/v1/jobs/input-run-job/runs", api.CreateJobRunRequest{
+		Inputs: []api.JobRunInput{{ID: "a", Ref: "one"}, {ID: "a", Ref: "two"}},
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate input IDs = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateFlexibleJobRunWindow(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "flexible-run-job", "ghcr.io/example/worker:v1")
+	eligible := time.Now().UTC().Add(2 * time.Minute)
+	latest := eligible.Add(time.Hour)
+	rec := e.do(t, "POST", "/v1/jobs/flexible-run-job/runs", api.CreateJobRunRequest{
+		Tasks: 2, ExecutionClass: "flexible", FailurePolicy: "fail_fast", EligibleAt: &eligible, LatestStartAt: &latest,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST flexible run = %d: %s", rec.Code, rec.Body.String())
+	}
+	var run api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.ExecutionClass != "flexible" || run.FailurePolicy != "fail_fast" || run.EligibleAt == "" || run.LatestStartAt == "" {
+		t.Fatalf("flexible window = %+v", run)
+	}
+	rec = e.do(t, "POST", "/v1/jobs/flexible-run-job/runs", api.CreateJobRunRequest{
+		Tasks: 1, ExecutionClass: "standard", LatestStartAt: &latest,
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("standard run with window = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateJobRunAllowsBatchLargerThanLiveConcurrency(t *testing.T) {
 	e := setup(t, api.PlanScale)
 	seedJob(t, e, "large-batch-job", "ghcr.io/example/worker:v1")

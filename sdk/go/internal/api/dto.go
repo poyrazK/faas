@@ -2129,6 +2129,17 @@ type CreateJobRunRequest struct {
 	RetryMax       *int              `json:"retry_max,omitempty"`
 	TaskTimeoutSec *int              `json:"task_timeout_sec,omitempty"`
 	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
+	Arguments      *[]string         `json:"arguments,omitempty"`
+	Inputs         []JobRunInput     `json:"inputs,omitempty"`
+	ExecutionClass string            `json:"execution_class,omitempty"`
+	FailurePolicy  string            `json:"failure_policy,omitempty"`
+	EligibleAt     *time.Time        `json:"eligible_at,omitempty"`
+	LatestStartAt  *time.Time        `json:"latest_start_at,omitempty"`
+}
+
+type JobRunInput struct {
+	ID  string `json:"input_id"`
+	Ref string `json:"input_ref"`
 }
 
 // JobResponse is the wire projection of state.Job.
@@ -2151,40 +2162,50 @@ type JobResponse struct {
 
 // JobRunResponse is the wire projection of state.JobRun.
 type JobRunResponse struct {
-	ID              string            `json:"id"`
-	JobID           string            `json:"job_id"`
-	AccountID       string            `json:"account_id"`
-	TriggerKind     string            `json:"trigger_kind"`
-	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
-	Tasks           int               `json:"tasks"`
-	Parallelism     int               `json:"parallelism"`
-	RetryMax        int               `json:"retry_max"`
-	TaskTimeoutSec  int               `json:"task_timeout_sec"`
-	AggregateStatus string            `json:"aggregate_status"`
-	TasksSucceeded  int               `json:"tasks_succeeded"`
-	TasksFailed     int               `json:"tasks_failed"`
-	TasksCancelled  int               `json:"tasks_cancelled"`
-	TasksRunning    int               `json:"tasks_running"`
-	DeadLetterCount int               `json:"dead_letter_count"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	CreatedAt       string            `json:"created_at"`
+	ID                   string            `json:"id"`
+	JobID                string            `json:"job_id"`
+	AccountID            string            `json:"account_id"`
+	TriggerKind          string            `json:"trigger_kind"`
+	EnvOverrides         map[string]string `json:"env_overrides,omitempty"`
+	Tasks                int               `json:"tasks"`
+	InputManifestVersion int               `json:"input_manifest_version"`
+	InputDigest          string            `json:"input_digest,omitempty"`
+	Parallelism          int               `json:"parallelism"`
+	ExecutionClass       string            `json:"execution_class"`
+	FailurePolicy        string            `json:"failure_policy"`
+	EligibleAt           string            `json:"eligible_at,omitempty"`
+	LatestStartAt        string            `json:"latest_start_at,omitempty"`
+	RetryMax             int               `json:"retry_max"`
+	TaskTimeoutSec       int               `json:"task_timeout_sec"`
+	Command              []string          `json:"command,omitempty"`
+	AggregateStatus      string            `json:"aggregate_status"`
+	TasksSucceeded       int               `json:"tasks_succeeded"`
+	TasksFailed          int               `json:"tasks_failed"`
+	TasksCancelled       int               `json:"tasks_cancelled"`
+	TasksRunning         int               `json:"tasks_running"`
+	DeadLetterCount      int               `json:"dead_letter_count"`
+	StartedAt            string            `json:"started_at,omitempty"`
+	FinishedAt           string            `json:"finished_at,omitempty"`
+	CreatedAt            string            `json:"created_at"`
 }
 
 // JobTaskResponse is the wire projection of state.JobTask.
 // LeaseToken is intentionally OMITTED (internal dispatch primitive).
 type JobTaskResponse struct {
-	RunID        string `json:"run_id"`
-	TaskIndex    int    `json:"task_index"`
-	Status       string `json:"status"`
-	Attempt      int    `json:"attempt"`
-	InstanceID   string `json:"instance_id,omitempty"`
-	ErrorClass   string `json:"error_class,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	CreatedAt    string `json:"created_at"`
+	RunID          string          `json:"run_id"`
+	TaskIndex      int             `json:"task_index"`
+	InputID        string          `json:"input_id,omitempty"`
+	InputRef       string          `json:"input_ref,omitempty"`
+	OutputManifest json.RawMessage `json:"output_manifest,omitempty"`
+	Status         string          `json:"status"`
+	Attempt        int             `json:"attempt"`
+	InstanceID     string          `json:"instance_id,omitempty"`
+	ErrorClass     string          `json:"error_class,omitempty"`
+	ErrorMessage   string          `json:"error_message,omitempty"`
+	ExitCode       int             `json:"exit_code,omitempty"`
+	StartedAt      string          `json:"started_at,omitempty"`
+	FinishedAt     string          `json:"finished_at,omitempty"`
+	CreatedAt      string          `json:"created_at"`
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/{id}/

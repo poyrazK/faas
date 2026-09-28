@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -106,11 +107,12 @@ type JobManifest struct {
 // FinishedAtUnixNano is the supervisor's monotonic → wall clock
 // converted to UnixNano; schedd stamps it on job_tasks.exit_at.
 type JobExitPayload struct {
-	ExitCode           int32  `json:"exit_code"`
-	ErrorClass         string `json:"error_class"`
-	Signal             int32  `json:"signal"`
-	FinishedAtUnixNano int64  `json:"finished_at_unix_nano"`
-	LeaseToken         string `json:"lease_token"`
+	ExitCode           int32           `json:"exit_code"`
+	ErrorClass         string          `json:"error_class"`
+	Signal             int32           `json:"signal"`
+	FinishedAtUnixNano int64           `json:"finished_at_unix_nano"`
+	LeaseToken         string          `json:"lease_token"`
+	OutputManifest     json.RawMessage `json:"output_manifest,omitempty"`
 }
 
 // Validate is the host-side gate; same shape as ColdBootSpec.Validate.
@@ -660,6 +662,14 @@ func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {
 }
 
 func validateJobExitPayload(payload JobExitPayload) error {
+	if len(payload.OutputManifest) > 0 {
+		if payload.ErrorClass != "succeeded" {
+			return fmt.Errorf("output manifest requires successful exit")
+		}
+		if _, err := jobresult.Validate(payload.OutputManifest); err != nil {
+			return err
+		}
+	}
 	if payload.ExitCode < 0 || payload.ExitCode > 255 {
 		return fmt.Errorf("exit_code=%d out of range", payload.ExitCode)
 	}

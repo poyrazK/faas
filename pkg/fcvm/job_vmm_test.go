@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -111,7 +112,7 @@ func TestWaitJobExitAcceptsGuestInitiatedStream(t *testing.T) {
 	case err := <-errCh:
 		t.Fatal(err)
 	case got := <-resultCh:
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("payload = %+v, want %+v", got, want)
 		}
 	case <-time.After(3 * time.Second):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -12,6 +12,11 @@ from ..models.job_run_response_aggregate_status import (
     JobRunResponseAggregateStatus,
     check_job_run_response_aggregate_status,
 )
+from ..models.job_run_response_execution_class import (
+    JobRunResponseExecutionClass,
+    check_job_run_response_execution_class,
+)
+from ..models.job_run_response_failure_policy import JobRunResponseFailurePolicy, check_job_run_response_failure_policy
 from ..models.job_run_response_trigger_kind import JobRunResponseTriggerKind, check_job_run_response_trigger_kind
 from ..types import UNSET, Unset
 
@@ -32,6 +37,8 @@ class JobRunResponse:
     trigger_kind: JobRunResponseTriggerKind
     tasks: int
     parallelism: int
+    execution_class: JobRunResponseExecutionClass
+    failure_policy: JobRunResponseFailurePolicy
     aggregate_status: JobRunResponseAggregateStatus
     tasks_succeeded: int
     tasks_failed: int
@@ -40,8 +47,16 @@ class JobRunResponse:
     dead_letter_count: int
     created_at: datetime.datetime
     env_overrides: JobRunResponseEnvOverrides | Unset = UNSET
+    input_manifest_version: int | Unset = UNSET
+    """0 for numeric fan-out, 1 for the ordered inline input manifest."""
+    input_digest: str | Unset = UNSET
+    """SHA-256 of the canonical ordered input manifest."""
+    eligible_at: datetime.datetime | Unset = UNSET
+    latest_start_at: datetime.datetime | Unset = UNSET
     retry_max: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
+    command: list[str] | Unset = UNSET
+    """Command captured at run creation."""
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -58,6 +73,10 @@ class JobRunResponse:
         tasks = self.tasks
 
         parallelism = self.parallelism
+
+        execution_class: str = self.execution_class
+
+        failure_policy: str = self.failure_policy
 
         aggregate_status: str = self.aggregate_status
 
@@ -77,9 +96,25 @@ class JobRunResponse:
         if not isinstance(self.env_overrides, Unset):
             env_overrides = self.env_overrides.to_dict()
 
+        input_manifest_version = self.input_manifest_version
+
+        input_digest = self.input_digest
+
+        eligible_at: str | Unset = UNSET
+        if not isinstance(self.eligible_at, Unset):
+            eligible_at = self.eligible_at.isoformat()
+
+        latest_start_at: str | Unset = UNSET
+        if not isinstance(self.latest_start_at, Unset):
+            latest_start_at = self.latest_start_at.isoformat()
+
         retry_max = self.retry_max
 
         task_timeout_sec = self.task_timeout_sec
+
+        command: list[str] | Unset = UNSET
+        if not isinstance(self.command, Unset):
+            command = self.command
 
         started_at: str | Unset = UNSET
         if not isinstance(self.started_at, Unset):
@@ -99,6 +134,8 @@ class JobRunResponse:
                 "trigger_kind": trigger_kind,
                 "tasks": tasks,
                 "parallelism": parallelism,
+                "execution_class": execution_class,
+                "failure_policy": failure_policy,
                 "aggregate_status": aggregate_status,
                 "tasks_succeeded": tasks_succeeded,
                 "tasks_failed": tasks_failed,
@@ -110,10 +147,20 @@ class JobRunResponse:
         )
         if env_overrides is not UNSET:
             field_dict["env_overrides"] = env_overrides
+        if input_manifest_version is not UNSET:
+            field_dict["input_manifest_version"] = input_manifest_version
+        if input_digest is not UNSET:
+            field_dict["input_digest"] = input_digest
+        if eligible_at is not UNSET:
+            field_dict["eligible_at"] = eligible_at
+        if latest_start_at is not UNSET:
+            field_dict["latest_start_at"] = latest_start_at
         if retry_max is not UNSET:
             field_dict["retry_max"] = retry_max
         if task_timeout_sec is not UNSET:
             field_dict["task_timeout_sec"] = task_timeout_sec
+        if command is not UNSET:
+            field_dict["command"] = command
         if started_at is not UNSET:
             field_dict["started_at"] = started_at
         if finished_at is not UNSET:
@@ -138,6 +185,10 @@ class JobRunResponse:
 
         parallelism = d.pop("parallelism")
 
+        execution_class = check_job_run_response_execution_class(d.pop("execution_class"))
+
+        failure_policy = check_job_run_response_failure_policy(d.pop("failure_policy"))
+
         aggregate_status = check_job_run_response_aggregate_status(d.pop("aggregate_status"))
 
         tasks_succeeded = d.pop("tasks_succeeded")
@@ -159,9 +210,29 @@ class JobRunResponse:
         else:
             env_overrides = JobRunResponseEnvOverrides.from_dict(_env_overrides)
 
+        input_manifest_version = d.pop("input_manifest_version", UNSET)
+
+        input_digest = d.pop("input_digest", UNSET)
+
+        _eligible_at = d.pop("eligible_at", UNSET)
+        eligible_at: datetime.datetime | Unset
+        if isinstance(_eligible_at, Unset):
+            eligible_at = UNSET
+        else:
+            eligible_at = datetime.datetime.fromisoformat(_eligible_at)
+
+        _latest_start_at = d.pop("latest_start_at", UNSET)
+        latest_start_at: datetime.datetime | Unset
+        if isinstance(_latest_start_at, Unset):
+            latest_start_at = UNSET
+        else:
+            latest_start_at = datetime.datetime.fromisoformat(_latest_start_at)
+
         retry_max = d.pop("retry_max", UNSET)
 
         task_timeout_sec = d.pop("task_timeout_sec", UNSET)
+
+        command = cast(list[str], d.pop("command", UNSET))
 
         _started_at = d.pop("started_at", UNSET)
         started_at: datetime.datetime | Unset
@@ -184,6 +255,8 @@ class JobRunResponse:
             trigger_kind=trigger_kind,
             tasks=tasks,
             parallelism=parallelism,
+            execution_class=execution_class,
+            failure_policy=failure_policy,
             aggregate_status=aggregate_status,
             tasks_succeeded=tasks_succeeded,
             tasks_failed=tasks_failed,
@@ -192,8 +265,13 @@ class JobRunResponse:
             dead_letter_count=dead_letter_count,
             created_at=created_at,
             env_overrides=env_overrides,
+            input_manifest_version=input_manifest_version,
+            input_digest=input_digest,
+            eligible_at=eligible_at,
+            latest_start_at=latest_start_at,
             retry_max=retry_max,
             task_timeout_sec=task_timeout_sec,
+            command=command,
             started_at=started_at,
             finished_at=finished_at,
         )

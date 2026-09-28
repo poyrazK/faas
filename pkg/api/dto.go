@@ -11047,7 +11047,7 @@ type UpdateJobRequest struct {
 type CreateJobRunRequest struct {
 	// Tasks is the number of tasks to fan out. Each
 	// task has its own (run_id, task_index) — task_index
-	// runs 1..Tasks. Tasks=1 is the "single-shot job"
+	// runs 0..Tasks-1. Tasks=1 is the "single-shot job"
 	// shape (the dashboard's one-off cron replacement).
 	Tasks int `json:"tasks"`
 	// Parallelism overrides the job's MaxParallelism
@@ -11063,6 +11063,22 @@ type CreateJobRunRequest struct {
 	// env_overrides at task-execution time;
 	// run-level wins. nil → no per-run overrides.
 	EnvOverrides map[string]string `json:"env_overrides,omitempty"`
+	// Arguments replaces the job command's trailing arguments for this run.
+	// Omitted means use the job command unchanged; [] removes trailing args.
+	Arguments *[]string `json:"arguments,omitempty"`
+	// Inputs declares one task per entry, in array order. When present,
+	// tasks may be omitted; when supplied it must match len(inputs).
+	Inputs []JobRunInput `json:"inputs,omitempty"`
+	// Flexible runs may start tasks only within this window.
+	ExecutionClass string     `json:"execution_class,omitempty"`
+	FailurePolicy  string     `json:"failure_policy,omitempty"`
+	EligibleAt     *time.Time `json:"eligible_at,omitempty"`
+	LatestStartAt  *time.Time `json:"latest_start_at,omitempty"`
+}
+
+type JobRunInput struct {
+	ID  string `json:"input_id"`
+	Ref string `json:"input_ref"`
 }
 
 // JobResponse is the wire projection of state.Job. Stable
@@ -11105,24 +11121,31 @@ type JobResponse struct {
 // retry-exhaustion counter — a run is "dead letter" when
 // dead_letter_count > 0 AND aggregate_status='dead_letter'.
 type JobRunResponse struct {
-	ID              string            `json:"id"`
-	JobID           string            `json:"job_id"`
-	AccountID       string            `json:"account_id"`
-	TriggerKind     string            `json:"trigger_kind"`
-	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
-	Tasks           int               `json:"tasks"`
-	Parallelism     int               `json:"parallelism"`
-	RetryMax        int               `json:"retry_max"`
-	TaskTimeoutSec  int               `json:"task_timeout_sec"`
-	AggregateStatus string            `json:"aggregate_status"`
-	TasksSucceeded  int               `json:"tasks_succeeded"`
-	TasksFailed     int               `json:"tasks_failed"`
-	TasksCancelled  int               `json:"tasks_cancelled"`
-	TasksRunning    int               `json:"tasks_running"`
-	DeadLetterCount int               `json:"dead_letter_count"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	CreatedAt       string            `json:"created_at"`
+	ID                   string            `json:"id"`
+	JobID                string            `json:"job_id"`
+	AccountID            string            `json:"account_id"`
+	TriggerKind          string            `json:"trigger_kind"`
+	EnvOverrides         map[string]string `json:"env_overrides,omitempty"`
+	Tasks                int               `json:"tasks"`
+	InputManifestVersion int               `json:"input_manifest_version"`
+	InputDigest          string            `json:"input_digest,omitempty"`
+	Parallelism          int               `json:"parallelism"`
+	ExecutionClass       string            `json:"execution_class"`
+	FailurePolicy        string            `json:"failure_policy"`
+	EligibleAt           string            `json:"eligible_at,omitempty"`
+	LatestStartAt        string            `json:"latest_start_at,omitempty"`
+	RetryMax             int               `json:"retry_max"`
+	TaskTimeoutSec       int               `json:"task_timeout_sec"`
+	Command              []string          `json:"command,omitempty"`
+	AggregateStatus      string            `json:"aggregate_status"`
+	TasksSucceeded       int               `json:"tasks_succeeded"`
+	TasksFailed          int               `json:"tasks_failed"`
+	TasksCancelled       int               `json:"tasks_cancelled"`
+	TasksRunning         int               `json:"tasks_running"`
+	DeadLetterCount      int               `json:"dead_letter_count"`
+	StartedAt            string            `json:"started_at,omitempty"`
+	FinishedAt           string            `json:"finished_at,omitempty"`
+	CreatedAt            string            `json:"created_at"`
 }
 
 // JobTaskResponse is the wire projection of state.JobTask.
@@ -11131,17 +11154,20 @@ type JobRunResponse struct {
 // LeaseToken is omitted (internal dispatch primitive, not a
 // customer-facing field).
 type JobTaskResponse struct {
-	RunID        string `json:"run_id"`
-	TaskIndex    int    `json:"task_index"`
-	Status       string `json:"status"`
-	Attempt      int    `json:"attempt"`
-	InstanceID   string `json:"instance_id,omitempty"`
-	ErrorClass   string `json:"error_class,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	CreatedAt    string `json:"created_at"`
+	RunID          string          `json:"run_id"`
+	TaskIndex      int             `json:"task_index"`
+	InputID        string          `json:"input_id,omitempty"`
+	InputRef       string          `json:"input_ref,omitempty"`
+	OutputManifest json.RawMessage `json:"output_manifest,omitempty"`
+	Status         string          `json:"status"`
+	Attempt        int             `json:"attempt"`
+	InstanceID     string          `json:"instance_id,omitempty"`
+	ErrorClass     string          `json:"error_class,omitempty"`
+	ErrorMessage   string          `json:"error_message,omitempty"`
+	ExitCode       int             `json:"exit_code,omitempty"`
+	StartedAt      string          `json:"started_at,omitempty"`
+	FinishedAt     string          `json:"finished_at,omitempty"`
+	CreatedAt      string          `json:"created_at"`
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/

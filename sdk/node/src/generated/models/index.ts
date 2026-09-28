@@ -417,6 +417,7 @@ export type { JobRegistryCredentialListResponse } from './JobRegistryCredentialL
 export type { JobRegistryCredentialResponse } from './JobRegistryCredentialResponse.js';
 export type { JobResponse } from './JobResponse.js';
 export type { JobRunCancelledResponse } from './JobRunCancelledResponse.js';
+export type { JobRunInput } from './JobRunInput.js';
 export type { JobRunResponse } from './JobRunResponse.js';
 export type { JobTaskLogResponse } from './JobTaskLogResponse.js';
 export type { JobTaskResponse } from './JobTaskResponse.js';

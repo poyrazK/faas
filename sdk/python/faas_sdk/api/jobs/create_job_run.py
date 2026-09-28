@@ -115,8 +115,10 @@ def sync_detailed(
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply either
+            `tasks` or
+            an ordered `inputs` array. The handler validates the count against
+            `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -160,8 +162,10 @@ def sync(
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply either
+            `tasks` or
+            an ordered `inputs` array. The handler validates the count against
+            `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -200,8 +204,10 @@ async def asyncio_detailed(
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply either
+            `tasks` or
+            an ordered `inputs` array. The handler validates the count against
+            `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -243,8 +249,10 @@ async def asyncio(
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply either
+            `tasks` or
+            an ordered `inputs` array. The handler validates the count against
+            `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.

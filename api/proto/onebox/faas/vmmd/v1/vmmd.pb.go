@@ -1874,6 +1874,7 @@ type JobExitResponse struct {
 	Signal             int32                  `protobuf:"varint,3,opt,name=signal,proto3" json:"signal,omitempty"`
 	FinishedAtUnixNano int64                  `protobuf:"varint,4,opt,name=finished_at_unix_nano,json=finishedAtUnixNano,proto3" json:"finished_at_unix_nano,omitempty"`
 	LeaseToken         string                 `protobuf:"bytes,5,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	OutputManifestJson string                 `protobuf:"bytes,6,opt,name=output_manifest_json,json=outputManifestJson,proto3" json:"output_manifest_json,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1939,6 +1940,13 @@ func (x *JobExitResponse) GetFinishedAtUnixNano() int64 {
 func (x *JobExitResponse) GetLeaseToken() string {
 	if x != nil {
 		return x.LeaseToken
+	}
+	return ""
+}
+
+func (x *JobExitResponse) GetOutputManifestJson() string {
+	if x != nil {
+		return x.OutputManifestJson
 	}
 	return ""
 }
@@ -8225,7 +8233,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"0\n" +
 	"\x12WaitJobExitRequest\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"\xbb\x01\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\"\xed\x01\n" +
 	"\x0fJobExitResponse\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12\x1f\n" +
 	"\verror_class\x18\x02 \x01(\tR\n" +
@@ -8233,7 +8241,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06signal\x18\x03 \x01(\x05R\x06signal\x121\n" +
 	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\x12\x1f\n" +
 	"\vlease_token\x18\x05 \x01(\tR\n" +
-	"leaseToken\"K\n" +
+	"leaseToken\x120\n" +
+	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"K\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
 	"export_dir\x18\x01 \x01(\tR\texportDir\x12\x1f\n" +

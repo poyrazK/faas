@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 // --- column-order contracts ----------------------------------------
@@ -50,7 +51,9 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
 const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, tasks,
        parallelism, retry_max, task_timeout_s, aggregate_status,
        tasks_succeeded, tasks_failed, tasks_cancelled, tasks_running,
-       dead_letter_count, started_at, finished_at, created_at`
+       dead_letter_count, started_at, finished_at, created_at, command,
+       execution_class, eligible_at, latest_start_at, failure_policy,
+       input_manifest_version, coalesce(input_digest, '')`
 
 // jobTaskSelectCols is the canonical column order for job_tasks.
 // Includes exit_code + next_attempt_at (00571), lease_token +
@@ -60,7 +63,8 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
 const jobTaskSelectCols = `run_id, task_index, status, attempt, instance_id, error_class,
        error_message, exit_code, started_at, finished_at, created_at,
        next_attempt_at, lease_token, lease_expires_at, last_lease_node,
-       log_content, log_truncated`
+	       log_content, log_truncated, coalesce(input_id, ''), coalesce(input_ref, ''),
+	       output_manifest`
 
 // jobTaskSelectColsQualified is the same column order as jobTaskSelectCols,
 // with an explicit table qualifier for joins that also expose a status column.
@@ -70,7 +74,9 @@ const jobTaskSelectColsQualified = `job_tasks.run_id, job_tasks.task_index,
        job_tasks.started_at, job_tasks.finished_at, job_tasks.created_at,
        job_tasks.next_attempt_at, job_tasks.lease_token,
        job_tasks.lease_expires_at, job_tasks.last_lease_node,
-       job_tasks.log_content, job_tasks.log_truncated`
+       job_tasks.log_content, job_tasks.log_truncated,
+	       coalesce(job_tasks.input_id, ''), coalesce(job_tasks.input_ref, ''),
+	       job_tasks.output_manifest`
 
 // scanJobCols reads the jobSelectCols row into a Job. Nullable columns
 // don't apply (every column on jobs is NOT NULL), but env_overrides
@@ -103,7 +109,9 @@ func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 	if err := scan(&r.ID, &r.JobID, &r.AccountID, &r.TriggerKind, &envOverrides,
 		&r.Tasks, &r.Parallelism, &r.RetryMax, &r.TaskTimeoutS, &r.AggregateStatus,
 		&r.TasksSucceeded, &r.TasksFailed, &r.TasksCancelled, &r.TasksRunning,
-		&r.DeadLetterCount, &r.StartedAt, &r.FinishedAt, &r.CreatedAt); err != nil {
+		&r.DeadLetterCount, &r.StartedAt, &r.FinishedAt, &r.CreatedAt,
+		&r.Command, &r.ExecutionClass, &r.EligibleAt, &r.LatestStartAt,
+		&r.FailurePolicy, &r.InputManifestVersion, &r.InputDigest); err != nil {
 		return JobRun{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -117,12 +125,15 @@ func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 // is pointer-clean — caller code never has to deal with sql.Null*.
 func scanJobTaskCols(scan func(...any) error) (JobTask, error) {
 	var t JobTask
+	var outputManifest []byte
 	if err := scan(&t.RunID, &t.TaskIndex, &t.Status, &t.Attempt, &t.InstanceID,
 		&t.ErrorClass, &t.ErrorMessage, &t.ExitCode, &t.StartedAt, &t.FinishedAt,
 		&t.CreatedAt, &t.NextAttemptAt, &t.LeaseToken, &t.LeaseExpiresAt,
-		&t.LastLeaseNode, &t.LogContent, &t.LogTruncated); err != nil {
+		&t.LastLeaseNode, &t.LogContent, &t.LogTruncated,
+		&t.InputID, &t.InputRef, &outputManifest); err != nil {
 		return JobTask{}, err
 	}
+	t.OutputManifest = json.RawMessage(outputManifest)
 	return t, nil
 }
 
@@ -781,10 +792,32 @@ func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) 
 //   - ErrNotFound when the parent job_id is gone or belongs to another account.
 //   - mapErr-wrapped CHECK violations on bad tasks / parallelism.
 //   - mapErr-wrapped FK violations on accountID.
-func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int) (JobRun, []JobTask, error) {
+func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...JobRunOptions) (JobRun, []JobTask, error) {
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
 	}
+	var commandArgs any
+	var inputs []JobInput
+	executionClass := "standard"
+	failurePolicy := "continue"
+	var eligibleAt, latestStartAt *time.Time
+	if len(options) > 0 && options[0].CommandArgs != nil {
+		commandArgs = *options[0].CommandArgs
+	}
+	if len(options) > 0 {
+		inputs = options[0].Inputs
+		if options[0].ExecutionClass != "" {
+			executionClass = options[0].ExecutionClass
+		}
+		if options[0].FailurePolicy != "" {
+			failurePolicy = options[0].FailurePolicy
+		}
+		eligibleAt, latestStartAt = options[0].EligibleAt, options[0].LatestStartAt
+	}
+	if len(inputs) > 0 && len(inputs) != tasks {
+		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
+	}
+	manifestVersion, inputDigest := jobInputDigest(inputs)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return JobRun{}, nil, fmt.Errorf("state: begin tx: %w", err)
@@ -801,23 +834,31 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 
 	// 1. Insert the run row. Parallelism is NOT NULL on job_runs, so a
 	// nil per-run override must be materialized from jobs.max_parallelism.
-	// retry_max and task_timeout_s stay nullable: nil is their durable
-	// "inherit from the parent job at dispatch time" representation.
+	// Materialize effective retry and timeout values now. Later edits to the
+	// job definition cannot change this run's behavior or reported contract.
 	// INSERT ... SELECT keeps the default lookup and insert atomic, and the
 	// account predicate prevents a caller from pairing another tenant's job
 	// with its own account row.
 	row := tx.QueryRow(ctx,
 		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
-		                       tasks, parallelism, retry_max, task_timeout_s)
+		                       tasks, parallelism, retry_max, task_timeout_s, command,
+		                       execution_class, eligible_at, latest_start_at, failure_policy,
+		                       input_manifest_version, input_digest)
 		 select j.id, $2::uuid, $3, $4::jsonb, $5,
-		        coalesce($6, j.max_parallelism), $7, $8
+		        coalesce($6, j.max_parallelism), coalesce($7, j.retry_max),
+		        coalesce($8, j.task_timeout_s),
+		        case when $9::text[] is null then j.command
+		             else j.command[1:1] || $9::text[] end,
+		        $10, $11, $12, $13, $14, nullif($15, '')
 		   from jobs j
 		  where j.id = $1::uuid
 		    and j.account_id = $2::uuid
 		    and j.status <> 'deleted'
 		 returning `+jobRunSelectCols,
 		jobID, accountID, triggerKind, []byte(envOverrides),
-		tasks, parallelism, retryMaxOverride, taskTimeoutOverride)
+		tasks, parallelism, retryMaxOverride, taskTimeoutOverride, commandArgs,
+		executionClass, eligibleAt, latestStartAt, failurePolicy,
+		manifestVersion, inputDigest)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.
@@ -829,12 +870,26 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 
 	// 2. Fan out the task rows. generate_series is one INSERT, not
 	//    N — a 5000-task run stays at one round-trip.
-	if _, err := tx.Exec(ctx,
-		`insert into job_tasks (run_id, task_index, status)
-		 select $1::uuid, g, 'queued' from generate_series(0, $2 - 1) g`,
-		run.ID, tasks,
-	); err != nil {
-		return JobRun{}, nil, fmt.Errorf("state: fan out tasks for run %s: %w", run.ID, err)
+	var fanoutErr error
+	if len(inputs) == 0 {
+		_, fanoutErr = tx.Exec(ctx,
+			`insert into job_tasks (run_id, task_index, status)
+			 select $1::uuid, g, 'queued' from generate_series(0, $2 - 1) g`,
+			run.ID, tasks)
+	} else {
+		ids := make([]string, len(inputs))
+		refs := make([]string, len(inputs))
+		for i, input := range inputs {
+			ids[i], refs[i] = input.ID, input.Ref
+		}
+		_, fanoutErr = tx.Exec(ctx,
+			`insert into job_tasks (run_id, task_index, status, input_id, input_ref)
+			 select $1::uuid, ordinality::int - 1, 'queued', input_id, input_ref
+			 from unnest($2::text[], $3::text[]) with ordinality as i(input_id, input_ref, ordinality)`,
+			run.ID, ids, refs)
+	}
+	if fanoutErr != nil {
+		return JobRun{}, nil, fmt.Errorf("state: fan out tasks for run %s: %w", run.ID, fanoutErr)
 	}
 
 	// 3. Read the fanned-out tasks back so the caller can echo them.
@@ -896,8 +951,9 @@ func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, ti
 	}
 	run, err := scanJobRun(tx.QueryRow(ctx,
 		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
-		                       tasks, parallelism)
-		 values ($1::uuid, $2::uuid, 'scheduled', $3::jsonb, 1, $4)
+		                       tasks, parallelism, retry_max, task_timeout_s, command)
+		 select $1::uuid, $2::uuid, 'scheduled', $3::jsonb, 1, $4,
+		        j.retry_max, j.task_timeout_s, j.command from jobs j where j.id = $1::uuid
 		 returning `+jobRunSelectCols,
 		jobID, accountID, envOverrides, parallelism))
 	if err != nil {
@@ -994,7 +1050,34 @@ func (s *PgStore) JobRunListActive(ctx context.Context, accountID string, limit,
 // satisfied. finished_at is NULL while the run is non-terminal — it
 // is stamped to now() on the first terminal recompute.
 func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, error) {
-	return queryJobRunRecompute(ctx, s.pool, runID, false)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return JobRun{}, fmt.Errorf("state: begin job run recompute: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `update job_tasks t set status = 'cancelled',
+		error_class = 'cancelled', error_message = 'fail_fast after permanent task failure',
+		finished_at = now()
+	where t.run_id = $1::uuid and t.status = 'queued'
+	  and exists (
+		select 1 from job_runs r join jobs j on j.id = r.job_id
+		where r.id = t.run_id and r.failure_policy = 'fail_fast'
+		  and exists (select 1 from job_tasks failed
+		              where failed.run_id = r.id
+		                and failed.status in ('failed', 'timeout', 'oom')
+		                and failed.attempt > coalesce(r.retry_max, j.retry_max))
+	  )`, runID)
+	if err != nil {
+		return JobRun{}, fmt.Errorf("state: cancel unstarted fail-fast tasks: %w", err)
+	}
+	run, err := queryJobRunRecompute(ctx, tx, runID, false)
+	if err != nil {
+		return JobRun{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return JobRun{}, fmt.Errorf("state: commit job run recompute: %w", err)
+	}
+	return run, nil
 }
 
 // queryJobRunRecompute updates counters from the task rows visible to q.
@@ -1175,10 +1258,17 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		  join job_runs r on r.id = job_tasks.run_id
 		  join jobs j on j.id = r.job_id
 		  where job_tasks.status = 'queued'
+		    and (r.failure_policy = 'continue' or not exists (
+		      select 1 from job_tasks failed
+		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
+		        and failed.attempt > coalesce(r.retry_max, j.retry_max)))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
+		    and (r.execution_class = 'standard' or
+		         (r.eligible_at <= now() and r.latest_start_at > now()))
 		    and j.image_materialization_status = 'ready'
 		    and j.image_storage_key is not null
-		  order by job_tasks.created_at asc
+		  order by case when r.execution_class = 'standard' then 0 else 1 end,
+		           job_tasks.created_at asc
 		  limit $1
 		  for update skip locked`,
 		limit)
@@ -1195,6 +1285,41 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		return nil, fmt.Errorf("state: commit claim tasks: %w", err)
 	}
 	return tasks, nil
+}
+
+func (s *PgStore) JobTaskExpireUnstarted(ctx context.Context, now time.Time) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `with picked as (
+		select t.run_id, t.task_index from job_tasks t
+		join job_runs r on r.id = t.run_id
+		where t.status = 'queued' and r.execution_class = 'flexible'
+		  and r.latest_start_at <= $1
+		order by r.latest_start_at, t.run_id, t.task_index
+		limit 1000 for update of t skip locked
+	)
+	update job_tasks t set status = 'cancelled', error_class = 'cancelled',
+		error_message = 'flexible start window expired before admission', finished_at = $1
+	from picked p where t.run_id = p.run_id and t.task_index = p.task_index
+	returning t.run_id::text`, now.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("state: expire flexible tasks: %w", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]struct{})
+	var runIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("state: scan expired flexible task: %w", err)
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			runIDs = append(runIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: read expired flexible tasks: %w", err)
+	}
+	return runIDs, nil
 }
 
 // JobTaskMarkClaimed transitions a single task from queued to
@@ -1245,6 +1370,12 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		   join jobs j on j.id = r.job_id and j.account_id = r.account_id
 		   join accounts a on a.id = r.account_id
 		  where r.id = $1::uuid and j.id = $2::uuid
+		    and (r.failure_policy = 'continue' or not exists (
+		      select 1 from job_tasks failed
+		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
+		        and failed.attempt > coalesce(r.retry_max, j.retry_max)))
+		    and (r.execution_class = 'standard' or
+		         (r.eligible_at <= now() and r.latest_start_at > now()))
 		  for update of a`,
 		runID, jobID,
 	).Scan(&accountID, &planName, &runParallelism); err != nil {
@@ -1319,21 +1450,33 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 // when the task is already terminal (the WHERE clause gates on
 // status IN ('queued','claimed')).
 func (s *PgStore) JobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt, nil)
 }
 
 // JobTaskMarkTerminalWithLogs settles a task and persists its retained output
 // in the same UPDATE. The log write is deliberately limited to the guest exit
 // path; reapers continue using JobTaskMarkTerminal and preserve empty output.
 func (s *PgStore) JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt, nil)
 }
 
-func (s *PgStore) JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+func (s *PgStore) JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time, outputManifest ...json.RawMessage) error {
+	var output json.RawMessage
+	if len(outputManifest) > 0 {
+		output = outputManifest[0]
+	}
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt, output)
 }
 
-func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
+func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time, outputManifest json.RawMessage) error {
+	if len(outputManifest) > 0 {
+		if status != "succeeded" {
+			return fmt.Errorf("state: output manifest requires successful task")
+		}
+		if _, err := jobresult.Validate(outputManifest); err != nil {
+			return fmt.Errorf("state: invalid output manifest: %w", err)
+		}
+	}
 	// nullify error_class / error_message when the caller passes
 	// the empty string — the CHECK constraint on error_class has a
 	// closed vocabulary and "" isn't in it.
@@ -1347,6 +1490,10 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	}
 	var expectedInstanceArg any
 	var expectedLeaseArg any
+	var outputArg any
+	if len(outputManifest) > 0 {
+		outputArg = []byte(outputManifest)
+	}
 	if requireClaim {
 		expectedInstanceArg = expectedInstanceID
 		expectedLeaseArg = expectedLeaseToken
@@ -1360,6 +1507,7 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   finished_at   = $6,
 		   log_content   = case when $8 then $9 else log_content end,
 		   log_truncated = case when $8 then $10 else log_truncated end,
+		   output_manifest = $14::jsonb,
 		   lease_token   = null,
 		   lease_expires_at = null
 		 where run_id = $1::uuid and task_index = $7
@@ -1367,7 +1515,7 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   and (not $11::boolean or (status = 'claimed'
 		        and instance_id = $12::uuid and lease_token = $13))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg, outputArg)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
@@ -1398,6 +1546,7 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 		   exit_code         = null,
 		   log_content      = '',
 		   log_truncated    = false,
+		   output_manifest = null,
 		   lease_token       = null,
 		   lease_expires_at  = null,
 		   last_lease_node   = null

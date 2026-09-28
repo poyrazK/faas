@@ -382,6 +382,8 @@ from .create_job_request_env_overrides import CreateJobRequestEnvOverrides
 from .create_job_request_kind import CreateJobRequestKind
 from .create_job_run_request import CreateJobRunRequest
 from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverrides
+from .create_job_run_request_execution_class import CreateJobRunRequestExecutionClass
+from .create_job_run_request_failure_policy import CreateJobRunRequestFailurePolicy
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
@@ -852,14 +854,20 @@ from .job_response_image_materialization_status import JobResponseImageMateriali
 from .job_response_kind import JobResponseKind
 from .job_response_status import JobResponseStatus
 from .job_run_cancelled_response import JobRunCancelledResponse
+from .job_run_input import JobRunInput
 from .job_run_response import JobRunResponse
 from .job_run_response_aggregate_status import JobRunResponseAggregateStatus
 from .job_run_response_env_overrides import JobRunResponseEnvOverrides
+from .job_run_response_execution_class import JobRunResponseExecutionClass
+from .job_run_response_failure_policy import JobRunResponseFailurePolicy
 from .job_run_response_trigger_kind import JobRunResponseTriggerKind
 from .job_task_log_response import JobTaskLogResponse
 from .job_task_log_response_task_status import JobTaskLogResponseTaskStatus
 from .job_task_response import JobTaskResponse
 from .job_task_response_error_class import JobTaskResponseErrorClass
+from .job_task_response_output_manifest import JobTaskResponseOutputManifest
+from .job_task_response_output_manifest_artifacts_item import JobTaskResponseOutputManifestArtifactsItem
+from .job_task_response_output_manifest_version import JobTaskResponseOutputManifestVersion
 from .job_task_response_status import JobTaskResponseStatus
 from .job_task_retry_response import JobTaskRetryResponse
 from .kafka_sasl_config import KafkaSASLConfig
@@ -2221,6 +2229,8 @@ __all__ = (
     "CreateJobRequestKind",
     "CreateJobRunRequest",
     "CreateJobRunRequestEnvOverrides",
+    "CreateJobRunRequestExecutionClass",
+    "CreateJobRunRequestFailurePolicy",
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
     "CreateManagedPostgresBindingRequest",
@@ -2681,14 +2691,20 @@ __all__ = (
     "JobResponseKind",
     "JobResponseStatus",
     "JobRunCancelledResponse",
+    "JobRunInput",
     "JobRunResponse",
     "JobRunResponseAggregateStatus",
     "JobRunResponseEnvOverrides",
+    "JobRunResponseExecutionClass",
+    "JobRunResponseFailurePolicy",
     "JobRunResponseTriggerKind",
     "JobTaskLogResponse",
     "JobTaskLogResponseTaskStatus",
     "JobTaskResponse",
     "JobTaskResponseErrorClass",
+    "JobTaskResponseOutputManifest",
+    "JobTaskResponseOutputManifestArtifactsItem",
+    "JobTaskResponseOutputManifestVersion",
     "JobTaskResponseStatus",
     "JobTaskRetryResponse",
     "KafkaSASLConfig",

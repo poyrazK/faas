@@ -804,6 +804,7 @@ func (s *Server) WaitJobExit(ctx context.Context, req *vmmdpb.WaitJobExitRequest
 		Signal:             payload.Signal,
 		FinishedAtUnixNano: payload.FinishedAtUnixNano,
 		LeaseToken:         payload.LeaseToken,
+		OutputManifestJson: string(payload.OutputManifest),
 	}, nil
 }
 

@@ -93,6 +93,15 @@ func NewLedger() *NodeLedger { return NewNodeLedger() }
 // KindWake and the per-app concurrency path runs unchanged.
 type Kind uint8
 
+// A flexible job may take spare capacity while leaving room for one ordinary
+// app wake on every admitting node. The reserve is deliberately local so a
+// busy node cannot consume another node's wake headroom.
+const (
+	flexibleAppReserveRAMMB         = 512 + api.PerVMOverheadMB
+	flexibleAppReserveVCPU          = 1
+	flexibleAppReserveCPUMillicores = api.DefaultAppCPUMillicores
+)
+
 const (
 	// KindWake (default) is a standard wake-side reservation: counts
 	// toward per-app concurrency (§6.2-1), per-node RAM (§6.2-2),
@@ -186,6 +195,9 @@ type Request struct {
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
 	Kind Kind
+	// Flexible jobs may use only capacity above the per-node app wake
+	// reserve. Placement applies the same reserve before selecting a node.
+	Flexible bool
 	// NodeID is the compute_node chosen by sched.ChoosePlacement at
 	// the call site. The ledger does not pick placement — that's the
 	// Engine's job. Empty NodeID means "legacy box-wide accounting"
@@ -362,10 +374,14 @@ func (l *NodeLedger) Admit(r Request) error {
 		// refreshes the stored value for subsequent floor decisions.
 		node.ceilingMB = ceiling
 	}
-	if node.residentRAM+r.admissionMB() > ceiling {
+	ramCeiling := ceiling
+	if r.Kind == KindJob && r.Flexible {
+		ramCeiling -= flexibleAppReserveRAMMB
+	}
+	if node.residentRAM+r.admissionMB() > ramCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q resident %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
-			r.NodeID, node.residentRAM, r.admissionMB(), ceiling))
+			r.NodeID, node.residentRAM, r.admissionMB(), ramCeiling))
 	}
 
 	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
@@ -381,6 +397,9 @@ func (l *NodeLedger) Admit(r Request) error {
 	vcpuCeiling := r.VCPUBudget
 	if vcpuCeiling <= 0 {
 		vcpuCeiling = api.VCPUSlots
+	}
+	if r.Kind == KindJob && r.Flexible {
+		vcpuCeiling -= flexibleAppReserveVCPU
 	}
 	if node.usedVCPU+r.VCPU > vcpuCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
@@ -398,12 +417,16 @@ func (l *NodeLedger) Admit(r Request) error {
 	reservedCPU := r.CPUMillicores
 	boostCPU := max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
 	reservedCPU += boostCPU
+	cpuCeiling := r.CPUBudgetMillicores
+	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
+		cpuCeiling -= flexibleAppReserveCPUMillicores
+	}
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		node.usedCPUMillicores+reservedCPU > r.CPUBudgetMillicores &&
+		node.usedCPUMillicores+reservedCPU > cpuCeiling &&
 		!r.AllowCPUOvercommitRecovery {
 		return api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, node.usedCPUMillicores, reservedCPU, r.CPUBudgetMillicores))
+			r.NodeID, node.usedCPUMillicores, reservedCPU, cpuCeiling))
 	}
 
 	l.entries[r.Instance] = &reservation{

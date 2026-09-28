@@ -14,8 +14,8 @@
 //                             [--ram N] [--timeout S] [--parallelism N]
 //                             [--retries N] [--pause|--resume]       UpdateJob
 //   gregale jobs rm    <name>                                                  DeleteJob
-//   gregale jobs run   <name> --tasks N [--parallelism N]
-//                             [--retries N] [--timeout S] [--env ...]   CreateJobRun
+//   gregale jobs run   <name> (--tasks N | --input ID=REF ...)
+//                             [--parallelism N] [--arg VALUE ...]       CreateJobRun
 //   gregale jobs runs  <name>                                                  ListJobRuns
 //   gregale jobs cancel <name> <run-id>                                  CancelJobRun
 //   gregale jobs tasks <name> <run-id>                                  ListJobRunTasks
@@ -395,16 +395,22 @@ func cmdJobsRm(args []string) int {
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N [--parallelism N] [--retries N] [--timeout S] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
 	name := args[0]
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
-	tasks := fs.Int("tasks", 0, "number of tasks to fan out (required)")
+	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
 	retries := fs.Int("retries", 0, "override retry max for this run")
 	timeout := fs.Int("timeout", 0, "override task timeout (s) for this run")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
+	arguments := registerJobsMultiFlag(fs, "arg", "repeatable command argument override")
+	inputFlags := registerJobsMultiFlag(fs, "input", "repeatable input binding: ID=REF")
+	flexible := fs.Bool("flexible", false, "use spare capacity within a start window")
+	failFast := fs.Bool("fail-fast", false, "cancel unstarted tasks after permanent failure")
+	eligibleAtFlag := fs.String("eligible-at", "", "earliest task start (RFC3339; flexible runs)")
+	latestStartAtFlag := fs.String("latest-start-at", "", "latest task start (RFC3339; required for flexible runs)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -417,13 +423,47 @@ func cmdJobsRun(args []string) int {
 			retriesProvided = true
 		}
 	})
-	if *tasks <= 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N (N > 0)", "jobs")
+	if *tasks <= 0 && len(*inputFlags) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N or --input ID=REF ...", "jobs")
 		return 1
 	}
 	req := api.CreateJobRunRequest{
 		Tasks:        *tasks,
 		EnvOverrides: parseEnvOverrides([]string(*env)),
+	}
+	for _, raw := range *inputFlags {
+		id, ref, ok := strings.Cut(raw, "=")
+		if !ok || id == "" || ref == "" {
+			PrintUsage(os.Stderr, "usage: --input ID=REF requires a nonempty ID and REF", "jobs")
+			return 1
+		}
+		req.Inputs = append(req.Inputs, api.JobRunInput{ID: id, Ref: ref})
+	}
+	if *flexible {
+		req.ExecutionClass = "flexible"
+	}
+	if *failFast {
+		req.FailurePolicy = "fail_fast"
+	}
+	if *eligibleAtFlag != "" {
+		parsed, err := time.Parse(time.RFC3339, *eligibleAtFlag)
+		if err != nil {
+			PrintUsage(os.Stderr, "--eligible-at must be RFC3339", "jobs")
+			return 1
+		}
+		req.EligibleAt = &parsed
+	}
+	if *latestStartAtFlag != "" {
+		parsed, err := time.Parse(time.RFC3339, *latestStartAtFlag)
+		if err != nil {
+			PrintUsage(os.Stderr, "--latest-start-at must be RFC3339", "jobs")
+			return 1
+		}
+		req.LatestStartAt = &parsed
+	}
+	if len(*arguments) > 0 {
+		args := append([]string(nil), (*arguments)...)
+		req.Arguments = &args
 	}
 	if *parallelism > 0 {
 		p := *parallelism
