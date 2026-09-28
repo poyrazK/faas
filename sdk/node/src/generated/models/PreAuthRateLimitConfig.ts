@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PreAuthRouteLimit } from './PreAuthRouteLimit.js';
 /**
- * Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe mode records threshold crossings without rejecting requests.
+ * Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests.
  */
 export type PreAuthRateLimitConfig = {
   mode: 'off' | 'observe' | 'enforce';

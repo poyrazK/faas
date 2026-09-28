@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.pre_auth_route_limit_coordination import (
+    PreAuthRouteLimitCoordination,
+    check_pre_auth_route_limit_coordination,
+)
 from ..models.pre_auth_route_limit_method import PreAuthRouteLimitMethod, check_pre_auth_route_limit_method
 from ..types import UNSET, Unset
 
@@ -18,7 +22,10 @@ T = TypeVar("T", bound="PreAuthRouteLimit")
 
 @_attrs_define
 class PreAuthRouteLimit:
-    """Optional stricter per-source limit for one public method and path, with an optional response-based failure budget."""
+    """Optional stricter per-source limit for one public method and path, with optional shared request coordination and a
+    response-based failure budget.
+
+    """
 
     method: PreAuthRouteLimitMethod
     path: str
@@ -26,6 +33,10 @@ class PreAuthRouteLimit:
     normalizing the decoded request path."""
     requests_per_second: int
     burst: int
+    coordination: PreAuthRouteLimitCoordination | Unset = "local"
+    """Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque
+    source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local
+    bucket. Failed-response budgets remain local."""
     failed_responses: PreAuthFailedResponseLimit | Unset = UNSET
     """Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
     omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and
@@ -41,6 +52,10 @@ class PreAuthRouteLimit:
 
         burst = self.burst
 
+        coordination: str | Unset = UNSET
+        if not isinstance(self.coordination, Unset):
+            coordination = self.coordination
+
         failed_responses: dict[str, Any] | Unset = UNSET
         if not isinstance(self.failed_responses, Unset):
             failed_responses = self.failed_responses.to_dict()
@@ -55,6 +70,8 @@ class PreAuthRouteLimit:
                 "burst": burst,
             }
         )
+        if coordination is not UNSET:
+            field_dict["coordination"] = coordination
         if failed_responses is not UNSET:
             field_dict["failed_responses"] = failed_responses
 
@@ -73,6 +90,13 @@ class PreAuthRouteLimit:
 
         burst = d.pop("burst")
 
+        _coordination = d.pop("coordination", UNSET)
+        coordination: PreAuthRouteLimitCoordination | Unset
+        if isinstance(_coordination, Unset):
+            coordination = UNSET
+        else:
+            coordination = check_pre_auth_route_limit_coordination(_coordination)
+
         _failed_responses = d.pop("failed_responses", UNSET)
         failed_responses: PreAuthFailedResponseLimit | Unset
         if isinstance(_failed_responses, Unset):
@@ -85,6 +109,7 @@ class PreAuthRouteLimit:
             path=path,
             requests_per_second=requests_per_second,
             burst=burst,
+            coordination=coordination,
             failed_responses=failed_responses,
         )
 

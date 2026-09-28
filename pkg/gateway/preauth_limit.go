@@ -3,6 +3,7 @@ package gateway
 import (
 	"container/list"
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"path"
@@ -21,6 +22,13 @@ import (
 const preAuthSourcesPerApp = 1024
 const preAuthTotalSources = 65_536
 const preAuthEvictionScan = 32
+
+// A fixed number of shared counters per exact route bounds database growth
+// even when an attacker rotates source addresses. Collisions share a budget.
+const preAuthCentralShards = 1024
+const preAuthCentralScope = "preauth"
+
+var errPreAuthCentralUnavailable = errors.New("pre-auth central rate-limit backend unavailable")
 
 type preAuthSourceLimiter struct {
 	mu          sync.Mutex
@@ -135,6 +143,24 @@ func (l *preAuthSourceLimiter) AvailableRate(appID, source string, rps float64, 
 // have already exhausted the budget. The resulting debt delays the next admit.
 func (l *preAuthSourceLimiter) RecordRate(appID, source string, rps float64, burst int) {
 	l.allowRate(appID, source, rps, burst, true, true)
+}
+
+// mirrorCentralBalance keeps the process-local degraded fallback conservative.
+// A concurrent older response must never restore tokens spent by a newer one.
+func (l *preAuthSourceLimiter) mirrorCentralBalance(policyID, source string, remaining int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	app := l.apps[policyID]
+	if app == nil {
+		return
+	}
+	b := app.sources[source]
+	if b == nil {
+		b = app.overflow
+	}
+	if b != nil {
+		b.tokens = min(b.tokens, float64(remaining))
+	}
 }
 
 func (l *preAuthSourceLimiter) allowRate(appID, source string, rps float64, burst int, consume, allowDebt bool) (bool, int) {
@@ -304,7 +330,12 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	routeAllowed := true
 	if matched != nil && (allowed || config.Mode == api.PreAuthRateLimitObserve) {
 		policyID := app.ID + "\x00" + matched.Method + " " + matched.Path
-		routeAllowed = h.preAuthLimiter.Allow(policyID, source, min(matched.RequestsPerSecond, rps), min(matched.Burst, burst))
+		routeRPS := min(matched.RequestsPerSecond, rps)
+		routeBurst := min(matched.Burst, burst)
+		routeAllowed = h.preAuthLimiter.Allow(policyID, source, routeRPS, routeBurst)
+		if matched.Coordination == api.PreAuthCoordinationCentral {
+			routeAllowed = h.allowCentralPreAuthRoute(r.Context(), app, policyID, source, routeRPS, routeBurst, routeAllowed)
+		}
 		if allowed {
 			scope = "pre-auth-route"
 		}
@@ -347,6 +378,28 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return true
+}
+
+// allowCentralPreAuthRoute consults one bounded shared counter after spending
+// the local fallback token. A central decision is authoritative; database
+// errors fall back to the already spent local bucket and are observable.
+func (h *Handler) allowCentralPreAuthRoute(ctx context.Context, app App, policyID, source string, rps, burst int, localAllowed bool) bool {
+	if h.preAuthCentral == nil {
+		h.observeCentralRateLimitDegraded(ctx, preAuthCentralScope, errPreAuthCentralUnavailable)
+		h.metrics.ObservePreAuthRateLimit(app.ID, "central_fallback")
+		return localAllowed
+	}
+	subjectID := dimensionalCentralSubjectID(policyID, "source_ip", source, preAuthCentralShards)
+	consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	defer cancel()
+	remaining, admitted, err := h.preAuthCentral.ConsumeToken(consultCtx, preAuthCentralScope, subjectID, string(app.Plan), float64(rps), float64(burst))
+	if err != nil {
+		h.observeCentralRateLimitDegraded(ctx, preAuthCentralScope, err)
+		h.metrics.ObservePreAuthRateLimit(app.ID, "central_fallback")
+		return localAllowed
+	}
+	h.preAuthLimiter.mirrorCentralBalance(policyID, source, remaining)
+	return admitted
 }
 
 // recordPreAuthShadowResult completes each observe-mode would-block decision

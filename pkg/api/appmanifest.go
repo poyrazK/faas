@@ -237,8 +237,8 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 
 // PreAuthRateLimitConfig is an app-owned, per-source gateway guard. It runs
 // before consumer-key lookup and JWT verification. The configured rate is
-// local to each gateway replica; the existing app/account limits remain the
-// authoritative fleet-wide ceilings.
+// local to each gateway replica unless an exact route opts into central
+// coordination. Existing app/account limits remain fleet-wide ceilings.
 type PreAuthRateLimitConfig struct {
 	Mode              string              `json:"mode"` // off | observe | enforce
 	RequestsPerSecond int                 `json:"requests_per_second,omitempty"`
@@ -253,6 +253,7 @@ type PreAuthRouteLimit struct {
 	Path              string                      `json:"path"`
 	RequestsPerSecond int                         `json:"requests_per_second"`
 	Burst             int                         `json:"burst"`
+	Coordination      string                      `json:"coordination,omitempty"` // local (default) | central
 	FailedResponses   *PreAuthFailedResponseLimit `json:"failed_responses,omitempty"`
 }
 
@@ -266,9 +267,11 @@ type PreAuthFailedResponseLimit struct {
 }
 
 const (
-	PreAuthRateLimitOff     = "off"
-	PreAuthRateLimitObserve = "observe"
-	PreAuthRateLimitEnforce = "enforce"
+	PreAuthRateLimitOff        = "off"
+	PreAuthRateLimitObserve    = "observe"
+	PreAuthRateLimitEnforce    = "enforce"
+	PreAuthCoordinationLocal   = "local"
+	PreAuthCoordinationCentral = "central"
 )
 
 func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
@@ -300,6 +303,9 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 		return fmt.Errorf("pre_auth_rate_limit.routes allows at most 16 entries")
 	}
 	for i, route := range c.Routes {
+		if route.Coordination != "" && route.Coordination != PreAuthCoordinationLocal && route.Coordination != PreAuthCoordinationCentral {
+			return fmt.Errorf("pre_auth_rate_limit.routes coordination must be local or central")
+		}
 		switch route.Method {
 		case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
 		default:

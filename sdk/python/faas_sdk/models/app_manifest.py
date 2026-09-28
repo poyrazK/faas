@@ -145,8 +145,8 @@ class AppManifest:
     crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
     """Effective policy for known monitor/crawler requests."""
     pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
-    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A
-    gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
     mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path."""

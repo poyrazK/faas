@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +22,118 @@ import (
 type countingConsumerAuthStore struct {
 	*fakeConsumerAuthStore
 	lookups atomic.Int32
+}
+
+type sharedPreAuthCentral struct {
+	mu     sync.Mutex
+	tokens map[string]int
+	keys   []string
+	err    error
+}
+
+func (b *sharedPreAuthCentral) ConsumeToken(_ context.Context, scope, subjectID, plan string, _, burst float64) (int, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return 0, false, b.err
+	}
+	key := scope + "/" + subjectID + "/" + plan
+	b.keys = append(b.keys, key)
+	if b.tokens == nil {
+		b.tokens = make(map[string]int)
+	}
+	remaining, found := b.tokens[key]
+	if !found {
+		remaining = int(burst)
+	}
+	if remaining == 0 {
+		return 0, false, nil
+	}
+	remaining--
+	b.tokens[key] = remaining
+	return remaining, true, nil
+}
+
+func (*sharedPreAuthCentral) PeekToken(context.Context, string, string, string) (int, error) {
+	return 0, nil
+}
+func (*sharedPreAuthCentral) Invalidate(string, string, string) {}
+
+func TestPreAuthCentralRouteSharesBudgetAcrossReplicas(t *testing.T) {
+	shared := &sharedPreAuthCentral{}
+	newReplica := func() (*Handler, *fakeBackend) {
+		h, b, _ := newTestHandler(t)
+		b.setLegacyHot()
+		b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+			Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 10, Burst: 10,
+			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1,
+				Coordination: api.PreAuthCoordinationCentral}},
+		}
+		h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+		h.WithPreAuthCentralBackend(shared)
+		return h, b
+	}
+	first, _ := newReplica()
+	second, secondBackend := newReplica()
+	request := func(h *Handler, method, source string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(first, "POST", "192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("first replica = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(second, "POST", "192.0.2.1"); rec.Code != http.StatusTooManyRequests ||
+		rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth-route" {
+		t.Fatalf("second replica = %d headers=%v: %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if got := atomic.LoadInt32(secondBackend.Admits()); got != 0 {
+		t.Fatalf("shared denial reached wake: %d", got)
+	}
+	if rec := request(second, "POST", "192.0.2.2"); rec.Code != http.StatusOK {
+		t.Fatalf("other source = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(second, "GET", "192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("other method = %d: %s", rec.Code, rec.Body.String())
+	}
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	if len(shared.keys) != 3 || shared.keys[0] != shared.keys[1] || shared.keys[2] == shared.keys[0] {
+		t.Fatalf("shared keys = %v", shared.keys)
+	}
+	if strings.Contains(strings.Join(shared.keys, " "), "192.0.2") {
+		t.Fatalf("central key persisted raw source: %v", shared.keys)
+	}
+}
+
+func TestPreAuthCentralRouteFallsBackLocallyOnError(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 10, Burst: 10,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1,
+			Coordination: api.PreAuthCoordinationCentral}},
+	}
+	h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+	h.WithPreAuthCentralBackend(&sharedPreAuthCentral{err: fmt.Errorf("database down")})
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(); rec.Code != http.StatusOK {
+		t.Fatalf("local fallback first = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("local fallback second = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(h.metrics.rateLimitDegraded.WithLabelValues("preauth")); got != 2 {
+		t.Fatalf("degraded metric = %v, want 2", got)
+	}
 }
 
 func (s *countingConsumerAuthStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (ConsumerAuthKey, error) {

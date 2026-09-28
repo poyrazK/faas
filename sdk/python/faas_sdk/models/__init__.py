@@ -1193,6 +1193,7 @@ from .pre_auth_policy_observation_kind import PreAuthPolicyObservationKind
 from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
 from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
 from .pre_auth_route_limit import PreAuthRouteLimit
+from .pre_auth_route_limit_coordination import PreAuthRouteLimitCoordination
 from .pre_auth_route_limit_method import PreAuthRouteLimitMethod
 from .preflight_finding import PreflightFinding
 from .preflight_level import PreflightLevel
@@ -2950,6 +2951,7 @@ __all__ = (
     "PreAuthRateLimitConfig",
     "PreAuthRateLimitConfigMode",
     "PreAuthRouteLimit",
+    "PreAuthRouteLimitCoordination",
     "PreAuthRouteLimitMethod",
     "PreflightFinding",
     "PreflightLevel",

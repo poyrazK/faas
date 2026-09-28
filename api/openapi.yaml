@@ -25161,7 +25161,7 @@ components:
         wake_id: { type: string, format: uuid, description: "Wake id stamped on the admitted instance and wake timeline." }
 
     PreAuthRateLimitConfig:
-      description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe mode records threshold crossings without rejecting requests."
+      description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests."
       type: object
       required: [mode]
       properties:
@@ -25186,7 +25186,7 @@ components:
             $ref: '#/components/schemas/PreAuthRouteLimit'
 
     PreAuthRouteLimit:
-      description: "Optional stricter per-source limit for one public method and path, with an optional response-based failure budget."
+      description: "Optional stricter per-source limit for one public method and path, with optional shared request coordination and a response-based failure budget."
       type: object
       required: [method, path, requests_per_second, burst]
       properties:
@@ -25207,6 +25207,11 @@ components:
           type: integer
           minimum: 1
           maximum: 2000
+        coordination:
+          type: string
+          enum: [local, central]
+          default: local
+          description: "Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local bucket. Failed-response budgets remain local."
         failed_responses:
           $ref: '#/components/schemas/PreAuthFailedResponseLimit'
 

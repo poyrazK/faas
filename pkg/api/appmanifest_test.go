@@ -550,6 +550,11 @@ func TestPreAuthRouteLimitValidation(t *testing.T) {
 	if err := base.Validate(PlanFree); err != nil {
 		t.Fatalf("valid route limit: %v", err)
 	}
+	central := base
+	central.Routes = []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4, Coordination: PreAuthCoordinationCentral}}
+	if err := central.Validate(PlanFree); err != nil {
+		t.Fatalf("valid central route limit: %v", err)
+	}
 	cases := []struct {
 		name  string
 		route PreAuthRouteLimit
@@ -561,6 +566,7 @@ func TestPreAuthRouteLimitValidation(t *testing.T) {
 		{"unsupported_method", PreAuthRouteLimit{Method: "TRACE", Path: "/login", RequestsPerSecond: 2, Burst: 4}},
 		{"rate_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 6, Burst: 4}},
 		{"burst_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 21}},
+		{"invalid_coordination", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4, Coordination: "fleet"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

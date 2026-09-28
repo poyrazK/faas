@@ -1706,7 +1706,7 @@ func NewMetrics() *Metrics {
 			m.routeConsumerThrottleDecisions.WithLabelValues(kind, outcome)
 		}
 	}
-	for _, scope := range []string{"app", "account", "rule", "other"} {
+	for _, scope := range []string{"app", "account", "rule", "preauth", "other"} {
 		m.rateLimitDegraded.WithLabelValues(scope)
 	}
 	for _, outcome := range []string{"match", "miss", "blocked", "failed", "missing"} {
@@ -2445,7 +2445,7 @@ func (m *Metrics) ObserveRateLimitDegraded(scope string) {
 		return
 	}
 	switch scope {
-	case "app", "account", "rule":
+	case "app", "account", "rule", "preauth":
 	default:
 		scope = "other"
 	}

@@ -896,6 +896,7 @@ type Handler struct {
 	declaredRoutes DeclaredRouteMatcher
 	limiter        *Limiter
 	preAuthLimiter *preAuthSourceLimiter
+	preAuthCentral CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -1483,6 +1484,15 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	return h
 }
 
+// WithPreAuthCentralBackend enables the separately opt-in, shared source
+// budget on exact pre-auth routes. It is wired at boot even when the general
+// app/account limiter remains in local mode. A nil backend leaves those routes
+// on observable local fallback. Call before serving requests.
+func (h *Handler) WithPreAuthCentralBackend(central CentralBackend) *Handler {
+	h.preAuthCentral = central
+	return h
+}
+
 // observeCentralRateLimitDegraded makes the limiter's local-fallback posture
 // explicit. Metrics count every fallback. Logs and audit rows are rate-limited
 // per closed scope so a Postgres outage does not create an additional write
@@ -1493,7 +1503,7 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 		return
 	}
 	switch scope {
-	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule:
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule, "preauth":
 	default:
 		scope = "other"
 	}

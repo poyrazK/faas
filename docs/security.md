@@ -73,6 +73,24 @@ route matching does not understand application route parameters. Route limits
 return `x-faas-rate-limit-scope: pre-auth-route` when enforced. Shared NAT
 addresses still share a bucket, so start in `observe` mode.
 
+An exact route can opt into a fleet-wide request budget with
+`"coordination":"central"`:
+
+```json
+{"pre_auth_rate_limit":{"mode":"observe","requests_per_second":20,"burst":40,"routes":[{"method":"POST","path":"/login","requests_per_second":2,"burst":4,"coordination":"central"}]}}
+```
+
+Central coordination uses one Postgres token consume per matching request.
+The same trusted source and route map to the same bounded counter on every
+replica. The gateway stores no raw IP address in that counter; it maps sources
+to 1,024 deterministic shards per route. Colliding sources share allowance,
+so an aggressive threshold can affect unrelated clients. Idle counters are
+pruned after two hours. If the central store fails or is not configured, the
+route falls back to its local source bucket and increments
+`gateway_ratelimit_degraded_total{scope="preauth"}`. Other routes and the
+app-wide source bucket remain local. Use the observe endpoint below before
+enforcing a shared route budget.
+
 For login or verification routes, a `failed_responses` budget can count only
 application failures. Successful responses do not spend this budget:
 
@@ -107,7 +125,8 @@ policy edit. The response maps slots to the current configured paths; the Promet
 policy IDs, never client IPs or paths. Prometheus unavailability returns
 `source: "degraded: ..."` and zero counts; these are unavailable data, not a
 clean result. As with the limiter, measurements come from all gateway
-replicas scraped by Prometheus, while enforcement remains replica-local.
+replicas scraped by Prometheus. Enforcement is replica-local except for exact
+routes that opt into central request coordination.
 
 The source is the client IP verified by the public gateway, which replaces
 incoming `X-Forwarded-For` before passing the request to the internal gateway.
@@ -117,14 +136,15 @@ app-wide policy, each route override, and each failure budget) and 65,536 per
 gateway;
 further addresses share that policy's overflow bucket until an inactive bucket can
 be safely evicted.
-The guard is local to each gateway replica, so its per-source threshold is an
-early abuse brake rather than a fleet-wide quota. Existing app and account
-limits continue to cap aggregate request rates. Shared corporate/NAT IPs
-also share a source bucket; use `observe` to choose a suitable threshold.
+The app-wide and failed-response guards are local to each gateway replica,
+so those thresholds are early abuse brakes rather than fleet-wide quotas.
+Existing app and account limits continue to cap aggregate request rates.
+Shared corporate/NAT IPs also share a source bucket; use `observe` to choose
+a suitable threshold.
 
 `gateway_pre_auth_rate_limit_total{app,outcome}` reports `would_block`,
 `blocked`, `route_would_block`, `route_blocked`, `failure_recorded`,
-`failure_would_block`, `failure_blocked`, and `untrusted_source`
+`failure_would_block`, `failure_blocked`, `central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
 ## Quarantine recovery

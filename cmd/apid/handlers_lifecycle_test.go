@@ -58,6 +58,7 @@ func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 	config := &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 2, Burst: 4,
 		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2,
+			Coordination:    api.PreAuthCoordinationCentral,
 			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1, Statuses: []int{401, 403}}}},
 	}
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)

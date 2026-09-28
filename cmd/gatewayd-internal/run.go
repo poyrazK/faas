@@ -2466,6 +2466,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
 		}
 	}
+	// Exact pre-auth routes opt into a shared source budget independently of
+	// the app/account limiter mode. The handler consults this backend only for
+	// routes with coordination="central"; all other requests remain local.
+	if deps.pool != nil {
+		preAuthBackend := state.NewPGRateLimitBackend(deps.pool)
+		handler.WithPreAuthCentralBackend(preAuthBackend)
+		go prunePreAuthCounters(ctx, preAuthBackend, log)
+	}
 	// Issue #587 / PR-A: construct the per-request drain tracker
 	// the graceful-shutdown path waits on. ONE tracker per daemon
 	// shared with the nodeCache raw forwarder + the control mux.
@@ -4132,6 +4140,28 @@ func buildCentralRateLimitBackend(pool *pgxpool.Pool, log *slog.Logger) (*state.
 		return float64(limits.RateLimitRPS), true
 	}
 	return state.NewPGRateLimitBackend(pool), rps
+}
+
+// prunePreAuthCounters bounds storage left by source rotation and removed
+// policies. Every replica can run it safely: row locks skip a peer's batch.
+func prunePreAuthCounters(ctx context.Context, backend *state.PGRateLimitBackend, log *slog.Logger) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		pruneCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		removed, err := backend.PrunePreAuthCounters(pruneCtx)
+		cancel()
+		if err != nil && log != nil {
+			log.Warn("gatewayd-internal: pre-auth counter prune failed", "error", err)
+		} else if removed > 0 && log != nil {
+			log.Debug("gatewayd-internal: pruned idle pre-auth counters", "removed", removed)
+		}
+	}
 }
 
 // rpsKind is a tiny stringifier for the rps closure kind. Used
