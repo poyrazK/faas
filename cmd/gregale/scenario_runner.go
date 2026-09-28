@@ -36,19 +36,20 @@ type testManifest struct {
 }
 
 type testScenario struct {
-	Project   string                 `yaml:"project"`
-	Source    string                 `yaml:"source"`
-	Secrets   map[string]string      `yaml:"secrets"`
-	Consumers []testConsumer         `yaml:"consumers"`
-	Services  map[string]testService `yaml:"services"`
-	Trigger   []string               `yaml:"trigger"`
-	Command   []string               `yaml:"command"`
-	Setup     [][]string             `yaml:"setup"`
-	Cleanup   [][]string             `yaml:"cleanup"`
-	Postgres  bool                   `yaml:"postgres"`
-	Buckets   []testBucket           `yaml:"buckets"`
-	WaitFor   testWaitFor            `yaml:"wait_for"`
-	Timeout   string                 `yaml:"timeout"`
+	Project          string                 `yaml:"project"`
+	Source           string                 `yaml:"source"`
+	Secrets          map[string]string      `yaml:"secrets"`
+	Consumers        []testConsumer         `yaml:"consumers"`
+	ConsumerAuthMode string                 `yaml:"consumer_auth_mode"`
+	Services         map[string]testService `yaml:"services"`
+	Trigger          []string               `yaml:"trigger"`
+	Command          []string               `yaml:"command"`
+	Setup            [][]string             `yaml:"setup"`
+	Cleanup          [][]string             `yaml:"cleanup"`
+	Postgres         bool                   `yaml:"postgres"`
+	Buckets          []testBucket           `yaml:"buckets"`
+	WaitFor          testWaitFor            `yaml:"wait_for"`
+	Timeout          string                 `yaml:"timeout"`
 }
 
 type testService struct {
@@ -302,6 +303,9 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		if len(scenario.Consumers) > 16 {
 			return nil, "", fmt.Errorf("scenario %q may declare at most 16 consumers", name)
 		}
+		if scenario.ConsumerAuthMode != "" && scenario.ConsumerAuthMode != api.ConsumerAuthModeOptional && scenario.ConsumerAuthMode != api.ConsumerAuthModeRequired {
+			return nil, "", fmt.Errorf("scenario %q consumer_auth_mode must be optional or required", name)
+		}
 		seenConsumers := map[string]bool{}
 		for _, consumer := range scenario.Consumers {
 			if !api.ValidAppSlug(consumer.Name) || seenConsumers[consumer.Name] {
@@ -510,6 +514,12 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	registered = true
+	if scenario.ConsumerAuthMode != "" {
+		if _, err := client.UpdateApp(ctx, session.App.Slug, api.UpdateAppRequest{ConsumerAuthMode: &scenario.ConsumerAuthMode}); err != nil {
+			receipt.Error = fmt.Sprintf("set test consumer authentication mode: %v", err)
+			return
+		}
+	}
 	consumerIDs := make([]string, 0, len(scenario.Consumers))
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)

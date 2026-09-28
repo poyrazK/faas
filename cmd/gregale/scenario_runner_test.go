@@ -21,6 +21,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gregale-test.yaml")
 	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    consumers: [{name: customer-a}, {name: customer-b, scopes: [read]}]\n    services:\n      worker:\n        source: ./worker\n        secrets: {NOTIFICATION_URL: '${service.notifications.url}/deliver'}\n      notifications: {source: ./notifications}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
+	content = strings.Replace(content, "    consumers:", "    consumer_auth_mode: required\n    consumers:", 1)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || len(scenarios["customer-export"].Consumers) != 2 {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
@@ -60,6 +61,12 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	}
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("duplicate consumer was accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "consumer_auth_mode: required", "consumer_auth_mode: unsupported", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("invalid consumer auth mode was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
 		t.Fatal(err)

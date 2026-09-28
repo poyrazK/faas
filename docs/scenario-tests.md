@@ -17,6 +17,7 @@ scenarios:
   customer-export:
     project: export-api
     source: ./gateway
+    consumer_auth_mode: required
     consumers:
       - name: customer-a
       - name: customer-b
@@ -75,9 +76,10 @@ commands receive each consumer's ID and key as
 `GREGALE_TEST_CONSUMER_CUSTOMER_A_ID` and
 `GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY` (using the consumer name in uppercase,
 with hyphens changed to underscores). A key has `read` and `write` scopes by
-default; `scopes` can narrow or expand them. Use these credentials when the
-application accepts Gregale consumer keys, for example to verify that
-`customer-b` cannot retrieve `customer-a`'s export. The keys are never written
+default; `scopes` can narrow or expand them. Send a key as an
+`Authorization: Bearer` token. Set `consumer_auth_mode: required` to have
+Gregale reject requests without a valid consumer key. Application assertions
+can then check that `customer-b` cannot retrieve `customer-a`'s export. The keys are never written
 to the report. The runner revokes the consumers during cleanup, and their keys
 expire one hour after the scenario timeout as a backstop. Consumer key plan
 limits apply. Applications with their own authentication scheme can create
