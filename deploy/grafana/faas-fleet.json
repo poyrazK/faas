@@ -2400,6 +2400,59 @@
       ],
       "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 420,
+      "type": "timeseries",
+      "title": "Safe Deploy worker lease health",
+      "description": "APID lease readiness and database read success, by instance.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 278},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "faas_safe_release_worker_lease_ready", "legendFormat": "ready / {{instance}}", "refId": "A"},
+        {"expr": "faas_safe_release_worker_lease_check_success", "legendFormat": "DB read / {{instance}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bool", "min": 0, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 421,
+      "type": "timeseries",
+      "title": "Safe Deploy serving canaries",
+      "description": "Canaries with nonzero traffic in APID's latest successful sweep, by instance.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 278},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "faas_safe_release_serving_canaries", "legendFormat": "{{instance}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 422,
+      "type": "timeseries",
+      "title": "Safe Deploy worker lease time remaining",
+      "description": "Seconds to worker lease expiry, measured using the database clock. Check the database read metric if this value is zero.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 286},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "faas_safe_release_worker_lease_seconds_until_expiry", "legendFormat": "{{instance}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 423,
+      "type": "timeseries",
+      "title": "Safe Deploy emergency recovery outcomes",
+      "description": "APID emergency abort, failure, and skipped counts by outcome over five minutes.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 286},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(faas_safe_release_emergency_abort_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "30s",

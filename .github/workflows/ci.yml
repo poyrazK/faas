@@ -1108,6 +1108,7 @@ jobs:
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
+          promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
