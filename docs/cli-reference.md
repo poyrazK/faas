@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify private services |
+| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -171,7 +171,7 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-Inspect app bindings and rotation status, manage storage credentials, or verify private services
+Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections
 
 `gregale bindings [<subcommand>] <app>`
 
@@ -223,15 +223,24 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 ### bindings verify
 
-Check DNS, TLS, authorization, and live routing for one or all bound services
+Check a private service route or test one managed PostgreSQL binding
 
-`gregale bindings verify <app> [<service>] [--all] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale bindings verify <app> [<service>] [--all] [--postgres <ENVIRONMENT_KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | verify every declared service binding |  |
+| `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+
+Examples:
+
+```sh
+gregale bindings verify my-api billing
+gregale bindings verify my-api --all
+gregale bindings verify my-api --postgres DATABASE_URL
+```
 
 ### bindings smoke
 

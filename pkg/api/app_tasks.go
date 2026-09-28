@@ -47,6 +47,10 @@ const (
 	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
 	// or a language runtime in the customer image.
 	AppTaskServiceBindingProbeCommand = "__gregale_service_binding_probe_v1__"
+	// AppTaskPostgresBindingProbeCommand is a reserved argv[0] handled directly
+	// by guest-init. It runs a bounded, read-only PostgreSQL connectivity canary
+	// using an environment key injected into the customer's deployment.
+	AppTaskPostgresBindingProbeCommand = "__gregale_postgres_binding_probe_v1__"
 	// AppTaskServiceBindingSmokeCommand is a reserved argv[0] handled directly
 	// by guest-init. It sends one bounded GET through a declared HTTPS service
 	// binding to an explicitly pinned target deployment.
@@ -62,9 +66,10 @@ const (
 // CreateAppTaskRequest is the public admission contract. Kind and deployment
 // are not caller-selected: public requests are always manual and apid pins the
 // app's current live deployment before persistence. The reserved
-// AppTaskServiceBindingProbeCommand and AppTaskServiceBindingSmokeCommand
-// argv[0] are handled by guest-init for `gregale bindings verify` and
-// `gregale bindings smoke`; neither is an image executable.
+// AppTaskServiceBindingProbeCommand, AppTaskPostgresBindingProbeCommand, and
+// AppTaskServiceBindingSmokeCommand argv[0] are handled by guest-init for
+// `gregale bindings verify`, `gregale bindings verify --postgres`, and
+// `gregale bindings smoke`; none is an image executable.
 type CreateAppTaskRequest struct {
 	Command        []string `json:"command"`
 	CommandShell   bool     `json:"command_shell,omitempty"`

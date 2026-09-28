@@ -315,7 +315,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "Inspect app bindings and rotation status, manage storage credentials, or verify private services",
+		Short:       "Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections",
 		Positionals: []string{"<app>"},
 		Subcommands: []cliSub{
 			{
@@ -333,13 +333,14 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:        "verify",
-				Short:       "Check DNS, TLS, authorization, and live routing for one or all bound services",
+				Short:       "Check a private service route or test one managed PostgreSQL binding",
 				Positionals: []string{"<app>", "[<service>]"},
 				Flags: []cliFlag{
 					{Name: "all", Short: "verify every declared service binding"},
+					{Name: "postgres", Short: "verify one managed PostgreSQL binding by environment key", Value: "ENVIRONMENT_KEY"},
 					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
 					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
-				},
+				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --postgres DATABASE_URL"},
 			},
 			{
 				Name:        "smoke",

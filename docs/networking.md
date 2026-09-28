@@ -384,6 +384,16 @@ for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for
 [ADR-275](adr/275-https-service-binding-canary.md) for caller verification. The alias is never a public ingress
 hostname.
 
+To test an app's managed PostgreSQL binding, run
+`gregale bindings verify <app> --postgres DATABASE_URL` with the binding's
+environment key. The CLI confirms that the key belongs to a managed database
+binding, then starts a bounded platform task in the app's live deployment. The
+task reads the injected URL inside the guest, checks URL configuration and
+database connection, and runs only `SELECT 1`. It reports the environment,
+configuration, connection, and query stages; the URL, host, username, password,
+and database response are never included in the report. This confirms basic
+connectivity and query permission, not application-specific schema readiness.
+
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the

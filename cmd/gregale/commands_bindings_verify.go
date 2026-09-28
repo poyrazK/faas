@@ -27,6 +27,12 @@ type serviceBindingProbeClient interface {
 	CancelAppTask(context.Context, string, string) (api.AppTaskResponse, error)
 }
 
+type postgresBindingProbeClient interface {
+	serviceBindingProbeClient
+	ListManagedPostgresDatabases(context.Context) (api.ManagedPostgresDatabaseList, error)
+	ListManagedPostgresBindings(context.Context, string) (api.ManagedPostgresBindingList, error)
+}
+
 type serviceBindingProbeBatchItem struct {
 	Service string                        `json:"service"`
 	Status  string                        `json:"status"`
@@ -46,15 +52,28 @@ type serviceBindingProbeBatchReport struct {
 func cmdBindingsVerify(args []string) int {
 	fs := newFlagSet("bindings-verify", flag.ContinueOnError)
 	all := fs.Bool("all", false, "verify every declared service binding")
+	postgresKey := fs.String("postgres", "", "verify a managed PostgreSQL binding by environment key")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
 	flagArgs, positionals := splitArgsForFlags(args)
-	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 || *all && len(positionals) != 1 || !*all && len(positionals) != 2 {
+	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 {
+		printBindingsVerifyUsage()
+		return 1
+	}
+	postgresKeyValue := strings.TrimSpace(*postgresKey)
+	invalidSelection := *all && postgresKeyValue != ""
+	if *all || postgresKeyValue != "" {
+		invalidSelection = invalidSelection || len(positionals) != 1
+	} else {
+		invalidSelection = len(positionals) != 2
+	}
+	if invalidSelection {
 		printBindingsVerifyUsage()
 		return 1
 	}
 	slug := strings.TrimSpace(positionals[0])
-	if !api.ValidAppSlug(slug) || *pollInterval <= 0 || *waitTimeout <= 0 {
+	invalidPostgresKey := postgresKeyValue != "" && api.ValidateEnvKey(postgresKeyValue) != nil
+	if !api.ValidAppSlug(slug) || *pollInterval <= 0 || *waitTimeout <= 0 || invalidPostgresKey {
 		printBindingsVerifyUsage()
 		return 1
 	}
@@ -64,6 +83,9 @@ func cmdBindingsVerify(args []string) int {
 	}
 	if *all {
 		return runAllServiceBindingProbes(context.Background(), client, slug, *pollInterval, *waitTimeout)
+	}
+	if postgresKeyValue != "" {
+		return runPostgresBindingProbe(context.Background(), client, slug, postgresKeyValue, *pollInterval, *waitTimeout)
 	}
 	service := strings.TrimSpace(positionals[1])
 	services, err := api.NormalizeServiceBindingTargets([]string{service})
@@ -76,7 +98,164 @@ func cmdBindingsVerify(args []string) int {
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [flags] | gregale bindings verify <app> --all [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags]", "bindings")
+}
+
+func runPostgresBindingProbe(ctx context.Context, client postgresBindingProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return printErr("Could not load app bindings", err)
+	}
+	databases, err := client.ListManagedPostgresDatabases(ctx)
+	if err != nil {
+		return printErr("Could not list managed PostgreSQL bindings", err)
+	}
+	bound := false
+	for _, database := range databases.Items {
+		bindings, err := client.ListManagedPostgresBindings(ctx, database.ID)
+		if err != nil {
+			return printErr("Could not list managed PostgreSQL bindings", err)
+		}
+		for _, binding := range bindings.Items {
+			if binding.AppID == app.ID && binding.EnvironmentKey == environmentKey {
+				bound = true
+				break
+			}
+		}
+		if bound {
+			break
+		}
+	}
+	if !bound {
+		return printErr("PostgreSQL environment key is not bound to this app", fmt.Errorf("%s has no managed PostgreSQL binding for %s", slug, environmentKey))
+	}
+
+	report, task, errorTitle, exitCode, err := executePostgresBindingProbe(ctx, client, slug, environmentKey, pollInterval, waitTimeout)
+	if errorTitle != "" {
+		return printErr(errorTitle, err)
+	}
+	if exitCode == 130 {
+		return exitCode
+	}
+	if jsonOutput {
+		if err := writeJSON(report); err != nil {
+			return jsonOut(err)
+		}
+		return exitCode
+	}
+	renderPostgresBindingProbeReport(slug, report, task)
+	return exitCode
+}
+
+func executePostgresBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) (api.PostgresBindingProbeReport, api.AppTaskResponse, string, int, error) {
+	report := newPostgresBindingProbeReport(slug, environmentKey)
+	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{
+		Command:        []string{api.AppTaskPostgresBindingProbeCommand, environmentKey},
+		TimeoutSeconds: bindingProbeTaskTimeoutSeconds,
+		MaxOutputBytes: 4096,
+	})
+	if err != nil {
+		report.Error = err.Error()
+		return report, task, "Could not start PostgreSQL binding canary", 1, err
+	}
+	report.TaskID = task.ID
+	report.DeploymentID = task.DeploymentID
+	interruptContext, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	waitContext, cancel := context.WithTimeout(interruptContext, waitTimeout)
+	defer cancel()
+	for !task.Status.Terminal() {
+		select {
+		case <-waitContext.Done():
+			if errors.Is(interruptContext.Err(), context.Canceled) {
+				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
+				defer cancelRequest()
+				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
+				if cancelErr != nil {
+					PrintWarn(osStderr, "could not request cancellation for PostgreSQL canary task %s: %v", task.ID, cancelErr)
+				} else if !jsonOutput {
+					PrintWarn(osStderr, "cancellation requested for PostgreSQL canary task %s (status=%s)", task.ID, cancelled.Status)
+				}
+				return report, task, "", 130, nil
+			}
+			report.Error = "PostgreSQL canary task did not finish before the wait timeout"
+			return report, task, "PostgreSQL binding canary is still running", 1, waitContext.Err()
+		case <-time.After(pollInterval):
+		}
+		task, err = client.GetAppTask(waitContext, slug, task.ID)
+		if err != nil {
+			if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
+				report.Error = "PostgreSQL canary task did not finish before the wait timeout"
+				return report, task, "PostgreSQL binding canary wait timed out; the task is still running", 1, waitContext.Err()
+			}
+			report.Error = err.Error()
+			return report, task, "Could not read PostgreSQL binding canary status", 1, err
+		}
+	}
+	if task.StdoutTail != "" {
+		var taskReport api.PostgresBindingProbeReport
+		if err := json.Unmarshal([]byte(task.StdoutTail), &taskReport); err != nil {
+			report.Error = "task did not return a valid PostgreSQL canary report"
+		} else {
+			report = taskReport
+		}
+	} else {
+		report.Error = "task did not return a PostgreSQL canary report"
+	}
+	if report.EnvironmentKey == "" {
+		report.EnvironmentKey = environmentKey
+	}
+	report.App = slug
+	report.TaskID = task.ID
+	report.DeploymentID = task.DeploymentID
+	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() {
+		if report.Error == "" {
+			report.Error = "PostgreSQL binding canary did not succeed"
+		}
+		return report, task, "", 1, nil
+	}
+	return report, task, "", 0, nil
+}
+
+func newPostgresBindingProbeReport(app, environmentKey string) api.PostgresBindingProbeReport {
+	return api.PostgresBindingProbeReport{
+		App:            app,
+		EnvironmentKey: environmentKey,
+		Environment:    api.PostgresBindingProbeCheck{Status: "not_checked"},
+		Configuration:  api.PostgresBindingProbeCheck{Status: "not_checked"},
+		Connection:     api.PostgresBindingProbeCheck{Status: "not_checked"},
+		Query:          api.PostgresBindingProbeCheck{Status: "not_checked"},
+	}
+}
+
+func renderPostgresBindingProbeReport(app string, report api.PostgresBindingProbeReport, task api.AppTaskResponse) {
+	_, _ = fmt.Fprintf(osStdout, "PostgreSQL binding canary: %s → %s\n", app, report.EnvironmentKey)
+	_, _ = fmt.Fprintf(osStdout, "Task: %s (deployment=%s)\n", task.ID, task.DeploymentID)
+	for _, row := range []struct {
+		name  string
+		check api.PostgresBindingProbeCheck
+	}{
+		{name: "Environment", check: report.Environment},
+		{name: "Configuration", check: report.Configuration},
+		{name: "Connection", check: report.Connection},
+		{name: "Query", check: report.Query},
+	} {
+		label := strings.ToUpper(strings.ReplaceAll(row.check.Status, "_", " "))
+		if label == "" {
+			label = "NOT CHECKED"
+		}
+		if row.check.Detail != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s (%s)\n", row.name, label, row.check.Detail)
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", row.name, label)
+		}
+	}
+	if report.Error != "" {
+		PrintFail(osStderr, "%s", report.Error)
+	}
+	if task.OutputTruncated {
+		PrintWarn(osStderr, "canary output was truncated at %d bytes", task.MaxOutputBytes)
+	}
 }
 
 func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) int {

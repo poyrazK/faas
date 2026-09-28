@@ -81,6 +81,104 @@ func TestCmdBindingsVerifyRunsInBoundAppTaskAndReportsStages(t *testing.T) {
 	}
 }
 
+func TestCmdBindingsVerifyPostgresRunsSelectedManagedBindingCanary(t *testing.T) {
+	report := api.PostgresBindingProbeReport{
+		EnvironmentKey: "DATABASE_URL",
+		Environment:    api.PostgresBindingProbeCheck{Status: "passed", Detail: "environment variable is present in this deployment"},
+		Configuration:  api.PostgresBindingProbeCheck{Status: "passed"},
+		Connection:     api.PostgresBindingProbeCheck{Status: "passed"},
+		Query:          api.PostgresBindingProbeCheck{Status: "passed"},
+	}
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var createCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
+			_, _ = w.Write([]byte(`{"items":[{"id":"binding-other","app_id":"other-app","environment_key":"DATABASE_URL"},{"id":"binding-wrong-key","app_id":"app-1","environment_key":"OTHER_URL"},{"id":"binding-match","app_id":"app-1","environment_key":"DATABASE_URL"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
+			createCalls++
+			var request api.CreateAppTaskRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode create task: %v", err)
+			}
+			if !reflect.DeepEqual(request.Command, []string{api.AppTaskPostgresBindingProbeCommand, "DATABASE_URL"}) || request.CommandShell {
+				t.Errorf("task command = %+v", request)
+			}
+			if request.TimeoutSeconds != bindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
+				t.Errorf("task limits = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.AppTaskResponse{
+				ID: "task-pg-1", AppID: "app-1", DeploymentID: "deployment-1",
+				Kind: api.AppTaskKindManual, Status: api.AppTaskStatusSucceeded, StdoutTail: string(reportJSON),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	var out bytes.Buffer
+	previousOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if createCalls != 1 {
+		t.Fatalf("create task calls = %d, want one", createCalls)
+	}
+	var got api.PostgresBindingProbeReport
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode report: %v; output=%s", err, out.String())
+	}
+	if !got.Passed() || got.App != "api" || got.EnvironmentKey != "DATABASE_URL" ||
+		got.TaskID != "task-pg-1" || got.DeploymentID != "deployment-1" {
+		t.Fatalf("report = %+v", got)
+	}
+}
+
+func TestCmdBindingsVerifyPostgresRejectsUnboundEnvironmentKeyBeforeTaskAdmission(t *testing.T) {
+	var createCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
+			_, _ = w.Write([]byte(`{"items":[{"id":"binding-other","app_id":"other-app","environment_key":"DATABASE_URL"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
+			createCalls++
+			http.Error(w, "unexpected task admission", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL"}); code == 0 {
+		t.Fatal("verification succeeded for an environment key not bound to this app")
+	}
+	if createCalls != 0 {
+		t.Fatalf("created %d canary task(s) for an unbound environment key", createCalls)
+	}
+}
+
 func TestCmdBindingsVerifyRejectsUndeclaredServiceBeforeTaskAdmission(t *testing.T) {
 	var createCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

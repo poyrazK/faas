@@ -152,6 +152,9 @@ func appTaskHandler(log *slog.Logger) apptaskproto.Handler {
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
+	if isPostgresBindingProbeCommand(req) {
+		return executePostgresBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isServiceBindingProbeCommand(req) {
 		return executeServiceBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
