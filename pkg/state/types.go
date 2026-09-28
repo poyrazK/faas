@@ -3586,6 +3586,10 @@ type TCPListener struct {
 // AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
 const AppWebhookClaimLease = 30 * time.Second
 
+// AppWebhookMaxInFlightPerSubscription bounds concurrent receiver requests
+// across all scheduler instances. Only unexpired in-flight leases count.
+const AppWebhookMaxInFlightPerSubscription = 4
+
 // appWebhookFairnessPeriodSeconds matches the dispatcher's default five-second
 // tick. Advancing the account rotation by one batch per tick spreads the extra
 // slots when the batch size is not divisible by the active account count.

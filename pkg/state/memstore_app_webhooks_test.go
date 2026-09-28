@@ -412,6 +412,74 @@ func TestMemStoreAppWebhookDelivery_ClaimHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_ClaimCapsEachSubscription(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	slow, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 12; i++ {
+		d := memSampleDelivery(slow.ID, app.ID, acct.ID, fmt.Sprintf("slow-%02d", i))
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		d := memSampleDelivery(other.ID, app.ID, acct.ID, fmt.Sprintf("other-%02d", i))
+		d.NextAttemptAt = now.Add(-time.Second)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var slowClaims []AppWebhookDelivery
+	otherClaims := 0
+	for _, d := range first {
+		if d.WebhookID == slow.ID {
+			slowClaims = append(slowClaims, d)
+		} else if d.WebhookID == other.ID {
+			otherClaims++
+		}
+	}
+	if len(slowClaims) != AppWebhookMaxInFlightPerSubscription || otherClaims != 2 {
+		t.Fatalf("first claim: slow=%d other=%d, want %d and 2", len(slowClaims), otherClaims, AppWebhookMaxInFlightPerSubscription)
+	}
+	blocked, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("claim while leases live = %+v, %v; want none", blocked, err)
+	}
+	claimed := slowClaims[0]
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claimed.ID, 200, claimed.Attempt, claimed.NextAttemptAt, now); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(replacement) != 1 || replacement[0].WebhookID != slow.ID {
+		t.Fatalf("claim after slot freed = %+v, %v; want one slow delivery", replacement, err)
+	}
+	// At the lease deadline the remaining claims expire together, but
+	// each subscription still receives no more than four new leases.
+	afterExpiry, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(AppWebhookClaimLease+2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredCounts := make(map[string]int)
+	for _, d := range afterExpiry {
+		expiredCounts[d.WebhookID]++
+	}
+	if expiredCounts[slow.ID] != AppWebhookMaxInFlightPerSubscription || expiredCounts[other.ID] != 2 {
+		t.Fatalf("claim after expiry: slow=%d other=%d, want %d and 2", expiredCounts[slow.ID], expiredCounts[other.ID], AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))

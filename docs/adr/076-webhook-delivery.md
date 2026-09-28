@@ -201,6 +201,15 @@ all slots are allocated. The existing overdue-queue alert detects sustained
 backlogs while the saturation signal distinguishes capacity pressure from an
 idle or failing claim loop.
 
+Each subscription also has a four-attempt concurrency cap shared by all
+scheduler instances. The claim transaction locks eligible subscription rows,
+then counts unexpired in-flight leases in a fresh database snapshot before
+claiming delivery rows. Expired leases no longer consume a slot and can be
+reclaimed; a slow receiver cannot fill the whole process-wide worker pool or
+receive a 32-request burst before its first rate-limit response. A partial
+index on in-flight deliveries keeps the lease-count query focused as terminal
+history grows.
+
 ## Consequences
 
 Positive:

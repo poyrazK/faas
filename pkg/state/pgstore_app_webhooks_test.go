@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -415,6 +416,94 @@ func TestPgStore_ClaimDueAppWebhookDeliveries(t *testing.T) {
 	}
 }
 
+func TestPgStore_ClaimDueAppWebhookDeliveries_CapsConcurrentSchedulers(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	otherScheduler := state.NewPgStore(pool)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "subscription-cap")
+	slow, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 12; i++ {
+		d := pgSampleDelivery(slow.ID, app, acct)
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		d := pgSampleDelivery(other.ID, app, acct)
+		d.NextAttemptAt = now.Add(-time.Second)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type result struct {
+		rows []state.AppWebhookDelivery
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for _, scheduler := range []*state.PgStore{s, otherScheduler} {
+		go func(scheduler *state.PgStore) {
+			ready.Done()
+			<-start
+			rows, err := scheduler.ClaimDueAppWebhookDeliveries(ctx, 20, now)
+			results <- result{rows: rows, err: err}
+		}(scheduler)
+	}
+	ready.Wait()
+	close(start)
+	var slowClaims []state.AppWebhookDelivery
+	otherClaims := 0
+	for i := 0; i < 2; i++ {
+		out := <-results
+		if out.err != nil {
+			t.Fatal(out.err)
+		}
+		for _, d := range out.rows {
+			if d.WebhookID == slow.ID {
+				slowClaims = append(slowClaims, d)
+			} else if d.WebhookID == other.ID {
+				otherClaims++
+			}
+		}
+	}
+	if len(slowClaims) != state.AppWebhookMaxInFlightPerSubscription || otherClaims != 2 {
+		t.Fatalf("concurrent claims: slow=%d other=%d, want %d and 2", len(slowClaims), otherClaims, state.AppWebhookMaxInFlightPerSubscription)
+	}
+	blocked, err := s.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("claim while leases live = %+v, %v; want none", blocked, err)
+	}
+	claimed := slowClaims[0]
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, claimed.ID, 200, claimed.Attempt, claimed.NextAttemptAt, now); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := s.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(replacement) != 1 || replacement[0].WebhookID != slow.ID {
+		t.Fatalf("claim after slot freed = %+v, %v; want one slow delivery", replacement, err)
+	}
+	afterExpiry, err := s.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(state.AppWebhookClaimLease+2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredCounts := make(map[string]int)
+	for _, d := range afterExpiry {
+		expiredCounts[d.WebhookID]++
+	}
+	if expiredCounts[slow.ID] != state.AppWebhookMaxInFlightPerSubscription || expiredCounts[other.ID] != 2 {
+		t.Fatalf("claim after expiry: slow=%d other=%d, want %d and 2", expiredCounts[slow.ID], expiredCounts[other.ID], state.AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
 func TestPgStore_ClaimDueAppWebhookDeliveries_FairAcrossAccounts(t *testing.T) {
 	s, ctx := pgStore(t)
 	const accounts, perAccount, cap = 3, 5, 5
@@ -730,8 +819,8 @@ func TestPgStore_ClaimDueAppWebhookDeliveries_SkipsLockedRowsWithinAccount(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claimed) != 10 {
-		t.Fatalf("claimed %d rows despite 20 unlocked rows, want 10", len(claimed))
+	if len(claimed) != state.AppWebhookMaxInFlightPerSubscription {
+		t.Fatalf("claimed %d rows despite 20 unlocked rows, want %d", len(claimed), state.AppWebhookMaxInFlightPerSubscription)
 	}
 	for _, d := range claimed {
 		if locked[d.ID] {

@@ -2,9 +2,9 @@
 //
 // Property:
 //
-//	Given N accounts each with equal pending delivery depth, the
-//	dispatcher's claim query must round-robin so no account gets
-//	more than ceil(32/N) deliveries/tick over a 10-tick window.
+//	Given N accounts each with equal pending delivery depth and one
+//	subscription each, every account can use its four claim slots on
+//	every tick without being starved by another account.
 //
 // This is hand-rolled assertion (not pgregory.net/rapid) to match
 // the precedent in pkg/sched/engine_test.go (memory:
@@ -27,8 +27,8 @@ import (
 
 // TestDispatcher_Fairness_PerAccountRoundRobin drives 10 cycles
 // against 5 accounts × 100 pending rows each and asserts the
-// max-min deliveries-per-account gap is ≤ 2 (within the
-// expected round-robin envelope).
+// max-min deliveries-per-account gap is zero while one subscription
+// per account limits each tick to four deliveries.
 func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 	const (
 		accounts   = 5
@@ -101,16 +101,14 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 				}
 			}
 			delta := total - succeededPerAccount[i]
-			if delta < cap/accounts || delta > (cap+accounts-1)/accounts {
-				t.Errorf("tick %d account %s claimed %d rows, want 6 or 7", tick, acct, delta)
+			if delta != state.AppWebhookMaxInFlightPerSubscription {
+				t.Errorf("tick %d account %s claimed %d rows, want %d", tick, acct, delta, state.AppWebhookMaxInFlightPerSubscription)
 			}
 			succeededPerAccount[i] = total
 		}
 	}
 
-	// Compute max-min gap. With cap=32 across 5 accounts the
-	// expected per-tick envelope is ceil(32/5) = 7; the round-robin
-	// claim query keeps the cumulative gap small.
+	// Every account remains equally represented over the window.
 	var min, max int
 	for i := 0; i < accounts; i++ {
 		v := succeededPerAccount[i]
@@ -122,8 +120,8 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 		}
 	}
 	gap := max - min
-	if gap > 2 {
-		t.Errorf("fairness gap: got %d, want <= 2 (min=%d max=%d per-account=%v)",
+	if gap != 0 {
+		t.Errorf("fairness gap: got %d, want 0 (min=%d max=%d per-account=%v)",
 			gap, min, max, succeededPerAccount)
 	}
 }

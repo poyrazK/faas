@@ -408,10 +408,17 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	if limit <= 0 {
 		return nil, nil
 	}
+	liveClaims := make(map[string]int)
+	for _, d := range m.appWebhookDeliveries {
+		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
+			liveClaims[d.WebhookID]++
+		}
+	}
 	byAccount := make(map[string][]AppWebhookDelivery)
 	for _, d := range m.appWebhookDeliveries {
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
-			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) {
+			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
+			liveClaims[d.WebhookID] < AppWebhookMaxInFlightPerSubscription {
 			byAccount[d.AccountID] = append(byAccount[d.AccountID], d)
 		}
 	}
@@ -450,19 +457,23 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 
 	var candidates []AppWebhookDelivery
 	for slot := 0; len(candidates) < limit; slot++ {
-		progress := false
+		scanned := false
 		for _, accountID := range orderedAccounts {
 			rows := byAccount[accountID]
 			if slot >= len(rows) {
 				continue
 			}
+			scanned = true
+			if liveClaims[rows[slot].WebhookID] >= AppWebhookMaxInFlightPerSubscription {
+				continue
+			}
 			candidates = append(candidates, rows[slot])
-			progress = true
+			liveClaims[rows[slot].WebhookID]++
 			if len(candidates) == limit {
 				break
 			}
 		}
-		if !progress {
+		if !scanned {
 			break
 		}
 	}

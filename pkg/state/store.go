@@ -6061,14 +6061,17 @@ type Store interface {
 
 	// ClaimDueAppWebhookDeliveries is the dispatcher's tick entry.
 	// In a single transaction it:
-	//   1. Locks up to `limit` rows whose status IN
+	//   1. Locks eligible subscriptions, then counts unexpired in-flight
+	//      leases in a fresh snapshot. At most four leases may be active
+	//      per subscription across all scheduler instances.
+	//   2. Locks up to `limit` rows whose status IN
 	//      ('pending','in_flight') AND next_attempt_at <= `now`,
 	//      excluding subscriptions with an active receiver cooldown and
 	//      interleaving the oldest due rows across accounts.
-	//   2. Transitions the rows to 'in_flight' and sets
+	//   3. Transitions the rows to 'in_flight' and sets
 	//      next_attempt_at to the claim deadline. Only expired
 	//      in_flight claims can be reclaimed after a crash.
-	//   3. Returns the locked rows for the caller to process.
+	//   4. Returns the locked rows for the caller to process.
 	// The transaction commits before the dispatcher starts the HTTP
 	// work; status='in_flight' is the post-commit visible state.
 	ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error)
