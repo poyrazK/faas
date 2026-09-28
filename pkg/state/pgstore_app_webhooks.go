@@ -881,29 +881,44 @@ func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accou
 }
 
 func (s *PgStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
-	var oldest pgtype.Timestamptz
+	health, err := s.AppWebhookFleetQueueHealth(ctx, now)
+	return health.OldestClaimableAt, err
+}
+
+func (s *PgStore) AppWebhookFleetQueueHealth(ctx context.Context, now time.Time) (AppWebhookFleetQueueHealth, error) {
+	var claimable, held pgtype.Timestamptz
+	var health AppWebhookFleetQueueHealth
 	if err := s.pool.QueryRow(ctx, `
 		with live_claims as materialized (
 			select webhook_id, count(*) as n
 			  from app_webhook_deliveries
 			 where status = 'in_flight' and next_attempt_at > $1
 			 group by webhook_id
+		), due as (
+			select d.next_attempt_at,
+			       coalesce(w.receiver_cooldown_until > $1, false) or
+			           coalesce(live.n, 0) >= case when w.receiver_cooldown_until is null then $2 else 1 end as held
+			  from app_webhook_deliveries d
+			  join app_webhooks w on w.id = d.webhook_id
+			  left join live_claims live on live.webhook_id = d.webhook_id
+			 where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $1
 		)
-		select min(d.next_attempt_at)
-		  from app_webhook_deliveries d
-		  join app_webhooks w on w.id = d.webhook_id
-		  left join live_claims live on live.webhook_id = d.webhook_id
-		 where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $1
-		   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-		   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $2 else 1 end
-	`, now, AppWebhookMaxInFlightPerSubscription).Scan(&oldest); err != nil {
-		return nil, fmt.Errorf("state: oldest overdue webhook delivery: %w", err)
+		select min(next_attempt_at) filter (where not held),
+		       min(next_attempt_at) filter (where held),
+		       count(*) filter (where held)
+		  from due
+	`, now, AppWebhookMaxInFlightPerSubscription).Scan(&claimable, &held, &health.HeldDueCount); err != nil {
+		return AppWebhookFleetQueueHealth{}, fmt.Errorf("state: app webhook fleet queue health: %w", err)
 	}
-	if !oldest.Valid {
-		return nil, nil
+	if claimable.Valid {
+		at := claimable.Time
+		health.OldestClaimableAt = &at
 	}
-	at := oldest.Time
-	return &at, nil
+	if held.Valid {
+		at := held.Time
+		health.OldestHeldAt = &at
+	}
+	return health, nil
 }
 
 func (s *PgStore) PruneAppWebhookDeliveries(ctx context.Context, cutoff time.Time, limit int) (int64, error) {

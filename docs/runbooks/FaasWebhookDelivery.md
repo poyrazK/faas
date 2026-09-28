@@ -7,8 +7,10 @@ tenant equivalent), then open its deliveries and attempt history.
 
 ## Queue overdue
 
-`FaasWebhookDeliveryQueueOverdue` means the oldest due `pending` or expired
-`in_flight` delivery has been overdue for more than 15 minutes for five minutes.
+`FaasWebhookDeliveryQueueOverdue` means the oldest claimable due `pending` or
+expired `in_flight` delivery has been overdue for more than 15 minutes for five
+minutes. Deliveries held by a receiver cooldown or a full subscription claim
+slot are tracked separately below.
 Check that schedd is running and that `webhook: claim` errors are absent. Check
 database availability and the size of the due queue:
 
@@ -19,17 +21,57 @@ WHERE status IN ('pending', 'in_flight') AND next_attempt_at <= now()
 GROUP BY status;
 ```
 
-The gauge resets to zero when no delivery is overdue. A sustained large queue
-may need more dispatch capacity; a small queue with growing age points to claim
-or worker failure.
+The claimable-age gauge resets to zero when no due delivery can be claimed. A
+sustained large queue may need more dispatch capacity; a small queue with
+growing age points to claim or worker failure.
 
 Schedd claims at most the free portion of its 64 delivery slots each tick.
 `schedd_webhook_delivery_inflight` shows running workers, and
 `schedd_webhook_delivery_saturated` is one when every slot is allocated
 (including a claim still being fetched). If saturation stays at one while the
 oldest-overdue age grows, inspect slow receivers and database write latency
-before increasing capacity. A backlog with no saturation points to claim
-failures or scheduler availability.
+before increasing capacity. A claimable backlog with no saturation points to
+claim failures or scheduler availability.
+
+## Held backlog
+
+`schedd_webhook_delivery_held_due_count` counts due deliveries that a
+subscription cannot claim while its receiver cooldown is active or its live
+claim slots are full. `schedd_webhook_delivery_oldest_held_due_seconds` measures
+the age of the oldest such delivery. Neither gauge carries account or webhook
+labels. Both reset to zero when no due delivery is held. The poll-success gauge
+must be one before trusting either age gauge.
+
+`FaasWebhookDeliveryHeldBacklog` warns when at least one due delivery remains
+held for over an hour for ten minutes. Check scoped webhook health for
+`cooling_down` or `probing`; inspect recent attempt status codes and
+`Retry-After` deadlines. A full four-slot subscription without cooldown may
+need receiver throughput or dispatch-capacity investigation. A deliberate long
+receiver cooldown is expected to defer delivery, but the warning keeps the
+customer impact visible. Do not manually replay a pending delivery to bypass a
+receiver's rate limit.
+
+Find the affected subscriptions, including rows held by a live recovery probe:
+
+```sql
+WITH live_claims AS (
+  SELECT webhook_id, count(*) AS n
+  FROM app_webhook_deliveries
+  WHERE status = 'in_flight' AND next_attempt_at > now()
+  GROUP BY webhook_id
+)
+SELECT w.id AS webhook_id, w.account_id, w.receiver_cooldown_until,
+       count(*) AS held_due_count, min(d.next_attempt_at) AS oldest_held_due_at
+FROM app_webhook_deliveries d
+JOIN app_webhooks w ON w.id = d.webhook_id
+LEFT JOIN live_claims live ON live.webhook_id = w.id
+WHERE d.status IN ('pending', 'in_flight') AND d.next_attempt_at <= now()
+  AND (coalesce(w.receiver_cooldown_until > now(), false)
+       OR coalesce(live.n, 0) >= CASE WHEN w.receiver_cooldown_until IS NULL THEN 4 ELSE 1 END)
+GROUP BY w.id, w.account_id, w.receiver_cooldown_until
+ORDER BY oldest_held_due_at
+LIMIT 20;
+```
 
 ## Dead delivery spike
 
@@ -41,10 +83,10 @@ Retry dead deliveries only after the cause is resolved.
 
 ## Health poll failure
 
-`FaasWebhookDeliveryHealthPollFailed` means schedd cannot read the oldest due
-delivery. Check database connectivity and the `webhook: delivery health poll`
-log. The overdue gauge retains its last value during a failed poll; treat it as
-stale until the success gauge returns to one.
+`FaasWebhookDeliveryHealthPollFailed` means schedd cannot read the fleet queue
+snapshot. Check database connectivity and the `webhook: delivery health poll`
+log. The claimable and held gauges retain their last values during a failed
+poll; treat them as stale until the success gauge returns to one.
 
 ## Retention and storage
 

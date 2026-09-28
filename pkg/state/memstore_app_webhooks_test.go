@@ -457,6 +457,11 @@ func TestMemStoreAppWebhookDelivery_ClaimCapsEachSubscription(t *testing.T) {
 	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(time.Second)); err != nil || oldest != nil {
 		t.Fatalf("fleet oldest with full live capacity = %v, %v; want nil", oldest, err)
 	}
+	if health, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(time.Second)); err != nil ||
+		health.OldestClaimableAt != nil || health.HeldDueCount != 8 ||
+		health.OldestHeldAt == nil || !health.OldestHeldAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("fleet health with full capacity = %+v, %v", health, err)
+	}
 	blocked, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
 	if err != nil || len(blocked) != 0 {
 		t.Fatalf("claim while leases live = %+v, %v; want none", blocked, err)
@@ -639,6 +644,11 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 		health.PendingCount != 3 || health.OldestOverdueAt != nil {
 		t.Fatalf("paused health = %+v, %v", health, err)
 	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(2*time.Minute)); err != nil ||
+		fleet.OldestClaimableAt == nil || !fleet.OldestClaimableAt.Equal(otherRow.NextAttemptAt) ||
+		fleet.HeldDueCount != 2 || fleet.OldestHeldAt == nil {
+		t.Fatalf("mixed fleet health = %+v, %v", fleet, err)
+	}
 	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, now.Add(2*time.Minute))
 	if err != nil || len(claims) != 1 || claims[0].ID != otherRow.ID {
 		t.Fatalf("claims during cooldown = %+v, %v; want other subscription only", claims, err)
@@ -648,6 +658,11 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 	}
 	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(2*time.Minute)); err != nil || oldest != nil {
 		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
+	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(2*time.Minute)); err != nil ||
+		fleet.OldestClaimableAt != nil || fleet.HeldDueCount != 2 ||
+		fleet.OldestHeldAt == nil || !fleet.OldestHeldAt.Equal(pausedRows[2].NextAttemptAt) {
+		t.Fatalf("fleet health during cooldown = %+v, %v", fleet, err)
 	}
 	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil); err != nil ||
 		health.ReceiverState != AppWebhookReceiverAwaitingProbe || health.OldestOverdueAt == nil {
@@ -667,6 +682,10 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 	}
 	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, longUntil.Add(time.Second)); err != nil || oldest != nil {
 		t.Fatalf("fleet oldest during probe = %v, %v; want nil", oldest, err)
+	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, longUntil.Add(time.Second)); err != nil ||
+		fleet.OldestClaimableAt != nil || fleet.HeldDueCount != 2 || fleet.OldestHeldAt == nil {
+		t.Fatalf("fleet health during probe = %+v, %v", fleet, err)
 	}
 	finished := longUntil.Add(2 * time.Second)
 	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt,

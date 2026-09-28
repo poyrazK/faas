@@ -182,6 +182,12 @@ minutes, a spike of more than 20 dead deliveries in ten minutes,
 and a failed poll. The poll-failure signal prevents a stale queue-age
 gauge from appearing healthy.
 
+The fleet poll separates claimable due work from deliveries held by an active
+receiver cooldown or full subscription claim capacity. It exports the held due
+count and oldest held due age without customer labels. A distinct warning
+catches a held delivery older than one hour while the claimable-age gauge may
+read zero. The same poll-success signal marks both age gauges stale on failure.
+
 ### 3.11 Delivery retention
 
 Schedd deletes up to 500 terminal (`succeeded` or `dead`) deliveries each

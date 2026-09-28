@@ -3,6 +3,7 @@ package webhook
 import (
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -10,6 +11,8 @@ import (
 // identifiers never appear as metric labels.
 type DeliveryHealthMetrics struct {
 	overdueSeconds    prometheus.Gauge
+	heldDueCount      prometheus.Gauge
+	heldDueSeconds    prometheus.Gauge
 	deadTotal         prometheus.Counter
 	pollSuccess       prometheus.Gauge
 	retentionSuccess  prometheus.Gauge
@@ -25,6 +28,14 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 		overdueSeconds: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: prefix + "_webhook_delivery_oldest_overdue_seconds",
 			Help: "Age of the oldest claimable overdue outbound webhook delivery, or zero when no subscription has claim capacity.",
+		}),
+		heldDueCount: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_delivery_held_due_count",
+			Help: "Due outbound webhook deliveries held by receiver cooldown or full subscription claim capacity.",
+		}),
+		heldDueSeconds: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_webhook_delivery_oldest_held_due_seconds",
+			Help: "Age of the oldest due outbound webhook delivery held by receiver cooldown or full subscription claim capacity.",
 		}),
 		deadTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: prefix + "_webhook_delivery_dead_total",
@@ -59,21 +70,26 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 			Help: "One when all outbound webhook dispatch slots are reserved or running, zero otherwise.",
 		}),
 	}
-	reg.MustRegister(m.overdueSeconds, m.deadTotal, m.pollSuccess, m.retentionSuccess,
+	reg.MustRegister(m.overdueSeconds, m.heldDueCount, m.heldDueSeconds, m.deadTotal, m.pollSuccess, m.retentionSuccess,
 		m.retentionFailures, m.prunedTotal, m.storageBytes, m.inFlight, m.saturated)
 	return m
 }
 
-func (m *DeliveryHealthMetrics) setOldestOverdue(now time.Time, oldest *time.Time) {
+func (m *DeliveryHealthMetrics) setFleetQueueHealth(now time.Time, health state.AppWebhookFleetQueueHealth) {
 	if m == nil {
 		return
 	}
-	age := 0.0
-	if oldest != nil {
-		age = max(0, now.Sub(*oldest).Seconds())
-	}
-	m.overdueSeconds.Set(age)
+	m.overdueSeconds.Set(webhookDeliveryAgeSeconds(now, health.OldestClaimableAt))
+	m.heldDueCount.Set(float64(health.HeldDueCount))
+	m.heldDueSeconds.Set(webhookDeliveryAgeSeconds(now, health.OldestHeldAt))
 	m.pollSuccess.Set(1)
+}
+
+func webhookDeliveryAgeSeconds(now time.Time, oldest *time.Time) float64 {
+	if oldest == nil {
+		return 0
+	}
+	return max(0, now.Sub(*oldest).Seconds())
 }
 
 func (m *DeliveryHealthMetrics) markPollFailed() {

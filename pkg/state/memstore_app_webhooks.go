@@ -784,10 +784,15 @@ func (m *MemStore) AppWebhookDeliveryHealth(_ context.Context, webhookID, accoun
 	return health, nil
 }
 
-func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(_ context.Context, now time.Time) (*time.Time, error) {
+func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
+	health, err := m.AppWebhookFleetQueueHealth(ctx, now)
+	return health.OldestClaimableAt, err
+}
+
+func (m *MemStore) AppWebhookFleetQueueHealth(_ context.Context, now time.Time) (AppWebhookFleetQueueHealth, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var oldest *time.Time
+	var health AppWebhookFleetQueueHealth
 	liveClaims := make(map[string]int)
 	for _, d := range m.appWebhookDeliveries {
 		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
@@ -798,19 +803,25 @@ func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(_ context.Context, now time
 		if _, exists := m.appWebhooks[d.WebhookID]; !exists {
 			continue
 		}
+		if (d.Status != AppWebhookDeliveryPending && d.Status != AppWebhookDeliveryInFlight) || d.NextAttemptAt.After(now) {
+			continue
+		}
 		capacity := AppWebhookMaxInFlightPerSubscription
 		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
 			capacity = 1
 		}
-		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
-			!m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
-			liveClaims[d.WebhookID] < capacity &&
-			(oldest == nil || d.NextAttemptAt.Before(*oldest)) {
+		if m.appWebhookReceiverCooldowns[d.WebhookID].After(now) || liveClaims[d.WebhookID] >= capacity {
+			health.HeldDueCount++
+			if health.OldestHeldAt == nil || d.NextAttemptAt.Before(*health.OldestHeldAt) {
+				at := d.NextAttemptAt
+				health.OldestHeldAt = &at
+			}
+		} else if health.OldestClaimableAt == nil || d.NextAttemptAt.Before(*health.OldestClaimableAt) {
 			at := d.NextAttemptAt
-			oldest = &at
+			health.OldestClaimableAt = &at
 		}
 	}
-	return oldest, nil
+	return health, nil
 }
 
 func (m *MemStore) PruneAppWebhookDeliveries(_ context.Context, cutoff time.Time, limit int) (int64, error) {

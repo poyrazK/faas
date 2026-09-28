@@ -157,7 +157,19 @@ groups:
           family: outbound_webhooks
         annotations:
           summary: "Outbound webhook queue is over 15 minutes behind"
-          description: "At least one due outbound webhook delivery has remained unclaimed or unfinished for over 15 minutes. Inspect schedd dispatch and database health."
+          description: "At least one claimable outbound webhook delivery has remained overdue for over 15 minutes. Inspect schedd dispatch and database health; receiver-held work has a separate alert."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
+
+      - alert: FaasWebhookDeliveryHeldBacklog
+        expr: schedd_webhook_delivery_held_due_count > 0 and schedd_webhook_delivery_oldest_held_due_seconds > 3600
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook deliveries have been held for over an hour"
+          description: "Due deliveries are waiting behind a receiver cooldown or full subscription claim capacity. Inspect receiver health and the affected subscriptions before changing dispatch capacity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWebhookDelivery.md"
 
       - alert: FaasWebhookDeliveryDeadSpike

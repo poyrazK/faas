@@ -771,8 +771,9 @@ ADR-075 / issue #475 / migration 00138.
   `webhook.delivered` / `webhook.failed` / `webhook.dead`.
 - **Delivery health** — scoped webhook health APIs and the dashboard show
   queue counts, oldest overdue age, and 24-hour terminal success rate.
-  Schedd exports fleet overdue-age, dead-delivery, and poll-success
-  metrics, with alert rules and an operator runbook.
+  Schedd exports separate fleet claimable-age and receiver-held due-count/age
+  signals, plus dead-delivery and poll-success metrics, with alert rules and an
+  operator runbook.
 
 ADR-076 / issue #476 / migrations 00140 + 00141.
 

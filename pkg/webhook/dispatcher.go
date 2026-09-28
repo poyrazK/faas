@@ -392,13 +392,13 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 func (d *Dispatcher) refreshHealth(ctx context.Context) {
 	now := d.Now()
-	oldest, err := d.store.OldestOverdueAppWebhookDeliveryAt(ctx, now)
+	health, err := d.store.AppWebhookFleetQueueHealth(ctx, now)
 	if err != nil {
 		d.HealthMetrics.markPollFailed()
 		d.log.Warn("webhook: delivery health poll", "err", err)
 		return
 	}
-	d.HealthMetrics.setOldestOverdue(now, oldest)
+	d.HealthMetrics.setFleetQueueHealth(now, health)
 }
 
 // shutdown blocks until in-flight goroutines finish or the 10s

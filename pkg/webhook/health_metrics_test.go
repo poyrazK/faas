@@ -17,10 +17,19 @@ func TestDeliveryHealthMetrics_FleetOnly(t *testing.T) {
 	m := NewDeliveryHealthMetrics(reg, "schedd")
 	now := time.Now()
 	oldest := now.Add(-20 * time.Minute)
-	m.setOldestOverdue(now, &oldest)
+	held := now.Add(-2 * time.Hour)
+	m.setFleetQueueHealth(now, state.AppWebhookFleetQueueHealth{
+		OldestClaimableAt: &oldest, OldestHeldAt: &held, HeldDueCount: 8,
+	})
 	m.markDead()
 	if got := testutil.ToFloat64(m.overdueSeconds); got != 1200 {
 		t.Fatalf("overdue age = %v, want 1200", got)
+	}
+	if got := testutil.ToFloat64(m.heldDueCount); got != 8 {
+		t.Fatalf("held due count = %v, want 8", got)
+	}
+	if got := testutil.ToFloat64(m.heldDueSeconds); got != 7200 {
+		t.Fatalf("oldest held age = %v, want 7200", got)
 	}
 	if got := testutil.ToFloat64(m.deadTotal); got != 1 {
 		t.Fatalf("dead count = %v, want 1", got)
@@ -29,8 +38,18 @@ func TestDeliveryHealthMetrics_FleetOnly(t *testing.T) {
 	if got := testutil.ToFloat64(m.pollSuccess); got != 0 {
 		t.Fatalf("poll success = %v, want 0", got)
 	}
+	if got := testutil.ToFloat64(m.heldDueCount); got != 8 {
+		t.Fatalf("failed poll changed held count to %v", got)
+	}
+	m.setFleetQueueHealth(now, state.AppWebhookFleetQueueHealth{})
+	if got := testutil.ToFloat64(m.heldDueCount); got != 0 {
+		t.Fatalf("cleared held count = %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(m.heldDueSeconds); got != 0 {
+		t.Fatalf("cleared held age = %v, want 0", got)
+	}
 	families, err := reg.Gather()
-	if err != nil || len(families) != 9 {
+	if err != nil || len(families) != 11 {
 		t.Fatalf("fleet metrics = %d families, err=%v", len(families), err)
 	}
 	for _, family := range families {

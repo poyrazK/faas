@@ -6125,6 +6125,9 @@ type Store interface {
 	AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error)
 	// OldestOverdueAppWebhookDeliveryAt backs the fleet claimable queue-age signal.
 	OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error)
+	// AppWebhookFleetQueueHealth reports both claimable and subscription-held
+	// due work in one snapshot for the fleet health poll.
+	AppWebhookFleetQueueHealth(ctx context.Context, now time.Time) (AppWebhookFleetQueueHealth, error)
 	// PruneAppWebhookDeliveries deletes at most limit terminal deliveries last
 	// updated before cutoff. Attempt history follows via cascade.
 	PruneAppWebhookDeliveries(ctx context.Context, cutoff time.Time, limit int) (int64, error)

@@ -3681,6 +3681,15 @@ type AppWebhookDeliveryHealth struct {
 	RecentDeadCount       int64
 }
 
+// AppWebhookFleetQueueHealth separates due deliveries with claim capacity from
+// those held by a receiver cooldown or a full subscription claim slot.
+// All values are fleet-wide and contain no customer identifiers.
+type AppWebhookFleetQueueHealth struct {
+	OldestClaimableAt *time.Time
+	OldestHeldAt      *time.Time
+	HeldDueCount      int64
+}
+
 // AppWebhookQuotaError is returned by CreateAppWebhookIfUnderQuota
 // when either cap (per-app or per-account) is reached. Mirrors
 // AlertRuleQuotaError at types.go:1030-1053.
