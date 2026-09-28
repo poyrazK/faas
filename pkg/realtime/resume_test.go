@@ -84,6 +84,7 @@ func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testC
 	}, hooks)
 	if err := m.RegisterEndpoint(Endpoint{
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
@@ -94,6 +95,106 @@ func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testC
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { server.Close(); _ = m.Close() })
 	return m, server
+}
+
+func TestResumeBrowserBearerSubprotocol(t *testing.T) {
+	history := &testResumeHistory{}
+	hooks := &testChannelHooks{allowed: true}
+	m, server := newResumeTestManager(t, history, hooks)
+	value, _ := m.endpoints.Load("resume-endpoint")
+	endpoint := *value.(*endpointState).config.Load()
+	seenProtocols := make(chan string, 1)
+	endpoint.Authorize = func(_ context.Context, request *http.Request) (string, error) {
+		seenProtocols <- request.Header.Get("Sec-WebSocket-Protocol")
+		return "user-123", nil
+	}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + "resume-endpoint"
+	credential := ResumeBearerSubprotocolPrefix + "aaa.bbb.ccc"
+	dialer := websocket.Dialer{Subprotocols: []string{ResumeSubprotocol, credential}}
+	client, response, err := dialer.Dial(url, http.Header{"Origin": {"https://app.example"}})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if got := client.Subprotocol(); got != ResumeSubprotocol {
+		t.Fatalf("selected subprotocol = %q, want only v2", got)
+	}
+	if got := <-seenProtocols; got != ResumeSubprotocol {
+		t.Fatalf("authorization hook protocols = %q, want credential stripped", got)
+	}
+	if got := m.cfg.JWTAuthorizer.(*recordingJWTAuthorizer).token; got != "aaa.bbb.ccc" {
+		t.Fatalf("verified token = %q", got)
+	}
+	sendResumeTestFrame(t, client, resumeClientFrame{Type: "subscribe", Channel: "updates"})
+	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" {
+		t.Fatalf("browser subscription = %+v", frame)
+	}
+}
+
+func TestResumeBrowserBearerRequiresEndpointOriginPolicy(t *testing.T) {
+	history := &testResumeHistory{}
+	hooks := &testChannelHooks{allowed: true}
+	m, server := newResumeTestManager(t, history, hooks)
+	value, _ := m.endpoints.Load("resume-endpoint")
+	endpoint := *value.(*endpointState).config.Load()
+	endpoint.AllowedOrigins = nil
+	endpoint.CheckOrigin = nil
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + "resume-endpoint"
+	dialer := websocket.Dialer{Subprotocols: []string{ResumeSubprotocol, ResumeBearerSubprotocolPrefix + "aaa.bbb.ccc"}}
+	client, response, err := dialer.Dial(url, http.Header{"Origin": {"https://app.example"}})
+	if client != nil {
+		_ = client.Close()
+	}
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("dial = (%v, %v), want HTTP 403", err, response)
+	}
+}
+
+func TestResumeBrowserBearerRequiresExplicitOriginAndUnambiguousCredential(t *testing.T) {
+	history := &testResumeHistory{}
+	hooks := &testChannelHooks{allowed: true}
+	_, server := newResumeTestManager(t, history, hooks)
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + "resume-endpoint"
+	credential := ResumeBearerSubprotocolPrefix + "aaa.bbb.ccc"
+	for _, tc := range []struct {
+		name      string
+		protocols []string
+		header    http.Header
+		status    int
+	}{
+		{"missing origin", []string{ResumeSubprotocol, credential}, nil, http.StatusForbidden},
+		{"wrong origin", []string{ResumeSubprotocol, credential}, http.Header{"Origin": {"https://evil.example"}}, http.StatusForbidden},
+		{"ambiguous headers", []string{ResumeSubprotocol, credential}, http.Header{"Origin": {"https://app.example"}, "Authorization": {"Bearer another"}}, http.StatusBadRequest},
+		{"duplicate credentials", []string{ResumeSubprotocol, credential, credential}, http.Header{"Origin": {"https://app.example"}}, http.StatusBadRequest},
+		{"malformed JWT", []string{ResumeSubprotocol, ResumeBearerSubprotocolPrefix + "not-a-jwt"}, http.Header{"Origin": {"https://app.example"}}, http.StatusBadRequest},
+		{"credential without v2", []string{credential}, http.Header{"Origin": {"https://app.example"}}, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dialer := websocket.Dialer{Subprotocols: tc.protocols}
+			client, response, err := dialer.Dial(url, tc.header)
+			if client != nil {
+				_ = client.Close()
+			}
+			if response != nil && response.Body != nil {
+				_ = response.Body.Close()
+			}
+			if err == nil || response == nil || response.StatusCode != tc.status {
+				t.Fatalf("dial = (%v, %v), want HTTP %d", err, response, tc.status)
+			}
+		})
+	}
 }
 
 func dialResumeTest(t *testing.T, server *httptest.Server) *websocket.Conn {

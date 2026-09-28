@@ -40,6 +40,7 @@ const (
 	RealtimeResumeSubscriptionsPerConnection = 8
 	RealtimeResumeClientFrameMaxBytes        = 4096
 	RealtimeResumeServerFrameMaxBytes        = 8 << 10
+	RealtimeResumeBearerTokenMaxBytes        = 3072
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

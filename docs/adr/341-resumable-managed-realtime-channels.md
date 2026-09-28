@@ -24,6 +24,8 @@ On reconnect, `realtimed` authorizes the channel before reading its history. It 
 
 Endpoint authentication proves a client can connect, not that it may read every channel. A versioned subscription requires an application authorization callback at `/realtime/authorize-channel`. The synchronous check binds endpoint, verified OIDC principal, channel, and read permission before the first history read. A missing callback fails closed. Its grant lasts for the connection; immediate revocation uses the existing connection-close operation. The existing app-scoped management API remains authorized by account and deployment-write scope. Shared static bearer tokens do not provide a distinct consumer principal and cannot use v2.
 
+Browser clients may carry a signed OIDC JWT in a reserved WebSocket subprotocol because the native constructor cannot set `Authorization`. This requires a non-empty exact endpoint origin allowlist and a present matching `Origin`. The daemon bounds and verifies the JWT, rejects ambiguous credentials, removes the credential subprotocol before hooks and negotiation, and echoes only the v2 protocol. Operators must redact the request's `Sec-WebSocket-Protocol` header from ingress logs and use short-lived JWTs.
+
 ## Rollout and recovery
 
 1. Land the migration, state-store interface, in-memory parity, and PostgreSQL tests. No customer-visible behavior changes in this step.

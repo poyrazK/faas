@@ -140,7 +140,8 @@ function decodeMessage(frame: Record<string, unknown>, channel: string, after: n
   }
   return {
     channel, sequence: next, messageId: frame.message_id,
-    data: Buffer.from(frame.data_base64 ?? '', 'base64'), binary: frame.binary ?? false,
+    data: Uint8Array.from(atob(frame.data_base64 ?? ''), (byte) => byte.charCodeAt(0)),
+    binary: frame.binary ?? false,
   };
 }
 
@@ -169,7 +170,7 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
 export async function consumeRealtimeChannel(options: ConsumeRealtimeChannelOptions): Promise<void> {
   const url = new URL(options.url);
   if (url.protocol !== 'wss:' && url.protocol !== 'ws:') throw new TypeError('realtime URL must use wss or ws');
-  if (!options.channel || Buffer.byteLength(options.channel, 'utf8') > 256 || options.channel.trim() !== options.channel ||
+  if (!options.channel || new TextEncoder().encode(options.channel).byteLength > 256 || options.channel.trim() !== options.channel ||
       /[/?#\r\n]/.test(options.channel)) throw new TypeError('invalid realtime channel');
   const initialDelay = options.retryInitialMs ?? 100;
   const maxDelay = options.retryMaxMs ?? 5_000;

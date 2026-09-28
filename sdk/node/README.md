@@ -126,8 +126,41 @@ An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
 missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
 requires both server preview flags and the endpoint's channel authorization
 callback described in [managed realtime operations](../../docs/ops/realtime.md).
-Browser WebSocket constructors cannot attach the required bearer header, so
-this helper currently targets server-side clients.
+
+Browser clients import from the browser subpath. The server accepts a bounded
+OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
+`allowed_origins` entry matching the page's origin:
+
+```ts
+import {
+  consumeRealtimeChannel,
+  createBrowserRealtimeSocketFactory,
+} from '@gregale/sdk-node/browser';
+
+const cursorKey = `realtime:ENDPOINT_ID:${currentUser.id}:notifications`;
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  cursorStore: {
+    load: () => Number(localStorage.getItem(cursorKey) ?? 0),
+    save: (sequence) => { localStorage.setItem(cursorKey, String(sequence)); },
+  },
+  onMessage: async ({ sequence, data }) => {
+    await processNotification(sequence, data); // deduplicate by channel and sequence
+  },
+  webSocketFactory: createBrowserRealtimeSocketFactory(getFreshOidcToken),
+});
+```
+
+The factory fetches a fresh JWT on every reconnect. For project release
+pinning, pass `createGregaleBrowserFetch(...).webSocket` as its second argument.
+The browser cursor is scoped to the current user; if browser storage is cleared
+or evicted, the application may need to rebuild state and save a fresh cursor.
+The JWT travels in the `Sec-WebSocket-Protocol` request header during the
+handshake. Keep it short lived and redact that header from proxy access logs.
+The server verifies the JWT, requires an exact allowed origin, removes the
+credential before application authorization hooks run, and selects only
+`gregale.realtime.v2` as the response subprotocol.
 
 Server-side Node services can also use the hand-written
 `createServiceCallerVerifier` helper to verify Gregale's incoming internal

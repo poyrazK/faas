@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // AuthMode selects how a managed endpoint authenticates WebSocket clients.
@@ -155,4 +157,46 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return parts[1], true
+}
+
+// resumeBearerFromProtocols extracts one bounded signed JWT from the browser
+// WebSocket protocol list. Returning the remaining protocols lets the caller
+// remove the credential before hooks and WebSocket negotiation see the request.
+func resumeBearerFromProtocols(protocols []string) (token string, present, invalid bool, remaining []string) {
+	remaining = make([]string, 0, len(protocols))
+	for _, protocol := range protocols {
+		if !strings.HasPrefix(protocol, ResumeBearerSubprotocolPrefix) {
+			remaining = append(remaining, protocol)
+			continue
+		}
+		if present {
+			invalid = true
+			continue
+		}
+		present = true
+		token = strings.TrimPrefix(protocol, ResumeBearerSubprotocolPrefix)
+		if len(token) == 0 || len(token) > api.RealtimeResumeBearerTokenMaxBytes {
+			invalid = true
+			continue
+		}
+		parts := strings.Split(token, ".")
+		if len(parts) != 3 {
+			invalid = true
+			continue
+		}
+		for _, part := range parts {
+			if part == "" {
+				invalid = true
+				break
+			}
+			for _, char := range part {
+				if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+					(char >= '0' && char <= '9') || char == '-' || char == '_') {
+					invalid = true
+					break
+				}
+			}
+		}
+	}
+	return token, present, invalid, remaining
 }

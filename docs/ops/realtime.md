@@ -295,10 +295,17 @@ durable log every five seconds; retained writes may therefore arrive with
 that delay. The preview caps a node at 256 v2 subscriptions and a connection
 at eight. If history becomes unavailable, the v2 connection closes with a
 retryable reason rather than silently switching to live-only delivery.
-The [Node SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
+The [SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
 persists a processed cursor, acknowledges in order, and reconnects from that
-cursor. Its socket factory must add an OIDC bearer header; native browser
-WebSockets cannot set that header.
+cursor. Server-side sockets add an OIDC bearer header. Browser sockets use
+`gregale.realtime.bearer.<signed-JWT>` as a second requested subprotocol because
+native WebSockets cannot set that header. Browser credentials are accepted only
+for v2 endpoints with a matching non-empty `allowed_origins` policy and a
+present `Origin` header. The credential is capped at 3,072 bytes, is verified
+through the same endpoint OIDC policy, and is removed before hooks and
+subprotocol negotiation. The response selects only `gregale.realtime.v2`.
+Configure ingress and proxy access logs to redact `Sec-WebSocket-Protocol` for
+this route, since the request header carries the short-lived JWT.
 
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,

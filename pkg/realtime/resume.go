@@ -15,12 +15,16 @@ import (
 )
 
 const (
-	ResumeSubprotocol         = "gregale.realtime.v2"
-	maxResumeSubscriptions    = api.RealtimeResumeSubscriptionsPerNode
-	maxResumePerConnection    = api.RealtimeResumeSubscriptionsPerConnection
-	resumeHistoryPageSize     = state.ManagedRealtimeHistoryMaxRead
-	resumeHistoryReadTimeout  = 5 * time.Second
-	maxResumeServerFrameBytes = api.RealtimeResumeServerFrameMaxBytes
+	ResumeSubprotocol = "gregale.realtime.v2"
+	// ResumeBearerSubprotocolPrefix carries an OIDC JWT on browser v2
+	// handshakes. The credential is removed before WebSocket negotiation and
+	// never echoed as the selected subprotocol.
+	ResumeBearerSubprotocolPrefix = "gregale.realtime.bearer."
+	maxResumeSubscriptions        = api.RealtimeResumeSubscriptionsPerNode
+	maxResumePerConnection        = api.RealtimeResumeSubscriptionsPerConnection
+	resumeHistoryPageSize         = state.ManagedRealtimeHistoryMaxRead
+	resumeHistoryReadTimeout      = 5 * time.Second
+	maxResumeServerFrameBytes     = api.RealtimeResumeServerFrameMaxBytes
 )
 
 // ManagedRealtimeHistoryReader is the private apid RPC seam. A nil reader

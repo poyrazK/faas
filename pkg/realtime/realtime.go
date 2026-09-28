@@ -610,11 +610,36 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	state := value.(*endpointState)
 	endpoint := *state.config.Load()
+	protocols := websocket.Subprotocols(r)
 	wantsResume := false
-	for _, protocol := range websocket.Subprotocols(r) {
+	for _, protocol := range protocols {
 		if protocol == ResumeSubprotocol {
 			wantsResume = true
 			break
+		}
+	}
+	browserToken, browserCredential, invalidCredential, remainingProtocols := resumeBearerFromProtocols(protocols)
+	if browserCredential {
+		// Browser credentials require an explicit endpoint origin policy. The
+		// normal WebSocket origin default allows non-browser clients without an
+		// Origin header, so it is insufficient for this credential carrier.
+		if !wantsResume || invalidCredential || len(r.Header.Values("Authorization")) != 0 {
+			m.recordAuthOutcome(authMetricModeForEndpoint(endpoint), authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "invalid realtime browser authentication", http.StatusBadRequest)
+			return
+		}
+		if len(endpoint.AllowedOrigins) == 0 || r.Header.Get("Origin") == "" || !checkAllowedOrigins(endpoint.AllowedOrigins)(r) {
+			m.recordAuthOutcome(authMetricModeForEndpoint(endpoint), authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime browser origin forbidden", http.StatusForbidden)
+			return
+		}
+		// Neither a custom authorization hook nor the upgrader should see or
+		// return the credential-bearing subprotocol.
+		r.Header.Del("Sec-WebSocket-Protocol")
+		if len(remainingProtocols) > 0 {
+			r.Header.Set("Sec-WebSocket-Protocol", strings.Join(remainingProtocols, ", "))
 		}
 	}
 	if wantsResume {
@@ -650,6 +675,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principal = "token"
 	case AuthModeOIDCJWT:
 		token, ok := bearerToken(r)
+		if browserCredential {
+			token, ok = browserToken, true
+		}
 		if !ok || m.cfg.JWTAuthorizer == nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
