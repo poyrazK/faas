@@ -2217,11 +2217,16 @@ export class AppsService {
    */
   public static parkApp({
     slug,
+    fresh = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+     */
+    fresh?: boolean,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -2229,8 +2234,12 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'fresh': fresh,
+      },
       errors: {
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
