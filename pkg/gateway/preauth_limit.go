@@ -159,6 +159,7 @@ func (l *preAuthSourceLimiter) mirrorCentralBalance(policyID, source string, rem
 	}
 	if b != nil {
 		b.tokens = min(b.tokens, float64(remaining))
+		b.last = l.now()
 	}
 }
 

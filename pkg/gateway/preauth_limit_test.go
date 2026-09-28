@@ -59,6 +59,20 @@ func (*sharedPreAuthCentral) PeekToken(context.Context, string, string, string) 
 }
 func (*sharedPreAuthCentral) Invalidate(string, string, string) {}
 
+func TestPreAuthCentralMirrorDoesNotDoubleRefill(t *testing.T) {
+	l := newPreAuthSourceLimiter()
+	now := time.Unix(100, 0)
+	l.now = func() time.Time { return now }
+	if !l.Allow("route", "192.0.2.1", 10, 10) {
+		t.Fatal("initial local token unavailable")
+	}
+	now = now.Add(time.Second)
+	l.mirrorCentralBalance("route", "192.0.2.1", 0)
+	if l.Allow("route", "192.0.2.1", 10, 10) {
+		t.Fatal("local fallback reused refill time already reflected by central balance")
+	}
+}
+
 func TestPreAuthCentralRouteSharesBudgetAcrossReplicas(t *testing.T) {
 	shared := &sharedPreAuthCentral{}
 	newReplica := func() (*Handler, *fakeBackend) {
