@@ -68,6 +68,13 @@ func (s *server) createOrgAPIKeyWithActivity(ctx context.Context, acct state.Acc
 }
 
 func (s *server) revokeOrgAPIKeyWithActivity(ctx context.Context, orgID, keyID string, activity state.OrgActivity) (state.APIKey, error) {
+	// MemStore retains support for pre-org account keys used by legacy
+	// handler tests. Such keys cannot be represented in the workspace
+	// activity timeline, so preserve the mutation without attempting to
+	// normalize an activity row with a missing org ID.
+	if orgID == "" {
+		return s.store.RevokeOrgAPIKey(ctx, orgID, keyID)
+	}
 	if mutations, ok := s.store.(state.OrgActivityAPIKeyMutationStore); ok {
 		key, outboxID, err := mutations.RevokeOrgAPIKeyWithActivity(ctx, orgID, keyID, activity)
 		if err == nil && outboxID > 0 {
@@ -84,6 +91,13 @@ func (s *server) revokeOrgAPIKeyWithActivity(ctx context.Context, orgID, keyID s
 }
 
 func (s *server) rotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKeyID string, hash []byte, label string, graceWindow time.Duration, createdIP, createdUA string, parent *string, activity state.OrgActivity) (state.APIKey, state.APIKey, error) {
+	// MemStore retains support for pre-org account keys used by legacy
+	// handler tests. Such keys cannot be represented in the workspace
+	// activity timeline, but still need the provenance stamps and atomic
+	// rotation behavior exercised by the account-key endpoint.
+	if orgID == "" {
+		return s.store.RotateOrgAPIKeyWithProvenance(ctx, orgID, oldKeyID, hash, label, graceWindow, createdIP, createdUA, parent)
+	}
 	if mutations, ok := s.store.(state.OrgActivityAPIKeyMutationStore); ok {
 		newKey, oldKey, outboxID, err := mutations.RotateOrgAPIKeyWithActivity(ctx, orgID, oldKeyID, hash, label, graceWindow, createdIP, createdUA, parent, activity)
 		if err == nil && outboxID > 0 {
