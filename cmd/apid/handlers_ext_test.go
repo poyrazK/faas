@@ -2174,6 +2174,49 @@ func TestParkApp_HappyPath(t *testing.T) {
 	}
 }
 
+func TestParkAppFreshIsPreviewOnlyAndInvalidatesAfterPark(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	productionID := mustSeedApp(t, e, "customer-api")
+	denied := e.do(t, http.MethodPost, "/v1/apps/customer-api/park?fresh=true", nil, nil)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("production fresh park = %d, want 403: %s", denied.Code, denied.Body.String())
+	}
+	production, err := e.store.AppByID(t.Context(), productionID)
+	if err != nil || production.Status != state.AppActive {
+		t.Fatalf("production changed after denied fresh park: %+v, %v", production, err)
+	}
+
+	created := e.do(t, http.MethodPut, "/v1/dev/sessions/customer-api", api.UpsertDevSessionRequest{
+		WorkspaceID: "11111111111111111111111111111111",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create developer preview = %d: %s", created.Code, created.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: session.App.ID, Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateSnapshot(t.Context(), state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "test"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parked := e.do(t, http.MethodPost, "/v1/apps/"+session.App.Slug+"/park?fresh=true", nil, nil)
+	if parked.Code != http.StatusNoContent {
+		t.Fatalf("preview fresh park = %d: %s", parked.Code, parked.Body.String())
+	}
+	if _, err := e.store.LatestSnapshotForTier(t.Context(), dep.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("fresh park left a reusable snapshot: %v", err)
+	}
+}
+
 func TestParkApp_WaitsForLiveInstanceDrain(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "park-drain")

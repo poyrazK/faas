@@ -178,6 +178,19 @@ func TestParkWaitsForMultiRevisionDrain(t *testing.T) {
 	}
 }
 
+func TestParkPreviewFreshUsesScopedQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/test-preview/park" || r.URL.Query().Get("fresh") != "true" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	if err := NewClient(server.URL, "token").ParkPreviewFresh(context.Background(), "test-preview"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParkDoesNotRetryUnrelatedCapacityError(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

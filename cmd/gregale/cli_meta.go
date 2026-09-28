@@ -1207,6 +1207,18 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:     "test",
+		DocSlug:  "test",
+		Short:    "Run an application scenario on isolated Gregale infrastructure",
+		Examples: []string{"gregale test --scenario customer-export", "gregale test --scenario customer-export --profile restored --report test-results.json"},
+		Flags: []cliFlag{
+			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Req: true, Value: "NAME"},
+			{Name: "profile", Short: "required lifecycle (default all)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
+			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
+			{Name: "report", Short: "write a JSON report", Value: "PATH"},
+		},
+	},
+	{
 		Name:    "preview",
 		DocSlug: "preview",
 		Short:   "Manage preview environments for pull requests",

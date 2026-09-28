@@ -8939,9 +8939,15 @@ paths:
       tags: [apps]
       operationId: parkApp
       summary: Manually park all running instances.
+      parameters:
+        - name: fresh
+          in: query
+          description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+          schema: { type: boolean, default: false }
       responses:
         '204': { description: Parked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }

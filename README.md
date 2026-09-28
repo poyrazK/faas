@@ -76,6 +76,10 @@ matrix, the [container compatibility contract](docs/container-compatibility.md)
 for direct OCI deployments, and the [generated CLI reference](docs/cli-reference.md)
 for commands and flags.
 
+Repository assertions can also run against isolated Gregale instances with
+[`gregale test`](docs/scenario-tests.md), including warm, cold-boot, and
+snapshot-restore profiles.
+
 ## Platform areas
 
 The examples below describe the durable product shape rather than an exhaustive
