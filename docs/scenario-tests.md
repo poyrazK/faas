@@ -20,6 +20,10 @@ scenarios:
     services:
       worker:
         source: ./worker
+        secrets:
+          NOTIFICATION_URL: ${service.notifications.url}/deliver
+      notifications:
+        source: ./test/notification-sink
     postgres: true
     buckets:
       - name: exports
@@ -66,6 +70,13 @@ Each workload's normal `gregale.yaml` is applied during deployment. A worker
 can declare `queue_bindings` and retry policy there; the runner waits for
 queues on all test workloads when `wait_for.queue_idle` is enabled. Queue
 binding plan gates still apply.
+The runner sets per-workload `secrets` on these expiring apps before deploying.
+Values can reference `${service.NAME.url}`, `${service.NAME.slug}`,
+`${bucket.NAME.name}`, or `${run.id}`. The example gives the worker a test
+notification endpoint. Its app can return a failure for the first delivery,
+then record the retries for the assertion command to inspect through
+`GREGALE_TEST_SERVICE_NOTIFICATIONS_URL`. Secret values are sent to Gregale's
+sealed secret API and are not included in the test report.
 
 `trigger` runs immediately after Gregale prepares the selected lifecycle
 profile. It can submit the authenticated export request through
@@ -105,7 +116,8 @@ first response status, wake headers, completed method, and cleanup outcome.
 The assertion commands own application-specific identities and expectations.
 For an export test they should create two customers, submit and retry the same
 export request, inspect the produced object through both customers' credentials,
-and check notification delivery. Built-in notification failure controls,
+and check notification delivery. A declared notification sink can return
+failures to exercise the application's retry policy. Built-in fault controls,
 per-workload lifecycle evidence, and simulated execution are still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
 

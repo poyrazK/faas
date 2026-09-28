@@ -19,7 +19,7 @@ import (
 func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gregale-test.yaml")
-	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    services:\n      worker: {source: ./worker}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
+	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    services:\n      worker:\n        source: ./worker\n        secrets: {NOTIFICATION_URL: '${service.notifications.url}/deliver'}\n      notifications: {source: ./notifications}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,31 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("unknown bucket owner was accepted")
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "service.notifications.url", "service.missing.url", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("unknown secret service reference was accepted")
+	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("subsecond timeout was accepted")
+	}
+}
+
+func TestExpandTestSecretValue(t *testing.T) {
+	got, err := expandTestSecretValue("${service.notifications.url}/deliver?run=${run.id}&bucket=${bucket.exports.name}",
+		map[string]string{"notifications": "https://sink.example"}, map[string]string{"notifications": "sink-app"},
+		map[string]testBucketRef{"exports": {Name: "exports-123"}}, "run-123")
+	if err != nil || got != "https://sink.example/deliver?run=run-123&bucket=exports-123" {
+		t.Fatalf("expanded = (%q, %v)", got, err)
+	}
+	for _, value := range []string{"${service.unknown.url}", "${bucket.unknown.name}", "${run.id", "${service.notifications.secret}"} {
+		if _, err := expandTestSecretValue(value, map[string]string{"notifications": "https://sink.example"}, nil, nil, "run-123"); err == nil {
+			t.Errorf("reference %q was accepted", value)
+		}
 	}
 }
 

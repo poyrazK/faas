@@ -38,6 +38,7 @@ type testManifest struct {
 type testScenario struct {
 	Project  string                 `yaml:"project"`
 	Source   string                 `yaml:"source"`
+	Secrets  map[string]string      `yaml:"secrets"`
 	Services map[string]testService `yaml:"services"`
 	Trigger  []string               `yaml:"trigger"`
 	Command  []string               `yaml:"command"`
@@ -50,8 +51,9 @@ type testScenario struct {
 }
 
 type testService struct {
-	Source   string `yaml:"source"`
-	Postgres bool   `yaml:"postgres"`
+	Source   string            `yaml:"source"`
+	Postgres bool              `yaml:"postgres"`
+	Secrets  map[string]string `yaml:"secrets"`
 }
 
 type testWaitFor struct {
@@ -277,8 +279,75 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 				return nil, "", fmt.Errorf("scenario %q has an invalid object wait condition for bucket %q", name, output.Bucket)
 			}
 		}
+		if err := validateTestSecrets(scenario.Project, scenario.Secrets, scenario); err != nil {
+			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		for service, spec := range scenario.Services {
+			if err := validateTestSecrets(service, spec.Secrets, scenario); err != nil {
+				return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+			}
+		}
 	}
 	return manifest.Scenarios, filepath.Dir(absolute), nil
+}
+
+var testSecretReferencePattern = regexp.MustCompile(`\$\{([^{}]+)\}`)
+
+func validateTestSecrets(workload string, secrets map[string]string, scenario testScenario) error {
+	serviceURLs := map[string]string{scenario.Project: "https://example.test"}
+	serviceSlugs := map[string]string{scenario.Project: "example-test"}
+	for service := range scenario.Services {
+		serviceURLs[service] = "https://example.test"
+		serviceSlugs[service] = "example-test"
+	}
+	buckets := make(map[string]testBucketRef, len(scenario.Buckets))
+	for _, bucket := range scenario.Buckets {
+		buckets[bucket.Name] = testBucketRef{Name: "example-test"}
+	}
+	for key, value := range secrets {
+		if api.ValidateSecretKey(key) != nil {
+			return fmt.Errorf("workload %q has invalid secret key %q", workload, key)
+		}
+		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef"); err != nil {
+			return fmt.Errorf("workload %q secret %q: %w", workload, key, err)
+		}
+	}
+	return nil
+}
+
+func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID string) (string, error) {
+	var expansionErr error
+	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
+		if expansionErr != nil {
+			return match
+		}
+		parts := strings.Split(match[2:len(match)-1], ".")
+		var replacement string
+		var ok bool
+		switch {
+		case len(parts) == 2 && parts[0] == "run" && parts[1] == "id":
+			replacement, ok = runID, true
+		case len(parts) == 3 && parts[0] == "service" && parts[2] == "url":
+			replacement, ok = serviceURLs[parts[1]]
+		case len(parts) == 3 && parts[0] == "service" && parts[2] == "slug":
+			replacement, ok = serviceSlugs[parts[1]]
+		case len(parts) == 3 && parts[0] == "bucket" && parts[2] == "name":
+			bucket, exists := buckets[parts[1]]
+			replacement, ok = bucket.Name, exists
+		}
+		if !ok {
+			expansionErr = fmt.Errorf("unknown reference %s", match)
+			return match
+		}
+		return replacement
+	})
+	if expansionErr != nil {
+		return "", expansionErr
+	}
+	if strings.Contains(expanded, "${") {
+		return "", errors.New("malformed reference")
+	}
+	return expanded, nil
 }
 
 func runTestProfile(parent context.Context, client *Client, name string, scenario testScenario, manifestDir, profile string) (receipt testRunReceipt) {
@@ -407,6 +476,40 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+bucket.Name)
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_PREFIX_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+binding.Prefix)
+	}
+	serviceURLs := make(map[string]string, len(workloads))
+	serviceSlugs := make(map[string]string, len(workloads))
+	for _, workload := range workloads {
+		appURL := canonicalAppURL(workload.session.App)
+		parsed, parseErr := url.Parse(appURL)
+		if parseErr != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+			receipt.Error = fmt.Sprintf("test workload %s returned an invalid app URL", workload.name)
+			return
+		}
+		serviceURLs[workload.name] = appURL
+		serviceSlugs[workload.name] = workload.session.App.Slug
+	}
+	for _, workload := range workloads {
+		secrets := scenario.Secrets
+		if workload.name != scenario.Project {
+			secrets = scenario.Services[workload.name].Secrets
+		}
+		keys := make([]string, 0, len(secrets))
+		for key := range secrets {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("resolve secret %s for %s: %v", key, workload.name, err)
+				return
+			}
+			if err := client.SetSecret(ctx, workload.session.App.Slug, key, value); err != nil {
+				receipt.Error = fmt.Sprintf("set secret %s for %s: %v", key, workload.name, err)
+				return
+			}
+		}
 	}
 	// The nested deploy command has its own progress output. Keep --json's
 	// stdout as one machine-readable test receipt.
