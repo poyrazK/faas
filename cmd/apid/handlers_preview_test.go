@@ -405,3 +405,14 @@ func TestDestroyPreview_ProblemShape(t *testing.T) {
 		t.Errorf("problem code = %q, want contains \"not_found\"", got)
 	}
 }
+
+// An ordinary app named like a PR preview ("pr-7-shop") squatted the slug
+// and hostname that shop's PR #7 preview is provisioned under, so the
+// preview failed with "slug taken" and its URL served someone else's app.
+func TestCreateAppRejectsPreviewSlugShape(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "pr-7-shop", Runtime: "node22"}, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create app pr-7-shop = %d, want 422: %s", rec.Code, rec.Body.String())
+	}
+}
