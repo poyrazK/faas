@@ -22139,6 +22139,10 @@ components:
         default_branch: { type: string }
         repo_full_name: { type: string }
         production_branch: { type: string }
+        deploy_branches:
+          type: object
+          additionalProperties: { type: string }
+          description: Configured GitHub branch-to-deployment-scope mappings for the project.
         binding_id: { type: string }
         linked_at: { type: [string, "null"], format: date-time }
         last_reconciled_at: { type: [string, "null"], format: date-time }

@@ -170,6 +170,9 @@ cmd_validate() {
 	if [ "${INPUT_ROLLOUT:-standard}" != "standard" ] && [ "${INPUT_ROLLOUT:-standard}" != "safe" ]; then
 		die "rollout must be standard or safe"
 	fi
+	if [ -n "${INPUT_ENVIRONMENT:-}" ] && { [[ ! "${INPUT_ENVIRONMENT}" =~ ^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$ ]] || [ "${INPUT_ENVIRONMENT}" = "default" ]; }; then
+		die "environment must be a registered project environment slug"
+	fi
     if [ ! -x "$BIN" ]; then
         die "vendored binary not found at $BIN (action must be released as a tagged version)"
     fi
@@ -217,6 +220,53 @@ verify_current_push_head() {
 		echo "::notice::Skipping superseded push ${INPUT_REF}; current branch head is ${current}" >&2
 		echo "status=skipped" >> "$GITHUB_OUTPUT"
 		return 1
+	fi
+	return 0
+}
+
+# Release-tag deployments are deliberately narrower than arbitrary ref
+# deployments. The generated workflow listens to v* tags, but only a new,
+# unforced SemVer tag creation is a release; moved, deleted, and malformed
+# refs are successful skips. The deployment itself still uses GITHUB_SHA so
+# the source submitted to Gregale is the immutable event commit, not a tag
+# name that could move between validation and source fetch.
+verify_release_tag_push() {
+	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/tags/* ]] ||
+		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] || [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		return 0
+	fi
+
+	local tag="${GITHUB_REF#refs/tags/}"
+	local semver_release_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+	local skip_reason=""
+	if [[ ! "$tag" =~ $semver_release_re ]]; then
+		skip_reason="Skipping non-SemVer release tag ${tag}"
+	fi
+	if [ -z "${GITHUB_EVENT_PATH:-}" ] || [ ! -f "$GITHUB_EVENT_PATH" ] || ! command -v jq >/dev/null 2>&1; then
+		die "cannot verify release tag event"
+	fi
+
+	local before after created forced deleted
+	if ! before="$(jq -er '.before | strings' "$GITHUB_EVENT_PATH")" ||
+		! after="$(jq -er '.after | strings' "$GITHUB_EVENT_PATH")" ||
+		! created="$(jq -r '.created == true' "$GITHUB_EVENT_PATH")" ||
+		! forced="$(jq -r '.forced == true' "$GITHUB_EVENT_PATH")" ||
+		! deleted="$(jq -r '.deleted == true' "$GITHUB_EVENT_PATH")"; then
+		die "cannot read release tag event fields"
+	fi
+	if [ "$deleted" = "true" ]; then
+		skip_reason="Skipping deleted release tag ${tag}"
+	elif [ "$created" != "true" ] || [ "$forced" = "true" ] ||
+		[ "$before" != "0000000000000000000000000000000000000000" ]; then
+		skip_reason="Skipping moved or existing release tag ${tag}"
+	fi
+	if [ -n "$skip_reason" ]; then
+		echo "::notice::${skip_reason}" >&2
+		echo "status=skipped" >> "$GITHUB_OUTPUT"
+		return 1
+	fi
+	if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]] || [ "$after" != "$GITHUB_SHA" ]; then
+		die "release tag event did not match its immutable commit SHA"
 	fi
 	return 0
 }
@@ -277,6 +327,9 @@ cmd_deploy() {
 	if ! verify_current_push_head; then
 		return 0
 	fi
+	if ! verify_release_tag_push; then
+		return 0
+	fi
 	exchange_oidc
 
     # 2. Invoke the vendored CLI. The wire shape is the same as
@@ -312,6 +365,10 @@ cmd_deploy() {
     if [ -n "${INPUT_PR_NUMBER:-}" ]; then
         annotation_args+=(--pr-number "$INPUT_PR_NUMBER")
     fi
+	local environment_args=()
+	if [ -n "${INPUT_ENVIRONMENT:-}" ]; then
+		environment_args+=(--environment "$INPUT_ENVIRONMENT")
+	fi
 	local rollout_args=()
 	if [ "$rollout" = "safe" ]; then
 		rollout_args+=(--canary-preset balanced)
@@ -322,6 +379,7 @@ cmd_deploy() {
             --name "$INPUT_APP" \
             --repo "$INPUT_REPO" \
             --ref "$INPUT_REF" \
+			"${environment_args[@]}" \
 			"${rollout_args[@]}" \
             "${annotation_args[@]}" \
             2>&1

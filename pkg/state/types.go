@@ -2066,6 +2066,11 @@ type Deployment struct {
 	// migrations/00047). Empty for image/tarball deploys that don't
 	// have an upstream commit.
 	CommitSHA string
+	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
+	// for source-ref deployments. Empty/zero for pinned SHAs, tags, and all
+	// other deployment kinds; imaged checks the branch head before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).
