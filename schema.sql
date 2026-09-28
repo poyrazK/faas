@@ -4492,7 +4492,10 @@ CREATE TABLE public.trigger_records (
     deadline_at timestamp with time zone,
     retry_policy jsonb,
     result_retention_until timestamp with time zone,
+    claim_generation bigint DEFAULT 0 NOT NULL,
+    claim_expires_at timestamp with time zone,
     CONSTRAINT trigger_records_attempts_check CHECK (((attempts >= 0) AND (attempts <= 25))),
+    CONSTRAINT trigger_records_claim_generation_check CHECK ((claim_generation >= 0)),
     CONSTRAINT trigger_records_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text])))
 );
 
@@ -8027,6 +8030,13 @@ CREATE INDEX trigger_dlq_trigger_reason_idx ON public.trigger_dead_letter USING 
 --
 
 CREATE INDEX trigger_records_dlq_idx ON public.trigger_records USING btree (trigger_id, state) WHERE (state = 'dead_letter'::text);
+
+
+--
+-- Name: trigger_records_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_records_claim_expiry_idx ON public.trigger_records USING btree (trigger_id, claim_expires_at) WHERE (state = 'claimed'::text);
 
 
 --

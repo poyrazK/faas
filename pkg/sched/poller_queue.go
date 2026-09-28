@@ -169,14 +169,16 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			   and i.state = 'pending'
 			   and i.work_policy_name is null
 			   and i.due_at <= now()
-			   and (tr.id is null or (tr.state in ('pending','retry') and tr.next_fire_at <= now()))
+			   and (tr.id is null
+			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
+			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
 			 order by i.created_at asc
 			 limit $4
 			 for update of i skip locked
 		), updated as (
 			update invocations i
 			   set state = 'dispatching',
-			       lease_expires_at = now() + interval '60 seconds',
+			       lease_expires_at = now() + interval '10 minutes',
 			       received_at = coalesce(i.received_at, now()),
 			       attempts = i.attempts + 1
 			  from claimed c

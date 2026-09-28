@@ -697,16 +697,26 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 }
 
 const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
-select id, trigger_id, item_identifier, payload, headers, metadata,
-       state, attempts, next_fire_at, received_at, last_error,
-       last_dispatched_at
-from trigger_records
-where trigger_id = $1
-  and state in ('pending','retry')
-  and next_fire_at <= now()
-order by next_fire_at
-limit $2
-for update skip locked
+WITH due AS MATERIALIZED (
+    SELECT candidate.id FROM trigger_records candidate
+    WHERE candidate.trigger_id = $1
+      AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
+        OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
+    ORDER BY candidate.next_fire_at, candidate.id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+), claimed AS (
+    UPDATE trigger_records r
+       SET state = 'claimed',
+           claim_generation = r.claim_generation + 1,
+           claim_expires_at = now() + INTERVAL '10 minutes'
+      FROM due WHERE r.id = due.id
+    RETURNING r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+              r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+              r.last_error, r.last_dispatched_at, r.claim_generation,
+              r.claim_expires_at
+)
+SELECT id, trigger_id, item_identifier, payload, headers, metadata, state, attempts, next_fire_at, received_at, last_error, last_dispatched_at, claim_generation, claim_expires_at FROM claimed ORDER BY next_fire_at, id
 `
 
 type ClaimTriggerRecordsParams struct {
@@ -727,13 +737,13 @@ type ClaimTriggerRecordsRow struct {
 	ReceivedAt       pgtype.Timestamptz
 	LastError        pgtype.Text
 	LastDispatchedAt pgtype.Timestamptz
+	ClaimGeneration  int64
+	ClaimExpiresAt   pgtype.Timestamptz
 }
 
-// FOR UPDATE SKIP LOCKED is the ADR-099 PR-C claim_job_tasks
-// precedent: concurrent schedd replicas each claim disjoint row
-// sets. Returns at most $1 records in (pending, retry) state whose
-// next_fire_at <= now(). The trigger_id constraint scopes the
-// claim so the poller drains one trigger at a time.
+// Persist ownership before returning. SKIP LOCKED alone would release the
+// claim at statement end and let another scheduler deliver the same row.
+// A lost dispatcher becomes eligible again after the ten-minute lease.
 func (q *Queries) ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTriggerRecordsParams) ([]ClaimTriggerRecordsRow, error) {
 	rows, err := db.Query(ctx, claimTriggerRecords, arg.TriggerID, arg.Limit)
 	if err != nil {
@@ -756,6 +766,90 @@ func (q *Queries) ClaimTriggerRecords(ctx context.Context, db DBTX, arg ClaimTri
 			&i.ReceivedAt,
 			&i.LastError,
 			&i.LastDispatchedAt,
+			&i.ClaimGeneration,
+			&i.ClaimExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimTriggerRecordsByItems = `-- name: ClaimTriggerRecordsByItems :many
+WITH due AS MATERIALIZED (
+    SELECT candidate.id FROM trigger_records candidate
+    WHERE candidate.trigger_id = $1
+      AND candidate.item_identifier = ANY($2::text[])
+      AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
+        OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
+    ORDER BY candidate.next_fire_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+), claimed AS (
+    UPDATE trigger_records r
+       SET state = 'claimed',
+           claim_generation = r.claim_generation + 1,
+           claim_expires_at = now() + INTERVAL '10 minutes'
+      FROM due WHERE r.id = due.id
+    RETURNING r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+              r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+              r.last_error, r.last_dispatched_at, r.claim_generation,
+              r.claim_expires_at
+)
+SELECT id, trigger_id, item_identifier, payload, headers, metadata, state, attempts, next_fire_at, received_at, last_error, last_dispatched_at, claim_generation, claim_expires_at FROM claimed ORDER BY next_fire_at, id
+`
+
+type ClaimTriggerRecordsByItemsParams struct {
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+type ClaimTriggerRecordsByItemsRow struct {
+	ID               pgtype.UUID
+	TriggerID        pgtype.UUID
+	ItemIdentifier   string
+	Payload          []byte
+	Headers          []byte
+	Metadata         []byte
+	State            string
+	Attempts         int32
+	NextFireAt       pgtype.Timestamptz
+	ReceivedAt       pgtype.Timestamptz
+	LastError        pgtype.Text
+	LastDispatchedAt pgtype.Timestamptz
+	ClaimGeneration  int64
+	ClaimExpiresAt   pgtype.Timestamptz
+}
+
+// The broker batch is authoritative: claiming an unrelated due row would
+// lease it without dispatching it and block its actual broker delivery.
+func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg ClaimTriggerRecordsByItemsParams) ([]ClaimTriggerRecordsByItemsRow, error) {
+	rows, err := db.Query(ctx, claimTriggerRecordsByItems, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimTriggerRecordsByItemsRow{}
+	for rows.Next() {
+		var i ClaimTriggerRecordsByItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TriggerID,
+			&i.ItemIdentifier,
+			&i.Payload,
+			&i.Headers,
+			&i.Metadata,
+			&i.State,
+			&i.Attempts,
+			&i.NextFireAt,
+			&i.ReceivedAt,
+			&i.LastError,
+			&i.LastDispatchedAt,
+			&i.ClaimGeneration,
+			&i.ClaimExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -8025,6 +8119,76 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 		&i.CreditsAppliedCents,
 	)
 	return i, err
+}
+
+const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
+UPDATE trigger_records
+   SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now()
+`
+
+type MarkClaimedTriggerRecordDeadLetterParams struct {
+	ID              pgtype.UUID
+	ClaimGeneration int64
+	LastError       pgtype.Text
+}
+
+func (q *Queries) MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error) {
+	result, err := db.Exec(ctx, markClaimedTriggerRecordDeadLetter, arg.ID, arg.ClaimGeneration, arg.LastError)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markClaimedTriggerRecordRetry = `-- name: MarkClaimedTriggerRecordRetry :execrows
+UPDATE trigger_records
+   SET state = 'retry', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), next_fire_at = $4, claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now()
+`
+
+type MarkClaimedTriggerRecordRetryParams struct {
+	ID              pgtype.UUID
+	ClaimGeneration int64
+	LastError       pgtype.Text
+	NextFireAt      pgtype.Timestamptz
+}
+
+func (q *Queries) MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, markClaimedTriggerRecordRetry,
+		arg.ID,
+		arg.ClaimGeneration,
+		arg.LastError,
+		arg.NextFireAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markClaimedTriggerRecordSucceeded = `-- name: MarkClaimedTriggerRecordSucceeded :execrows
+UPDATE trigger_records
+   SET state = 'succeeded', last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now()
+`
+
+type MarkClaimedTriggerRecordSucceededParams struct {
+	ID              pgtype.UUID
+	ClaimGeneration int64
+}
+
+func (q *Queries) MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error) {
+	result, err := db.Exec(ctx, markClaimedTriggerRecordSucceeded, arg.ID, arg.ClaimGeneration)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec

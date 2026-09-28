@@ -115,8 +115,13 @@ the invocation drain continues to own it.
 
 Named queue-trigger messages and external broker records need a shared
 work-item claim ledger before policy fields can be exposed on those producers.
-Their current trigger path claims `trigger_records` and acknowledges broker
-handles outside the invocation transaction. The adapter must resolve keys at durable record
+The trigger path now persists a claim generation and a ten-minute lease on
+`trigger_records`; retry, completion, and dead-letter transitions for broker
+records reject an expired or superseded claim. Queue polling can recover an
+expired record claim, and the scheduler claims only records present in its
+polled broker batch. These are claim safety prerequisites, not a work-key
+reservation: broker handles are still acknowledged outside the invocation
+transaction. The adapter must resolve keys at durable record
 admission, reserve lane and fairness slots across both ledgers, carry a claim
 generation through the gateway result, and release reservations on retry,
 terminal outcome, and lease recovery. A late broker acknowledgement must not

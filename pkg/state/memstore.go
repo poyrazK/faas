@@ -11954,14 +11954,44 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 func (m *MemStore) ClaimTriggerRecords(_ context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var out []sqlc.TriggerRecord
-	for _, r := range m.records {
-		if r.TriggerID.String() == triggerID && r.State == "pending" && len(out) < int(limit) {
-			r.State = "claimed"
-			out = append(out, r)
-		}
+	return m.claimTriggerRecordsLocked(triggerID, int(limit), nil), nil
+}
+
+func (m *MemStore) ClaimTriggerRecordsByItems(_ context.Context, triggerID string, items []string) ([]sqlc.TriggerRecord, error) {
+	if len(items) == 0 {
+		return nil, nil
 	}
-	return out, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	allowed := make(map[string]bool, len(items))
+	for _, item := range items {
+		allowed[item] = true
+	}
+	return m.claimTriggerRecordsLocked(triggerID, len(allowed), allowed), nil
+}
+
+func (m *MemStore) claimTriggerRecordsLocked(triggerID string, limit int, allowed map[string]bool) []sqlc.TriggerRecord {
+	var out []sqlc.TriggerRecord
+	now := time.Now().UTC()
+	for id, r := range m.records {
+		if len(out) >= limit {
+			break
+		}
+		if r.TriggerID.String() != triggerID || (allowed != nil && !allowed[r.ItemIdentifier]) {
+			continue
+		}
+		due := (r.State == "pending" || r.State == "retry") && (!r.NextFireAt.Valid || !r.NextFireAt.Time.After(now))
+		expired := r.State == "claimed" && r.ClaimExpiresAt.Valid && !r.ClaimExpiresAt.Time.After(now)
+		if !due && !expired {
+			continue
+		}
+		r.State = "claimed"
+		r.ClaimGeneration++
+		r.ClaimExpiresAt = pgtypeFromTime(now.Add(10 * time.Minute))
+		m.records[id] = r
+		out = append(out, r)
+	}
+	return out
 }
 
 // InsertTriggerRecord mirrors PgStore.InsertTriggerRecord for the

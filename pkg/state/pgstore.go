@@ -29954,6 +29954,8 @@ func claimTriggerRecordRowToTriggerRecord(r sqlc.ClaimTriggerRecordsRow) sqlc.Tr
 		ReceivedAt:       r.ReceivedAt,
 		LastError:        r.LastError,
 		LastDispatchedAt: r.LastDispatchedAt,
+		ClaimGeneration:  r.ClaimGeneration,
+		ClaimExpiresAt:   r.ClaimExpiresAt,
 	}
 }
 

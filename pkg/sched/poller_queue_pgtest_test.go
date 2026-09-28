@@ -171,6 +171,43 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			if !found {
 				t.Fatal("keyed row with queue trigger was not offered to the keyed drain")
 			}
+
+			// A lost queue dispatcher leaves both an invocation lease and a
+			// trigger-record claim. Once recovered, the next poll must be
+			// able to claim the expired record instead of stranding the row.
+			recoverable, err := store.EnqueueInvocation(ctx, state.Invocation{
+				AccountID: account.ID, AppID: app.ID, Source: tc.source,
+				QueueName: queueName, Payload: json.RawMessage(`{"job":"recover"}`),
+				DueAt: time.Now().Add(-time.Second),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			firstPoll := poller.Poll(ctx, trigger)
+			if firstPoll.Error != nil || len(firstPoll.Records) != 1 || firstPoll.Records[0].ItemIdentifier != recoverable.ID {
+				t.Fatalf("first recovery poll = %+v", firstPoll)
+			}
+			if _, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), recoverable.ID, recoverable.Payload, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			firstClaim, err := store.ClaimTriggerRecords(ctx, trigger.ID.String(), 1)
+			if err != nil || len(firstClaim) != 1 || firstClaim[0].ClaimGeneration != 1 {
+				t.Fatalf("first recovery claim = %+v, err=%v", firstClaim, err)
+			}
+			if _, err := pool.Exec(ctx, `update invocations set state='pending', lease_expires_at=null where id=$1`, recoverable.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `update trigger_records set claim_expires_at=now()-interval '1 second' where id=$1`, firstClaim[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			secondPoll := poller.Poll(ctx, trigger)
+			if secondPoll.Error != nil || len(secondPoll.Records) != 1 || secondPoll.Records[0].ItemIdentifier != recoverable.ID {
+				t.Fatalf("expired claim poll = %+v", secondPoll)
+			}
+			secondClaim, err := store.ClaimTriggerRecords(ctx, trigger.ID.String(), 1)
+			if err != nil || len(secondClaim) != 1 || secondClaim[0].ClaimGeneration != 2 {
+				t.Fatalf("recovered claim = %+v, err=%v", secondClaim, err)
+			}
 		})
 	}
 }

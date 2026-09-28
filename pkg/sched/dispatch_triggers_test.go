@@ -15,9 +15,8 @@
 //     returns ("", nil); deadLetterAll SKIPS both store calls
 //     for that item; no FK violation, broker offset stays put,
 //     the record retries on the next dispatch tick.
-//  3. poison_record path — caller passes a row UUID directly
-//     (claimed[i].ID.String()); the lookup self-resolves and
-//     the dead_letter row still lands.
+//  3. poison_record path — caller passes the broker item identifier;
+//     the dead_letter row still uses the durable record UUID.
 //
 // The fakeStore implements the storeLike interface from
 // dispatch_triggers.go without any real SQL — every assertion
@@ -315,24 +314,19 @@ func TestDeadLetterAll_RowMissing_RateLimitBeforeInsert(t *testing.T) {
 	}
 }
 
-// TestDeadLetterAll_PoisonPath_PassesUUIDs pins the
-// poison_record path at dispatch_triggers.go:354 — the caller
-// already has the trigger_records.id UUID (from the `claimed`
-// result-set, line 352), so the lookup self-resolves and the
-// dead_letter row still lands. This guards against a future
-// refactor that might "optimise" by skipping the lookup when the
-// input looks UUID-like — the helper has no such heuristic; it
-// always goes through TriggerRecordIDByItemIdentifier.
-func TestDeadLetterAll_PoisonPath_PassesUUIDs(t *testing.T) {
+// The poison path still receives broker handles, even after a trigger record
+// has been claimed. Its receipt must carry the durable record UUID.
+func TestDeadLetterAll_PoisonPath_ResolvesItem(t *testing.T) {
 	const (
 		triggerID = "11111111-1111-1111-1111-111111111111"
+		itemID    = "kafka-offset-42"
 		rowUUID   = "33333333-3333-3333-3333-333333333333"
 	)
 	store := &fakeDeadLetterStore{
-		records: map[string]string{rowUUID: rowUUID}, // self-resolves
+		records: map[string]string{itemID: rowUUID},
 	}
 	l := makeLoopForDLQ()
-	l.deadLetterAll(context.Background(), triggerID, []string{rowUUID},
+	l.deadLetterAll(context.Background(), triggerID, []string{itemID},
 		triggerReasonPoisonRecord, "gateway response malformed", store)
 
 	if got, want := len(store.inserts), 1; got != want {

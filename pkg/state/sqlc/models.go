@@ -2363,6 +2363,8 @@ type TriggerRecord struct {
 	DeadlineAt           pgtype.Timestamptz
 	RetryPolicy          []byte
 	ResultRetentionUntil pgtype.Timestamptz
+	ClaimGeneration      int64
+	ClaimExpiresAt       pgtype.Timestamptz
 }
 
 type UploadCommitOutcome struct {

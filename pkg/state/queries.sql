@@ -1741,21 +1741,73 @@ join apps a on a.id = t.app_id
 where a.account_id = $1 and a.status <> 'deleted';
 
 -- name: ClaimTriggerRecords :many
--- FOR UPDATE SKIP LOCKED is the ADR-099 PR-C claim_job_tasks
--- precedent: concurrent schedd replicas each claim disjoint row
--- sets. Returns at most $1 records in (pending, retry) state whose
--- next_fire_at <= now(). The trigger_id constraint scopes the
--- claim so the poller drains one trigger at a time.
-select id, trigger_id, item_identifier, payload, headers, metadata,
-       state, attempts, next_fire_at, received_at, last_error,
-       last_dispatched_at
-from trigger_records
-where trigger_id = $1
-  and state in ('pending','retry')
-  and next_fire_at <= now()
-order by next_fire_at
-limit $2
-for update skip locked;
+-- Persist ownership before returning. SKIP LOCKED alone would release the
+-- claim at statement end and let another scheduler deliver the same row.
+-- A lost dispatcher becomes eligible again after the ten-minute lease.
+WITH due AS MATERIALIZED (
+    SELECT candidate.id FROM trigger_records candidate
+    WHERE candidate.trigger_id = $1
+      AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
+        OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
+    ORDER BY candidate.next_fire_at, candidate.id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+), claimed AS (
+    UPDATE trigger_records r
+       SET state = 'claimed',
+           claim_generation = r.claim_generation + 1,
+           claim_expires_at = now() + INTERVAL '10 minutes'
+      FROM due WHERE r.id = due.id
+    RETURNING r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+              r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+              r.last_error, r.last_dispatched_at, r.claim_generation,
+              r.claim_expires_at
+)
+SELECT * FROM claimed ORDER BY next_fire_at, id;
+
+-- name: ClaimTriggerRecordsByItems :many
+-- The broker batch is authoritative: claiming an unrelated due row would
+-- lease it without dispatching it and block its actual broker delivery.
+WITH due AS MATERIALIZED (
+    SELECT candidate.id FROM trigger_records candidate
+    WHERE candidate.trigger_id = $1
+      AND candidate.item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+      AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
+        OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
+    ORDER BY candidate.next_fire_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+), claimed AS (
+    UPDATE trigger_records r
+       SET state = 'claimed',
+           claim_generation = r.claim_generation + 1,
+           claim_expires_at = now() + INTERVAL '10 minutes'
+      FROM due WHERE r.id = due.id
+    RETURNING r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+              r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+              r.last_error, r.last_dispatched_at, r.claim_generation,
+              r.claim_expires_at
+)
+SELECT * FROM claimed ORDER BY next_fire_at, id;
+
+-- name: MarkClaimedTriggerRecordSucceeded :execrows
+UPDATE trigger_records
+   SET state = 'succeeded', last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now();
+
+-- name: MarkClaimedTriggerRecordRetry :execrows
+UPDATE trigger_records
+   SET state = 'retry', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), next_fire_at = $4, claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now();
+
+-- name: MarkClaimedTriggerRecordDeadLetter :execrows
+UPDATE trigger_records
+   SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now();
 
 -- name: InsertTriggerRecord :one
 -- Review finding #1 (PR #910): the dispatcher MUST persist every
