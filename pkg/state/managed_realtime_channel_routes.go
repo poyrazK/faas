@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -36,6 +37,26 @@ type ManagedRealtimeChannelRouteView struct {
 	Disabled     bool
 }
 
+// ManagedRealtimeChannelPublishTarget is the small compute-node projection
+// needed to dispatch one channel publish. SnapshotReady is false for nodes
+// that must stay in the conservative fanout.
+type ManagedRealtimeChannelPublishTarget struct {
+	NodeID           string
+	NodeName         string
+	GatewayTargetURL *string
+	SnapshotReady    bool
+}
+
+// ManagedRealtimeChannelPublishTargetView is produced from one directory
+// snapshot and contains only nodes that may receive the channel publish.
+// HasActiveNodes distinguishes an empty fleet from a ready directory with no
+// subscribers. Disabled means the caller must retain full-fleet fanout.
+type ManagedRealtimeChannelPublishTargetView struct {
+	Targets        []ManagedRealtimeChannelPublishTarget
+	HasActiveNodes bool
+	Disabled       bool
+}
+
 // ManagedRealtimeChannelRouteLock serializes a node's Subscribe operation
 // with its live-connection snapshot and route replacement.
 type ManagedRealtimeChannelRouteLock interface {
@@ -58,9 +79,18 @@ type ManagedRealtimeChannelRouteStore interface {
 	FinalizeManagedRealtimeChannelRouteRebuild(context.Context) (bool, error)
 }
 
+// ManagedRealtimeChannelPublishTargetStore lets the publish hot path fetch
+// only routed nodes and nodes whose snapshots are not current. Implementors
+// that do not provide this optimization continue to use the route-view path.
+type ManagedRealtimeChannelPublishTargetStore interface {
+	ListManagedRealtimeChannelPublishTargets(context.Context, string, string) (ManagedRealtimeChannelPublishTargetView, error)
+}
+
 var (
-	_ ManagedRealtimeChannelRouteStore = (*PgStore)(nil)
-	_ ManagedRealtimeChannelRouteStore = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteStore         = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteStore         = (*MemStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore = (*PgStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore = (*MemStore)(nil)
 )
 
 type managedRealtimeChannelRouteOverflowState struct {
@@ -346,6 +376,99 @@ func (s *PgStore) ListManagedRealtimeChannelRouteView(ctx context.Context, endpo
 	       ), '{}'::text[])
 	`, endpointID, channel).Scan(&view.Disabled, &view.NodeIDs, &view.ReadyNodeIDs); err != nil {
 		return ManagedRealtimeChannelRouteView{}, fmt.Errorf("state: list realtime channel route view: %w", err)
+	}
+	return view, nil
+}
+
+func (s *PgStore) ListManagedRealtimeChannelPublishTargets(ctx context.Context, endpointID, channel string) (ManagedRealtimeChannelPublishTargetView, error) {
+	view := ManagedRealtimeChannelPublishTargetView{Targets: make([]ManagedRealtimeChannelPublishTarget, 0)}
+	if endpointID == "" || channel == "" {
+		nodes, err := s.ActiveComputeNodes(ctx)
+		if err != nil {
+			return ManagedRealtimeChannelPublishTargetView{}, err
+		}
+		view.HasActiveNodes = len(nodes) > 0
+		for _, node := range nodes {
+			view.Targets = append(view.Targets, ManagedRealtimeChannelPublishTarget{
+				NodeID: node.ID, NodeName: node.Name, GatewayTargetURL: node.GatewayTargetURL,
+			})
+		}
+		return view, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		with route_state as (
+			select exists (
+			         select 1 from managed_realtime_channel_route_overflow overflow
+			          where overflow.endpoint_id = $1
+			       ) or exists (
+			         select 1 from managed_realtime_channel_route_overflow_channels overflow_channel
+			          where overflow_channel.endpoint_id = $1 and overflow_channel.channel = $2
+			       ) as disabled,
+			       coalesce((
+			         select generation from managed_realtime_channel_route_generation
+			          where singleton = true
+			       ), 0) as generation,
+			       exists (select 1 from compute_nodes where active = true) as has_active_nodes
+		), candidates as (
+			select nodes.id::text as node_id,
+			       nodes.name as node_name,
+			       nodes.gateway_target_url,
+			       ($1 <> '' and $2 <> '' and
+			        coalesce(node_state.snapshot_generation >= route_state.generation, false)) as snapshot_ready
+			  from compute_nodes nodes
+			 cross join route_state
+			  left join managed_realtime_channel_route_node_state node_state
+			    on node_state.node_id = nodes.id
+			 where nodes.active = true
+		   and (
+			      route_state.disabled
+			      or exists (
+			           select 1 from managed_realtime_channel_routes routes
+			            where routes.endpoint_id = $1 and routes.channel = $2 and routes.node_id = nodes.id
+			      )
+			      or not ($1 <> '' and $2 <> '' and
+			              coalesce(node_state.snapshot_generation >= route_state.generation, false))
+		   )
+		)
+		select route_state.disabled,
+		       route_state.has_active_nodes,
+		       candidates.node_id,
+		       candidates.node_name,
+		       candidates.gateway_target_url,
+		       candidates.snapshot_ready
+		  from route_state
+		  left join candidates on true
+		 order by candidates.node_name
+	`, endpointID, channel)
+	if err != nil {
+		return ManagedRealtimeChannelPublishTargetView{}, fmt.Errorf("state: list realtime channel publish targets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var disabled, hasActiveNodes bool
+		var nodeID, nodeName, gatewayTargetURL pgtype.Text
+		var snapshotReady pgtype.Bool
+		if err := rows.Scan(&disabled, &hasActiveNodes, &nodeID, &nodeName, &gatewayTargetURL, &snapshotReady); err != nil {
+			return ManagedRealtimeChannelPublishTargetView{}, fmt.Errorf("state: scan realtime channel publish target: %w", err)
+		}
+		view.Disabled = disabled
+		view.HasActiveNodes = hasActiveNodes
+		if !nodeID.Valid {
+			continue
+		}
+		target := ManagedRealtimeChannelPublishTarget{
+			NodeID:        nodeID.String,
+			NodeName:      nodeName.String,
+			SnapshotReady: snapshotReady.Valid && snapshotReady.Bool,
+		}
+		if gatewayTargetURL.Valid {
+			url := gatewayTargetURL.String
+			target.GatewayTargetURL = &url
+		}
+		view.Targets = append(view.Targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return ManagedRealtimeChannelPublishTargetView{}, fmt.Errorf("state: list realtime channel publish targets: %w", err)
 	}
 	return view, nil
 }
@@ -877,6 +1000,42 @@ func (m *MemStore) ListManagedRealtimeChannelRouteView(_ context.Context, endpoi
 	}
 	sort.Strings(view.NodeIDs)
 	sort.Strings(view.ReadyNodeIDs)
+	return view, nil
+}
+
+func (m *MemStore) ListManagedRealtimeChannelPublishTargets(_ context.Context, endpointID, channel string) (ManagedRealtimeChannelPublishTargetView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	view := ManagedRealtimeChannelPublishTargetView{Targets: make([]ManagedRealtimeChannelPublishTarget, 0)}
+	routedNodes := make(map[string]struct{})
+	if endpointID != "" && channel != "" {
+		if overflow, ok := m.realtimeChannelRouteOverflow[endpointID]; ok {
+			view.Disabled = overflow.OverflowAll || managedRealtimeChannelRouteChannelOverflowed(overflow, channel)
+		}
+		for route := range m.realtimeChannelRoutes {
+			if route.EndpointID == endpointID && route.Channel == channel {
+				routedNodes[route.NodeID] = struct{}{}
+			}
+		}
+	}
+	for _, node := range m.computeNodes {
+		if !node.Active {
+			continue
+		}
+		view.HasActiveNodes = true
+		snapshotGeneration, hasSnapshot := m.realtimeChannelRouteSnapshots[node.ID]
+		snapshotReady := endpointID != "" && channel != "" && hasSnapshot && snapshotGeneration >= m.realtimeChannelRouteGeneration
+		_, hasRoute := routedNodes[node.ID]
+		if !view.Disabled && !hasRoute && snapshotReady {
+			continue
+		}
+		target := ManagedRealtimeChannelPublishTarget{
+			NodeID: node.ID, NodeName: node.Name, GatewayTargetURL: node.GatewayTargetURL,
+			SnapshotReady: snapshotReady,
+		}
+		view.Targets = append(view.Targets, target)
+	}
+	sort.Slice(view.Targets, func(i, j int) bool { return view.Targets[i].NodeName < view.Targets[j].NodeName })
 	return view, nil
 }
 
