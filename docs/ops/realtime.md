@@ -120,15 +120,22 @@ compared with fallback broadcasts. Rebuild health is reported by
 `canceled`), `apid_realtime_channel_route_reconcile_passes_total`
 (`complete`, `incomplete`, `error`, `canceled`), and
 `apid_realtime_channel_route_node_snapshots_total` (`success`, `error`,
-`canceled`). `apid_realtime_channel_route_reconcile_duration_seconds` records
-the duration of passes that start. These metrics omit endpoint, channel, and
-node identifiers.
+`canceled`). Revision polling is reported by
+`apid_realtime_channel_route_revision_polls_total` (`unchanged`,
+`refresh_required`, `unsupported`, `error`, `canceled`).
+`apid_realtime_channel_route_node_snapshot_sources_total` records snapshot
+attempts by source (`rebuild`, `periodic`, `revision`) and outcome. The
+`apid_realtime_channel_route_reconcile_duration_seconds` histogram records the
+duration of passes that start. These metrics omit endpoint, channel, and node
+identifiers.
 
 ```promql
 sum by (decision) (rate(apid_realtime_channel_route_publish_decisions_total[5m]))
 histogram_quantile(0.95, sum by (decision, le) (rate(apid_realtime_channel_route_publish_recipients_bucket[5m])))
 sum by (outcome) (rate(apid_realtime_channel_route_rebuild_checks_total[15m]))
 sum by (outcome) (rate(apid_realtime_channel_route_reconcile_passes_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_revision_polls_total[15m]))
+sum by (source, outcome) (rate(apid_realtime_channel_route_node_snapshot_sources_total[15m]))
 histogram_quantile(0.95, sum by (le) (rate(apid_realtime_channel_route_reconcile_duration_seconds_bucket[15m])))
 ```
 

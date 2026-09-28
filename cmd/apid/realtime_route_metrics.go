@@ -16,21 +16,35 @@ var (
 		"targeted",
 		"no_subscribers",
 	}
-	managedRealtimeRouteRebuildOutcomes  = []string{"started", "idle", "error", "canceled"}
-	managedRealtimeRoutePassOutcomes     = []string{"complete", "incomplete", "error", "canceled"}
-	managedRealtimeRouteSnapshotOutcomes = []string{"success", "error", "canceled"}
+	managedRealtimeRouteRebuildOutcomes      = []string{"started", "idle", "error", "canceled"}
+	managedRealtimeRoutePassOutcomes         = []string{"complete", "incomplete", "error", "canceled"}
+	managedRealtimeRouteSnapshotOutcomes     = []string{"success", "error", "canceled"}
+	managedRealtimeRouteRevisionPollOutcomes = []string{"unchanged", "refresh_required", "unsupported", "error", "canceled"}
+	managedRealtimeRouteSnapshotSources      = []string{
+		managedRealtimeRouteSnapshotSourceRebuild,
+		managedRealtimeRouteSnapshotSourcePeriodic,
+		managedRealtimeRouteSnapshotSourceRevision,
+	}
+)
+
+const (
+	managedRealtimeRouteSnapshotSourceRebuild  = "rebuild"
+	managedRealtimeRouteSnapshotSourcePeriodic = "periodic"
+	managedRealtimeRouteSnapshotSourceRevision = "revision"
 )
 
 // managedRealtimeChannelRouteMetrics reports routing decisions and repair
 // progress with closed labels. Endpoint, channel, and node identifiers are
 // intentionally absent so traffic volume cannot create unbounded series.
 type managedRealtimeChannelRouteMetrics struct {
-	publishDecisions  *prometheus.CounterVec
-	publishRecipients *prometheus.HistogramVec
-	rebuildChecks     *prometheus.CounterVec
-	reconcilePasses   *prometheus.CounterVec
-	reconcileDuration prometheus.Histogram
-	nodeSnapshots     *prometheus.CounterVec
+	publishDecisions    *prometheus.CounterVec
+	publishRecipients   *prometheus.HistogramVec
+	rebuildChecks       *prometheus.CounterVec
+	reconcilePasses     *prometheus.CounterVec
+	reconcileDuration   prometheus.Histogram
+	nodeSnapshots       *prometheus.CounterVec
+	revisionPolls       *prometheus.CounterVec
+	nodeSnapshotSources *prometheus.CounterVec
 }
 
 func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix string) *managedRealtimeChannelRouteMetrics {
@@ -64,6 +78,14 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 			Name: prefix + "_realtime_channel_route_node_snapshots_total",
 			Help: "Realtime channel route node snapshot attempts by outcome.",
 		}, []string{"outcome"}),
+		revisionPolls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_realtime_channel_route_revision_polls_total",
+			Help: "Realtime channel route revision polls by bounded decision outcome.",
+		}, []string{"outcome"}),
+		nodeSnapshotSources: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_realtime_channel_route_node_snapshot_sources_total",
+			Help: "Realtime channel route node snapshot attempts by bounded source and outcome.",
+		}, []string{"source", "outcome"}),
 	}
 
 	metrics.publishDecisions = registerRealtimeRouteCounterVec(registry, metrics.publishDecisions)
@@ -72,6 +94,8 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 	metrics.reconcilePasses = registerRealtimeRouteCounterVec(registry, metrics.reconcilePasses)
 	metrics.reconcileDuration = registerRealtimeRouteHistogram(registry, metrics.reconcileDuration)
 	metrics.nodeSnapshots = registerRealtimeRouteCounterVec(registry, metrics.nodeSnapshots)
+	metrics.revisionPolls = registerRealtimeRouteCounterVec(registry, metrics.revisionPolls)
+	metrics.nodeSnapshotSources = registerRealtimeRouteCounterVec(registry, metrics.nodeSnapshotSources)
 	for _, decision := range managedRealtimeRoutePublishDecisions {
 		metrics.publishDecisions.WithLabelValues(decision)
 		metrics.publishRecipients.WithLabelValues(decision)
@@ -84,6 +108,12 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 	}
 	for _, outcome := range managedRealtimeRouteSnapshotOutcomes {
 		metrics.nodeSnapshots.WithLabelValues(outcome)
+		for _, source := range managedRealtimeRouteSnapshotSources {
+			metrics.nodeSnapshotSources.WithLabelValues(source, outcome)
+		}
+	}
+	for _, outcome := range managedRealtimeRouteRevisionPollOutcomes {
+		metrics.revisionPolls.WithLabelValues(outcome)
 	}
 	return metrics
 }
@@ -155,5 +185,17 @@ func (m *managedRealtimeChannelRouteMetrics) reconcilePass(outcome string, durat
 func (m *managedRealtimeChannelRouteMetrics) nodeSnapshot(outcome string) {
 	if m != nil {
 		m.nodeSnapshots.WithLabelValues(outcome).Inc()
+	}
+}
+
+func (m *managedRealtimeChannelRouteMetrics) revisionPoll(outcome string) {
+	if m != nil {
+		m.revisionPolls.WithLabelValues(outcome).Inc()
+	}
+}
+
+func (m *managedRealtimeChannelRouteMetrics) nodeSnapshotSource(source, outcome string) {
+	if m != nil {
+		m.nodeSnapshotSources.WithLabelValues(source, outcome).Inc()
 	}
 }

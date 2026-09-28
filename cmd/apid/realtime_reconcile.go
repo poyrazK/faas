@@ -48,7 +48,7 @@ func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owne
 		outcome = realtimeRouteErrorOutcome(ctx, err)
 		return fmt.Errorf("list active nodes for realtime channel routing: %w", err)
 	}
-	finalized, err := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, nodes)
+	finalized, err := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, nodes, managedRealtimeRouteSnapshotSourceRebuild)
 	if err != nil {
 		outcome = realtimeRouteErrorOutcome(ctx, err)
 	} else if ctx.Err() != nil {
@@ -59,7 +59,7 @@ func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owne
 	return err
 }
 
-func reconcileManagedRealtimeChannelRouteNodes(ctx context.Context, owner *leasedRealtimeOwner, nodes []state.ComputeNode) (bool, error) {
+func reconcileManagedRealtimeChannelRouteNodes(ctx context.Context, owner *leasedRealtimeOwner, nodes []state.ComputeNode, source string) (bool, error) {
 	snapshotErrs := make([]error, len(nodes))
 	jobs := make(chan int)
 	var workers sync.WaitGroup
@@ -79,6 +79,7 @@ func reconcileManagedRealtimeChannelRouteNodes(ctx context.Context, owner *lease
 						snapshotOutcome = realtimeRouteErrorOutcome(ctx, err)
 					}
 					owner.channelRouteMetrics.nodeSnapshot(snapshotOutcome)
+					owner.channelRouteMetrics.nodeSnapshotSource(source, snapshotOutcome)
 				}
 			}
 		}()
@@ -141,7 +142,7 @@ func reconcileDueManagedRealtimeChannelRoutes(ctx context.Context, owner *leased
 				needed = append(needed, node)
 			}
 		}
-		finalized, snapshotErr := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, needed)
+		finalized, snapshotErr := reconcileManagedRealtimeChannelRouteNodes(ctx, owner, needed, managedRealtimeRouteSnapshotSourcePeriodic)
 		if snapshotErr != nil {
 			reconcileErr = errors.Join(reconcileErr, snapshotErr)
 		}
@@ -171,6 +172,7 @@ func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *l
 		var err error
 		persistedRevisions, err = revisionStore.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, nodeIDs)
 		if err != nil {
+			owner.channelRouteMetrics.revisionPoll(realtimeRouteErrorOutcome(ctx, err))
 			return fmt.Errorf("list persisted realtime channel route revisions: %w", err)
 		}
 	}
@@ -187,28 +189,34 @@ func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *l
 				}
 				op, err := owner.nodeOperator(nodes[index])
 				if err != nil {
+					owner.channelRouteMetrics.revisionPoll(realtimeRouteErrorOutcome(ctx, err))
 					results[index] = err
 					continue
 				}
 				revision, err := nodeChannelRouteRevision(ctx, op)
 				if err != nil {
+					owner.channelRouteMetrics.revisionPoll(realtimeRouteErrorOutcome(ctx, err))
 					results[index] = fmt.Errorf("node %s channel route revision: %w", nodes[index].ID, err)
 					continue
 				}
 				if revision == nil {
+					owner.channelRouteMetrics.revisionPoll("unsupported")
 					continue
 				}
 				if hasRevisionStore {
 					previous, ok := persistedRevisions[nodes[index].ID]
 					if ok && previous.InstanceID == revision.InstanceID && previous.Revision == revision.Revision {
+						owner.channelRouteMetrics.revisionPoll("unchanged")
 						continue
 					}
 				} else {
 					previous, ok := owner.routeRevision(nodes[index].ID)
 					if ok && previous == *revision {
+						owner.channelRouteMetrics.revisionPoll("unchanged")
 						continue
 					}
 				}
+				owner.channelRouteMetrics.revisionPoll("refresh_required")
 				attempted, err := snapshotManagedRealtimeChannelRoutesWithRevision(ctx, owner, nodes[index], true, revision)
 				if (attempted || err != nil) && owner.channelRouteMetrics != nil {
 					outcome := "success"
@@ -216,6 +224,7 @@ func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *l
 						outcome = realtimeRouteErrorOutcome(ctx, err)
 					}
 					owner.channelRouteMetrics.nodeSnapshot(outcome)
+					owner.channelRouteMetrics.nodeSnapshotSource(managedRealtimeRouteSnapshotSourceRevision, outcome)
 				}
 				if err != nil {
 					results[index] = err
