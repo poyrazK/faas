@@ -748,6 +748,35 @@ func TestCmdEdgeRulesTraceReportsRetryPolicy(t *testing.T) {
 	}
 }
 
+func TestRenderEdgeRuleTraceReportsJWTPolicyWithoutValues(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "jwt-rule", Enabled: true, Kind: "jwt", MatchHost: "example.com", MatchPath: "/private/*",
+		Action: json.RawMessage(`{"jwt":{"issuer":"https://issuer.example/private-issuer","audience":["private-audience"],"jwks_url":"https://keys.example/jwks?access_token=private-jwks-token","algorithms":["RS256"],"required_claims":{"tenant_id":"private-tenant"}}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/private/report", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{"Authorization": []string{"Bearer secret-token-value"}},
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	renderEdgeRuleTrace(result)
+	for _, want := range []string{"JWT policy: bearer_token_present=true", "algorithms=[RS256]", "required_claim_names=[tenant_id]"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("human-readable trace missing %q\n%s", want, stdout.String())
+		}
+	}
+	for _, secret := range []string{"secret-token-value", "private-issuer", "private-audience", "private-jwks-token", "private-tenant"} {
+		if strings.Contains(stdout.String(), secret) {
+			t.Errorf("human-readable trace leaked sensitive JWT input/config value %q: %s", secret, stdout.String())
+		}
+	}
+}
+
 func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

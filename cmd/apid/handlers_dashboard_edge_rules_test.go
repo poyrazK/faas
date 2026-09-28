@@ -138,6 +138,63 @@ func TestDashboardEdgeRuleTraceShowsRetryPolicy(t *testing.T) {
 	}
 }
 
+func TestDashboardEdgeRuleTraceShowsJWTPolicyWithoutValues(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-jwt-trace", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/private/*", Priority: 10, Enabled: true,
+		Kind: state.EdgeRuleKindJWT,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindJWT, JWT: &state.EdgeRuleJWTAction{
+			Issuer: "https://issuer.example/private-issuer", Audience: []string{"private-audience"},
+			JWKSURL: "https://keys.example/jwks?access_token=private-jwks-token", Algorithms: []string{"RS256"},
+			RequiredClaims: map[string]string{"tenant_id": "private-tenant"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-jwt-trace/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/private/report", "trace_method": "GET",
+		"trace_headers": "Authorization: Bearer secret-token-value",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Simulation: incomplete · needs_jwt_runtime_context", "JWT policy:", "Bearer token present true",
+		"audiences 1", "algorithms <code>[RS256]</code>", "required claim names <code>[tenant_id]</code>",
+		"signature/claim verification",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("trace response missing %q\n%s", want, body)
+		}
+	}
+	traceStart := strings.Index(body, `<div class="trace-details"`)
+	rulesStart := strings.Index(body, "<h2>Rules</h2>")
+	if traceStart < 0 || rulesStart <= traceStart {
+		t.Fatalf("trace result section boundaries missing")
+	}
+	traceOutput := body[traceStart:rulesStart]
+	for _, secret := range []string{"secret-token-value", "private-issuer", "private-audience", "private-jwks-token", "private-tenant"} {
+		if strings.Contains(traceOutput, secret) {
+			t.Errorf("dashboard trace leaked sensitive JWT input/config value %q\n%s", secret, traceOutput)
+		}
+	}
+}
+
 func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
 	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
