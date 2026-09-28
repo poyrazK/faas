@@ -42,13 +42,17 @@ gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeou
 gregale jobs run nightly --tasks 10 --parallelism 3
 gregale jobs run nightly --tasks 10 --parallelism 3 --arg=--dataset --arg=2026-09
 gregale jobs run nightly --parallelism 2 --input=shard-a=s3://my-bucket/a --input=shard-b=s3://my-bucket/b
+gregale jobs run nightly --parallelism 2 --input-manifest-uri=obj://APP_ID/BUCKET_ID/inputs.json --input-manifest-sha256=sha256:DIGEST
 gregale jobs run nightly --tasks 20 --flexible --eligible-at=2026-10-01T00:00:00Z --latest-start-at=2026-10-01T04:00:00Z
 gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 gregale jobs update nightly-export --schedule "30 3 * * *"
 gregale jobs update nightly-export --unschedule
 gregale jobs runs nightly
 gregale jobs tasks nightly RUN_ID
+gregale jobs attempts nightly RUN_ID 0
 gregale jobs retry nightly RUN_ID 0
+gregale jobs replay-failed nightly RUN_ID
+gregale jobs artifact-url nightly RUN_ID 0 result
 gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
@@ -97,6 +101,10 @@ same JSON array of input bindings. Gregale verifies the exact object bytes
 against the supplied SHA-256 and enforces a 16 MiB manifest limit and the
 plan's task limit. The run retains the source URI, source checksum, and the
 canonical digest of its validated inputs. Entry order determines task index.
+For the CLI digest, use `sha256:` followed by the lowercase hex SHA-256 of the
+manifest file's exact bytes. `--input-manifest-uri` and
+`--input-manifest-sha256` must be supplied together and cannot be combined
+with `--tasks` or inline `--input` values.
 
 `--flexible` accepts a start window of at most 24 hours. `--eligible-at`
 defaults to the time the run is accepted; `--latest-start-at` is required.
@@ -133,6 +141,9 @@ retry policy. For an `obj://` artifact, call
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check
 the downloaded checksum too, because an object can change after verification.
+`gregale jobs artifact-url` prints the signed URL and expected digest; add
+the global JSON output option to retrieve the full signed request, including
+headers and expiry.
 Missing objects return 404; an object whose current bytes disagree with the
 manifest returns 422.
 External `s3://` and `gs://` artifacts remain customer-managed references.

@@ -62,7 +62,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|retry|logs|registry> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -84,8 +84,14 @@ func cmdJobs(args []string) int {
 		return cmdJobsCancel(args[1:])
 	case "tasks":
 		return cmdJobsTasks(args[1:])
+	case "attempts":
+		return cmdJobsAttempts(args[1:])
 	case "retry":
 		return cmdJobsRetry(args[1:])
+	case "replay-failed":
+		return cmdJobsReplayFailed(args[1:])
+	case "artifact-url":
+		return cmdJobsArtifactURL(args[1:])
 	case "logs":
 		return cmdJobsLogs(args[1:])
 	case "registry":
@@ -407,6 +413,8 @@ func cmdJobsRun(args []string) int {
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	arguments := registerJobsMultiFlag(fs, "arg", "repeatable command argument override")
 	inputFlags := registerJobsMultiFlag(fs, "input", "repeatable input binding: ID=REF")
+	manifestURI := fs.String("input-manifest-uri", "", "account-readable obj:// URI containing JSON input bindings")
+	manifestSHA256 := fs.String("input-manifest-sha256", "", "sha256:<64 hex> digest of exact manifest bytes")
 	flexible := fs.Bool("flexible", false, "use spare capacity within a start window")
 	failFast := fs.Bool("fail-fast", false, "cancel unstarted tasks after permanent failure")
 	eligibleAtFlag := fs.String("eligible-at", "", "earliest task start (RFC3339; flexible runs)")
@@ -423,13 +431,19 @@ func cmdJobsRun(args []string) int {
 			retriesProvided = true
 		}
 	})
-	if *tasks <= 0 && len(*inputFlags) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N or --input ID=REF ...", "jobs")
+	if (*manifestURI == "") != (*manifestSHA256 == "") || (*manifestURI != "" && (*tasks != 0 || len(*inputFlags) != 0)) {
+		PrintUsage(os.Stderr, "usage: --input-manifest-uri URI and --input-manifest-sha256 DIGEST must be paired and cannot be combined with --tasks or --input", "jobs")
+		return 1
+	}
+	if *tasks <= 0 && len(*inputFlags) == 0 && *manifestURI == "" {
+		PrintUsage(os.Stderr, "usage: gregale jobs run <name> --tasks N or --input ID=REF ... or --input-manifest-uri URI --input-manifest-sha256 DIGEST", "jobs")
 		return 1
 	}
 	req := api.CreateJobRunRequest{
-		Tasks:        *tasks,
-		EnvOverrides: parseEnvOverrides([]string(*env)),
+		Tasks:               *tasks,
+		EnvOverrides:        parseEnvOverrides([]string(*env)),
+		InputManifestURI:    *manifestURI,
+		InputManifestSHA256: *manifestSHA256,
 	}
 	for _, raw := range *inputFlags {
 		id, ref, ok := strings.Cut(raw, "=")
@@ -571,6 +585,83 @@ func cmdJobsTasks(args []string) int {
 		return jsonOut(writeNDJSON(out.Tasks))
 	}
 	renderJobTasksTable(osStdout, out.Tasks)
+	return 0
+}
+
+// cmdJobsAttempts returns retained terminal outcomes, including earlier
+// attempts whose task projection was subsequently retried.
+func cmdJobsAttempts(args []string) int {
+	if len(args) != 3 || !jobRunIDPattern.MatchString(args[1]) {
+		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id> <task-index>", "jobs")
+		return 1
+	}
+	taskIdx, err := strconv.Atoi(args[2])
+	if err != nil || taskIdx < 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.ListJobTaskAttempts(context.Background(), args[0], args[1], taskIdx)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSONSingle(out))
+	}
+	for _, attempt := range out.Attempts {
+		fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\n", attempt.Attempt, attempt.Status, attempt.InputID, attempt.ErrorMessage)
+	}
+	return 0
+}
+
+// cmdJobsReplayFailed creates a linked run containing unsuccessful inputs.
+func cmdJobsReplayFailed(args []string) int {
+	if len(args) != 2 || !jobRunIDPattern.MatchString(args[1]) {
+		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed <name> <run-id>", "jobs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	run, err := client.ReplayFailedJobRun(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Replay failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSONSingle(run))
+	}
+	PrintOK(osStdout, "Run %s created from %s (%d tasks)", run.ID, args[1], run.Tasks)
+	return 0
+}
+
+// cmdJobsArtifactURL verifies a managed result and returns its short-lived
+// signed GET URL together with the expected size and SHA-256.
+func cmdJobsArtifactURL(args []string) int {
+	if len(args) != 4 || !jobRunIDPattern.MatchString(args[1]) || args[3] == "" {
+		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>", "jobs")
+		return 1
+	}
+	taskIdx, err := strconv.Atoi(args[2])
+	if err != nil || taskIdx < 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.DownloadJobArtifact(context.Background(), args[0], args[1], taskIdx, args[3])
+	if err != nil {
+		return printErr("Download request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSONSingle(out))
+	}
+	fmt.Fprintf(osStdout, "%s\n%s  %d bytes\n", out.Download.URL, out.SHA256, out.SizeBytes)
 	return 0
 }
 

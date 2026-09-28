@@ -2600,6 +2600,14 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs/"+runID+"/cancel", nil, &out)
 }
 
+// ReplayFailedJobRun creates a linked run for unsuccessful tasks from a
+// terminal run, with a fresh retry budget and the source input bindings.
+func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/replay-failed"
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
 // ListJobRunTasks returns a page of the run's task rows
 // (issue #1184 Workstream A). task_index 0..N-1 (zero-based; matches
 // the server's CTE fan-out). Status is the closed-set {queued,
@@ -2609,6 +2617,21 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+}
+
+// ListJobTaskAttempts returns the retained terminal outcomes for a task.
+func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	var out ListJobTaskAttemptsResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// DownloadJobArtifact verifies a managed output object and returns a signed
+// GET request. Callers should also verify the downloaded SHA-256.
+func (c *Client) DownloadJobArtifact(ctx context.Context, name, runID string, taskIndex int, artifact string) (JobArtifactDownloadResponse, error) {
+	var out JobArtifactDownloadResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/artifacts/" + url.PathEscape(artifact) + "/download"
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while
