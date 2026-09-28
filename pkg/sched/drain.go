@@ -273,6 +273,13 @@ func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
 // Tick is the per-cycle drain walk. Public so tests can drive it
 // without spinning Run().
 func (d *Drain) Tick(ctx context.Context) {
+	if expirer, ok := d.store.(interface {
+		ExpirePendingKeyedInvocations(context.Context, time.Time, int) (int, error)
+	}); ok {
+		if _, err := expirer.ExpirePendingKeyedInvocations(ctx, d.now(), d.batchSize); err != nil {
+			d.log.Warn("drain: expire pending keyed work", "err", err)
+		}
+	}
 	// A crashed schedd/gateway can leave a row in dispatching after its
 	// wake/invoke lease expires. Requeue those rows before reading pending
 	// work so the next scheduler tick can make progress. The store update is
@@ -556,7 +563,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			err := errors.New("sched: debug replay gateway is not configured")
 			retryAfter := d.invocationRetryDelay(inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
-			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err)); failErr != nil {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr != nil {
 				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
 			}
 			return
@@ -568,7 +575,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 				retryAfter = 0
 			}
 			budget := d.invocationAttemptBudget(ctx, inv)
-			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err))
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
 			if failErr == nil && retryAfter == 0 {
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
@@ -583,7 +590,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 				d.log.Warn("drain: stamp debug replay instance", "inv", inv.ID, "inst", dispatched.InstanceID, "err", err)
 			}
 		}
-		if err := d.store.CompleteInvocation(ctx, inv.ID, dispatched.Result); err != nil {
+		if err := completeClaimedInvocation(ctx, d.store, inv, dispatched.Result); err != nil {
 			d.log.Warn("drain: complete debug replay", "inv", inv.ID, "err", err)
 			return
 		}
@@ -599,7 +606,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err)); failErr == nil && retryAfter == 0 {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		return
@@ -639,7 +646,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
@@ -658,7 +665,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if d.gateway == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
-		if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err == nil {
+		if err := completeClaimedInvocation(ctx, d.store, inv, nil); err == nil {
 			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
@@ -679,7 +686,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -691,7 +698,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	// 6. Complete.
-	if err := d.store.CompleteInvocation(ctx, inv.ID, dispatched.Result); err != nil {
+	if err := completeClaimedInvocation(ctx, d.store, inv, dispatched.Result); err != nil {
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
 		// terminal state and the meter join will see it.
@@ -700,6 +707,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
+}
+
+func completeClaimedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage) error {
+	if inv.WorkPolicyName != "" {
+		return store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, result)
+	}
+	return store.CompleteInvocation(ctx, inv.ID, result)
 }
 
 func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {

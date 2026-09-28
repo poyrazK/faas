@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // ErrNotFound is returned by Store reads when a row does not exist.
@@ -3943,6 +3944,9 @@ type Store interface {
 	// InstanceID is stamped by ClaimInvocation (state→dispatching) so
 	// pkg/meter can join. instance_id is unique to a dispatched row.
 	EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error)
+	// EnqueueKeyedInvocation resolves idempotency and pending replacement
+	// under the same app-scoped lane lock used by keyed claims.
+	EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string) (Invocation, error)
 	InvocationByID(ctx context.Context, id string) (Invocation, error)
 	// ListDueInvocations returns up to `limit` rows whose state='pending'
 	// and due_at <= now, ordered by due_at. The drain tick calls this with
@@ -4030,6 +4034,8 @@ type Store interface {
 	// other sources). State → completed. A selected on-success webhook delivery
 	// is inserted into the durable delivery ledger in the same transaction.
 	CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error
+	// CompleteKeyedInvocation requires the attempt returned by the claim.
+	CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error
 	// FailInvocation records a terminal or retryable error. When retryAfter
 	// > 0 the row goes back to state='pending' with due_at = now +
 	// retryAfter; when retryAfter == 0 the row is terminal ('failed').

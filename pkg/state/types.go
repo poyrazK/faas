@@ -3881,6 +3881,8 @@ const (
 	InvocationCompleted   InvocationState = "completed"
 	InvocationFailed      InvocationState = "failed"
 	InvocationCancelled   InvocationState = "cancelled"
+	InvocationSuperseded  InvocationState = "superseded"
+	InvocationExpired     InvocationState = "expired"
 	// InvocationDeadLetter (issue #394 / Move 1) is the terminal state
 	// for queue messages that exhausted their per-plan retry budget
 	// (see pkg/api.Limits.MaxQueueAttempts). Rows reach this state only
@@ -3925,9 +3927,15 @@ type Invocation struct {
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
-	QuotaReserved bool      `json:"-"`
-	LastError     string    `json:"last_error,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	QuotaReserved bool `json:"-"`
+	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
+	// The raw application key is never persisted in this ledger.
+	WorkPolicyName string     `json:"work_policy_name,omitempty"`
+	WorkKeyDigest  []byte     `json:"-"`
+	WorkExpiresAt  *time.Time `json:"work_expires_at,omitempty"`
+	WorkSequence   int64      `json:"-"`
+	LastError      string     `json:"last_error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 	// Outcome is the normalized terminal classification (issue #791).
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.
@@ -4155,6 +4163,8 @@ const (
 	// retry budget was exhausted. Set automatically by FailInvocation
 	// on the dead-letter branch, so callers need not pass it.
 	OutcomeDeadLetter InvocationOutcome = "dead_letter"
+	OutcomeSuperseded InvocationOutcome = "superseded"
+	OutcomeExpired    InvocationOutcome = "expired"
 )
 
 // FailOptions carries the optional, non-breaking extras for
@@ -4168,6 +4178,9 @@ type FailOptions struct {
 	// branch, which leaves the row non-terminal and therefore
 	// outcome-less. The dead-letter branch always wins over this.
 	Outcome InvocationOutcome
+	// ClaimAttempt fences a keyed dispatch against a newer lease of the
+	// same invocation. Zero is valid only for pre-claim or unkeyed work.
+	ClaimAttempt int
 }
 
 // FailOption mutates FailOptions. See WithOutcome.
@@ -4179,6 +4192,10 @@ type FailOption func(*FailOptions)
 // transient-retry or dead-letter branch.
 func WithOutcome(o InvocationOutcome) FailOption {
 	return func(f *FailOptions) { f.Outcome = o }
+}
+
+func WithClaimAttempt(attempt int) FailOption {
+	return func(f *FailOptions) { f.ClaimAttempt = attempt }
 }
 
 // ApplyFailOptions folds opts over the defaults. Exported so both
