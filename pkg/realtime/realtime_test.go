@@ -1,5 +1,7 @@
 package realtime
 
+// adr: 318
+
 import (
 	"context"
 	"errors"
@@ -7,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -147,6 +150,323 @@ func TestManagerConnectionLifecycleAndPublish(t *testing.T) {
 	}
 }
 
+func TestManagerClosesSocketWhenCallbackOutboxStaysFull(t *testing.T) {
+	var messageRequests atomic.Uint64
+	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/message" {
+			messageRequests.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callbackServer.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 1, RetryInterval: time.Millisecond})
+	manager := NewManager(Config{CallbackTimeout: 80 * time.Millisecond}, HTTPHooks{
+		Client:       callbackServer.Client(),
+		DurableQueue: queue,
+		MaxAttempts:  1,
+	})
+	defer manager.Close()
+	endpoint := Endpoint{
+		ID:             "full-outbox",
+		CallbackURL:    callbackServer.URL,
+		ConnectPath:    "/connect",
+		MessagePath:    "/message",
+		DisconnectPath: "/disconnect",
+	}
+	if err := manager.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+	server := httptest.NewServer(manager.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	if err := client.WriteMessage(websocket.TextMessage, []byte("first")); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("second")); err != nil {
+		t.Fatalf("write second message: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = client.ReadMessage()
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseTryAgainLater {
+		t.Fatalf("connection close = %v, want websocket code %d", err, websocket.CloseTryAgainLater)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for len(manager.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(manager.Snapshot()) != 0 {
+		t.Fatal("connection remained registered after outbox-full close")
+	}
+	stats := manager.Stats()
+	if stats.ReceivedMessages != 1 {
+		t.Fatalf("received messages = %d, want only the first message before closing", stats.ReceivedMessages)
+	}
+	if stats.CallbackOutboxFull == 0 {
+		t.Fatal("outbox-full rejection was not counted")
+	}
+	if got := messageRequests.Load(); got != 0 {
+		t.Fatalf("message callbacks reached receiver = %d, want 0", got)
+	}
+	if got := queue.Stats().Pending; got != 0 {
+		t.Fatalf("pending callbacks = %d, want no unpersisted message", got)
+	}
+}
+
+func TestManagerClosesSocketWhenCallbackOutboxPersistenceFails(t *testing.T) {
+	var messageRequests atomic.Uint64
+	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/message" {
+			messageRequests.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callbackServer.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	queue.root += "-unavailable"
+	manager := NewManager(Config{CallbackTimeout: time.Second}, HTTPHooks{
+		Client:       callbackServer.Client(),
+		DurableQueue: queue,
+		MaxAttempts:  1,
+	})
+	defer manager.Close()
+	endpoint := Endpoint{
+		ID:             "outbox-write-failure",
+		CallbackURL:    callbackServer.URL,
+		ConnectPath:    "/connect",
+		MessagePath:    "/message",
+		DisconnectPath: "/disconnect",
+	}
+	if err := manager.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+	server := httptest.NewServer(manager.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	if err := client.WriteMessage(websocket.TextMessage, []byte("first")); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("second")); err != nil {
+		t.Fatalf("write second message: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = client.ReadMessage()
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseTryAgainLater {
+		t.Fatalf("connection close = %v, want websocket code %d", err, websocket.CloseTryAgainLater)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for len(manager.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(manager.Snapshot()) != 0 {
+		t.Fatal("connection remained registered after outbox persistence failure")
+	}
+	stats := manager.Stats()
+	if stats.ReceivedMessages != 1 {
+		t.Fatalf("received messages = %d, want only the first message before closing", stats.ReceivedMessages)
+	}
+	if stats.CallbackOutboxAdmissionErrors == 0 {
+		t.Fatal("outbox admission failure was not counted")
+	}
+	if stats.CallbackOutboxFull != 0 {
+		t.Fatalf("outbox-full count = %d, want persistence failure classified separately", stats.CallbackOutboxFull)
+	}
+	if got := messageRequests.Load(); got != 0 {
+		t.Fatalf("message callbacks reached receiver = %d, want 0", got)
+	}
+	if got := queue.Stats().Pending; got != 0 {
+		t.Fatalf("pending callbacks = %d, want no unpersisted message", got)
+	}
+}
+
+func TestManagerClosesSocketWhenUnpersistedCallbackFails(t *testing.T) {
+	var messageRequests atomic.Uint64
+	var disconnectRequests atomic.Uint64
+	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/connect":
+			w.WriteHeader(http.StatusNoContent)
+		case "/disconnect":
+			disconnectRequests.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/message":
+			messageRequests.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer callbackServer.Close()
+
+	manager := NewManager(Config{CallbackTimeout: time.Second}, HTTPHooks{
+		Client:      callbackServer.Client(),
+		MaxAttempts: 1,
+	})
+	defer manager.Close()
+	endpoint := Endpoint{
+		ID:             "unpersisted-callback",
+		CallbackURL:    callbackServer.URL,
+		ConnectPath:    "/connect",
+		MessagePath:    "/message",
+		DisconnectPath: "/disconnect",
+	}
+	if err := manager.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+	server := httptest.NewServer(manager.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	if err := client.WriteMessage(websocket.TextMessage, []byte("first")); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("second")); err != nil {
+		t.Fatalf("write second message: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = client.ReadMessage()
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseTryAgainLater {
+		t.Fatalf("connection close = %v, want websocket code %d", err, websocket.CloseTryAgainLater)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for (len(manager.Snapshot()) != 0 || manager.Stats().CallbackUnpersistedFailures < 2) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(manager.Snapshot()) != 0 {
+		t.Fatal("connection remained registered after non-durable callback failure")
+	}
+	stats := manager.Stats()
+	if stats.ReceivedMessages != 1 {
+		t.Fatalf("received messages = %d, want only the first message before closing", stats.ReceivedMessages)
+	}
+	if stats.CallbackUnpersistedFailures != 2 {
+		t.Fatalf("unpersisted callback failures = %d, want message and disconnect failures", stats.CallbackUnpersistedFailures)
+	}
+	if got := messageRequests.Load(); got != 1 {
+		t.Fatalf("message callback requests = %d, want only the failed first message", got)
+	}
+	if got := disconnectRequests.Load(); got != 1 {
+		t.Fatalf("disconnect callback requests = %d, want one disconnect attempt", got)
+	}
+}
+
+func TestManagerUpdatesCallbackAuthForExistingConnections(t *testing.T) {
+	hooks := &testHooks{accept: true}
+	m := NewManager(Config{MaxConnectionAge: time.Second}, hooks)
+	defer m.Close()
+	endpoint := Endpoint{ID: "rotating-callback", CallbackAuthToken: "callback-old"}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+endpoint.ID, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	deadline := time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(m.Snapshot()) != 1 {
+		t.Fatal("connection was not registered")
+	}
+
+	deadline = time.Now().Add(time.Second)
+	var connectEvents []Event
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		connectEvents = append([]Event(nil), hooks.connect...)
+		hooks.mu.Unlock()
+		if len(connectEvents) == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if len(connectEvents) != 1 {
+		t.Fatalf("connect callbacks = %d, want 1", len(connectEvents))
+	}
+	if connectEvents[0].CallbackAuthToken != "callback-old" {
+		t.Fatalf("connect callback token = %q, want original token", connectEvents[0].CallbackAuthToken)
+	}
+
+	endpoint.CallbackAuthToken = "callback-new"
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatalf("rotate callback token: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte("after-rotation")); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		messages := append([]Event(nil), hooks.messages...)
+		hooks.mu.Unlock()
+		if len(messages) == 1 {
+			if messages[0].CallbackAuthToken != "callback-new" {
+				t.Fatalf("message callback token = %q, want updated token", messages[0].CallbackAuthToken)
+			}
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	hooks.mu.Lock()
+	if len(hooks.messages) != 1 {
+		hooks.mu.Unlock()
+		t.Fatal("message callback was not observed")
+	}
+	hooks.mu.Unlock()
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		disconnects := append([]Event(nil), hooks.disconnect...)
+		hooks.mu.Unlock()
+		if len(disconnects) == 1 {
+			if disconnects[0].CallbackAuthToken != "callback-new" {
+				t.Fatalf("disconnect callback token = %q, want updated token", disconnects[0].CallbackAuthToken)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("disconnect callback was not observed")
+}
+
 func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
 	hooks := &testHooks{accept: true}
 	m := NewManager(Config{MaxConnections: 1}, hooks)
@@ -215,7 +535,82 @@ func TestManagerAllowsIdleConnectionUntilFirstHeartbeat(t *testing.T) {
 	}
 }
 
-func TestManagerPublishRetainsEndpointLimitAfterRemoval(t *testing.T) {
+func TestManagerKeepsIdleConnectionAcrossPongs(t *testing.T) {
+	m := NewManager(Config{Heartbeat: 200 * time.Millisecond, PongWait: 150 * time.Millisecond, MaxConnectionAge: 3 * time.Second}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "idle"}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+"idle", nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var pings atomic.Int32
+	client.SetPingHandler(func(data string) error {
+		pings.Add(1)
+		return client.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
+	})
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, _, err := client.ReadMessage(); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for pings.Load() < 2 && time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("client closed before second heartbeat: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if pings.Load() < 2 || len(m.Snapshot()) != 1 {
+		t.Fatalf("idle connection did not survive two heartbeats: pings=%d connections=%d", pings.Load(), len(m.Snapshot()))
+	}
+}
+
+func TestManagerReregisterPreservesEndpointConnectionLimit(t *testing.T) {
+	m := NewManager(Config{MaxConnections: 10, Heartbeat: time.Hour}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	url := "ws" + server.URL[len("http"):] + ManagedPathPrefix + "limited"
+	first, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+		t.Fatal(err)
+	}
+	second, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if second != nil {
+		_ = second.Close()
+	}
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second connection = (%v, %v), want 429", err, response)
+	}
+}
+
+func TestManagerRemovalClosesExistingConnections(t *testing.T) {
 	m := NewManager(Config{MaxMessageBytes: 16, Heartbeat: time.Hour}, nil)
 	defer m.Close()
 	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxMessageBytes: 4}); err != nil {
@@ -241,12 +636,21 @@ func TestManagerPublishRetainsEndpointLimitAfterRemoval(t *testing.T) {
 	if len(connections) != 1 {
 		t.Fatalf("connections = %d, want 1", len(connections))
 	}
-	if err := m.Subscribe(connections[0].ID, "alerts"); err != nil {
-		t.Fatalf("subscribe: %v", err)
-	}
 	m.RemoveEndpoint("limited")
-	if _, err := m.Publish(context.Background(), "limited", "alerts", Message{Data: []byte("12345")}); err == nil {
-		t.Fatal("publish over removed endpoint's limit unexpectedly succeeded")
+	if _, err := m.Publish(context.Background(), "limited", "alerts", Message{Data: []byte("ok")}); !errors.Is(err, ErrEndpointNotFound) {
+		t.Fatalf("publish after removal = %v, want endpoint not found", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	_, _, err = client.ReadMessage()
+	if err == nil {
+		t.Fatal("removed endpoint left client socket readable")
+	}
+	deadline = time.Now().Add(time.Second)
+	for len(m.Snapshot()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(m.Snapshot()); got != 0 {
+		t.Fatalf("remaining connections = %d, want 0", got)
 	}
 }
 

@@ -52,15 +52,29 @@ func cmdLogin(args []string) int {
 		if jsonOutput && !jsonUsageHelp {
 			return
 		}
-		PrintUsage(os.Stderr, "usage: gregale login [--token T]", "auth")
+		PrintUsage(os.Stderr, "usage: gregale login [--token T | --token-stdin]", "auth")
 		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
+	tokenStdin := fs.Bool("token-stdin", false, "read API token from stdin (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if *tokenStdin {
+		if *token != "" {
+			return printErr("Invalid login flags", errors.New("--token and --token-stdin cannot be combined"))
+		}
+		body, err := io.ReadAll(io.LimitReader(osStdin, 64*1024+1))
+		if err != nil || len(body) > 64*1024 {
+			return printErr("Could not read token", errors.New("stdin token exceeds 64 KiB or could not be read"))
+		}
+		*token = strings.TrimSpace(string(body))
+		if *token == "" {
+			return printErr("Could not read token", errors.New("stdin contains no API token"))
+		}
 	}
 
 	// CI path — unchanged behavior. Keep --token working so build
@@ -79,6 +93,9 @@ func cmdLogin(args []string) int {
 		probeCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		return finalizeLogin(probeCtx, client, *token, "", acct)
+	}
+	if f, ok := osStdin.(*os.File); ok && f == os.Stdin && !stdinIsTTY() {
+		return printErr("Login requires input", errors.New("use --token-stdin or --token in a non-interactive shell"))
 	}
 
 	// Interactive flow (spec §2.2 device-code pair).

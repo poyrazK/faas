@@ -25,6 +25,7 @@ type (
 	AppEffectiveLimits        = api.AppEffectiveLimits
 	AppConfiguredResources    = api.AppConfiguredResources
 	AppServiceBinding         = api.AppServiceBinding
+	ServiceReliabilityPolicy  = api.ServiceReliabilityPolicy
 	ServiceBindingPolicy      = api.ServiceBindingPolicy
 	PreviewServiceCallsPolicy = api.PreviewServiceCallsPolicy
 	DeclaredRoute             = api.DeclaredRoute

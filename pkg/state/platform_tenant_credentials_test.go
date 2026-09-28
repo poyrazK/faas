@@ -12,11 +12,83 @@ import (
 
 type credentialFixtureStore interface {
 	state.PlatformTenantCredentialStore
+	state.PlatformTenantCredentialPolicyStore
 	CreateAccount(context.Context, string, api.Plan) (state.Account, error)
 	CreateApp(context.Context, state.App) (state.App, error)
 	CreateAPIConsumer(context.Context, string, string, string, string) (state.APIConsumer, error)
 	CreatePlatformTenant(context.Context, string, string, string, int) (state.PlatformTenant, bool, error)
 	LinkPlatformTenantConsumer(context.Context, string, string, string) (state.APIConsumer, error)
+}
+
+func TestMemPlatformTenantCredentialDelegationPolicy(t *testing.T) {
+	testPlatformTenantCredentialDelegationPolicy(t, state.NewMemStore())
+}
+
+func TestPgPlatformTenantCredentialDelegationPolicy(t *testing.T) {
+	store, _, _ := pgStoreWithPool(t)
+	testPlatformTenantCredentialDelegationPolicy(t, store)
+}
+
+func testPlatformTenantCredentialDelegationPolicy(t *testing.T, store credentialFixtureStore) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "credential-policy-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "credential-policy-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "delegated", "Delegated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "credential-policy", "Credential policy", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetPlatformTenantCredentialPolicy(ctx, account.ID, tenant.ID, []string{"read"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	newIntent := func(name string, scopes []string) state.PlatformTenantCredentialIntent {
+		t.Helper()
+		_, prefix, hash, err := api.GenerateConsumerKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.PlatformTenantCredentialIntent{ConsumerID: consumer.ID, Name: name, Prefix: prefix, Hash: hash, Scopes: scopes}
+	}
+	apply := func(keys []state.PlatformTenantCredentialIntent, revokeIDs ...string) (state.ApplyPlatformTenantCredentialsResult, error) {
+		t.Helper()
+		return store.ApplyPlatformTenantCredentials(ctx, state.ApplyPlatformTenantCredentialsParams{
+			AccountID: account.ID, TenantID: tenant.ID, EnforceDelegationPolicy: true,
+			AppLimit: 100, AccountLimit: 100, Keys: keys, RevokeKeyIDs: revokeIDs,
+		})
+	}
+	first, err := apply([]state.PlatformTenantCredentialIntent{newIntent("v1", []string{"read"})})
+	if err != nil || len(first.Keys) != 1 || first.Keys[0].Action != "create" {
+		t.Fatalf("allowed delegated create=%+v err=%v", first, err)
+	}
+	if _, err := apply([]state.PlatformTenantCredentialIntent{newIntent("v2", []string{"read"})}); !errors.As(err, new(*state.PlatformTenantCredentialPolicyQuotaError)) {
+		t.Fatalf("per-consumer limit error=%v", err)
+	}
+	if _, err := apply([]state.PlatformTenantCredentialIntent{newIntent("admin", []string{"write"})}); !errors.Is(err, state.ErrPlatformTenantCredentialScopeDenied) {
+		t.Fatalf("disallowed scope error=%v", err)
+	}
+	if _, err := store.SetPlatformTenantCredentialPolicy(ctx, account.ID, tenant.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apply([]state.PlatformTenantCredentialIntent{newIntent("v2", []string{"read"})}); !errors.Is(err, state.ErrPlatformTenantCredentialDelegationDisabled) {
+		t.Fatalf("disabled policy error=%v", err)
+	}
+	revoked, err := apply(nil, first.Keys[0].Key.ID)
+	if err != nil || len(revoked.Keys) != 1 || revoked.Keys[0].Action != "revoke" {
+		t.Fatalf("revocation while disabled=%+v err=%v", revoked, err)
+	}
 }
 
 func TestMemPlatformTenantCredentialRotation(t *testing.T) {

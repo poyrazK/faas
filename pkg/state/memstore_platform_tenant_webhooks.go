@@ -12,7 +12,7 @@ import (
 func (m *MemStore) CreatePlatformTenantWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
 	if in.AccountID == "" || in.PlatformTenantID == "" || in.AppID != "" ||
 		(in.Scope != "" && in.Scope != AppWebhookScopePlatformTenant) ||
-		!validPlatformTenantWebhookFilter(in.EventFilter) {
+		!ValidPlatformTenantWebhookFilter(in.EventFilter) {
 		return AppWebhook{}, ErrInvalidAppWebhookScope
 	}
 	m.mu.Lock()

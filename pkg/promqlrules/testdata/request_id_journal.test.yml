@@ -1,0 +1,35 @@
+# Synthetic coverage for the mandatory request-ID journal failure alert.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "sustained journal write failures alert"
+    input_series:
+      - series: 'gateway_request_id_journal_write_total{result="failed"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRequestIDJournalWriteFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: request_id_journal
+            exp_annotations:
+              summary: "Exact request-ID journal writes are failing"
+              description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
+
+  - interval: 30s
+    name: "no journal failures do not alert"
+    input_series:
+      - series: 'gateway_request_id_journal_write_total{result="failed"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasRequestIDJournalWriteFailures
+        exp_alerts: []

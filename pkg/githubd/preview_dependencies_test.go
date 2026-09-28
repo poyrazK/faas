@@ -27,7 +27,11 @@ func (e *previewDependencyEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (
 func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
-	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanScale); err != nil {
+		t.Fatal(err)
+	}
+	rootManifest := state.AppManifest{Env: map[string]string{"ROOT_SECRET": "production-root"}}
+	if _, err := rig.mem.UpdateApp(ctx, rig.parentID, state.UpdateAppParams{Manifest: &rootManifest}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"worker", "db", "metrics"} {
@@ -35,6 +39,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: name,
 			WorkloadName: name, Type: state.AppTypeApp, RAMMB: 256,
 			MaxConcurrency: 1, Status: state.AppActive,
+			Manifest: state.AppManifest{Env: map[string]string{"DEPENDENCY_SECRET": "production-" + name}},
 		}); err != nil {
 			t.Fatalf("create production %s: %v", name, err)
 		}
@@ -90,6 +95,9 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	}
 	apiPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-demo-app")
 	workerPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if apiPreview.Manifest.Env["ROOT_SECRET"] != "" || workerPreview.Manifest.Env["DEPENDENCY_SECRET"] != "" {
+		t.Fatalf("PR preview inherited production environment: root=%v worker=%v", apiPreview.Manifest.Env, workerPreview.Manifest.Env)
+	}
 	if apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "http://worker.svc.gregale:10080" ||
 		apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_HTTPS_URL"] != "https://worker.internal" ||
 		apiPreview.Manifest.Env["GREGALE_SERVICE_REDIS_URL"] != "" ||
@@ -102,11 +110,16 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("PR-head workload metadata not applied: dockerfile=%q command=%q", apiPreview.Manifest.BuildDockerfile, apiPreview.StartCommand)
 	}
 	productionAPI, _ := rig.mem.AppByID(ctx, rig.parentID)
-	if productionAPI.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "" {
+	if productionAPI.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "" || productionAPI.Manifest.Env["ROOT_SECRET"] != "production-root" {
 		t.Fatal("PR head source mutated production app manifest")
 	}
 	if _, err := rig.mem.AppBySlug(ctx, "pr-42-metrics"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unrelated metrics preview = %v, want ErrNotFound", err)
+	}
+	legacyManifest := workerPreview.Manifest
+	legacyManifest.Env = map[string]string{"DEPENDENCY_SECRET": "legacy-inherited"}
+	if _, err := rig.mem.UpdateApp(ctx, workerPreview.ID, state.UpdateAppParams{Manifest: &legacyManifest}); err != nil {
+		t.Fatal(err)
 	}
 
 	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40)))
@@ -114,6 +127,11 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("synchronize PR #42 = (%+v, %v)", second, err)
 	}
 	assertBuilds(3, []string{"db", "worker", "api"}, 42)
+	refreshedWorker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil || refreshedWorker.Manifest.Env["DEPENDENCY_SECRET"] != "" ||
+		refreshedWorker.Manifest.Env["GREGALE_SERVICE_DB_URL"] == "" {
+		t.Fatalf("synchronized worker retained legacy env or lost PR service binding: (%v, %v)", refreshedWorker.Manifest.Env, err)
+	}
 	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
 	if err != nil || set.CommitSHA != strings.Repeat("b", 40) || len(set.MemberAppIDs) != 3 || set.Closed {
 		t.Fatalf("synchronized preview revision set = (%+v, %v)", set, err)
@@ -333,8 +351,8 @@ func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
 		t.Fatalf("first preview = (%+v, %v)", first, err)
 	}
 	count, err := rig.mem.CountDeployedApps(ctx, rig.acct)
-	if err != nil || count != api.MustLimitsFor(api.PlanHobby).DeployedApps {
-		t.Fatalf("initial full quota = (%d, %v)", count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("initial production quota = (%d, %v)", count, err)
 	}
 	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
 	if err != nil {
@@ -353,8 +371,8 @@ func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
 		t.Fatalf("new db preview: %v", err)
 	}
 	count, err = rig.mem.CountDeployedApps(ctx, rig.acct)
-	if err != nil || count != api.MustLimitsFor(api.PlanHobby).DeployedApps {
-		t.Fatalf("post-swap quota = (%d, %v)", count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("post-swap production quota = (%d, %v)", count, err)
 	}
 }
 

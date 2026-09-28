@@ -1,0 +1,8 @@
+# ADR-298 · Tenant-scoped surface deployment outcome webhooks
+
+- **Status:** accepted
+- **Date:** 2026-09-27
+- **Decision:** Add `platform_tenant.surface.deployment.changed` to tenant webhook subscriptions. Emit durable events when a deployment for an explicitly linked surface transitions to `live` or `failed`; insert the delivery in the same database transaction as the deployment status change. Include tenant and surface identity, revision, status, start time, and transition time. Omit app/deployment IDs, source metadata, logs, and raw errors.
+- **Why:** Platforms can already observe activation and certificate lifecycle, but otherwise must poll to learn whether a customer deployment completed. A terminal outcome event lets them update customer portals and notifications through the existing signed, retryable delivery path.
+- **Consequences:** The event reports the latest attempt's terminal outcome only. A `failed` outcome does not imply an older deployment is not serving; the activation snapshot remains the source for current attempt status. Only explicitly linked, non-deleted surfaces receive events; there is no backfill. Delivery is durable and at-least-once. Existing subscriptions continue receiving only their configured events, and filters remain immutable after creation.
+- **Rejected alternatives:** Emit all intermediate states, which adds noisy build progress without improving the existing terminal-outcome integration; include deployment IDs, source details, or error text, which would expose internal metadata beyond the tenant surface; or call the event `surface.ready`, which would overstate the deployment outcome as overall routing or tenant readiness.

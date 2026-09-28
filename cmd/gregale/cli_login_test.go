@@ -516,6 +516,27 @@ func TestCmdLogin_TokenFlagRegression(t *testing.T) {
 	}
 }
 
+func TestCmdLogin_TokenStdin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.AccountResponse{Email: "alice@x.com", Plan: "pro"})
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "")
+	setFakeKeyring(t)
+	token := testAPIKey('e')
+	pipeStdin(t, token+"\n")
+	if code := cmdLogin([]string{"--token-stdin"}); code != 0 {
+		t.Fatalf("cmdLogin --token-stdin = %d", code)
+	}
+	if got := loadToken(); got != token {
+		t.Fatalf("saved token = %q, want stdin token", got)
+	}
+}
+
 // mustTokenPath returns the token file path or fatals. Used in
 // failure-path assertions where we want a clear error if the test
 // setup is broken (vs. an os.IsNotExist miss-interpreted).

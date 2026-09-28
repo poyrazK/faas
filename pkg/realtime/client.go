@@ -91,6 +91,23 @@ func (c *Client) RemoveEndpoint(ctx context.Context, endpointID string) error {
 	return c.do(ctx, http.MethodDelete, "/internal/endpoints/"+pathPart(endpointID), nil, nil)
 }
 
+// Endpoints lists the node-local registration IDs for desired-state repair.
+func (c *Client) Endpoints(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := c.do(ctx, http.MethodGet, "/internal/endpoints", nil, &ids)
+	return ids, err
+}
+
+// ListEndpointInventory adapts the local client to the control-plane repair
+// interface used by both single-box and split-node deployments.
+func (c *Client) ListEndpointInventory(ctx context.Context) (EndpointInventory, error) {
+	ids, err := c.Endpoints(ctx)
+	if err != nil {
+		return EndpointInventory{NodesUnavailable: 1}, err
+	}
+	return EndpointInventory{IDs: ids, NodesQueried: 1}, nil
+}
+
 // Send queues a message to one live connection.
 func (c *Client) Send(ctx context.Context, connectionID string, message Message) error {
 	return c.do(ctx, http.MethodPost, "/internal/connections/"+pathPart(connectionID)+":send", messageRequest{
@@ -141,6 +158,34 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	var response Stats
 	err := c.do(ctx, http.MethodGet, "/internal/stats", nil, &response)
 	return response, err
+}
+
+// ListCallbackDeadLetters returns metadata only; callback payloads and bearer
+// credentials remain on the daemon's node-local spool.
+func (c *Client) ListCallbackDeadLetters(ctx context.Context, after string, limit int) (CallbackDeadLetterPage, error) {
+	if limit < 0 {
+		return CallbackDeadLetterPage{}, fmt.Errorf("realtime: invalid callback dead-letter page size %d", limit)
+	}
+	query := url.Values{}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/internal/callbacks/dead-letters"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response CallbackDeadLetterPage
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+// ReplayCallbackDeadLetter returns one event to the pending outbox. The
+// original event ID is retained so callback handlers can deduplicate retries.
+func (c *Client) ReplayCallbackDeadLetter(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/internal/callbacks/dead-letters/"+pathPart(id)+":replay", nil, nil)
 }
 
 func encodeMessage(message Message) string {

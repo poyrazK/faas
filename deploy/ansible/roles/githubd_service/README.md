@@ -6,6 +6,11 @@ operator runs `systemctl enable --now faas-githubd` once the GitHub App
 credentials and `FAAS_GITHUB_WEBHOOK_SECRET` are provisioned in
 `/etc/faas/secrets/githubd/githubd.env`.
 
+Split-box inventories also install an mTLS gRPC listener at
+`tcp://0.0.0.0:50053` for compute-only imaged branch freshness checks. The
+listener is restricted to private compute CIDRs by nftables and requires the
+fleet CA client certificate.
+
 ## Drop-ins
 
 - `99-faas-node-name.conf.j2` (linked from `_shared/`) — exposes this box's
@@ -16,3 +21,6 @@ credentials and `FAAS_GITHUB_WEBHOOK_SECRET` are provisioned in
   right `role.FromConfig` sentinel. Without this drop-in githubd falls
   back to `RoleSingleBox` on a multi-host fleet and the per-daemon role
   gate is unenforced.
+- `99-faas-source-ref-mtls.conf.j2` — enables the split-box listener and
+  loads the `githubd/server` leaf plus fleet CA. Single-box installs keep the
+  unix socket unless the listener variable is configured.

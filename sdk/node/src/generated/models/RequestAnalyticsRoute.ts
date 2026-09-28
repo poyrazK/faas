@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RequestAnalyticsDependency } from './RequestAnalyticsDependency.js';
+import type { RequestAnalyticsRouteDeploymentObservation } from './RequestAnalyticsRouteDeploymentObservation.js';
 /**
  * Aggregated request analytics for one route and HTTP method. Counts include collapsed telemetry row weights.
  */
@@ -59,6 +60,18 @@ export type RequestAnalyticsRoute = {
    * Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based.
    */
   dependencies?: Array<RequestAnalyticsDependency>;
+  /**
+   * At most the five highest-request deployments for this route/method, with request-share compute estimates and measured guest CPU comparisons against the preceding comparable revision.
+   */
+  deployment_observations?: Array<RequestAnalyticsRouteDeploymentObservation>;
+  /**
+   * Route requests from deployments outside the top-five list.
+   */
+  other_deployment_requests?: number;
+  /**
+   * This route's estimated compute value allocated to deployments outside the top-five list by request share.
+   */
+  other_deployment_estimated_compute_cost_millicents?: number;
   /**
    * Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress.
    */

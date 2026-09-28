@@ -21,6 +21,7 @@ faas_compute_gateway_discovery: database
 # nftables role admits TCP/80+443 only from the pinned Cloudflare ranges;
 # loopback remains the local health path and SSH remains provider/IAP-scoped.
 faas_cloudflare_origin_only: true
+faas_githubd_listen_addr: "tcp://0.0.0.0:50053"
 
 # Ansible connection vars. `ansible_host` is the cross-box addressing
 # target (Layer-3 mesh endpoint: Tailscale/Wireguard IP, internal LAN,

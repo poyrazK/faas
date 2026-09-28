@@ -240,7 +240,7 @@ func runWithRetry(
 		owner := r.Body
 		defer func() { _ = owner.Close() }()
 	}
-	admission.budget.ObserveOriginal(admission.scope)
+	admission.budget.ObserveOriginal(r.Context(), admission.scope)
 	runAttempts(w, r, target, policy, onStale, attempt, repick, obs, admission)
 }
 
@@ -310,7 +310,7 @@ func runAttempts(
 		if minRetries <= 0 {
 			minRetries = api.EdgeRuleRetryDefaultBudgetMin
 		}
-		if admission.budget != nil && !admission.budget.AllowRetry(admission.scope, percent, minRetries) {
+		if admission.budget != nil && !admission.budget.AllowRetry(r.Context(), admission.scope, percent, minRetries) {
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipAggregate)
 			}

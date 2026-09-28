@@ -12,6 +12,10 @@ export type ProjectEnvironmentPromotionStatusResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Config sync was enabled for this promotion.
+   */
+  sync_config?: boolean;
   promotion_hash: string;
   status: 'running' | 'succeeded' | 'failed';
   error?: string;

@@ -305,9 +305,8 @@ jobs:
             curl -fsSL https://get.gregale.dev | sh
             ```
 
-            ```sh
-            npm install -g gregale
-            ```
+            The npm package is available after the `publish-npm` release job
+            succeeds. See `docs/cli-install.md` for its current status.
 
             Pin this exact release:
 
@@ -438,18 +437,13 @@ jobs:
             *-*) echo "dist_tag=rc" >> "$GITHUB_OUTPUT" ;;
             *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
           esac
-          # The `secrets` context is not usable in a job-level `if`, so the
-          # token check becomes a step output. Missing credentials skip the
-          # channel instead of failing the release (ADR-172).
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=npm channel skipped::NPM_TOKEN is not set, so ${TAG} was staged and validated but not published to npm."
+          # A documented install channel must never silently miss a release.
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error title=npm channel unavailable::Set NPM_TOKEN before tagging a release; staged packages were not published."
+            exit 1
           fi
 
       - name: Publish to npm
-        if: steps.guard.outputs.publish == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ steps.guard.outputs.dist_tag }}
@@ -476,6 +470,26 @@ jobs:
               --provenance </dev/null
             echo "published $name@$version (dist-tag $DIST_TAG)"
           done < "$RUNNER_TEMP/npm/publish-order.txt"
+
+      - name: Verify npm installation from the public registry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "gregale@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "gregale@${version} is absent from the public npm registry" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          npm install --prefix "$RUNNER_TEMP/npm-smoke" \
+            --registry=https://registry.npmjs.org/ "gregale@${version}"
+          "$RUNNER_TEMP/npm-smoke/node_modules/.bin/gregale" version | grep -F "${TAG}"
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle

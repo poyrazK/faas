@@ -100,3 +100,77 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 		}
 	}
 }
+
+func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub)
+}
+
+func TestPreviewSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview)
+}
+
+func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind) {
+	t.Helper()
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "github-snapshot-fence@example.test", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "github-snapshot-fence", RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
+		CommitSHA: strings.Repeat("a", 40)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, older.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
+		CommitSHA: strings.Repeat("b", 40)}); err != nil {
+		t.Fatal(err)
+	}
+	backend := mustLocalStorage(t, t.TempDir())
+	notifier := &fakeNotifier{}
+	h := New(store, notifier, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(backend)
+	key := state.SnapshotCaptureMemKey(older.ID, state.SnapshotTierInit, "older")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := backend.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{DeploymentID: older.ID, StorageKey: key,
+		FCVersion: "1.10.0", Tier: state.SnapshotTierInit}); err != nil {
+		t.Fatalf("stale snapshot publication: %v", err)
+	}
+	oldRow, err := store.DeploymentByID(ctx, older.ID)
+	if err != nil || oldRow.Status != state.DeploySuperseded {
+		t.Fatalf("stale GitHub row = (%+v, %v)", oldRow, err)
+	}
+	stableRow, err := store.DeploymentByID(ctx, stable.ID)
+	if err != nil || stableRow.Status != state.DeployLive {
+		t.Fatalf("serving predecessor = (%+v, %v)", stableRow, err)
+	}
+	var supersededNotice bool
+	for _, call := range notifier.calls {
+		if strings.Contains(call.payload, `"kind":"candidate_route"`) {
+			t.Fatalf("stale deployment route was published: %+v", call)
+		}
+		if strings.Contains(call.payload, `"status":"superseded"`) && strings.Contains(call.payload, older.ID) {
+			supersededNotice = true
+		}
+	}
+	if !supersededNotice {
+		t.Fatalf("stale deployment did not notify its terminal status: %+v", notifier.calls)
+	}
+}

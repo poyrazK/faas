@@ -77,6 +77,19 @@ func (l *Loop) Readiness(now time.Time) HealthStatus {
 	})
 }
 
+// SafeReleaseReadiness is narrower than daemon readiness: both release ticks
+// must be wired, recent, and successful before meterd can renew the admission
+// lease. A healthy billing loop alone cannot authorize a canary.
+func (l *Loop) SafeReleaseReadiness(now time.Time) HealthStatus {
+	if l.canaryProgression == nil || l.safedeploy == nil {
+		return HealthStatus{Healthy: false, Stale: []string{"safe_release_workers_unwired"}, Ticks: map[string]string{}}
+	}
+	return l.health(now, map[string]time.Duration{
+		"canary_progression": l.cfg.CanaryEvalInterval,
+		"safedeploy":         l.cfg.SafeDeployInterval,
+	})
+}
+
 func (l *Loop) health(now time.Time, intervals map[string]time.Duration) HealthStatus {
 	s := HealthStatus{Failed: make(map[string]string), Ticks: make(map[string]string, len(intervals))}
 	for name, interval := range intervals {

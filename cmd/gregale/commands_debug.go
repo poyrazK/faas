@@ -738,7 +738,7 @@ func cmdDebugCompare(args []string) int {
 
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ROW_ID\tPUBLIC_REQUEST_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	_, _ = fmt.Fprintln(tw, "ROW_ID\tREQUEST_ID\tTRACE_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
@@ -748,12 +748,16 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 		if consumer == "" {
 			consumer = "anonymous"
 		}
-		publicRequestID := "—"
-		if r.TraceID != nil && *r.TraceID != "" {
-			publicRequestID = *r.TraceID
+		requestID := r.RequestID
+		if requestID == "" {
+			requestID = "—"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			r.ID, publicRequestID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
+		traceID := "—"
+		if r.TraceID != nil && *r.TraceID != "" {
+			traceID = *r.TraceID
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			r.ID, requestID, traceID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
 	}
 	_ = tw.Flush()
 	if resp.RetentionClamped {
@@ -767,9 +771,22 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 }
 
 func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
-	_, _ = fmt.Fprintf(w, "Row ID:     %s\n", r.ID)
+	if r.ID != "" {
+		_, _ = fmt.Fprintf(w, "Row ID:     %s\n", r.ID)
+	}
+	if r.RequestID != "" {
+		_, _ = fmt.Fprintf(w, "Public ID:  %s\n", r.RequestID)
+	}
+	if r.EvidenceStatus == "request_id_only" {
+		_, _ = fmt.Fprintln(w, "Evidence:   request ID is retained, but detailed request telemetry is unavailable")
+		if r.TraceID != nil && *r.TraceID != "" {
+			_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
+		}
+		_, _ = fmt.Fprintf(w, "Received:   %s\n", r.ReceivedAt)
+		return
+	}
 	if r.TraceID != nil && *r.TraceID != "" {
-		_, _ = fmt.Fprintf(w, "Public ID:  %s\n", *r.TraceID)
+		_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
 	}
 	_, _ = fmt.Fprintf(w, "Route:      %s %s\n", r.Method, r.Route)
 	_, _ = fmt.Fprintf(w, "Status:     %d\n", r.Status)

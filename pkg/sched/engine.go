@@ -1910,6 +1910,13 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
+		if err == nil && out.Instance != nil && wakeID != "" {
+			if rotations, ok := e.store.(state.ObjectS3CredentialRotationStore); ok {
+				if finishErr := rotations.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID); finishErr != nil {
+					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)
+				}
+			}
+		}
 		if err == nil && out.Instance != nil && e.audit != nil {
 			e.audit.Emit(ctx, "app.runtime_config_restarted", &app.AccountID, map[string]any{
 				"app_id": appID, "slug": app.Slug, "wake_id": out.Instance.WakeID, "fresh": true,

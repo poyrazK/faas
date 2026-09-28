@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -33,6 +35,7 @@ var errManagedRealtimeOwnerUnavailable = errors.New("realtime: owner node unavai
 type realtimeNodeOperator interface {
 	realtimeOwner
 	Connections(context.Context) ([]realtime.ConnectionInfo, error)
+	Endpoints(context.Context) ([]string, error)
 	RegisterEndpoint(context.Context, realtime.Endpoint) error
 	RemoveEndpoint(context.Context, string) error
 }
@@ -59,6 +62,9 @@ func (o localRealtimeNodeOperator) Publish(ctx context.Context, endpointID, chan
 }
 func (o localRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
+}
+func (o localRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
+	return o.client.Endpoints(ctx)
 }
 func (o localRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)
@@ -97,6 +103,9 @@ func (o remoteRealtimeNodeOperator) Publish(ctx context.Context, endpointID, cha
 }
 func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
+}
+func (o remoteRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
+	return o.client.Endpoints(ctx)
 }
 func (o remoteRealtimeNodeOperator) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.client.RegisterEndpoint(ctx, endpoint)
@@ -204,6 +213,11 @@ func (o *leasedRealtimeOwner) discover(ctx context.Context, endpointID, connecti
 		}
 		return lease, op, nil
 	}
+	// A partial inventory cannot prove absence: the connection may live on
+	// the node that did not answer. Preserve a retryable availability error.
+	if lastErr != nil {
+		return state.ManagedRealtimeConnectionOwner{}, nil, fmt.Errorf("%w: incomplete owner discovery: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+	}
 	if successful > 0 {
 		return state.ManagedRealtimeConnectionOwner{}, nil, realtime.ErrConnectionNotFound
 	}
@@ -282,15 +296,20 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 	})
 }
 
-// Publish is a fleet broadcast. Channel subscriptions are node-local, so a
-// single owner lease cannot represent all recipients. A node that is down is
-// tolerated when at least one active node accepted the request; if every node
-// is unavailable the caller receives a 503 through the normal owner mapping.
 func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
+	result, err := o.PublishWithStatus(ctx, endpointID, channel, message)
+	return result.Queued, err
+}
+
+// PublishWithStatus reports partial fleet delivery. A successful node may
+// have queued messages even when another is unavailable, so returning only
+// an error would invite duplicate sends on a blind retry.
+func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message) (api.ManagedRealtimePublishResponse, error) {
+	var result api.ManagedRealtimePublishResponse
 	started := time.Now()
 	if o.nodes == nil {
 		o.observePublish("unavailable", started)
-		return 0, errManagedRealtimeOwnerUnavailable
+		return result, errManagedRealtimeOwnerUnavailable
 	}
 	nodes, err := o.nodes.ActiveComputeNodes(ctx)
 	if err != nil {
@@ -299,7 +318,7 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 			outcome = "canceled"
 		}
 		o.observePublish(outcome, started)
-		return 0, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+		return result, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
 	// Keep one result per node so aggregation and error selection stay in
 	// fleet order even when node requests finish in a different order.
@@ -346,44 +365,48 @@ dispatch:
 	close(jobs)
 	workers.Wait()
 
-	queued, reached := 0, 0
 	attempted, endpointMissing, failed, canceled := 0, 0, 0, 0
 	var lastErr error
-	for _, result := range results {
-		if !result.attempted {
+	for _, outcome := range results {
+		if !outcome.attempted {
+			result.NodesUnavailable++
 			continue
 		}
 		attempted++
-		nodeOutcome := managedRealtimePublishNodeOutcome(result.err)
+		nodeOutcome := managedRealtimePublishNodeOutcome(outcome.err)
 		if o.ops != nil {
-			o.ops.ObserveCode(managedRealtimePublishNodeOp, nodeOutcome, result.duration)
+			o.ops.ObserveCode(managedRealtimePublishNodeOp, nodeOutcome, outcome.duration)
 		}
 		switch nodeOutcome {
 		case "endpoint_missing":
 			endpointMissing++
+			result.NodesUnavailable++
 			// Endpoint registration can lag node activation; continue
 			// without turning a healthy partial broadcast into a 503.
 			continue
 		case "canceled":
 			canceled++
-			lastErr = result.err
+			lastErr = outcome.err
+			result.NodesUnavailable++
 			continue
 		case "error":
 			failed++
-			lastErr = result.err
+			lastErr = outcome.err
+			result.NodesUnavailable++
 			continue
 		}
-		reached++
-		queued += result.count
+		result.NodesQueried++
+		result.Queued += outcome.count
 	}
-	if reached > 0 {
+	result.Partial = result.NodesUnavailable > 0
+	if result.NodesQueried > 0 {
 		outcome := "ok"
 		if attempted < len(nodes) || endpointMissing > 0 || failed > 0 || canceled > 0 {
 			outcome = "partial"
-			o.warnPartialPublish(len(nodes), attempted, reached, endpointMissing, failed, canceled, queued, time.Since(started))
+			o.warnPartialPublish(len(nodes), attempted, result.NodesQueried, endpointMissing, failed, canceled, result.Queued, time.Since(started))
 		}
 		o.observePublish(outcome, started)
-		return queued, nil
+		return result, nil
 	}
 	outcome := "unavailable"
 	if ctx.Err() != nil {
@@ -394,7 +417,7 @@ dispatch:
 	if lastErr == nil {
 		lastErr = errors.New("no active realtime nodes accepted publish")
 	}
-	return 0, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+	return result, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
 }
 
 func managedRealtimePublishNodeOutcome(err error) string {
@@ -468,6 +491,44 @@ func (o *leasedRealtimeOwner) ListConnectionInventory(ctx context.Context) (real
 	}
 	if inventory.NodesQueried == 0 && inventory.NodesUnavailable > 0 {
 		return inventory, fmt.Errorf("%w: no active realtime nodes responded", errManagedRealtimeOwnerUnavailable)
+	}
+	return inventory, nil
+}
+
+// ListEndpointInventory reads the registrations actually present on active
+// nodes. The reconciler uses it to repair deletions whose immediate fan-out
+// missed a node, including after that node later rejoins the fleet.
+func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realtime.EndpointInventory, error) {
+	var inventory realtime.EndpointInventory
+	if o.nodes == nil {
+		return inventory, errManagedRealtimeOwnerUnavailable
+	}
+	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	if err != nil {
+		return inventory, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	seen := make(map[string]struct{})
+	for _, node := range nodes {
+		op, err := o.nodeOperator(node)
+		if err == nil {
+			var ids []string
+			ids, err = op.Endpoints(ctx)
+			if err == nil {
+				inventory.NodesQueried++
+				for _, id := range ids {
+					seen[id] = struct{}{}
+				}
+				continue
+			}
+		}
+		inventory.NodesUnavailable++
+	}
+	for id := range seen {
+		inventory.IDs = append(inventory.IDs, id)
+	}
+	sort.Strings(inventory.IDs)
+	if inventory.NodesQueried == 0 && inventory.NodesUnavailable > 0 {
+		return inventory, fmt.Errorf("%w: no active realtime nodes returned endpoints", errManagedRealtimeOwnerUnavailable)
 	}
 	return inventory, nil
 }

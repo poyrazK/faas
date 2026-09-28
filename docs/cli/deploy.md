@@ -39,6 +39,22 @@ archive before the deployment is queued. It never requires removing
 `.git`. The default remains reproducible and excludes uncommitted
 changes.
 
+For scripts and CI, choose the local source explicitly:
+
+```bash
+gregale deploy --source=head       # require a Git commit; upload committed HEAD
+gregale deploy --source=worktree   # upload local files, including changes
+```
+
+`--source=head` works even when the Git repository has no `origin` remote.
+It fails before upload if the directory is not a Git repository or has no
+commit. `--source=auto` is the default: it uses committed `HEAD` when
+`origin` exists and local files otherwise. Pinning a mode prevents a change
+to the repository's remote configuration from changing which files deploy.
+The source option accepts local directories, including `--path`; it cannot
+be combined with an image, tarball, GitHub ref, template, `--github`,
+`--create-only`, or the legacy `--worktree` spelling.
+
 Use `--worktree` to explicitly deploy local files from the selected
 directory, including uncommitted and untracked files:
 
@@ -47,7 +63,8 @@ gregale deploy --path packages/api --worktree --name api
 ```
 
 `--worktree` without `--path` applies the same behavior to the current
-directory. Both modes keep the repository's `commit_sha` in the JSON
+directory. It remains available for existing scripts and is equivalent to
+`--source=worktree`. Both modes keep the repository's `commit_sha` in the JSON
 receipt when Git metadata is available; `dirty: true` indicates that
 the repository had local changes at deploy time.
 
@@ -75,7 +92,8 @@ existing app's resources are preserved. In a dirty Git checkout the plan states
 whether local changes are included. The default deploy ships committed `HEAD`;
 use `--worktree` when the plan reports that local changes are excluded. JSON
 output remains a single machine-readable deployment receipt and does not
-include this human preflight block.
+include this human preflight block. A dirty checkout also prints an exclusion
+warning to stderr, including with `--json`, so a script's stdout stays parseable.
 
 ## Safe production rollouts
 

@@ -25,6 +25,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/docs/object-storage":
             body = "<html><h1>Wrong page</h1></html>"
             self.send_response(200)
+        elif self.path == "/docs/preview-environments":
+            body = "<html><h1>PR preview environments (issue #272 / ADR-095)</h1><code>pr-{N}.{slug}.apps</code></html>"
+            self.send_response(200)
         elif self.homepage_fallback:
             body = "<html><h1>Serverless on real microVMs</h1></html>"
             self.send_response(200)
@@ -64,6 +67,11 @@ class LiveDocsTest(unittest.TestCase):
         Handler.homepage_fallback = False
         failures = CHECK.check(self.base, {"object-storage"})
         self.assertTrue(any("first h1" in item for item in failures), failures)
+
+    def test_preview_url_shape_drift_fails(self) -> None:
+        Handler.homepage_fallback = False
+        failures = CHECK.check(self.base, {"preview-environments"})
+        self.assertTrue(any("missing contract text 'pr-{N}-{slug}'" in item for item in failures), failures)
 
 
 if __name__ == "__main__":

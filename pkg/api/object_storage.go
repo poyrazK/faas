@@ -202,12 +202,13 @@ type ObjectStorageComputeBindingSecretKeys struct {
 // binding. The binding ID is also the managed credential ID, but callers must
 // treat it as opaque.
 type ObjectStorageComputeBinding struct {
-	ID         string                                `json:"id"`
-	BucketID   string                                `json:"bucket_id"`
-	Scope      string                                `json:"scope"`
-	Prefix     string                                `json:"prefix"`
-	Credential ObjectS3Credential                    `json:"credential"`
-	SecretKeys ObjectStorageComputeBindingSecretKeys `json:"secret_keys"`
+	ID              string                                `json:"id"`
+	BucketID        string                                `json:"bucket_id"`
+	Scope           string                                `json:"scope"`
+	Prefix          string                                `json:"prefix"`
+	Credential      ObjectS3Credential                    `json:"credential"`
+	SecretKeys      ObjectStorageComputeBindingSecretKeys `json:"secret_keys"`
+	RotationPending bool                                  `json:"rotation_pending,omitempty"`
 }
 
 type ObjectStorageComputeBindingList struct {

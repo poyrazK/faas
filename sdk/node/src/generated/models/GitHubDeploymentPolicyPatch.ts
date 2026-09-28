@@ -11,5 +11,6 @@ export type GitHubDeploymentPolicyPatch = {
   preview_enabled?: boolean;
   preview_ttl_hours?: number;
   preview_service_policy?: 'deny' | 'allow_marked';
+  production_trigger?: 'webhook' | 'actions';
 };
 

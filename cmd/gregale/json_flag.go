@@ -111,9 +111,9 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 //	false / no / off / 0  → disable JSON
 //	empty                 → enable JSON (same as bare --json)
 //
-// Anything else (e.g. an agent typo'd `tru`) defaults to enable,
-// matching the previous behaviour and the UX §3.2 "agents depend on
-// it" intent: every obvious truthy spelling Just Works.
+// run validates the explicit suffix before calling this helper so typos
+// cannot silently change output mode. The permissive fallback remains for
+// persisted preferences that may have been written by older CLI versions.
 func applyJSONFlag(args []string) []string {
 	if configured, ok := configuredJSONPreference(); ok {
 		jsonOutput = configured
@@ -129,6 +129,22 @@ func applyJSONFlag(args []string) []string {
 		}
 	}
 	return args
+}
+
+func invalidJSONFlagValue(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--json=") {
+			continue
+		}
+		value := strings.ToLower(strings.TrimPrefix(arg, "--json="))
+		switch value {
+		case "", requireSignedTrue, "yes", "on", "1", requireSignedFalse, "no", "off", "0":
+			return ""
+		default:
+			return value
+		}
+	}
+	return ""
 }
 
 // jsonBoolTrue maps a --json= suffix to a boolean. Falsy spellings

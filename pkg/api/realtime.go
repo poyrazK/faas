@@ -133,11 +133,14 @@ type ManagedRealtimeCloseRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ManagedRealtimePublishResponse reports how many local owner queues accepted
-// a published message. A cross-node owner may return a different aggregate
-// after the leased registry is enabled.
+// ManagedRealtimePublishResponse reports accepted queues and whether the
+// active fleet was fully reached. Queued means admitted to in-memory output
+// queues, not acknowledged by clients.
 type ManagedRealtimePublishResponse struct {
-	Queued int `json:"queued"`
+	Queued           int  `json:"queued"`
+	Partial          bool `json:"partial"`
+	NodesQueried     int  `json:"nodes_queried"`
+	NodesUnavailable int  `json:"nodes_unavailable"`
 }
 
 // ManagedRealtimeConnectionResponse is the safe control-plane projection of

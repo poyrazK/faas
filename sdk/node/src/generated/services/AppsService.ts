@@ -1890,12 +1890,15 @@ export class AppsService {
   }
   /**
    * Get one request telemetry record (ADR-127).
-   * Returns one request telemetry row by public request id or internal row
-   * id for the app. The
-   * lookup is scoped to the app resolved from `slug`, so a request
-   * id belonging to another app is returned as not found. This
-   * direct lookup is not limited to the first page of recent
-   * requests. Plan-gated by `DebugTelemetryEnabled`.
+   * Resolves an exact public x-faas-request-id through the durable,
+   * app-scoped request-ID journal, then enriches it from detailed request
+   * telemetry when that sampled row exists. If only the identity mapping
+   * remains, the response sets `evidence_status` to `request_id_only` and
+   * includes the W3C `trace_id` separately when available. Internal
+   * telemetry row UUIDs remain accepted for compatibility. The lookup is
+   * scoped to the app resolved from `slug`, so an ID belonging to another
+   * app is returned as not found. This direct lookup is not limited to the
+   * first page of recent requests. Plan-gated by `DebugTelemetryEnabled`.
    *
    * @returns DebugTelemetryRequestItem Request telemetry record.
    * @throws ApiError
