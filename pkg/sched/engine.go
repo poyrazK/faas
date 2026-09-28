@@ -7394,11 +7394,28 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		storageKey = reused.StorageKey
 	}
 	snapCancel()
-	// The park path has no phase instrumentation (unlike wakePhases on
-	// the boot path), so at minimum record how long the capture ran
-	// against the budget it was given — enough to tell "budget too
-	// tight" from "vmmd wedged" on the next occurrence.
-	if snapMS := time.Since(snapStart).Milliseconds(); err != nil || snapMS > snapBudget.Milliseconds()/2 {
+	snapDuration := time.Since(snapStart)
+	site := wire.InitSnapshotSitePark
+	if !allowReuse {
+		site = wire.InitSnapshotSitePrime
+	}
+	outcome := wire.InitSnapshotOutcomeCaptured
+	if reused != nil {
+		outcome = wire.InitSnapshotOutcomeReused
+		if err != nil {
+			outcome = wire.InitSnapshotOutcomeReuseCleanupFailed
+		}
+	} else if err != nil {
+		outcome = wire.InitSnapshotOutcomeSnapshotFailed
+		if problem := api.AsProblem(err); problem != nil && problem.Code == api.CodeBeforeCheckpointFailed {
+			outcome = wire.InitSnapshotOutcomeBeforeCheckpointFailed
+		}
+	}
+	e.ops.RecordInitSnapshotAttempt(site, outcome, snapDuration)
+	// The histogram records every new capture. Keep a budget-aware log for
+	// failures and slow attempts so operators can distinguish a tight budget
+	// from a stalled vmmd call during triage.
+	if snapMS := snapDuration.Milliseconds(); err != nil || snapMS > snapBudget.Milliseconds()/2 {
 		e.log.Warn("sched: snapshot capture timing",
 			"instance", ins.ID, "ram_mb", ins.RAMMB,
 			"snapshot_ms", snapMS, "budget_ms", snapBudget.Milliseconds(),
@@ -7411,7 +7428,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		// "all park-snapshot failures in the last hour" is queryable.
 		e.ledger.Release(ins.ID)
 		reason := "snapshot_failed"
-		if problem := api.AsProblem(err); problem != nil && problem.Code == api.CodeBeforeCheckpointFailed {
+		if outcome == wire.InitSnapshotOutcomeBeforeCheckpointFailed {
 			reason = api.CodeBeforeCheckpointFailed
 		}
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", reason)

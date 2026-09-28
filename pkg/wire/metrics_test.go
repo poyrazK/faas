@@ -1275,6 +1275,45 @@ func TestOpsMetrics_WarmSnapshotErrors(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_InitSnapshotAttempt(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	if body := render(t, m); !strings.Contains(body, `schedd_init_snapshot_attempt_total{outcome="snapshot_failed",site="prime"} 0`) {
+		t.Fatal("missing zero-valued init snapshot outcome at startup")
+	}
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePrime, wire.InitSnapshotOutcomeCaptured, 120*time.Millisecond)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeReused, 0)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeReuseCleanupFailed, 0)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeBeforeCheckpointFailed, 500*time.Millisecond)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeSnapshotFailed, time.Second)
+	m.RecordInitSnapshotAttempt("customer-app", wire.InitSnapshotOutcomeCaptured, time.Second)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, "private-error", time.Second)
+	var nilM *wire.OpsMetrics
+	nilM.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeCaptured, time.Second)
+
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_init_snapshot_attempt_total{outcome="captured",site="prime"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="reused",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="reuse_cleanup_failed",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="before_checkpoint_failed",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="snapshot_failed",site="park"} 1`,
+		`schedd_init_snapshot_capture_duration_seconds_count{outcome="captured",site="prime"} 1`,
+		`schedd_init_snapshot_capture_duration_seconds_count{outcome="before_checkpoint_failed",site="park"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in metrics", want)
+		}
+	}
+	for _, forbidden := range []string{`site="customer-app"`, `outcome="private-error"`, `schedd_init_snapshot_capture_duration_seconds_count{outcome="reused"`, `schedd_init_snapshot_capture_duration_seconds_count{outcome="reuse_cleanup_failed"`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("unexpected metric label %q", forbidden)
+		}
+	}
+	if body := render(t, wire.NewOpsMetrics("vmmd")); strings.Contains(body, "vmmd_init_snapshot_attempt_total") {
+		t.Fatal("schedd-only snapshot metric registered on vmmd")
+	}
+}
+
 // TestOpsMetrics_ObserveSidecarRestart (issue #463 / ADR-069 /
 // ADR-071 / PR-C §4) pins the per-(app, sidecar) restart counter
 // that vmmd increments from dispatchSidecarRestart. The metric

@@ -3082,6 +3082,40 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 428,
+      "type": "timeseries",
+      "title": "Init snapshot path outcomes (5m)",
+      "description": "Prime and later park outcomes. Reused snapshots and failed reuse cleanup are separate from new captures; before_checkpoint_failed is an application callback failure.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 318},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (site, outcome) (increase(schedd_init_snapshot_attempt_total[5m]))",
+          "legendFormat": "{{site}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 429,
+      "type": "timeseries",
+      "title": "Init snapshot capture p95 (5m)",
+      "description": "Time spent in new terminal init capture, including before_checkpoint. Reuse is excluded. Compare with the RAM-scaled snapshot budget when investigating slow captures.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 318},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, site, outcome) (rate(schedd_init_snapshot_capture_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{site}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "30s",

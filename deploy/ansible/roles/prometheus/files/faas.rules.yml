@@ -3760,6 +3760,31 @@ groups:
           description: "No complete snapshot drift inventory has succeeded for more than two hours. Check OCI enumeration latency and registry availability."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
 
+  - name: faas_init_snapshot_capture
+    interval: 30s
+    rules:
+      - alert: FaasInitSnapshotCaptureFailures
+        expr: |
+          (
+            sum by (site) (increase(schedd_init_snapshot_attempt_total{outcome=~"snapshot_failed|reuse_cleanup_failed"}[15m])) >= 3
+          )
+          and on (site)
+          (
+            sum by (site) (increase(schedd_init_snapshot_attempt_total{outcome=~"snapshot_failed|reuse_cleanup_failed"}[15m]))
+            /
+            clamp_min(sum by (site) (increase(schedd_init_snapshot_attempt_total[15m])), 1)
+            > 0.1
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: init_snapshot
+        annotations:
+          summary: "Init snapshot path is failing during {{ $labels.site }}"
+          description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
+
   - name: faas_service_rollout_handoff
     interval: 30s
     rules:

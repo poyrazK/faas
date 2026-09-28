@@ -105,6 +105,10 @@ type OpsMetrics struct {
 	// the TSDB series. The PromQL `rate(vmmd_warm_snapshot_errors_total[5m])`
 	// panel is the §12 warm-capture-error alert's primary signal.
 	warmSnapshotErrors *prometheus.CounterVec
+	// initSnapshotAttempts records terminal init snapshot outcomes in schedd.
+	// The two closed labels have no app, deployment, or instance IDs.
+	initSnapshotAttempts        *prometheus.CounterVec
+	initSnapshotCaptureDuration *prometheus.HistogramVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2088,6 +2092,31 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"reason"})
 	warmSnapshotErrors.WithLabelValues("vmm_call")
 	warmSnapshotErrors.WithLabelValues("store_write")
+	initSnapshotAttempts := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_init_snapshot_attempt_total",
+		Help: "Terminal init snapshot path outcomes by site (prime or park). Reuse is counted separately from new captures; reuse_cleanup_failed means destroying the source guest failed.",
+	}, []string{"site", "outcome"})
+	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_init_snapshot_capture_duration_seconds",
+		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
+		Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600},
+	}, []string{"site", "outcome"})
+	if prefix == "schedd" {
+		for _, site := range []string{InitSnapshotSitePrime, InitSnapshotSitePark} {
+			for _, outcome := range []string{
+				InitSnapshotOutcomeCaptured,
+				InitSnapshotOutcomeReused,
+				InitSnapshotOutcomeReuseCleanupFailed,
+				InitSnapshotOutcomeBeforeCheckpointFailed,
+				InitSnapshotOutcomeSnapshotFailed,
+			} {
+				initSnapshotAttempts.WithLabelValues(site, outcome)
+				if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+					initSnapshotCaptureDuration.WithLabelValues(site, outcome)
+				}
+			}
+		}
+	}
 	warmPoolSize := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_warm_pool_size",
 		Help: "Desired paused warm-pool size by plan (issue #1056 / ADR-074). Runtime reconciliation updates this bounded gauge; zero means the customer has disabled the pool.",
@@ -3788,6 +3817,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// field declaration at line 292.
 		planGateRescuedByExclude,
 	}
+	if prefix == "schedd" {
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
+	}
 	if cpuStatsCollectDurLocal != nil {
 		commonCollectors = append(commonCollectors, cpuStatsCollectDurLocal)
 	}
@@ -5086,6 +5118,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dur:                                        dur,
 		watchdogKills:                              watchdogKills,
 		warmSnapshotErrors:                         warmSnapshotErrors,
+		initSnapshotAttempts:                       initSnapshotAttempts,
+		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		warmupErrors:                               warmupErrors,
@@ -5756,6 +5790,39 @@ func (m *OpsMetrics) WarmSnapshotErrors(reason string) prometheus.Counter {
 		return nil
 	}
 	return m.warmSnapshotErrors.WithLabelValues(reason)
+}
+
+const (
+	InitSnapshotSitePrime = "prime"
+	InitSnapshotSitePark  = "park"
+
+	InitSnapshotOutcomeCaptured               = "captured"
+	InitSnapshotOutcomeReused                 = "reused"
+	InitSnapshotOutcomeReuseCleanupFailed     = "reuse_cleanup_failed"
+	InitSnapshotOutcomeBeforeCheckpointFailed = "before_checkpoint_failed"
+	InitSnapshotOutcomeSnapshotFailed         = "snapshot_failed"
+)
+
+// RecordInitSnapshotAttempt counts one terminal init snapshot path. A reused
+// snapshot is an attempt to park, but not a new capture, so it does not enter
+// the duration histogram. Unknown labels are rejected before reaching the
+// Prometheus vectors. Only schedd exports these collectors.
+func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration time.Duration) {
+	if m == nil || m.metricPrefix != "schedd" ||
+		(site != InitSnapshotSitePrime && site != InitSnapshotSitePark) {
+		return
+	}
+	switch outcome {
+	case InitSnapshotOutcomeCaptured, InitSnapshotOutcomeReused,
+		InitSnapshotOutcomeReuseCleanupFailed,
+		InitSnapshotOutcomeBeforeCheckpointFailed, InitSnapshotOutcomeSnapshotFailed:
+	default:
+		return
+	}
+	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
+	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
+	}
 }
 
 // WarmPoolSize returns the plan-labelled desired warm-pool gauge. The
