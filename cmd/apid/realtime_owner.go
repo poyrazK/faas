@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"golang.org/x/sync/singleflight"
 )
 
 const managedRealtimeOwnerLeaseTTL = 30 * time.Second
@@ -29,6 +30,12 @@ const (
 )
 
 var errManagedRealtimeOwnerUnavailable = errors.New("realtime: owner node unavailable")
+var errManagedRealtimePublishTargetLookupShape = errors.New("realtime: publish target lookup returned an invalid result")
+
+type managedRealtimePublishTargetFlightResult struct {
+	view       state.ManagedRealtimeChannelPublishTargetView
+	cacheRehit bool
+}
 
 // realtimeNodeOperator is the node-local management contract plus the
 // endpoint/registry operations used by the fleet registrar.
@@ -166,6 +173,7 @@ type leasedRealtimeOwner struct {
 	routeRevisions            map[string]realtime.ChannelRouteRevision
 	publishTargetCache        *managedRealtimePublishTargetCache
 	publishTargetCacheOnce    sync.Once
+	publishTargetLookups      singleflight.Group
 }
 
 func newLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -408,12 +416,8 @@ func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID
 	if o.channelRoutingEnabled && o.channelRoutes != nil {
 		if targetStore, ok := o.channelRoutes.(state.ManagedRealtimeChannelPublishTargetStore); ok {
 			cacheKey := managedRealtimePublishTargetCacheKey{endpointID: endpointID, channel: channel}
-			view, cacheOutcome, cacheEpoch := o.publishTargetCache.lookup(cacheKey)
+			view, cacheOutcome, err := o.lookupManagedRealtimePublishTargets(ctx, targetStore, cacheKey)
 			o.channelRouteMetrics.targetCacheLookup(cacheOutcome)
-			var err error
-			if cacheOutcome != "hit" {
-				view, err = targetStore.ListManagedRealtimeChannelPublishTargets(ctx, endpointID, channel)
-			}
 			if err != nil {
 				// Keep the directory as an optimization: a failed read falls back
 				// to the same full-fleet publish used before route indexing.
@@ -425,9 +429,6 @@ func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID
 					o.channelRouteMetrics.publish("directory_error", len(nodes))
 				}
 				return nodes, false, nil
-			}
-			if cacheOutcome != "hit" {
-				o.publishTargetCache.store(cacheKey, cacheEpoch, view)
 			}
 			if !view.HasActiveNodes {
 				return nil, false, nil
@@ -468,6 +469,66 @@ func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID
 		}
 	}
 	return nodes, false, nil
+}
+
+func (o *leasedRealtimeOwner) lookupManagedRealtimePublishTargets(ctx context.Context, targetStore state.ManagedRealtimeChannelPublishTargetStore, key managedRealtimePublishTargetCacheKey) (state.ManagedRealtimeChannelPublishTargetView, string, error) {
+	view, initialOutcome, _ := o.publishTargetCache.lookup(key)
+	if initialOutcome == "hit" {
+		return view, "hit", nil
+	}
+	retries := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return state.ManagedRealtimeChannelPublishTargetView{}, initialOutcome, err
+		}
+		cachedView, currentOutcome, cacheEpoch := o.publishTargetCache.lookup(key)
+		if currentOutcome == "hit" {
+			return cachedView, "coalesced", nil
+		}
+		flightKey := fmt.Sprintf("%s\x00%s\x00%d", key.endpointID, key.channel, cacheEpoch)
+		results := o.publishTargetLookups.DoChan(flightKey, func() (any, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			cachedView, cacheOutcome, cacheEpoch := o.publishTargetCache.lookup(key)
+			if cacheOutcome == "hit" {
+				return managedRealtimePublishTargetFlightResult{view: cachedView, cacheRehit: true}, nil
+			}
+			loadedView, err := targetStore.ListManagedRealtimeChannelPublishTargets(ctx, key.endpointID, key.channel)
+			if err != nil {
+				return nil, err
+			}
+			o.publishTargetCache.store(key, cacheEpoch, loadedView)
+			return managedRealtimePublishTargetFlightResult{view: loadedView}, nil
+		})
+		select {
+		case <-ctx.Done():
+			return state.ManagedRealtimeChannelPublishTargetView{}, initialOutcome, ctx.Err()
+		case result := <-results:
+			if result.Err != nil {
+				if ctx.Err() == nil && retries == 0 && (errors.Is(result.Err, context.Canceled) || errors.Is(result.Err, context.DeadlineExceeded)) {
+					// The request that started the flight may have been canceled
+					// while this caller is still active. Retry with this caller's
+					// context so one canceled request cannot fail the whole herd.
+					retries++
+					continue
+				}
+				outcome := currentOutcome
+				if result.Shared {
+					outcome = "coalesced"
+				}
+				return state.ManagedRealtimeChannelPublishTargetView{}, outcome, result.Err
+			}
+			flightResult, ok := result.Val.(managedRealtimePublishTargetFlightResult)
+			if !ok {
+				return state.ManagedRealtimeChannelPublishTargetView{}, currentOutcome, errManagedRealtimePublishTargetLookupShape
+			}
+			if result.Shared || flightResult.cacheRehit {
+				return flightResult.view, "coalesced", nil
+			}
+			return flightResult.view, currentOutcome, nil
+		}
+	}
 }
 
 // Publish routes to known subscriber nodes when shared channel hints are

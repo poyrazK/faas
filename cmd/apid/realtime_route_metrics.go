@@ -25,7 +25,7 @@ var (
 		managedRealtimeRouteSnapshotSourcePeriodic,
 		managedRealtimeRouteSnapshotSourceRevision,
 	}
-	managedRealtimeRouteTargetCacheOutcomes = []string{"hit", "miss", "disabled"}
+	managedRealtimeRouteTargetCacheOutcomes = []string{"hit", "miss", "disabled", "coalesced"}
 )
 
 const (
@@ -90,7 +90,7 @@ func newManagedRealtimeChannelRouteMetrics(registry *prometheus.Registry, prefix
 		}, []string{"source", "outcome"}),
 		targetCacheLookups: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_realtime_channel_route_target_cache_lookups_total",
-			Help: "Realtime channel publish target cache lookups by bounded outcome.",
+			Help: "Realtime channel publish target lookups by cache and in-flight sharing outcome.",
 		}, []string{"outcome"}),
 	}
 

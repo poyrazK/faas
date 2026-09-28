@@ -136,7 +136,9 @@ compared with fallback broadcasts. Rebuild health is reported by
 `apid_realtime_channel_route_node_snapshot_sources_total` records snapshot
 attempts by source (`rebuild`, `periodic`, `revision`) and outcome. The
 `apid_realtime_channel_route_target_cache_lookups_total` counter reports
-target-cache `hit`, `miss`, and `disabled` lookups. The
+target-cache `hit`, `miss`, `disabled`, and `coalesced` lookups. Coalesced
+lookups shared an in-flight directory query or used the cache after waiting
+for another lookup. The
 `apid_realtime_channel_route_reconcile_duration_seconds` histogram records the
 duration of passes that start. These metrics omit endpoint, channel, and node
 identifiers.
