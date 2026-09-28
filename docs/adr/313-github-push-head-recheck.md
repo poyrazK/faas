@@ -1,4 +1,4 @@
-# ADR-287 · GitHub push head recheck before reconciliation
+# ADR-313 · GitHub push head recheck before reconciliation
 
 - **Status:** accepted
 - **Date:** 2026-09-27

@@ -60,7 +60,7 @@ readiness validation and just before promotion. If it moved or was deleted, the
 candidate fails with `source_ref_stale`; if GitHub cannot be checked, promotion
 fails closed with `source_ref_unavailable`. A tag or commit SHA stays pinned to
 the resolved commit and skips this branch check. See
-[ADR-290](adr/290-source-ref-branch-freshness-before-promotion.md).
+[ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
 In split-box fleets, compute-side imaged performs the final check over the
 private `githubd.faas:50053` mTLS route provisioned by the manifest and Ansible.
 
@@ -68,12 +68,12 @@ For App-driven push deployments, Gregale checks that the webhook's commit is
 still the branch head before it fetches source and checks again after scanning,
 immediately before reconciliation. If the branch has advanced, the older
 delivery is ignored without changing project state. See
-[ADR-287](adr/287-github-push-head-recheck.md). Once a GitHub deployment is accepted, its
+[ADR-313](adr/313-github-push-head-recheck.md). Once a GitHub deployment is accepted, its
 per-app revision also prevents an older in-flight GitHub build from becoming
 live after a newer deployment was accepted for the same environment. A manual
 `--repo --ref` request is an explicit deployment choice, including an older
 SHA for rollback; its accepted revision takes part in the same promotion
-order. See [ADR-285](adr/285-github-push-freshness-and-promotion-fence.md).
+order. See [ADR-311](adr/311-github-push-freshness-and-promotion-fence.md).
 
 To queue the deployment without waiting for the build, pass
 `--no-wait`. This returns the deployment id and URL as soon as the

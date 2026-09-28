@@ -1,4 +1,4 @@
-# ADR-288 · Actions-owned release-tag deployments
+# ADR-314 · Actions-owned release-tag deployments
 
 - **Status:** accepted
 - **Date:** 2026-09-27

@@ -67,7 +67,7 @@ Before applying a PR webhook, Gregale verifies the current PR state and head
 with GitHub. Delayed updates for an older head and delayed close events after
 reopening are ignored. If two preview builds overlap, the older build cannot
 take traffic after a newer preview deployment has been accepted. See
-[ADR-286](adr/286-pr-preview-freshness.md).
+[ADR-312](adr/312-pr-preview-freshness.md).
 
 ## Quota
 
@@ -224,7 +224,7 @@ branches and tags targeting the same scope share a deployment queue.
 ## Related
 
 - ADR-095 (decision + schema + state machine rationale).
-- ADR-284 (production trigger ownership and separate preview quota).
+- ADR-310 (production trigger ownership and separate preview quota).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).

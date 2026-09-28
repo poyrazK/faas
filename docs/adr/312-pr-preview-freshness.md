@@ -1,4 +1,4 @@
-# ADR-286 · PR preview freshness
+# ADR-312 · PR preview freshness
 
 - **Status:** accepted
 - **Date:** 2026-09-27

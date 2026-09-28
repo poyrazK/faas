@@ -1,4 +1,4 @@
-# ADR-289 · Actions-owned mapped environment deployments
+# ADR-315 · Actions-owned mapped environment deployments
 
 - **Status:** accepted
 - **Date:** 2026-09-27

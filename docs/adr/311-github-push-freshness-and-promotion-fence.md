@@ -1,4 +1,4 @@
-# ADR-285 · GitHub push freshness and promotion fence
+# ADR-311 · GitHub push freshness and promotion fence
 
 - **Status:** accepted
 - **Date:** 2026-09-27
