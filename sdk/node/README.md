@@ -148,6 +148,36 @@ in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
 docs customers request it) would layer on top without breaking the
 existing contract.
 
+## Login-target observation
+
+For a `POST` login route configured with `failed_responses`, central
+coordination, and `observe_targets: true`, attach an opaque target to each
+selected failed response. Use the exact normalization applied during account
+lookup for both existing and unknown accounts:
+
+```ts
+import { PRE_AUTH_TARGET_HEADER, preAuthTargetDigest } from '@gregale/sdk-node';
+
+const targetKey = process.env.GREGALE_ABUSE_TARGET_KEY;
+if (!targetKey) throw new Error('GREGALE_ABUSE_TARGET_KEY is required');
+
+function failedLoginResponse(normalizedIdentifier: string): Response {
+  return new Response('Invalid credentials', {
+    status: 401,
+    headers: { [PRE_AUTH_TARGET_HEADER]: preAuthTargetDigest(targetKey, normalizedIdentifier) },
+  });
+}
+```
+
+Create a random key of at least 32 bytes, keep it server-side, and share it
+across replicas. The helper takes an already-normalized identifier and returns
+a lowercase HMAC-SHA256 digest. It does not decide which responses are login
+failures. Attach the header exactly once only on failed responses. Gregale
+removes it before returning the response to the client. See
+[pre-auth security guidance](../../docs/security.md) for tenant-scoped
+identifiers and key rotation. Call `failedLoginResponse` with the normalized
+lookup value after either an unknown account or an incorrect credential.
+
 ## Project release context
 
 Capture the release selected for an inbound Gregale request and use the

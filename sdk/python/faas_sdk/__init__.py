@@ -48,6 +48,7 @@ from .idempotency import (
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -95,6 +96,8 @@ __all__ = (
     "WEBHOOK_TIMESTAMP_HEADER",
     "WEBHOOK_DELIVERY_ID_HEADER",
     "DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE",
+    "PRE_AUTH_TARGET_HEADER",
+    "pre_auth_target_digest",
     "Problem",
     "FaasError",
     "FaasProblemError",

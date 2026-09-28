@@ -119,6 +119,36 @@ Things to know:
 1. If your endpoint had any tags on it, the first tag will be used as a module name for the function (my_tag above)
 1. Any endpoint which did not have a tag will be in `faas_sdk.api.default`
 
+## Login-target observation
+
+For a `POST` login route configured with `failed_responses`, central
+coordination, and `observe_targets: true`, attach an opaque target to each
+selected failed response. Use the exact normalization applied during account
+lookup for both existing and unknown accounts:
+
+```python
+import os
+from faas_sdk import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
+
+
+def failed_login_headers(normalized_identifier: str) -> dict[str, str]:
+    return {
+        PRE_AUTH_TARGET_HEADER: pre_auth_target_digest(
+            os.environ["GREGALE_ABUSE_TARGET_KEY"], normalized_identifier
+        )
+    }
+```
+
+Create a random key of at least 32 bytes, keep it server-side, and share it
+across replicas. The helper takes an already-normalized identifier and returns
+a lowercase HMAC-SHA256 digest. It does not decide which responses are login
+failures. Attach the header exactly once only on failed responses. Gregale
+removes it before returning the response to the client. See
+[pre-auth security guidance](../../docs/security.md) for tenant-scoped
+identifiers and key rotation. Call `failed_login_headers` with the normalized
+lookup value after either an unknown account or an incorrect credential, and
+set its result on the 401 response using your framework.
+
 ## Project release context
 
 For app-to-app calls, wrap the ASGI application in

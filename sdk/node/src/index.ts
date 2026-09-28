@@ -120,3 +120,6 @@ export {
   type VerifiedWebhook,
   type VerifyWebhookOptions,
 } from './webhook.js';
+
+// Opaque login-target signal for opt-in pre-auth abuse observation.
+export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';

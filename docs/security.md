@@ -138,6 +138,22 @@ it does not persist, log, or expose that digest or the raw identifier.
 Responses without exactly one valid digest are counted as missing or invalid.
 Successes and gateway-generated denials do not enter target counters.
 
+The Node and Python SDKs provide `preAuthTargetDigest` and
+`pre_auth_target_digest`, with `PRE_AUTH_TARGET_HEADER` for the header name.
+Each helper accepts the app's already-normalized identifier and an app-owned
+key of at least 32 bytes, then returns the required lowercase digest. Generate
+the key randomly, keep it server-side, and share it across replicas. String
+keys use UTF-8 bytes as supplied; a hex-encoded key is not decoded. Normalize
+with the same rules used for account lookup, including unknown accounts. If
+accounts are scoped by tenant, include the tenant in that normalized lookup
+value, with an unambiguous encoding shared by every replica, so separate
+tenants do not share a target signal. Attach the header
+exactly once on selected failed login responses, regardless of whether the
+account exists; never attach it to a successful response. Rotating the key
+starts a new target history while old counters expire. See the
+[Node](../sdk/node/README.md#login-target-observation) and
+[Python](../sdk/python/README.md#login-target-observation) examples.
+
 The gateway maps each valid target to two independent sets of 2,048 bounded
 shared counters and spends one token per set on each selected failure. When
 both sets exceed the configured `failed_responses` budget, it increments the
