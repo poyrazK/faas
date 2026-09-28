@@ -1252,19 +1252,18 @@ func newID() string {
 
 // --- Accounts ---------------------------------------------------------------
 
-func (m *MemStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
-	// Match PgStore.CreateAccount: every new account gets its personal
-	// organization and owner membership atomically. Besides keeping the
-	// stores behaviorally aligned, app mutations can then always attach
-	// their workspace activity to an organization.
-	result, err := m.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
-		Email: email,
-		Plan:  plan,
-	})
-	if err != nil {
-		return Account{}, err
+func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.accounts {
+		if a.Email == email {
+			return Account{}, fmt.Errorf("state: account with email %q exists", email)
+		}
 	}
-	return result.Account, nil
+	now := time.Now().UTC()
+	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: now, EmailVerifiedAt: &now}
+	m.accounts[a.ID] = a
+	return a, nil
 }
 
 // CreateAccountWithPersonalOrg is the PR 3 canonical

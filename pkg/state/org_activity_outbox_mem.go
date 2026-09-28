@@ -34,6 +34,11 @@ func orgActivityOutboxKey(entry OrgActivity) string {
 	return entry.OrgID.String() + "\x00" + entry.SourceType + "\x00" + entry.SourceID
 }
 
+func parseDeploymentActivityID(value string) (uuid.UUID, bool) {
+	parsed, err := uuid.Parse(value)
+	return parsed, err == nil
+}
+
 func (m *MemStore) enqueueOrgActivityOutboxLocked(entry OrgActivity) int64 {
 	if m.orgActivityOutbox == nil {
 		m.orgActivityOutbox = make(map[int64]orgActivityOutboxRow)
@@ -62,10 +67,10 @@ func (m *MemStore) enqueueOrgActivityOutboxLocked(entry OrgActivity) int64 {
 }
 
 func (m *MemStore) enqueueDeploymentOutcomeActivityLocked(deploymentID, outcome, errorCode string) error {
-	if uuid.Validate(deploymentID) != nil {
+	targetID, valid := parseDeploymentActivityID(deploymentID)
+	if !valid {
 		return nil
 	}
-	targetID := uuid.MustParse(deploymentID)
 	var latestID int64
 	var request OrgActivity
 	for id, row := range m.orgActivityOutbox {

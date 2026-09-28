@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -15,6 +17,13 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App,
 	created, err := m.createAppIfUnderQuotaLocked(app, limits)
 	if err != nil {
 		return App{}, 0, err
+	}
+	if created.OrgID == "" && entry.OrgID == uuid.Nil {
+		// Legacy MemStore fixtures can create accounts without a personal
+		// org. Keep app creation compatible for those non-organization-owned
+		// rows; production accounts always have a personal org, and callers
+		// with an explicit org continue through the atomic activity path.
+		return created, 0, nil
 	}
 	entry, err = bindOrgActivityToApp(entry, created)
 	if err != nil {
