@@ -2,10 +2,10 @@
 -- +goose StatementBegin
 -- NULL belongs to receipts accepted before this migration. An empty array
 -- means the event had no eligible source/type candidates at acceptance.
-ALTER TABLE event_fanout_outbox ADD COLUMN recipient_snapshot jsonb
+ALTER TABLE event_fanout_outbox ADD COLUMN IF NOT EXISTS recipient_snapshot jsonb
     CHECK (recipient_snapshot IS NULL OR jsonb_typeof(recipient_snapshot) = 'array');
 
-CREATE FUNCTION event_fanout_pattern_matches(pattern text, value text)
+CREATE OR REPLACE FUNCTION event_fanout_pattern_matches(pattern text, value text)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$
     SELECT CASE
         WHEN pattern = '*' THEN true
@@ -102,6 +102,6 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-DROP FUNCTION event_fanout_pattern_matches(text, text);
-ALTER TABLE event_fanout_outbox DROP COLUMN recipient_snapshot;
+DROP FUNCTION IF EXISTS event_fanout_pattern_matches(text, text);
+ALTER TABLE event_fanout_outbox DROP COLUMN IF EXISTS recipient_snapshot;
 -- +goose StatementEnd
