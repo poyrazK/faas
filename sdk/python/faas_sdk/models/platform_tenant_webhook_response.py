@@ -34,7 +34,7 @@ T = TypeVar("T", bound="PlatformTenantWebhookResponse")
 
 @_attrs_define
 class PlatformTenantWebhookResponse:
-    """Tenant-scoped statement event receiver. The secret is never returned."""
+    """Tenant-scoped event receiver. The secret is never returned."""
 
     id: UUID
     scope: PlatformTenantWebhookResponseScope

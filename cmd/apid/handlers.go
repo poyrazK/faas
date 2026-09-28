@@ -189,7 +189,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
 	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
 	// accounts under concurrency (spec §4.2).
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
+	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
@@ -671,6 +671,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, dep) {
 		return
 	}
 	// Capture the current predecessor for audit. It remains live until the
@@ -1198,6 +1201,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			PreviewApps:                 l.PreviewApps,
 			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),

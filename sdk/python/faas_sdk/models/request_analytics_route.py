@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.request_analytics_dependency import RequestAnalyticsDependency
+    from ..models.request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 
 
 T = TypeVar("T", bound="RequestAnalyticsRoute")
@@ -57,6 +58,13 @@ class RequestAnalyticsRoute:
     """Collapsed request weight represented by rows with at least one classified dependency span."""
     dependencies: list[RequestAnalyticsDependency] | Unset = UNSET
     """Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."""
+    deployment_observations: list[RequestAnalyticsRouteDeploymentObservation] | Unset = UNSET
+    """At most the five highest-request deployments for this route/method, with request-share compute estimates and
+    measured guest CPU comparisons against the preceding comparable revision."""
+    other_deployment_requests: int | Unset = UNSET
+    """Route requests from deployments outside the top-five list."""
+    other_deployment_estimated_compute_cost_millicents: int | Unset = UNSET
+    """This route's estimated compute value allocated to deployments outside the top-five list by request share."""
     estimated_compute_cost_millicents: int | Unset = UNSET
     """Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level
     included allowance and egress."""
@@ -135,6 +143,17 @@ class RequestAnalyticsRoute:
                 dependencies_item = dependencies_item_data.to_dict()
                 dependencies.append(dependencies_item)
 
+        deployment_observations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.deployment_observations, Unset):
+            deployment_observations = []
+            for deployment_observations_item_data in self.deployment_observations:
+                deployment_observations_item = deployment_observations_item_data.to_dict()
+                deployment_observations.append(deployment_observations_item)
+
+        other_deployment_requests = self.other_deployment_requests
+
+        other_deployment_estimated_compute_cost_millicents = self.other_deployment_estimated_compute_cost_millicents
+
         estimated_compute_cost_millicents = self.estimated_compute_cost_millicents
 
         request_share_pct = self.request_share_pct
@@ -174,6 +193,14 @@ class RequestAnalyticsRoute:
             field_dict["dependency_requests"] = dependency_requests
         if dependencies is not UNSET:
             field_dict["dependencies"] = dependencies
+        if deployment_observations is not UNSET:
+            field_dict["deployment_observations"] = deployment_observations
+        if other_deployment_requests is not UNSET:
+            field_dict["other_deployment_requests"] = other_deployment_requests
+        if other_deployment_estimated_compute_cost_millicents is not UNSET:
+            field_dict["other_deployment_estimated_compute_cost_millicents"] = (
+                other_deployment_estimated_compute_cost_millicents
+            )
         if estimated_compute_cost_millicents is not UNSET:
             field_dict["estimated_compute_cost_millicents"] = estimated_compute_cost_millicents
         if request_share_pct is not UNSET:
@@ -184,6 +211,7 @@ class RequestAnalyticsRoute:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.request_analytics_dependency import RequestAnalyticsDependency
+        from ..models.request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 
         d = dict(src_dict)
         route = d.pop("route")
@@ -280,6 +308,23 @@ class RequestAnalyticsRoute:
 
                 dependencies.append(dependencies_item)
 
+        _deployment_observations = d.pop("deployment_observations", UNSET)
+        deployment_observations: list[RequestAnalyticsRouteDeploymentObservation] | Unset = UNSET
+        if _deployment_observations is not UNSET:
+            deployment_observations = []
+            for deployment_observations_item_data in _deployment_observations:
+                deployment_observations_item = RequestAnalyticsRouteDeploymentObservation.from_dict(
+                    deployment_observations_item_data
+                )
+
+                deployment_observations.append(deployment_observations_item)
+
+        other_deployment_requests = d.pop("other_deployment_requests", UNSET)
+
+        other_deployment_estimated_compute_cost_millicents = d.pop(
+            "other_deployment_estimated_compute_cost_millicents", UNSET
+        )
+
         estimated_compute_cost_millicents = d.pop("estimated_compute_cost_millicents", UNSET)
 
         request_share_pct = d.pop("request_share_pct", UNSET)
@@ -304,6 +349,9 @@ class RequestAnalyticsRoute:
             dependency_samples=dependency_samples,
             dependency_requests=dependency_requests,
             dependencies=dependencies,
+            deployment_observations=deployment_observations,
+            other_deployment_requests=other_deployment_requests,
+            other_deployment_estimated_compute_cost_millicents=other_deployment_estimated_compute_cost_millicents,
             estimated_compute_cost_millicents=estimated_compute_cost_millicents,
             request_share_pct=request_share_pct,
         )

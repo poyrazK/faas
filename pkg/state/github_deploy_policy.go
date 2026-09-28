@@ -27,10 +27,9 @@ const (
 // PreviewServicePolicy controls whether a project preview may call a
 // production dependency through Gregale's internal service proxy.
 //
-// Existing projects are migration-backfilled to allow_marked. A project with
-// no persisted policy row is new and receives deny from
-// DefaultGitHubDeployPolicy, so the safe posture does not break existing
-// traffic.
+// All projects default to deny, including legacy rows that were initially
+// backfilled to allow_marked. Customers must now explicitly opt into marked
+// preview-to-production calls.
 type PreviewServicePolicy string
 
 const (
@@ -48,10 +47,23 @@ func (p PreviewServicePolicy) Valid() bool {
 	}
 }
 
+// ProductionTrigger selects the single authority for production deploys.
+// Existing projects keep the webhook path; github setup explicitly chooses
+// Actions while the GitHub App continues to manage PR previews.
+type ProductionTrigger string
+
+const (
+	ProductionTriggerWebhook ProductionTrigger = "webhook"
+	ProductionTriggerActions ProductionTrigger = "actions"
+)
+
+func (t ProductionTrigger) Valid() bool {
+	return t == ProductionTriggerWebhook || t == ProductionTriggerActions
+}
+
 // GitHubDeployPolicy is the customer-owned deployment policy for a project
 // connected to GitHub. A missing row receives the safe defaults below;
-// migrations persist legacy-compatible defaults for projects that predate the
-// preview service policy.
+// migrations persist safe defaults for projects that predate the policy.
 type GitHubDeployPolicy struct {
 	ProjectID            string
 	AccountID            string
@@ -60,6 +72,7 @@ type GitHubDeployPolicy struct {
 	PreviewEnabled       bool
 	PreviewTTLHours      int
 	PreviewServicePolicy PreviewServicePolicy
+	ProductionTrigger    ProductionTrigger
 	UpdatedAt            time.Time
 }
 
@@ -72,6 +85,7 @@ func DefaultGitHubDeployPolicy(projectID, accountID string) GitHubDeployPolicy {
 		PreviewEnabled:       true,
 		PreviewTTLHours:      GitHubDeployPolicyDefaultPreviewTTLHours,
 		PreviewServicePolicy: PreviewServicePolicyDeny,
+		ProductionTrigger:    ProductionTriggerWebhook,
 	}
 }
 
@@ -128,6 +142,9 @@ func (p GitHubDeployPolicy) Validate() error {
 	if !p.PreviewServicePolicy.Valid() {
 		return fmt.Errorf("state: preview_service_policy must be %q or %q", PreviewServicePolicyDeny, PreviewServicePolicyAllowMarked)
 	}
+	if p.ProductionTrigger != "" && !p.ProductionTrigger.Valid() {
+		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
+	}
 	return nil
 }
 
@@ -179,6 +196,9 @@ func (m *MemStore) GetGitHubDeployPolicy(_ context.Context, projectID, accountID
 }
 
 func (m *MemStore) UpsertGitHubDeployPolicy(_ context.Context, policy GitHubDeployPolicy) (GitHubDeployPolicy, error) {
+	if policy.ProductionTrigger == "" {
+		policy.ProductionTrigger = ProductionTriggerWebhook
+	}
 	if err := policy.Validate(); err != nil {
 		return GitHubDeployPolicy{}, err
 	}
@@ -203,11 +223,11 @@ func (s *PgStore) GetGitHubDeployPolicy(ctx context.Context, projectID, accountI
 	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
 		select project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		       preview_ttl_hours, preview_service_policy, updated_at
+		       preview_ttl_hours, preview_service_policy, production_trigger, updated_at
 		  from github_deploy_policies
 		 where project_id = $1 and account_id = $2`, projectID, accountID).Scan(
 		&policy.ProjectID, &policy.AccountID, &policy.RootDir, &raw,
-		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewServicePolicy, &updatedAt)
+		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewServicePolicy, &policy.ProductionTrigger, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DefaultGitHubDeployPolicy(projectID, accountID), nil
@@ -225,6 +245,9 @@ func (s *PgStore) GetGitHubDeployPolicy(ctx context.Context, projectID, accountI
 }
 
 func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDeployPolicy) (GitHubDeployPolicy, error) {
+	if policy.ProductionTrigger == "" {
+		policy.ProductionTrigger = ProductionTriggerWebhook
+	}
 	if err := policy.Validate(); err != nil {
 		return GitHubDeployPolicy{}, err
 	}
@@ -237,8 +260,8 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 	err = s.pool.QueryRow(ctx, `
 		insert into github_deploy_policies
 		    (project_id, account_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours,
-		     preview_service_policy, updated_at)
-		values ($1, $2, $3, $4::jsonb, $5, $6, $7, now())
+		     preview_service_policy, production_trigger, updated_at)
+		values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, now())
 		on conflict (project_id) do update set
 		    account_id = excluded.account_id,
 		    root_dir = excluded.root_dir,
@@ -246,13 +269,14 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 		    preview_enabled = excluded.preview_enabled,
 		    preview_ttl_hours = excluded.preview_ttl_hours,
 		    preview_service_policy = excluded.preview_service_policy,
+		    production_trigger = excluded.production_trigger,
 		    updated_at = now()
 		returning project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		          preview_ttl_hours, preview_service_policy, updated_at`,
+		          preview_ttl_hours, preview_service_policy, production_trigger, updated_at`,
 		policy.ProjectID, policy.AccountID, policy.RootDir, raw,
-		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy).Scan(
+		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy, policy.ProductionTrigger).Scan(
 		&stored.ProjectID, &stored.AccountID, &stored.RootDir, &storedRaw,
-		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewServicePolicy, &stored.UpdatedAt)
+		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewServicePolicy, &stored.ProductionTrigger, &stored.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubDeployPolicy{}, ErrNotFound

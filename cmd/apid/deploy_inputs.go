@@ -432,6 +432,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, releaseProblem)
 		return
 	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)

@@ -16,6 +16,10 @@ export type AccountLimits = {
   max_concurrency: number;
   deployed_apps: number;
   /**
+   * Maximum live pull-request preview apps, separate from production apps.
+   */
+  preview_apps: number;
+  /**
    * Account-wide deployment admissions per fixed one-hour window.
    */
   deploys_per_hour: number;

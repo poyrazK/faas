@@ -46,7 +46,7 @@ func UnitRealtimed() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas"},
+		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/realtime-callbacks"},
 		WantedBy:       "multi-user.target",
 	}
 }

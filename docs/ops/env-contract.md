@@ -162,9 +162,14 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
+| `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_ROLE` | githubd, shared | `dropin` |  |  | `` |  |
-| `FAAS_GITHUBD_SOCKET` | apid | `default` |  |  | `` |  |
+| `FAAS_GITHUBD_SOCKET` | apid, imaged | `default` |  |  | `` |  |
+| `FAAS_GITHUBD_TARGET_URL` | imaged | `dropin` |  |  | `` | githubd private mTLS endpoint reached by imaged on compute-only hosts |
+| `FAAS_GITHUBD_TLS_CA_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
+| `FAAS_GITHUBD_TLS_CERT_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
+| `FAAS_GITHUBD_TLS_KEY_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
 | `FAAS_GITHUBD_WORK_DIR` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_GITHUB_APP_CLIENT_ID` | apid, githubd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_APP_CLIENT_SECRET` | githubd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
@@ -312,7 +317,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_REPLAY_WORKERS` | realtimed | `default` |  |  | `` | bounded parallel callback recovery; values above 32 are capped |
+| `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` | realtimed | `default` |  |  | `` | maximum persistent callback retry delay; defaults to one minute and is capped at one hour |
 | `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |

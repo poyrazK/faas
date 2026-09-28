@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Update a tenant statement receiver. Rotate secrets with the dedicated action.
+ * Update a tenant event receiver. Its event filter is immutable; create a replacement to change subscribed events.
  */
 export type UpdatePlatformTenantWebhookRequest = {
   target_url?: string;

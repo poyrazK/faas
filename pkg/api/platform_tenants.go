@@ -2,9 +2,42 @@ package api
 
 import "time"
 
+const (
+	MaxPlatformTenantHostnameSuffixes = 32
+	MaxPlatformTenantDelegatedHosts   = 100
+)
+
 type CreatePlatformTenantRequest struct {
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+}
+
+type SetPlatformTenantHostnamePolicyRequest struct {
+	AllowedSuffixes []string `json:"allowed_suffixes"`
+	MaxHostnames    *int     `json:"max_hostnames"`
+}
+
+type PlatformTenantHostnamePolicyResponse struct {
+	TenantID        string     `json:"tenant_id"`
+	Enabled         bool       `json:"enabled"`
+	AllowedSuffixes []string   `json:"allowed_suffixes"`
+	MaxHostnames    int        `json:"max_hostnames"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
+}
+
+type CreatePlatformTenantSelfHostnameRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Hostname  string `json:"hostname"`
+}
+
+type PlatformTenantSelfHostnameResponse struct {
+	SurfaceID      string `json:"surface_id"`
+	Hostname       string `json:"hostname"`
+	Action         string `json:"action"`
+	Verified       bool   `json:"verified"`
+	VerifiedAt     string `json:"verified_at,omitempty"`
+	TXTRecord      string `json:"txt_record"`
+	ChallengeToken string `json:"challenge_token,omitempty"`
 }
 
 // ApplyPlatformTenantRequest adds missing consumers and links existing surfaces
@@ -74,6 +107,44 @@ type PlatformTenantActivationResponse struct {
 	Enabled  bool                                      `json:"enabled"`
 	Ready    bool                                      `json:"ready"`
 	Surfaces []PlatformTenantActivationSurfaceResponse `json:"surfaces"`
+}
+
+// PlatformTenantSelfActivationResponse is the downstream tenant's redacted
+// activation snapshot. It intentionally omits app and deployment IDs, DNS
+// challenge tokens, source metadata, logs, and raw DNS/certificate/deployment
+// errors from the account-owner response.
+type PlatformTenantSelfActivationResponse struct {
+	Status   string                                        `json:"status"`
+	Enabled  bool                                          `json:"enabled"`
+	Ready    bool                                          `json:"ready"`
+	Surfaces []PlatformTenantSelfActivationSurfaceResponse `json:"surfaces"`
+}
+
+type PlatformTenantSelfActivationSurfaceResponse struct {
+	ID               string                                         `json:"id"`
+	Name             string                                         `json:"name"`
+	Status           string                                         `json:"status"`
+	CertState        string                                         `json:"cert_state"`
+	CertNotAfter     string                                         `json:"cert_not_after,omitempty"`
+	Ready            bool                                           `json:"ready"`
+	LatestDeployment *PlatformTenantSelfDeploymentResponse          `json:"latest_deployment,omitempty"`
+	Hostnames        []PlatformTenantSelfActivationHostnameResponse `json:"hostnames"`
+}
+
+// PlatformTenantSelfDeploymentResponse is a deliberately small projection of
+// the latest deployment attempt for a linked surface. It does not claim that
+// the attempt is the currently serving deployment and omits deployment IDs,
+// app IDs, source metadata, logs, and errors.
+type PlatformTenantSelfDeploymentResponse struct {
+	Status    string `json:"status"`
+	Revision  int    `json:"revision,omitempty"`
+	StartedAt string `json:"started_at"`
+}
+
+type PlatformTenantSelfActivationHostnameResponse struct {
+	Hostname   string `json:"hostname"`
+	Verified   bool   `json:"verified"`
+	VerifiedAt string `json:"verified_at,omitempty"`
 }
 
 type ApplyPlatformTenantResponse struct {
@@ -168,7 +239,7 @@ type PlatformTenantDetailResponse struct {
 }
 
 // CreatePlatformTenantAccessTokenRequest asks the platform owner to mint a
-// read-only credential for one downstream tenant. Omitted expiration defaults
+// tenant-bound credential with selected self-service scopes. Omitted expiration defaults
 // to 90 days; callers may choose any future time up to 365 days away.
 type CreatePlatformTenantAccessTokenRequest struct {
 	Name      string     `json:"name"`

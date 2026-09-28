@@ -720,10 +720,10 @@ func TestEnqueue_CommitsDeploymentActivityWithBuildQueue(t *testing.T) {
 	orgID := uuid.New()
 	srcPath, srcBytes := stageSource(t, t.TempDir())
 	activity := &state.OrgActivity{
-		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorUser,
+		OrgID: orgID, Kind: "deploy.requested", ActorType: state.OrgActivityActorUser,
 		ActorLabel: "person@example.com", ResourceType: "app", ResourceID: app.ID,
-		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment",
-		Data: []byte(`{"source":"tarball"}`),
+		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment.requested",
+		Data: []byte(`{"source":"tarball","phase":"requested"}`),
 	}
 
 	result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
@@ -738,7 +738,7 @@ func TestEnqueue_CommitsDeploymentActivityWithBuildQueue(t *testing.T) {
 		t.Fatalf("parse deployment ID: %v", err)
 	}
 	rows, err := st.ListOrgActivity(context.Background(), state.OrgActivityFilter{OrgID: orgID, Limit: 10})
-	if err != nil || len(rows) != 1 || rows[0].SourceID != result.DeploymentID ||
+	if err != nil || len(rows) != 1 || rows[0].Kind != "deploy.requested" || rows[0].SourceType != "deployment.requested" || rows[0].SourceID != result.DeploymentID ||
 		rows[0].DeploymentID == nil || *rows[0].DeploymentID != deploymentID {
 		t.Fatalf("deployment activity = (%#v, %v), want one event for %s", rows, err, result.DeploymentID)
 	}

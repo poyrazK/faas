@@ -2159,6 +2159,12 @@ type RuntimeSnapshot struct {
 	RetiredAt           pgtype.Timestamptz
 }
 
+type SafeReleaseWorkerLease struct {
+	Singleton bool
+	HealthyAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID

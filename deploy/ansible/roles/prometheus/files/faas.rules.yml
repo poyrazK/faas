@@ -20,6 +20,116 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: faas_realtime_callbacks
+    interval: 30s
+    rules:
+      - alert: FaasRealtimeCallbackReplayStalled
+        expr: realtimed_callback_replay_ready > 0 and increase(realtimed_callback_replay_attempts_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback replay has stalled"
+          description: "The node has callbacks eligible for replay but no replay attempts in the last five minutes. Check the replay supervisor, realtimed logs, and outbox disk health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackReplayRestarting
+        expr: increase(realtimed_callback_replay_supervisor_restarts_total[15m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback replay keeps restarting"
+          description: "The node restarted its callback replay loop at least three times in the last 15 minutes. Inspect realtimed logs and local outbox storage health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxNearCapacity
+        expr: realtimed_callback_pending_capacity_bytes > 0 and (realtimed_callback_pending_bytes / realtimed_callback_pending_capacity_bytes) > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback outbox is near capacity"
+          description: "Pending callbacks use more than 80% of this node's outbox capacity. Restore callback delivery so the durable queue can drain before it stops accepting new records."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxFull
+        expr: increase(realtimed_callback_outbox_full_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback event could not be persisted"
+          description: "The node rejected a callback event because its durable outbox remained full until the admission deadline. A live WebSocket was closed with code 1013 when a message event was rejected."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxAdmissionFailed
+        expr: increase(realtimed_callback_outbox_admission_errors_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback could not be saved to the outbox"
+          description: "The node failed to admit a callback to its durable outbox for a reason other than capacity exhaustion. Check local storage health and permissions; a live WebSocket is closed with code 1013 when its message cannot be saved."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackUnpersisted
+        expr: increase(realtimed_callback_unpersisted_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback failed without durable persistence"
+          description: "A message or disconnect callback failed while no durable outbox was configured. Message failures close the live WebSocket with code 1013. Configure a durable outbox for production callback delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackDeadLettersPresent
+        expr: realtimed_callback_dead_letters > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead letters need review"
+          description: "The node retains {{ $value }} callback dead-letter file(s). Inspect the callback failure and preserve records needed for investigation or replay."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackDeadLettersNearCapacity
+        expr: realtimed_callback_dead_letter_bytes / realtimed_callback_dead_letter_capacity_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead-letter storage is near capacity"
+          description: "Retained callback dead letters exceed 80% of the node's configured byte limit. Inspect failed callbacks and preserve any records needed for replay before retention evicts the oldest files."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackDeadLettersEvicted
+        expr: time() - realtimed_callback_dead_letter_last_eviction_timestamp_seconds < 3600
+        for: 0m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback dead letters were evicted"
+          description: "The node evicted dead-letter files to enforce its byte limit, including any excess found at daemon startup. Inspect callback failures and available records."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
   - name: request_id_journal
     interval: 30s
     rules:
@@ -115,6 +225,73 @@ groups:
           summary: "Daily usage rollup is failing"
           description: "Meterd cannot refresh usage_daily. Raw usage and provider billing remain authoritative, but daily customer usage and daily cost alerts are stale until the rollup succeeds."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableBackgroundWorkers.md"
+
+  - name: faas_safe_release
+    interval: 15s
+    rules:
+      - alert: FaasSafeReleaseWorkerLeaseStale
+        expr: faas_safe_release_worker_lease_ready == 0 and on(job, instance) faas_safe_release_worker_lease_check_success == 1 and on(job, instance) faas_safe_release_serving_canaries == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "Safe Deploy worker lease is stale"
+          description: "APID can reach Postgres but meterd's Safe Deploy lease is absent or expired. New canaries are rejected. Check meterd release ticks and APID operator probes before re-enabling rollouts."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseServingCanaryAtRisk
+        expr: (faas_safe_release_worker_lease_ready == 0 or faas_safe_release_worker_lease_check_success == 0) and on(job, instance) faas_safe_release_serving_canaries > 0
+        for: 30s
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "Serving canary has no healthy Safe Deploy worker lease"
+          description: "APID sees a canary serving traffic while the worker lease is stale or unreadable. Emergency abort starts after the restart grace; inspect the rollout, predecessor, and APID recovery outcome now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseLeaseObservationStalled
+        expr: time() - faas_safe_release_worker_lease_last_check_timestamp_seconds > 90
+        for: 1m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+        annotations:
+          summary: "APID has not observed the Safe Deploy worker lease recently"
+          description: "The lease health poll has not succeeded for over 90 seconds. Check APID's database access and background recovery loop; the last readiness value is not trustworthy."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseEmergencyAbort
+        expr: increase(faas_safe_release_emergency_abort_total{outcome="aborted"}[5m]) > 0 or (faas_safe_release_emergency_abort_total{outcome="aborted"} > 0 unless faas_safe_release_emergency_abort_total{outcome="aborted"} offset 5m)
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "APID aborted a serving canary after worker lease expiry"
+          description: "APID restored the serving predecessor after the Safe Deploy worker lease remained expired past its grace period. Confirm gateway traffic, audit actor, and meterd recovery before deploying again."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasSafeReleaseEmergencyRecoveryFailed
+        expr: increase(faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"}[5m]) > 0 or (faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"} > 0 unless faas_safe_release_emergency_abort_total{outcome=~"failed|sweep_failed"} offset 5m)
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "APID emergency canary recovery failed"
+          description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
   - name: account_lifecycle
     interval: 30s

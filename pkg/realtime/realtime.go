@@ -48,13 +48,14 @@ const (
 )
 
 var (
-	ErrEndpointNotFound   = errors.New("realtime: endpoint not found")
-	ErrConnectionNotFound = errors.New("realtime: connection not found")
-	ErrTooManyConnections = errors.New("realtime: connection limit reached")
-	ErrOutboundQueueFull  = errors.New("realtime: outbound queue full")
-	ErrConnectionClosed   = errors.New("realtime: connection closed")
-	ErrUnauthorized       = errors.New("realtime: connection unauthorized")
-	ErrInvalidChannel     = errors.New("realtime: invalid channel")
+	ErrEndpointNotFound     = errors.New("realtime: endpoint not found")
+	ErrConnectionNotFound   = errors.New("realtime: connection not found")
+	ErrTooManyConnections   = errors.New("realtime: connection limit reached")
+	ErrOutboundQueueFull    = errors.New("realtime: outbound queue full")
+	ErrConnectionClosed     = errors.New("realtime: connection closed")
+	ErrUnauthorized         = errors.New("realtime: connection unauthorized")
+	ErrInvalidChannel       = errors.New("realtime: invalid channel")
+	ErrCallbackNotPersisted = errors.New("realtime: callback was not persisted")
 )
 
 // EventType is the callback event discriminator delivered to an application.
@@ -230,30 +231,52 @@ type ConnectionInventory struct {
 	NodesUnavailable int
 }
 
+// EndpointInventory contains node-local registrations observed by the
+// control plane. It contains IDs only; credentials never leave the node.
+type EndpointInventory struct {
+	IDs              []string
+	NodesQueried     int
+	NodesUnavailable int
+}
+
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
-	CurrentConnections   uint64 `json:"current_connections"`
-	AcceptedConnections  uint64 `json:"accepted_connections"`
-	RejectedConnections  uint64 `json:"rejected_connections"`
-	ReceivedMessages     uint64 `json:"received_messages"`
-	ReceivedBytes        uint64 `json:"received_bytes"`
-	SentMessages         uint64 `json:"sent_messages"`
-	SentBytes            uint64 `json:"sent_bytes"`
-	DroppedMessages      uint64 `json:"dropped_messages"`
-	CallbackErrors       uint64 `json:"callback_errors"`
-	CallbackPending      uint64 `json:"callback_pending"`
-	CallbackPendingBytes uint64 `json:"callback_pending_bytes"`
-	CallbackDeadLetters  uint64 `json:"callback_dead_letters"`
+	CurrentConnections                 uint64  `json:"current_connections"`
+	AcceptedConnections                uint64  `json:"accepted_connections"`
+	RejectedConnections                uint64  `json:"rejected_connections"`
+	ReceivedMessages                   uint64  `json:"received_messages"`
+	ReceivedBytes                      uint64  `json:"received_bytes"`
+	SentMessages                       uint64  `json:"sent_messages"`
+	SentBytes                          uint64  `json:"sent_bytes"`
+	DroppedMessages                    uint64  `json:"dropped_messages"`
+	CallbackErrors                     uint64  `json:"callback_errors"`
+	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
+	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
+	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
+	CallbackPending                    uint64  `json:"callback_pending"`
+	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
+	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
+	CallbackReplayReady                uint64  `json:"callback_replay_ready"`
+	CallbackReplayDelayed              uint64  `json:"callback_replay_delayed"`
+	CallbackReplayAttempts             uint64  `json:"callback_replay_attempts"`
+	CallbackReplayDeliveries           uint64  `json:"callback_replay_deliveries"`
+	CallbackOldestPendingAgeSeconds    float64 `json:"callback_oldest_pending_age_seconds"`
+	CallbackDeadLetters                uint64  `json:"callback_dead_letters"`
+	CallbackDeadLetterBytes            uint64  `json:"callback_dead_letter_bytes"`
+	CallbackDeadLetterCapacityBytes    uint64  `json:"callback_dead_letter_capacity_bytes"`
+	CallbackDeadLetterEvictions        uint64  `json:"callback_dead_letter_evictions"`
+	CallbackDeadLetterLastEvictionUnix int64   `json:"callback_dead_letter_last_eviction_unix"`
 }
 
 type connection struct {
 	info ConnectionInfo
-	// endpoint is retained with the connection so removing or replacing an
-	// endpoint does not strand lifecycle callbacks for already-open sockets.
-	endpoint Endpoint
-	ws       *websocket.Conn
-	m        *Manager
+	// endpoint is retained so lifecycle callbacks can finish after revocation.
+	endpoint     Endpoint
+	state        *endpointState
+	callbackAuth atomic.Pointer[callbackAuthSnapshot]
+	ws           *websocket.Conn
+	m            *Manager
 
 	outbound chan Message
 	done     chan struct{}
@@ -266,13 +289,17 @@ type connection struct {
 	closeReason string
 }
 
+type callbackAuthSnapshot struct {
+	token string
+}
+
 type endpointState struct {
-	Endpoint
-	// reserved counts this endpoint's live connections. It is a pointer
-	// so re-registering the endpoint (apid's reconciler replays intent)
-	// carries the count over: connections admitted under the previous
-	// state release against the same counter the new state admits on.
+	config atomic.Pointer[Endpoint]
+	gate   sync.Mutex
+	// reserved is shared across policy refreshes so live connections continue
+	// to release against the count used during admission.
 	reserved *atomic.Int64
+	revoked  atomic.Bool
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -286,23 +313,27 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	endpoints sync.Map // map[string]*endpointState
-	mu        sync.RWMutex
-	conns     map[string]*connection
-	reserved  atomic.Int64
-	closed    atomic.Bool
+	endpoints   sync.Map // map[string]*endpointState
+	endpointsMu sync.Mutex
+	mu          sync.RWMutex
+	conns       map[string]*connection
+	reserved    atomic.Int64
+	closed      atomic.Bool
 
 	upgrader websocket.Upgrader
 
-	acceptedConnections atomic.Uint64
-	rejectedConnections atomic.Uint64
-	receivedMessages    atomic.Uint64
-	receivedBytes       atomic.Uint64
-	sentMessages        atomic.Uint64
-	sentBytes           atomic.Uint64
-	droppedMessages     atomic.Uint64
-	callbackErrors      atomic.Uint64
-	authOutcomes        authOutcomeCounters
+	acceptedConnections           atomic.Uint64
+	rejectedConnections           atomic.Uint64
+	receivedMessages              atomic.Uint64
+	receivedBytes                 atomic.Uint64
+	sentMessages                  atomic.Uint64
+	sentBytes                     atomic.Uint64
+	droppedMessages               atomic.Uint64
+	callbackErrors                atomic.Uint64
+	callbackOutboxFull            atomic.Uint64
+	callbackOutboxAdmissionErrors atomic.Uint64
+	callbackUnpersistedFailures   atomic.Uint64
+	authOutcomes                  authOutcomeCounters
 }
 
 // NewManager creates a managed realtime owner. Call Close during daemon
@@ -406,28 +437,94 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	if e.CheckOrigin == nil && len(e.AllowedOrigins) > 0 {
 		e.CheckOrigin = checkAllowedOrigins(e.AllowedOrigins)
 	}
-	next := &endpointState{Endpoint: e, reserved: new(atomic.Int64)}
-	for {
-		prev, loaded := m.endpoints.LoadOrStore(e.ID, next)
-		if !loaded {
-			return nil
+	m.endpointsMu.Lock()
+	defer m.endpointsMu.Unlock()
+	updater, canUpdateCallbacks := m.hooks.(interface {
+		updateCallbackAuthToken(string, string) error
+	})
+	if existing, ok := m.endpoints.Load(e.ID); ok {
+		// Reconciliation updates the immutable policy snapshot without
+		// resetting the count held by connections admitted under an older one.
+		state := existing.(*endpointState)
+		state.gate.Lock()
+		defer state.gate.Unlock()
+		if canUpdateCallbacks {
+			if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+				return err
+			}
 		}
-		// Replace the definition but keep the live-connection count;
-		// a fresh counter would let every re-registration admit another
-		// MaxConnections on top of the connections still open.
-		next.reserved = prev.(*endpointState).reserved
-		if m.endpoints.CompareAndSwap(e.ID, prev, next) {
-			return nil
+		previous := state.config.Load()
+		state.config.Store(&e)
+		if previous == nil || previous.CallbackAuthToken != e.CallbackAuthToken {
+			m.mu.RLock()
+			for _, conn := range m.conns {
+				if conn.state == state {
+					conn.callbackAuth.Store(&callbackAuthSnapshot{token: e.CallbackAuthToken})
+				}
+			}
+			m.mu.RUnlock()
 		}
+		return nil
+	}
+	if canUpdateCallbacks {
+		if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+			return err
+		}
+	}
+	state := &endpointState{reserved: new(atomic.Int64)}
+	state.config.Store(&e)
+	m.endpoints.Store(e.ID, state)
+	return nil
+}
+
+// RemoveEndpoint revokes admission and closes existing sockets. A deletion or
+// disable is a security boundary, including for clients already connected.
+func (m *Manager) RemoveEndpoint(id string) {
+	if m == nil {
+		return
+	}
+	m.endpointsMu.Lock()
+	value, ok := m.endpoints.Load(id)
+	if ok {
+		state := value.(*endpointState)
+		state.gate.Lock()
+		state.revoked.Store(true)
+		m.endpoints.Delete(id)
+		state.gate.Unlock()
+	}
+	m.endpointsMu.Unlock()
+	if updater, ok := m.hooks.(interface{ removeCallbackAuthToken(string) }); ok {
+		updater.removeCallbackAuthToken(id)
+	}
+	m.mu.RLock()
+	connections := make([]*connection, 0)
+	for _, c := range m.conns {
+		if ok && c.state == value.(*endpointState) {
+			connections = append(connections, c)
+		}
+	}
+	m.mu.RUnlock()
+	for _, c := range connections {
+		// Revocation must not wait for a slow client's control-frame write.
+		// Closing the transport unblocks the read pump and persists its
+		// disconnect callback through the normal lifecycle path.
+		c.terminate(websocket.ClosePolicyViolation, "endpoint removed")
 	}
 }
 
-// RemoveEndpoint stops new connections for an endpoint. Existing connections
-// are left alive until their owner or application explicitly closes them.
-func (m *Manager) RemoveEndpoint(id string) {
-	if m != nil {
-		m.endpoints.Delete(id)
+// EndpointIDs returns the node-local registration inventory without exposing
+// credentials or policy. The control plane compares it to durable intent.
+func (m *Manager) EndpointIDs() []string {
+	if m == nil {
+		return nil
 	}
+	ids := make([]string, 0)
+	m.endpoints.Range(func(key, _ any) bool {
+		ids = append(ids, key.(string))
+		return true
+	})
+	sort.Strings(ids)
+	return ids
 }
 
 // Handler returns the HTTP handler mounted at ManagedPathPrefix.
@@ -456,7 +553,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := value.(*endpointState)
-	endpoint := state.Endpoint
+	endpoint := *state.config.Load()
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
 	switch endpoint.ClientAuth.Mode {
@@ -518,11 +615,22 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.rejectedConnections.Add(1)
 		return
 	}
-	conn := m.addConnection(endpoint, principal, ws)
+	state.gate.Lock()
+	if state.revoked.Load() {
+		state.gate.Unlock()
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed"), time.Now().Add(m.cfg.WriteWait))
+		_ = ws.Close()
+		return
+	}
+	conn := m.addConnection(state, endpoint, principal, ws)
+	state.gate.Unlock()
 	m.runConnection(r.Context(), conn)
 }
 
 func (m *Manager) tryReserve(state *endpointState) bool {
+	if state.revoked.Load() {
+		return false
+	}
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
@@ -531,7 +639,7 @@ func (m *Manager) tryReserve(state *endpointState) bool {
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
-				if endpointCurrent >= int64(state.MaxConnections) {
+				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
 					m.reserved.Add(-1)
 					return false
 				}
@@ -586,7 +694,7 @@ func endpointIDFromPath(path string) (string, bool) {
 	return rest, true
 }
 
-func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websocket.Conn) *connection {
+func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
@@ -602,10 +710,14 @@ func (m *Manager) addConnection(endpoint Endpoint, principal string, ws *websock
 		},
 		ws:       ws,
 		endpoint: endpoint,
+		state:    state,
 		m:        m,
 		outbound: make(chan Message, m.cfg.OutboundQueue),
 		done:     make(chan struct{}),
 		channels: make(map[string]struct{}),
+	}
+	if current := state.config.Load(); current != nil {
+		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
 	}
 	m.mu.Lock()
 	m.conns[id] = conn
@@ -631,7 +743,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	}
 	connect.CallbackURL = c.endpoint.CallbackURL
 	connect.CallbackPath = c.endpoint.ConnectPath
-	connect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	connect.CallbackAuthToken = c.currentCallbackAuthToken()
 	accepted, err := m.callConnect(ctx, connect)
 	if err != nil {
 		m.callbackErrors.Add(1)
@@ -649,7 +761,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	// 30s and 10s respectively).
 	_ = c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 	c.ws.SetPongHandler(func(string) error {
-		return c.ws.SetReadDeadline(time.Now().Add(m.cfg.PongWait))
+		// The next ping arrives after Heartbeat; PongWait alone would
+		// disconnect a healthy idle client between heartbeats.
+		return c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 	})
 
 	for {
@@ -680,14 +794,28 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		}
 		event.CallbackURL = c.endpoint.CallbackURL
 		event.CallbackPath = c.endpoint.MessagePath
-		event.CallbackAuthToken = c.endpoint.CallbackAuthToken
+		event.CallbackAuthToken = c.currentCallbackAuthToken()
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
-		if err := m.hooks.Message(callbackCtx, event); err != nil {
-			m.callbackErrors.Add(1)
-		}
+		callbackErr := m.hooks.Message(callbackCtx, event)
 		cancel()
+		if callbackErr != nil {
+			m.callbackErrors.Add(1)
+			if errors.Is(callbackErr, ErrCallbackNotPersisted) {
+				if errors.Is(callbackErr, ErrCallbackOutboxFull) {
+					m.callbackOutboxFull.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
+				} else if errors.Is(callbackErr, ErrCallbackOutboxAdmission) {
+					m.callbackOutboxAdmissionErrors.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback could not be persisted")
+				} else {
+					m.callbackUnpersistedFailures.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback delivery unavailable")
+				}
+				return
+			}
+		}
 	}
 }
 
@@ -738,11 +866,14 @@ func (c *connection) write(msg Message) error {
 }
 
 func (m *Manager) removeConnection(ctx context.Context, c *connection) {
+	c.state.gate.Lock()
 	m.mu.Lock()
 	if current, ok := m.conns[c.info.ID]; ok && current == c {
 		delete(m.conns, c.info.ID)
 	}
+	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
+	c.state.gate.Unlock()
 	c.closeOne.Do(func() {
 		close(c.done)
 		_ = c.ws.Close()
@@ -765,12 +896,28 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	}
 	disconnect.CallbackURL = c.endpoint.CallbackURL
 	disconnect.CallbackPath = c.endpoint.DisconnectPath
-	disconnect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
+		if errors.Is(err, ErrCallbackNotPersisted) {
+			if errors.Is(err, ErrCallbackOutboxFull) {
+				m.callbackOutboxFull.Add(1)
+			} else if errors.Is(err, ErrCallbackOutboxAdmission) {
+				m.callbackOutboxAdmissionErrors.Add(1)
+			} else {
+				m.callbackUnpersistedFailures.Add(1)
+			}
+		}
 	}
+}
+
+func (c *connection) currentCallbackAuthToken() string {
+	if current := c.callbackAuth.Load(); current != nil {
+		return current.token
+	}
+	return ""
 }
 
 func (c *connection) close(code int, reason string) error {
@@ -786,6 +933,14 @@ func (c *connection) close(code int, reason string) error {
 		}
 	})
 	return err
+}
+
+func (c *connection) terminate(code int, reason string) {
+	c.closeOne.Do(func() {
+		c.recordClose(code, reason)
+		close(c.done)
+		_ = c.ws.Close()
+	})
 }
 
 func (c *connection) recordClose(code int, reason string) {
@@ -884,21 +1039,17 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		return 0, ErrInvalidChannel
 	}
 	value, endpointRegistered := m.endpoints.Load(endpointID)
-	maxMessageBytes := m.cfg.MaxMessageBytes
-	if endpointRegistered {
-		maxMessageBytes = value.(*endpointState).MaxMessageBytes
+	if !endpointRegistered || value.(*endpointState).revoked.Load() {
+		return 0, ErrEndpointNotFound
 	}
+	state := value.(*endpointState)
+	maxMessageBytes := state.config.Load().MaxMessageBytes
 	m.mu.RLock()
 	connections := make([]string, 0, len(m.conns))
-	endpointHasConnection := false
 	for id, c := range m.conns {
-		if c.info.EndpointID != endpointID {
+		if c.state != state {
 			continue
 		}
-		if !endpointRegistered && !endpointHasConnection {
-			maxMessageBytes = c.endpoint.MaxMessageBytes
-		}
-		endpointHasConnection = true
 		c.mu.RLock()
 		_, subscribed := c.channels[channel]
 		c.mu.RUnlock()
@@ -907,12 +1058,6 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 		}
 	}
 	m.mu.RUnlock()
-	// Removing an endpoint only stops new handshakes; existing sockets retain
-	// their endpoint configuration and remain publishable until closed. An
-	// unknown endpoint with no live sockets is still reported as not found.
-	if !endpointRegistered && !endpointHasConnection {
-		return 0, ErrEndpointNotFound
-	}
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return 0, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
@@ -939,6 +1084,9 @@ func (m *Manager) connection(id string) (*connection, bool) {
 	m.mu.RLock()
 	c, ok := m.conns[id]
 	m.mu.RUnlock()
+	if ok && c.state.revoked.Load() {
+		return nil, false
+	}
 	return c, ok
 }
 
@@ -974,21 +1122,34 @@ func (m *Manager) Stats() Stats {
 		current = 0
 	}
 	stats := Stats{
-		CurrentConnections:  uint64(current),
-		AcceptedConnections: m.acceptedConnections.Load(),
-		RejectedConnections: m.rejectedConnections.Load(),
-		ReceivedMessages:    m.receivedMessages.Load(),
-		ReceivedBytes:       m.receivedBytes.Load(),
-		SentMessages:        m.sentMessages.Load(),
-		SentBytes:           m.sentBytes.Load(),
-		DroppedMessages:     m.droppedMessages.Load(),
-		CallbackErrors:      m.callbackErrors.Load(),
+		CurrentConnections:            uint64(current),
+		AcceptedConnections:           m.acceptedConnections.Load(),
+		RejectedConnections:           m.rejectedConnections.Load(),
+		ReceivedMessages:              m.receivedMessages.Load(),
+		ReceivedBytes:                 m.receivedBytes.Load(),
+		SentMessages:                  m.sentMessages.Load(),
+		SentBytes:                     m.sentBytes.Load(),
+		DroppedMessages:               m.droppedMessages.Load(),
+		CallbackErrors:                m.callbackErrors.Load(),
+		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
+		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
+		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()
 		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
 		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
+		stats.CallbackPendingCapacityBytes = uint64(maxInt64(outbox.CapacityBytes, 0))
+		stats.CallbackReplayReady = uint64(maxInt(outbox.ReplayReady, 0))
+		stats.CallbackReplayDelayed = uint64(maxInt(outbox.ReplayDelayed, 0))
+		stats.CallbackReplayAttempts = outbox.ReplayAttempts
+		stats.CallbackReplayDeliveries = outbox.ReplayDeliveries
+		stats.CallbackOldestPendingAgeSeconds = outbox.OldestPendingAgeSeconds
 		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))
+		stats.CallbackDeadLetterBytes = uint64(maxInt64(outbox.DeadLetterBytes, 0))
+		stats.CallbackDeadLetterCapacityBytes = uint64(maxInt64(outbox.DeadLetterCapacityBytes, 0))
+		stats.CallbackDeadLetterEvictions = outbox.DeadLetterEvictions
+		stats.CallbackDeadLetterLastEvictionUnix = outbox.DeadLetterLastEvictionUnix
 	}
 	return stats
 }

@@ -524,6 +524,15 @@ func TestRolesForBoxIsSubsetOfRoles(t *testing.T) {
 	}
 }
 
+func TestComputeOnlyRolesIncludeGitHubdClientLeaf(t *testing.T) {
+	for _, role := range RolesForBox("compute-only") {
+		if role.Directory == "imaged" && role.Filename == "githubd-client" && role.Kind == KindClient {
+			return
+		}
+	}
+	t.Fatal("compute-only PKI set is missing imaged/githubd-client")
+}
+
 // TestLeafPathsRoundTrip pins the path helper: every Role's
 // LeafPaths() must produce a stable suffix so per-daemon TOML
 // references like `tls_cert_path = "/etc/faas/tls/<dir>/<file>.crt"`

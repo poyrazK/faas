@@ -672,12 +672,13 @@
             {{if eq .Data.RequestAnalytics.GroupBy "route"}}
               {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>
+              <p class="muted">Expand a route to see its top-five deployment split. Estimated compute is allocated by request share, not billed per route; CPU comparisons are advisory, require 20 measured requests per revision, and are available only for supported runtimes.</p>
               <table>
                 <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Cold-request p95</th><th>Wake boot p95</th><th>Guest runtime p50/p95</th><th>Guest CPU avg/p95</th><th>Peak guest RSS</th><th>Dependency waits (sampled)</th><th>Trend</th><th>Explore</th></tr></thead>
                 <tbody>
                   {{range .Data.RequestAnalytics.Routes}}
                     <tr>
-                      <td><code>{{.Route}}</code></td>
+                      <td><code>{{.Route}}</code>{{if or .DeploymentObservations (gt .OtherDeploymentRequests 0)}}<details><summary>Deployment compute</summary><ul>{{range .DeploymentObservations}}<li>{{if .Tag}}<code>{{.Tag}}</code>{{else}}<code>{{printf "%.12s" .Revision}}</code>{{end}}: {{.Requests}} {{if eq .Requests 1}}request{{else}}requests{{end}} · €{{.EstimatedComputeEUR}} estimated{{if .GuestCPUAvailable}} · {{.GuestCPUAvgMS}} ms CPU avg ({{.GuestCPUMeasuredRequests}} measured){{if .GuestCPUChangeAvailable}} · {{if gt .GuestCPUChangePct 0.0}}+{{end}}{{printf "%.1f" .GuestCPUChangePct}}% vs {{.GuestCPUComparedTo}}{{if .GuestCPURegression}} · <strong>⚠ CPU/request regression</strong>{{end}}{{end}}{{end}}</li>{{end}}{{if gt .OtherDeploymentRequests 0}}<li>Other deployments: {{.OtherDeploymentRequests}} {{if eq .OtherDeploymentRequests 1}}request{{else}}requests{{end}} · €{{.OtherDeploymentComputeEUR}} estimated</li>{{end}}</ul></details>{{end}}</td>
                       <td>{{.Method}}</td>
                       <td>{{.Requests}}</td>
                       <td>{{printf "%.2f" .RequestSharePct}}%</td>

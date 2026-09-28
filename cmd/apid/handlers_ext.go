@@ -1409,7 +1409,32 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
-	updated, err := s.store.UpdateApp(r.Context(), app.ID, params)
+	configActivityAtomic := false
+	var configActivityOutboxID int64
+	var updated state.App
+	var err error
+	if mutationStore, ok := s.store.(state.OrgActivityAppConfigMutationStore); ok {
+		activity := newAppLifecycleActivity(r, acct, "app.config_updated", "app.config_updated", nil)
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			configActivityAtomic = true
+			updated, configActivityOutboxID, err = mutationStore.UpdateAppWithActivity(r.Context(), app.ID, params, prepared,
+				func(before, after state.App) (json.RawMessage, bool, error) {
+					changes := appConfigActivityChangesForUpdate(req, before, after, acct.Plan, callerPolicySet, callScopesSet, lifecycleChanged)
+					if len(changes) == 0 {
+						return nil, false, nil
+					}
+					return activityData(map[string]any{"changes": changes}), true, nil
+				})
+		} else {
+			if s.log != nil {
+				s.log.Warn("activity: prepare app config update", "app", app.ID, "err", prepareErr)
+			}
+			updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
+		}
+	} else {
+		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		return
@@ -1591,6 +1616,17 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"old":    oldApp,
 		"new":    newApp,
 	})
+	if changes := appConfigActivityChanges(oldApp, newApp); len(changes) > 0 && !configActivityAtomic {
+		activity := newAppLifecycleActivity(r, acct, "app.config_updated", "app.config_updated", map[string]any{
+			"changes": changes,
+		})
+		activity.ResourceID = updated.ID
+		activity.ResourceLabel = updated.Slug
+		s.recordAppActivity(r.Context(), r, acct, updated, activity)
+	}
+	if configActivityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), configActivityOutboxID)
+	}
 	// Issue #470 / PR C / ADR-074: emit a second audit row when the
 	// warm-snapshot opt-in flips true → false. The app.updated
 	// row already carries the old/new snapshot of warm_snapshot_
@@ -1782,7 +1818,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
-	parked, err := s.store.ScheduleAppDeletion(r.Context(), app.ID, graceUntil)
+	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
@@ -1817,7 +1853,7 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such app")
 		return
 	}
-	restored, err := s.store.RestoreApp(r.Context(), app.ID)
+	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
@@ -1990,7 +2026,8 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 //     for Hobby/Free.
 //  5. Call store.UpdateDeploymentTraffic (atomic, with FOR UPDATE
 //     lock on live rows + Σ = 100 invariant check via
-//     RedistributeTraffic largest-remainder — issue #556 PR-C).
+//     RedistributeTraffic largest-remainder — issue #556 PR-C). An active
+//     managed canary returns 409 before traffic, audit, or notify writes.
 //  6. Audit emit deployment.traffic_percent_changed with
 //     {app, deployment, traffic_percent, prev} payload.
 //  7. pg_notify `deployment_changed` with kind="traffic" so the
@@ -2085,6 +2122,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
+		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
+			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",
@@ -2296,7 +2335,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
 	activity := state.OrgActivity{
-		Kind: "deploy.rolled_back", SourceType: "rollback", SourceID: activitySourceID(r, target.ID),
+		Kind: "deploy.rollback_requested", SourceType: "rollback.requested", SourceID: activitySourceID(r, target.ID),
 		Data: activityData(map[string]any{"from": current.ID, "to": target.ID, "mode": mode, "phase": "readiness_requested"}),
 	}
 	if targetID, err := uuid.Parse(target.ID); err == nil {
@@ -2761,19 +2800,42 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
 		return
 	}
+	type environmentQuotaCreator interface {
+		CreateCustomDomainInEnvironmentIfUnderQuota(context.Context, string, string, string, string, int, int) (state.CustomDomain, error)
+	}
+	environmentCreator, hasEnvironmentCreator := s.store.(environmentQuotaCreator)
+	if environmentID != "" && !hasEnvironmentCreator {
+		api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
+		return
+	}
+	createDomain := func(ctx context.Context) (state.CustomDomain, error) {
+		if environmentID != "" {
+			return environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, domain, app.ID, environmentID, token, perApp, perAccount)
+		}
+		return creator.CreateCustomDomainIfUnderQuota(ctx, domain, app.ID, token, perApp, perAccount)
+	}
+	activity := state.OrgActivity{
+		Kind: "domain.added", ResourceType: "domain", ResourceID: domain,
+		ResourceLabel: domain, SourceType: "domain.added", SourceID: activitySourceID(r, domain),
+		Data: activityData(map[string]any{"app_id": app.ID, "environment": req.Environment}),
+	}
 	var d state.CustomDomain
-	if environmentID != "" {
-		type environmentQuotaCreator interface {
-			CreateCustomDomainInEnvironmentIfUnderQuota(context.Context, string, string, string, string, int, int) (state.CustomDomain, error)
+	var activityOutboxID int64
+	var activityMutationAtomic bool
+	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			activityMutationAtomic = true
+			if environmentID != "" {
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount, prepared)
+			} else {
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainIfUnderQuotaWithActivity(r.Context(), domain, app.ID, token, perApp, perAccount, prepared)
+			}
+		} else {
+			d, err = createDomain(r.Context())
 		}
-		environmentCreator, supported := s.store.(environmentQuotaCreator)
-		if !supported {
-			api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
-			return
-		}
-		d, err = environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount)
 	} else {
-		d, err = creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+		d, err = createDomain(r.Context())
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
@@ -2784,9 +2846,18 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			s.notFound(w, "no such app or project environment")
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Domain taken", err.Error()))
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Domain taken", err.Error()))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
 		return
+	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else if !activityMutationAtomic {
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyDomainChanged, `{"kind":"created","domain":"`+d.Domain+`"}`)
 	// d.Domain came in via the HTTP body (bearer-token authenticated).
@@ -2803,11 +2874,6 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"app_id":      d.AppID,
 		"domain":      d.Domain,
 		"environment": req.Environment,
-	})
-	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
-		Kind: "domain.added", ResourceType: "domain", ResourceID: d.Domain,
-		ResourceLabel: d.Domain, SourceType: "domain.added", SourceID: activitySourceID(r, d.Domain),
-		Data: activityData(map[string]any{"app_id": d.AppID, "environment": req.Environment}),
 	})
 	writeJSON(w, http.StatusAccepted, s.domainResponseWithDefault(r.Context(), d))
 }
@@ -2902,17 +2968,36 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such domain")
 		return
 	}
-	if err := s.store.DeleteCustomDomain(r.Context(), domain); err != nil {
+	activity := state.OrgActivity{
+		Kind: "domain.removed", ResourceType: "domain", ResourceID: d.Domain,
+		ResourceLabel: d.Domain, SourceType: "domain.removed", SourceID: activitySourceID(r, d.Domain),
+		Data: activityData(map[string]any{"app_id": d.AppID}),
+	}
+	var activityOutboxID int64
+	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			activityOutboxID, err = mutationStore.DeleteCustomDomainWithActivity(r.Context(), domain, prepared)
+		} else {
+			err = s.store.DeleteCustomDomain(r.Context(), domain)
+		}
+	} else {
+		err = s.store.DeleteCustomDomain(r.Context(), domain)
+	}
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete domain"))
 		return
 	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else {
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
+	}
 	_ = s.notif.Notify(r.Context(), db.NotifyDomainChanged, `{"kind":"deleted","domain":"`+domain+`"}`)
 	s.log.Info("domain deleted", "domain", domain, "account", acct.ID)
-	// IAM-4 (issue #291): record the domain detachment. Symmetric
-	// to domain.added; like the cron family, the pair is what an
-	// operator queries ("when did this domain get attached and
-	// later detached?"). data carries the low-cased canonical
-	// form for the same dashboard-join reason.
+	// IAM-4 (issue #291): record the domain detachment in the legacy
+	// audit log as well as the organization activity timeline. data
+	// carries the low-cased canonical form for dashboard joins.
 	s.audit.Emit(r.Context(), "domain.removed", &acct.ID, map[string]any{
 		"app_id": d.AppID,
 		"domain": domain,
@@ -3958,7 +4043,12 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var k state.APIKey
 	switch {
 	case perr == nil:
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil)
+		activityData := map[string]any{"scopes": scopes}
+		if expiresAt != nil {
+			activityData["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+		}
+		activity := newOrgAPIKeyActivity(r, acct, org.ID, "api_key.created", activityData)
+		k, err = s.createOrgAPIKeyWithActivity(r.Context(), acct, org.ID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil, activity)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback path (pre-00127 fixtures). The
 		// 5-arg CreateAPIKeyWithExpiry is the production
@@ -4060,7 +4150,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	if _, err := s.revokeAPIKey(r.Context(), acct, id); err != nil {
+	if _, err := s.revokeAPIKey(r, acct, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
 			return
@@ -4075,13 +4165,24 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // revocation surfaces. Keeping notification and audit emission here ensures
 // both entry points produce the same authentication-cache invalidation and
 // key.revoked event.
-func (s *server) revokeAPIKey(ctx context.Context, acct state.Account, id string) (state.APIKey, error) {
+func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (state.APIKey, error) {
+	ctx := r.Context()
+	prior, err := s.store.GetAPIKey(ctx, acct.ID, id)
+	if err != nil {
+		return state.APIKey{}, err
+	}
 	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
 	// stays in the table for audit lineage (rotated_from_id chain
 	// preserves the predecessor's id; revoced_at marks the kill).
 	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
 	// is a "update if not revoked" and returns the row either way.
-	updated, err := s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	var updated state.APIKey
+	if prior.OrgID != "" {
+		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+		updated, err = s.revokeOrgAPIKeyWithActivity(ctx, prior.OrgID, id, activity)
+	} else {
+		updated, err = s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	}
 	if err != nil {
 		return state.APIKey{}, err
 	}
@@ -4145,6 +4246,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	} else {
 		graceWindow = time.Duration(*gw) * 24 * time.Hour
 	}
+	var graceWindowDays int
+	if graceWindow > 0 {
+		graceWindowDays = int(graceWindow / (24 * time.Hour))
+	}
 
 	// Mint the new plaintext + hash BEFORE the rotation so the
 	// store op can persist the real hash. The handler is the only
@@ -4186,7 +4291,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
 	parentID := oldKey.ID
-	newKey, oldKey, err := s.store.RotateOrgAPIKeyWithProvenance(r.Context(), oldKey.OrgID, id, hash, "", graceWindow, bindIP, bindUA, &parentID)
+	activity := newOrgAPIKeyActivity(r, acct, oldKey.OrgID, "api_key.rotated", map[string]any{
+		"old_key_id": id, "grace_window_days": graceWindowDays,
+	})
+	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), oldKey.OrgID, id, hash, "", graceWindow, bindIP, bindUA, &parentID, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
@@ -4201,10 +4309,6 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
-	}
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
 		"new_key_id":         newKey.ID,

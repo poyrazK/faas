@@ -52,6 +52,7 @@ type Handler struct {
 	IdentityVerifier       IdentityVerifier
 	CredentialResolver     ManagedCredentialResolver
 	managedAuthorization   map[string]string
+	responseCache          *outboundResponseCache
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -124,10 +125,15 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		client.Transport = http.DefaultTransport
 	}
 	client.Transport = newDependencyTransport(client.Transport)
+	responseCache, err := newOutboundResponseCache()
+	if err != nil {
+		return nil, errors.New("outbound response cache key could not be initialized")
+	}
 	return &Handler{
 		Resolver:               resolver,
 		Backend:                backend,
 		Client:                 client,
+		responseCache:          responseCache,
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
@@ -213,10 +219,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
-		DailyRequestLimit:        integration.DailyRequestLimit,
-		BindingAppID:             bindingAppID,
-		BindingDailyRequestLimit: copyInt64Pointer(bindingDailyRequestLimit),
-		LeaseTTL:                 integration.RequestTimeout,
+		DailyRequestLimit:              integration.DailyRequestLimit,
+		BindingAppID:                   bindingAppID,
+		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
+		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      integration.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
+		LeaseTTL:                       integration.RequestTimeout,
 	})
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
@@ -294,11 +303,99 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	resp, err := h.Client.Do(upstreamReq)
+	cacheEligible := outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
+	cacheKey := ""
+	var resp *http.Response
+	attempts := 0
+	cacheHit := false
+	if cacheEligible {
+		cacheKey = h.responseCache.key(integration.ID, appID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
+		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
+			resp = cached
+			cacheHit = true
+			h.Metrics.ObserveCache(metricIntegrationID, "hit")
+		} else {
+			h.Metrics.ObserveCache(metricIntegrationID, "miss")
+		}
+	}
+	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
+	if !cacheHit {
+		cooldown, ok := h.Backend.(ProviderCooldownBackend)
+		if !ok {
+			h.Metrics.ObserveProviderCooldown(metricIntegrationID, "unavailable")
+		} else {
+			gate, gateErr := cooldown.AllowProviderRequest(r.Context(), integration.ID, integration.PolicyRevision)
+			if gateErr != nil {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "state_error")
+				h.Metrics.ObserveRejection(metricIntegrationID, "provider_cooldown_unavailable")
+				w.Header().Set("X-Gregale-Outbound-Rejection", "provider_cooldown_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_cooldown_unavailable", "Outbound provider cooldown state is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "blocked")
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonProviderCooldown)
+				dependencySpan.SetStatus(codes.Error, "provider requested cooldown")
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonProviderCooldown)
+				writeProblem(w, http.StatusTooManyRequests, "outbound_provider_cooldown", "Outbound provider requested a cooldown", retryAfterSeconds(gate.RetryAfter))
+				return
+			}
+		}
+		var breaker CircuitBreakerBackend
+		breakerProbe := false
+		if decision.CircuitBreakerFailureThreshold > 0 {
+			var ok bool
+			breaker, ok = h.Backend.(CircuitBreakerBackend)
+			if !ok {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			gate, gateErr := breaker.AllowCircuit(r.Context(), integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds)
+			if gateErr != nil {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonCircuitOpen)
+				h.Metrics.ObserveCircuit(metricIntegrationID, "open_rejected")
+				retry := retryAfterSeconds(gate.RetryAfter)
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonCircuitOpen)
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_open", "Outbound provider is temporarily unavailable", retry)
+				return
+			}
+			breakerProbe = gate.Probe
+			if breakerProbe {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "probe")
+			} else {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
+			}
+		}
+		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, integration.ID, metricIntegrationID,
+			integration.PolicyRevision, integration.MaxRetries, decision.RetryBudgetPerMinute)
+		if breaker != nil {
+			outcome := outboundCircuitOutcome(resp, err)
+			if outcome != CircuitOutcomeNeutral {
+				h.Metrics.ObserveCircuit(metricIntegrationID, string(outcome))
+			}
+			observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			if recordErr := breaker.RecordCircuitOutcome(observeCtx, integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds, outcome); recordErr != nil {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+			}
+			cancel()
+		}
+		if err == nil && cacheEligible {
+			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
+		}
+	}
+	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
-		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -311,7 +408,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
-	h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
 	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))

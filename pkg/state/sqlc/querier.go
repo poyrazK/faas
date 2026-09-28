@@ -66,7 +66,9 @@ type Querier interface {
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	// Change only the debugger workflow state for one app-scoped observation.
-	// The handler maps reopen to active before calling this query.
+	// The handler maps reopen to active before calling this query. Reopening a
+	// non-active observation starts a new detection lifecycle so the transition
+	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
@@ -1079,6 +1081,12 @@ type Querier interface {
 	// Top route/method rows for the customer analytics overview. `count` is
 	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
+	// Per-route deployment split for the customer analytics window. Routes are
+	// bounded to the same top-N surface as route analytics, and each route keeps
+	// only its top deployments by request count; the remaining revisions are
+	// folded into __other__ so the response cardinality is bounded by
+	// route_limit * (deployment_limit + 1).
+	RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteDeploymentParams) ([]RequestTelemetryAnalyticsByRouteDeploymentRow, error)
 	// Customer-facing request analytics over a bounded retention window.
 	// The recorder collapses identical requests into bounded latency-bucket
 	// rows with `count`, so all request/error/cold-boot totals and percentiles
@@ -1147,6 +1155,7 @@ type Querier interface {
 	// Publication is insert-only; retirement is the sole mutable transition.
 	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
+	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
@@ -1168,6 +1177,7 @@ type Querier interface {
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
+	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
@@ -1349,13 +1359,11 @@ type Querier interface {
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row
-	// per cron tick. Mirrors UpsertDoctorObservation's primary-key upsert
-	// shape (migrations/00313). first_detected_at is set on INSERT only;
-	// the ON CONFLICT clause does NOT touch it, so the column survives
-	// subsequent upserts and the dashboard shows "regression detected 4h
-	// ago" correctly. last_detected_at is refreshed to EXCLUDED on every
-	// pass; the column backs the `since=<duration>` filter on the dashboard
-	// and the GET /v1/apps/{slug}/debug/regressions endpoint.
+	// per cron tick. first_detected_at remains stable during one active
+	// lifecycle, then resets when a resolved regression is detected again
+	// (or a dismissal expires). The webhook trigger uses that timestamp as
+	// the detection transition's idempotency key. last_detected_at is
+	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
 }

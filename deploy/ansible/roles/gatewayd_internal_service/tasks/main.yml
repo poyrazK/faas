@@ -59,6 +59,16 @@
     create_home: false
     password: "*"
 
+# The callback spool contains customer payloads and callback bearer tokens.
+# Keep it on the host boot disk and private to the realtimed service user.
+- name: gatewayd_internal_service — create persistent realtime callback spool
+  ansible.builtin.file:
+    path: /var/lib/faas/realtime-callbacks
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0700"
+
 # Customer log drains use a gateway-local durable outbox. Keep it separate
 # from the runtime archive and grant only gatewayd-internal write access via
 # the unit's ReadWritePaths= allowlist.

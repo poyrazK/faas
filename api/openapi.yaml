@@ -4107,6 +4107,131 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantActivationResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/hostname-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose delegated hostname policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantHostnamePolicy
+      summary: Read the downstream customer's hostname delegation policy.
+      description: Empty suffixes and a zero limit mean self-service hostname creation is disabled. Tenant-surface feature and plan gates still apply.
+      responses:
+        '200':
+          description: Current hostname delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantHostnamePolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantHostnamePolicy
+      summary: Replace a downstream customer's hostname delegation policy.
+      description: Requires deploy:write and recent MFA. Suffixes are canonical DNS names; delegation is disabled with an empty array and a zero limit. Tenant-bound access tokens do not gain these account-owner permissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantHostnamePolicyRequest' }
+      responses:
+        '200':
+          description: Updated hostname delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantHostnamePolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid suffixes or hostname limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/platform-tenants/{id}/credential-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose downstream credential delegation policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantCredentialPolicy
+      summary: Read a customer's delegated credential policy.
+      description: An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+      responses:
+        '200':
+          description: Current credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantCredentialPolicy
+      summary: Replace a customer's delegated credential policy.
+      description: Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantCredentialPolicyRequest' }
+      responses:
+        '200':
+          description: Updated credential delegation policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid scope set or per-consumer limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/platform-tenants/{id}/consumer-provisioning-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose downstream customer-provisioning policy is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantConsumerProvisioningPolicy
+      summary: Read a customer's self-service customer-provisioning policy.
+      responses:
+        '200':
+          description: Current customer-provisioning policy; absent policies are disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantConsumerProvisioningPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantConsumerProvisioningPolicy
+      summary: Replace a customer's self-service customer-provisioning policy.
+      description: Requires deploy:write and recent MFA. Provisioning is disabled with enabled=false and max_consumers=0; enabled policies require a 1-100000 customer cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantConsumerProvisioningPolicyRequest' }
+      responses:
+        '200':
+          description: Updated customer-provisioning policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantConsumerProvisioningPolicyResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid enablement and customer-cap combination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/platform-tenants/{id}/request-budget:
     parameters:
       - name: id
@@ -4665,8 +4790,8 @@ paths:
     post:
       tags: [platform-tenants]
       operationId: createPlatformTenantAccessToken
-      summary: Mint a tenant-bound read-only self-service credential.
-      description: The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+      summary: Mint a tenant-bound, explicitly scoped self-service credential.
+      description: The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service scopes. Credential management additionally requires the owner to enable a scope allowlist and per-consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
       requestBody:
         required: true
         content:
@@ -4708,6 +4833,201 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/activation:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfActivation
+      summary: Read this tenant's own redacted activation snapshot.
+      description: Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
+      responses:
+        '200':
+          description: Current activation state for the caller's linked surfaces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfActivationResponse' }
+
+  /v1/platform-tenant-self/consumers:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfConsumers
+      summary: List this tenant's linked consumers for credential management.
+      description: Requires platform_tenant:credentials:read. The tenant is derived from the bearer. The response omits app IDs and account-owned details.
+      responses:
+        '200':
+          description: Linked consumer identities belonging only to the caller's tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumersResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantSelfConsumer
+      summary: Create or replay a customer identity on a linked surface.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage and an owner-enabled provisioning policy. The tenant comes from the bearer; surface_id must already be linked and active. App and tenant IDs are never accepted from the request. An identical retry returns the original identity without consuming another slot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantSelfConsumerRequest' }
+      responses:
+        '201':
+          description: Customer identity created and linked atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        '200':
+          description: Identical request replayed; the existing identity is unchanged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: Tenant is inactive or the same app already has a conflicting identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/consumers/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenantSelfConsumers
+      summary: Onboard one customer across selected linked app surfaces.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage. The bearer supplies the tenant, while Gregale resolves each selected active, already-linked surface to its app. At most one surface per app may be selected. The batch is all-or-nothing, honors the owner's provisioning policy and tenant-wide cap, and safely replays existing identities. Set dry_run to validate and preview actions without mutation or consumer IDs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersRequest' }
+      responses:
+        '201':
+          description: One or more app-local customer identities were created atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersResponse' }
+        '200':
+          description: Dry-run preview or exact replay with no new identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantSelfConsumersResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Tenant is inactive or an app already has a conflicting customer identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/consumers/revoke:
+    post:
+      tags: [platform-tenants]
+      operationId: revokePlatformTenantSelfConsumers
+      summary: Revoke selected customers and all of their credentials atomically.
+      description: Requires a tenant-bound token with platform_tenant:consumers:manage. The tenant is derived from the bearer; consumer_ids must be IDs returned by this tenant's customer listing. Every ID is validated before any change. Revocation remains available when customer provisioning is disabled or the tenant is suspended. An exact retry is safe and reports zero newly revoked keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokePlatformTenantSelfConsumersRequest' }
+      responses:
+        '200':
+          description: Revoked customer identities and count of keys newly revoked by this request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfConsumerRevocationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/credentials:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfCredentials
+      summary: List this tenant's linked consumer-key metadata.
+      description: Requires platform_tenant:credentials:read. Plaintext and hashes are never returned.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum keys in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the next page.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: One bounded page of redacted key metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCredentialsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/credentials/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenantSelfCredentials
+      summary: Reconcile this tenant's downstream consumer keys.
+      description: Requires platform_tenant:credentials:manage. New keys must use an owner-allowed scope and fit the owner's active-key cap; revocation remains available even after delegation is disabled. Submit only client-generated SHA-256 hashes, never plaintext. Changes are atomic, account/tenant identity comes from the bearer, and responses contain metadata only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsRequest' }
+      responses:
+        '200':
+          description: Credential metadata after atomic tenant-scoped reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The owner disabled delegation, a requested scope is not permitted, or the per-consumer active-key ceiling would be exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/hostnames:
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantSelfHostname
+      summary: Request a hostname on one of the caller tenant's linked surfaces.
+      description: Requires platform_tenant:hostnames:manage. Hostnames must match the platform owner's delegated DNS suffix policy, remain within account/plan quotas, and pass DNS TXT ownership verification. The same request safely replays its pending challenge; the response is never cached.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantSelfHostnameRequest' }
+      responses:
+        '202':
+          description: Hostname intent accepted; DNS verification and certificate issuance are asynchronous.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfHostnameResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/platform-tenant-self/usage:
@@ -8572,8 +8892,8 @@ paths:
         Returns the project-level policy applied to source staging,
         pull-request previews, and preview-to-production internal service
         calls. A missing policy row resolves to the safe defaults for a new
-        project; projects created before preview service isolation was
-        introduced are migration-backed to the legacy allow_marked policy.
+        project. Legacy allow_marked compatibility rows are migrated to deny;
+        customers can explicitly opt back in when production calls are safe.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -10845,6 +11165,9 @@ paths:
         An optional expected_serving_deployment_id is checked under the
         same live-row locks before rebalance. A stale expectation returns
         409 `traffic_serving_changed` without changing traffic.
+        An in-flight managed canary owns the app's traffic weights; direct
+        traffic changes during `pending` or `rolling_out` return 409
+        `traffic_change_during_canary` without changing traffic.
       requestBody:
         required: true
         content:
@@ -10872,11 +11195,13 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — either the post-write Σ invariant check
-            tripped (`traffic_percent_sum_invalid`) or the optional
+            `409 Conflict` — the post-write Σ invariant check tripped
+            (`traffic_percent_sum_invalid`), the optional
             expected_serving_deployment_id was stale
-            (`traffic_serving_changed`). A stale expectation is checked
-            before any traffic write.
+            (`traffic_serving_changed`), or an in-flight managed canary
+            owns traffic (`traffic_change_during_canary`). The canary and
+            serving checks run before mutation; a sum-invariant failure
+            rolls back all tentative updates.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |
@@ -16534,7 +16859,7 @@ paths:
             schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
       responses:
         '200':
-          description: Number of owner queues that accepted the message.
+          description: Queued recipients and whether every active realtime node accepted the publish.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
@@ -20807,9 +21132,39 @@ components:
         burst: { type: integer, minimum: 1, maximum: 2000 }
         max_in_flight: { type: integer, minimum: 1, maximum: 1000 }
         request_timeout_ms: { type: integer, minimum: 1, maximum: 300000 }
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 2
+          default: 0
+          description: Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request timeout and count as one admission.
+        response_cache_ttl_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache directives can shorten or prohibit storage.
+        circuit_breaker_failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and requires circuit_breaker_open_seconds to be zero too.
+        circuit_breaker_open_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is allowed. Must be set with a nonzero failure threshold.
+        retry_budget_per_minute:
+          type: integer
+          minimum: 0
+          maximum: 3000
+          default: 0
+          description: Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling.
     PutOutboundRequestPolicyRequest:
       type: object
-      description: Replace all admission policy values for a customer-owned integration.
+      description: Replace admission policy values for a customer-owned integration.
       required: [request_policy]
       properties:
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
@@ -21980,7 +22335,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy, production_trigger]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -22002,8 +22357,13 @@ components:
             Controls calls from project previews to production internal
             services. `deny` rejects the call before discovery or wake-up;
             `allow_marked` permits it and marks the request as preview-origin
-            traffic. Projects created before this policy was introduced are
-            migration-backed to `allow_marked`.
+            traffic. Legacy projects are migrated to `deny`; `allow_marked`
+            requires an explicit policy update.
+        production_trigger:
+          type: string
+          enum: [webhook, actions]
+          default: webhook
+          description: The single production deploy authority; GitHub App PR previews continue in either mode.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -22020,6 +22380,9 @@ components:
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
+        production_trigger:
+          type: string
+          enum: [webhook, actions]
 
     GitHubInstallMutationRequest:
       description: |
@@ -22049,6 +22412,10 @@ components:
         default_branch: { type: string }
         repo_full_name: { type: string }
         production_branch: { type: string }
+        deploy_branches:
+          type: object
+          additionalProperties: { type: string }
+          description: Configured GitHub branch-to-deployment-scope mappings for the project.
         binding_id: { type: string }
         linked_at: { type: [string, "null"], format: date-time }
         last_reconciled_at: { type: [string, "null"], format: date-time }
@@ -22190,13 +22557,14 @@ components:
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
+      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, preview_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        preview_apps: { type: integer, description: "Maximum live pull-request preview apps, separate from production apps." }
         deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
@@ -23639,6 +24007,161 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantActivationSurfaceResponse' }
 
+    PlatformTenantSelfActivationHostnameResponse:
+      description: Hostname verification status for the tenant-bound downstream activation view; challenge material and raw errors are omitted.
+      type: object
+      required: [hostname, verified]
+      properties:
+        hostname: { type: string }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+
+    CreatePlatformTenantSelfHostnameRequest:
+      description: Add a DNS hostname to an existing surface already linked to the authenticated platform tenant.
+      type: object
+      required: [surface_id, hostname]
+      properties:
+        surface_id: { type: string, format: uuid }
+        hostname: { type: string, maxLength: 253, pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$' }
+
+    PlatformTenantSelfHostnameResponse:
+      description: A redacted hostname intent and DNS TXT challenge. DNS and certificate status remain asynchronous.
+      type: object
+      required: [surface_id, hostname, action, verified, txt_record]
+      properties:
+        surface_id: { type: string, format: uuid }
+        hostname: { type: string }
+        action: { type: string, enum: [created, unchanged] }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+        txt_record: { type: string, description: DNS TXT record name to publish for ownership proof. }
+        challenge_token: { type: string, description: Returned only while DNS ownership remains unverified; store securely and publish as the TXT value. }
+
+    PlatformTenantSelfActivationSurfaceResponse:
+      description: Redacted state for one surface linked to the caller's platform tenant.
+      type: object
+      required: [id, name, status, cert_state, ready, hostnames]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [pending, active, suspended] }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: string, format: date-time }
+        ready: { type: boolean }
+        latest_deployment:
+          $ref: '#/components/schemas/PlatformTenantSelfDeploymentResponse'
+        hostnames:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationHostnameResponse' }
+
+    PlatformTenantSelfDeploymentResponse:
+      description: Safe status of the latest deployment attempt for the surface's app. This is not a claim that the attempt is currently serving; IDs, source metadata, logs, and errors are omitted.
+      type: object
+      required: [status, started_at]
+      properties:
+        status: { type: string, enum: [pending, building, imaging, snapshotting, live, failed, superseded, cancelled] }
+        revision: { type: integer, format: int32, minimum: 1, description: Positive app revision when assigned. }
+        started_at: { type: string, format: date-time }
+
+    PlatformTenantSelfActivationResponse:
+      description: Current read-only activation snapshot for the tenant bound to the bearer; ready requires every linked surface to be ready.
+      type: object
+      required: [status, enabled, ready, surfaces]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+        enabled: { type: boolean }
+        ready: { type: boolean }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfActivationSurfaceResponse' }
+
+    PlatformTenantSelfConsumerResponse:
+      description: Minimal linked-consumer identity used to target tenant-managed credentials; app IDs and account metadata are omitted.
+      type: object
+      required: [consumer_id, external_ref, name, status]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, revoked] }
+
+    CreatePlatformTenantSelfConsumerRequest:
+      description: Create a customer identity on an active surface already linked to the token's tenant.
+      type: object
+      required: [surface_id, external_ref, name]
+      properties:
+        surface_id: { type: string, format: uuid }
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+
+    ApplyPlatformTenantSelfConsumersRequest:
+      description: All-or-nothing customer onboarding bundle across surfaces already linked to the token's tenant; no app or tenant identifier is accepted.
+      type: object
+      required: [external_ref, name, surface_ids]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        surface_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        dry_run: { type: boolean, default: false }
+
+    PlatformTenantSelfConsumerApplyItemResponse:
+      description: Result for one surface; a planned create omits consumer_id until the real apply runs.
+      type: object
+      required: [surface_id, external_ref, name, status, action]
+      properties:
+        surface_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active] }
+        action: { type: string, enum: [create, unchanged] }
+
+    ApplyPlatformTenantSelfConsumersResponse:
+      description: Redacted per-surface onboarding results. App and account identifiers are not returned.
+      type: object
+      required: [dry_run, consumers]
+      properties:
+        dry_run: { type: boolean }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerApplyItemResponse' }
+
+    PlatformTenantSelfConsumersResponse:
+      description: The linked consumer identities for the caller's tenant only.
+      type: object
+      required: [consumers]
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+
+    RevokePlatformTenantSelfConsumersRequest:
+      description: All-or-nothing batch of customer IDs from this tenant's linked-consumer inventory.
+      type: object
+      required: [consumer_ids]
+      properties:
+        consumer_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    PlatformTenantSelfConsumerRevocationResponse:
+      description: Revoked identities with the number of active keys newly revoked by this operation; exact retries return zero.
+      type: object
+      required: [consumers, revoked_keys]
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSelfConsumerResponse' }
+        revoked_keys: { type: integer, minimum: 0 }
+
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
       type: object
@@ -23672,6 +24195,49 @@ components:
           uniqueItems: true
           items: { type: string, enum: [read, write, admin] }
         expires_at: { type: string, format: date-time }
+
+    SetPlatformTenantCredentialPolicyRequest:
+      description: Explicit scopes and per-consumer key ceiling for tenant-bound credential self-service; empty scopes and zero disable it.
+      type: object
+      required: [allowed_scopes, max_keys_per_consumer]
+      properties:
+        allowed_scopes:
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+
+    PlatformTenantCredentialPolicyResponse:
+      description: Owner-configured scope allowlist and active-key ceiling for delegated credential management.
+      type: object
+      required: [tenant_id, enabled, allowed_scopes, max_keys_per_consumer]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        allowed_scopes:
+          type: array
+          items: { type: string, enum: [read, write, admin] }
+        max_keys_per_consumer: { type: integer, minimum: 0, maximum: 100 }
+        updated_at: { type: string, format: date-time }
+
+    SetPlatformTenantConsumerProvisioningPolicyRequest:
+      description: Owner-controlled enablement and total active-customer ceiling for a downstream tenant.
+      type: object
+      required: [enabled, max_consumers]
+      properties:
+        enabled: { type: boolean }
+        max_consumers: { type: integer, minimum: 0, maximum: 100000 }
+
+    PlatformTenantConsumerProvisioningPolicyResponse:
+      description: Owner-controlled self-service customer creation policy; an absent policy is disabled.
+      type: object
+      required: [tenant_id, enabled, max_consumers]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        max_consumers: { type: integer, minimum: 0, maximum: 100000 }
+        updated_at: { type: string, format: date-time }
 
     ApplyPlatformTenantCredentialsRequest:
       description: Additive key reconciliation and revocation in one transaction; provide at least one key or revocation.
@@ -23746,6 +24312,31 @@ components:
       properties:
         max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
         max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    SetPlatformTenantHostnamePolicyRequest:
+      description: Replace the tenant's domain delegation. Empty suffixes and zero max_hostnames disable tenant self-service.
+      type: object
+      required: [allowed_suffixes, max_hostnames]
+      properties:
+        allowed_suffixes:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, maxLength: 253, pattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$' }
+        max_hostnames: { type: integer, minimum: 0, maximum: 100 }
+
+    PlatformTenantHostnamePolicyResponse:
+      description: Owner-managed allowlist and total hostname cap for downstream self-service. An absent policy is disabled.
+      type: object
+      required: [tenant_id, enabled, allowed_suffixes, max_hostnames]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        allowed_suffixes:
+          type: array
+          items: { type: string }
+        max_hostnames: { type: integer, minimum: 0, maximum: 100 }
+        updated_at: { type: string, format: date-time }
 
     PlatformTenantRequestBudgetResponse:
       description: One customer's authoritative cross-app admitted-request budget and current UTC counters. Absent policy has configured=false and zero ceilings.
@@ -23839,7 +24430,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -23853,7 +24444,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -23870,7 +24461,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -24072,11 +24663,19 @@ components:
 
     CreatePlatformTenantWebhookRequest:
       type: object
-      description: Create a receiver for this tenant's finalized cross-app billing statements.
+      description: Create a receiver for this tenant's supported hostname, certificate, deployment, and finalized billing events.
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          description: Events delivered to this receiver. Defaults to platform_tenant.statement.finalized when omitted.
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          default: [platform_tenant.statement.finalized]
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -24086,7 +24685,7 @@ components:
 
     UpdatePlatformTenantWebhookRequest:
       type: object
-      description: Update a tenant statement receiver. Rotate secrets with the dedicated action.
+      description: Update a tenant event receiver. Its event filter is immutable; create a replacement to change subscribed events.
       minProperties: 1
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -24096,7 +24695,7 @@ components:
 
     PlatformTenantWebhookResponse:
       type: object
-      description: Tenant-scoped statement event receiver. The secret is never returned.
+      description: Tenant-scoped event receiver. The secret is never returned.
       required: [id, scope, platform_tenant_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -24107,7 +24706,10 @@ components:
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
           type: array
-          items: { type: string, enum: [platform_tenant.statement.finalized] }
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }
@@ -35289,8 +35891,32 @@ components:
           type: array
           description: "Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."
           items: { $ref: '#/components/schemas/RequestAnalyticsDependency' }
+        deployment_observations:
+          type: array
+          description: "At most the five highest-request deployments for this route/method, with request-share compute estimates and measured guest CPU comparisons against the preceding comparable revision."
+          items: { $ref: '#/components/schemas/RequestAnalyticsRouteDeploymentObservation' }
+        other_deployment_requests: { type: integer, format: int64, minimum: 0, description: "Route requests from deployments outside the top-five list." }
+        other_deployment_estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "This route's estimated compute value allocated to deployments outside the top-five list by request share." }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    RequestAnalyticsRouteDeploymentObservation:
+      type: object
+      description: "One route/method's bounded request and estimated-compute share for an immutable deployment. CPU comparisons are advisory, require at least 20 measured requests on both revisions, and remain sensitive to traffic mix."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents, guest_cpu_measured_requests, guest_cpu_regression]
+      properties:
+        deployment_id: { type: string, description: "Stable UUID identifying the immutable revision that served this route." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string, description: "RFC 3339 timestamp used to order same-route CPU comparisons." }
+        requests: { type: integer, format: int64, minimum: 0 }
+        request_share_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "This route/deployment cell's share of all observed app requests in the window." }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route/deployment cell by request share; not an invoice amount." }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, description: "Request-weighted mean measured guest CPU time for this route under this deployment; supported Linux one-shot runtimes only." }
+        guest_cpu_measured_requests: { type: integer, format: int64, minimum: 0 }
+        guest_cpu_change_pct: { type: number, format: double, description: "Change in measured mean guest CPU/request from the preceding comparable deployment for this same route/method." }
+        guest_cpu_compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID of the preceding comparable revision." }
+        guest_cpu_regression: { type: boolean, description: "True when measured guest CPU/request rose by at least 25% from the preceding comparable revision." }
 
     RequestAnalyticsDependency:
       type: object
@@ -38314,6 +38940,51 @@ components:
         finalized_at: { type: string, format: date-time }
       additionalProperties: false
 
+    PlatformTenantHostnameVerifiedWebhookPayload:
+      type: object
+      description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, hostname_id, hostname, verified_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Stable customer reference selected by the platform owner. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        hostname_id: { type: string, format: uuid }
+        hostname: { type: string, minLength: 1 }
+        verified_at: { type: string, format: date-time }
+      additionalProperties: false
+
+    PlatformTenantSurfaceCertificateChangedWebhookPayload:
+      type: object
+      description: Persisted certificate-state transition for a surface explicitly linked to this tenant. Raw provider error text, certificates, and private keys are never included; use the activation snapshot for current diagnostic details.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, cert_state, cert_not_after, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: [string, "null"], format: date-time, description: Null unless a certificate expiry is recorded. }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+
+    PlatformTenantSurfaceDeploymentChangedWebhookPayload:
+      type: object
+      description: Terminal deployment outcome for a surface explicitly linked to this tenant. Contains revision and status metadata only; app/deployment IDs, source details, logs, and raw errors are excluded. A failed latest attempt does not mean a previous deployment is not serving.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, revision, deployment_status, started_at, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        revision: { type: integer, minimum: 1 }
+        deployment_status: { type: string, enum: [live, failed] }
+        started_at: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+
     CreateInboundWebhookEndpointRequest:
       type: object
       description: Create a provider-verified endpoint whose accepted events become durable app invocations.
@@ -38395,7 +39066,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -38711,6 +39382,9 @@ components:
       required: [queued]
       properties:
         queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
+        partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
+        nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
+        nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
 
     AppLogDrainResponse:
       type: object
@@ -38831,7 +39505,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
