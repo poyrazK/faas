@@ -68,6 +68,30 @@ func serviceBindingsEqual(left, right []api.AppServiceBinding) bool {
 	return true
 }
 
+func serviceReliabilityForWorkload(w reposcan.Workload, available map[string]struct{}, existing map[string]api.ServiceReliabilityPolicy) map[string]api.ServiceReliabilityPolicy {
+	source := w.ServiceReliability
+	if source == nil {
+		source = existing
+	}
+	if len(source) == 0 {
+		return nil
+	}
+	bound := make(map[string]struct{}, len(w.DependsOn))
+	for _, binding := range serviceBindingsForWorkloadWithAvailable(w, available) {
+		bound[binding.Service] = struct{}{}
+	}
+	out := make(map[string]api.ServiceReliabilityPolicy, len(source))
+	for target, policy := range source {
+		if _, ok := bound[target]; ok {
+			out[target] = policy
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func serviceBindingPolicyForNewWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
 	if w.ServiceBindingPolicy == "" {
 		return api.ServiceBindingPolicyDeclared

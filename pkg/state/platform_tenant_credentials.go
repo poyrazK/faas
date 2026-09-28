@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -18,13 +19,16 @@ type PlatformTenantCredentialStore interface {
 }
 
 type ApplyPlatformTenantCredentialsParams struct {
-	AccountID    string
-	TenantID     string
-	DryRun       bool
-	AppLimit     int
-	AccountLimit int
-	Keys         []PlatformTenantCredentialIntent
-	RevokeKeyIDs []string
+	AccountID string
+	TenantID  string
+	DryRun    bool
+	// EnforceDelegationPolicy is set only by tenant-self management routes.
+	// Owner-managed account routes retain their existing behavior.
+	EnforceDelegationPolicy bool
+	AppLimit                int
+	AccountLimit            int
+	Keys                    []PlatformTenantCredentialIntent
+	RevokeKeyIDs            []string
 }
 
 type PlatformTenantCredentialIntent struct {
@@ -51,6 +55,54 @@ type PlatformTenantCredentialQuotaError struct {
 	Scope    string // app, account
 	Limit    int
 	Observed int
+}
+
+var (
+	ErrPlatformTenantCredentialDelegationDisabled = errors.New("state: delegated credentials are disabled")
+	ErrPlatformTenantCredentialScopeDenied        = errors.New("state: delegated credential scope is not allowed")
+)
+
+type PlatformTenantCredentialPolicyQuotaError struct {
+	Limit    int
+	Observed int
+}
+
+func (e *PlatformTenantCredentialPolicyQuotaError) Error() string {
+	return "platform tenant delegated credential limit exceeded"
+}
+
+func validatePlatformTenantCredentialPolicyCreates(policy PlatformTenantCredentialPolicy, result ApplyPlatformTenantCredentialsResult) (map[string]int, error) {
+	creates := make(map[string]int)
+	for _, item := range result.Keys {
+		if item.Action == "create" {
+			creates[item.Key.ConsumerID]++
+		}
+	}
+	if len(creates) == 0 {
+		return creates, nil
+	}
+	if len(policy.AllowedScopes) == 0 || policy.MaxKeysPerConsumer < 1 {
+		return nil, ErrPlatformTenantCredentialDelegationDisabled
+	}
+	allowed := make(map[string]struct{}, len(policy.AllowedScopes))
+	for _, scope := range policy.AllowedScopes {
+		allowed[scope] = struct{}{}
+	}
+	for _, item := range result.Keys {
+		if item.Action != "create" {
+			continue
+		}
+		for _, scope := range item.Key.Scopes {
+			if _, ok := allowed[scope]; !ok {
+				return nil, ErrPlatformTenantCredentialScopeDenied
+			}
+		}
+	}
+	return creates, nil
+}
+
+func activePlatformTenantCredentialKey(key ConsumerKey, now time.Time) bool {
+	return key.RevokedAt == nil && (key.ExpiresAt == nil || key.ExpiresAt.After(now))
 }
 
 func (e *PlatformTenantCredentialQuotaError) Error() string {

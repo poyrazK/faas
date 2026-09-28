@@ -1208,6 +1208,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
+	mux.HandleFunc("POST /v1/postgres/bindings/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.rotateManagedPostgresBinding))))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
@@ -1411,10 +1412,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.applyPlatformTenant)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenant))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantActivation))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/hostname-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantHostnamePolicy))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/hostname-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantHostnamePolicy))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantCredentials))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credentials/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyPlatformTenantCredentials))))
-	// Downstream tenant bearers are distinct, tenant-bound, read-only
-	// capabilities. Their plaintext is returned once and never cached.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantCredentialPolicy)))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/credential-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantCredentialPolicy))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/consumer-provisioning-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantConsumerProvisioningPolicy)))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/consumer-provisioning-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantConsumerProvisioningPolicy))))
+	// Downstream tenant bearers are distinct, tenant-bound capabilities with
+	// explicit narrow self-service scopes. Plaintext is returned
+	// once and never cached.
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listPlatformTenantAccessTokens))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createPlatformTenantAccessToken))))
 	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/access-tokens/{token_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokePlatformTenantAccessToken))))
@@ -1436,8 +1444,16 @@ func (s *server) handler() http.Handler {
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage", s.authLimited(s.requireScope(api.ScopesPlatformTenantUsageReadSurface...)(s.getPlatformTenantSelfUsage)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/activation", s.authLimited(s.requireScope(api.ScopesPlatformTenantActivationReadSurface...)(s.getPlatformTenantSelfActivation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/hostnames", s.authLimited(s.requireScope(api.ScopesPlatformTenantHostnamesManageSurface...)(s.createPlatformTenantSelfHostname)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.listPlatformTenantSelfStatements)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements/{statement_id}", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.getPlatformTenantSelfStatement)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/consumers", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfConsumers)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/consumers", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.createPlatformTenantSelfConsumer)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/consumers/apply", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.applyPlatformTenantSelfConsumers)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/consumers/revoke", s.authLimited(s.requireScope(api.ScopesPlatformTenantConsumersManageSurface...)(s.revokePlatformTenantSelfConsumers)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/credentials", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsReadSurface...)(s.listPlatformTenantSelfCredentials)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/credentials/apply", s.authLimited(s.requireScope(api.ScopesPlatformTenantCredentialsManageSurface...)(s.applyPlatformTenantSelfCredentials)))
 	// Durable statement events belong to the cross-app platform tenant, not
 	// any one app's webhook namespace. Each delivery remains inspectable and
 	// replayable through the same signed webhook ledger.
@@ -2684,6 +2700,7 @@ func (s *server) handler() http.Handler {
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
 	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSecrets))))
+	mux.HandleFunc("GET /v1/apps/{slug}/secret-revocations/{revocation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSecretRevocation))))
 	// Account-scoped sealed-secret list (issue #393). Each row
 	// carries the owning app's id and slug so the dashboard can
 	// render "foo-app / DATABASE_URL" without a parallel /v1/apps

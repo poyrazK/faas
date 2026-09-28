@@ -3,6 +3,8 @@
 export {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
+  GREGALE_RELEASE_COOKIE,
+  GREGALE_RELEASE_SUBPROTOCOL_PREFIX,
   GREGALE_REVISION_HEADER,
   type GregaleBrowserFetchClient,
   type GregaleBrowserFetchOptions,

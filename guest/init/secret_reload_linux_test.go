@@ -24,14 +24,14 @@ func TestFetchRuntimeSecretsUsesDedicatedRequestKind(t *testing.T) {
 				return
 			}
 			var request runtimeConfigRequest
-			if json.Unmarshal(body, &request) != nil || request.Kind != "secrets" || request.Revision != "" {
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secrets" || request.WorkloadName != "worker" || request.Revision != "" {
 				return
 			}
 			_ = writeRuntimeConfigFrame(server, []byte(`{"secrets":{"DB_URL":"postgres://new"},"revision":"r2"}`))
 		}()
 		return client, nil
 	}
-	response, err := fetchRuntimeSecrets("")
+	response, err := fetchRuntimeSecretsForWorkload("worker", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
 			}
 			var request runtimeConfigRequest
 			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_status" ||
-				request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
+				request.WorkloadName != "worker" || request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
 				request.Signal != "sent" || request.ErrorCode != "" {
 				return
 			}
@@ -62,7 +62,7 @@ func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
 		return client, nil
 	}
 	accepted, stale, err := sendRuntimeSecretReloadReport(runtimeSecretReloadReport{
-		Revision: strings.Repeat("a", 64), Projection: "updated", Signal: "sent",
+		Revision: strings.Repeat("a", 64), WorkloadName: "worker", Projection: "updated", Signal: "sent",
 	})
 	if err != nil || !accepted || stale {
 		t.Fatalf("sendRuntimeSecretReloadReport = accepted %t stale %t err %v", accepted, stale, err)
@@ -98,6 +98,38 @@ func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	}
 	if got["DB_URL"] != "new" || got["TOKEN"] != "next" {
 		t.Fatalf("projection = %#v", got)
+	}
+}
+
+func TestRuntimeSecretsStatePublishesRevokedKeyRemoval(t *testing.T) {
+	dir := t.TempDir()
+	projectionPath := filepath.Join(dir, "projection", "secrets.json")
+	revisionPath := filepath.Join(dir, "projection", "revision")
+	uid, gid := os.Getuid(), os.Getgid()
+	secrets := newRuntimeSecretsState(map[string]string{"DB_URL": "old-credential"})
+	if runtimeSecretsEqual(secrets.snapshot(), map[string]string{}) {
+		t.Fatal("removing a granted key was treated as an unchanged projection")
+	}
+	revision := strings.Repeat("b", 64)
+	if err := secrets.publishForOwner(projectionPath, revisionPath, uid, uid, gid, map[string]string{}, revision); err != nil {
+		t.Fatalf("publish revoked projection: %v", err)
+	}
+	if got := secrets.snapshot(); len(got) != 0 {
+		t.Fatalf("in-memory projection = %#v, want empty map", got)
+	}
+	body, err := os.ReadFile(projectionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("on-disk projection = %#v, want empty map", got)
+	}
+	if gotRevision, err := os.ReadFile(revisionPath); err != nil || string(gotRevision) != revision {
+		t.Fatalf("revision projection = %q, err=%v", gotRevision, err)
 	}
 }
 

@@ -22,7 +22,8 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * app secrets selected by explicit `secret:KEY` references.
  * References resolve in the deployment's scope at each wake;
  * sidecars do not inherit main-workload secrets. Secret rotation
- * reaches sidecars through a restart, not in-process reload.
+ * reaches sidecars through a restart by default; a long-running
+ * sidecar image may opt into runtime projection and signal delivery.
  *
  * - `name` matches RFC 1123 label (lowercase alphanumeric
  * + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -43,7 +44,9 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
  * and referenced app-secret name must match. Missing secrets fail
  * the wake; an empty/omitted map grants no app secrets to this
- * sidecar. These values refresh on cold boot or restart only.
+ * sidecar. Values refresh on cold boot or restart by default;
+ * long-running sidecars can also opt into runtime projection and
+ * signal delivery through their image metadata.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
  * - `primary_ingress` routes the application's normal hostname and
  * custom domains through this long-running helper. It requires port.
@@ -96,7 +99,7 @@ export type Sidecar = {
    */
   env?: Record<string, string>;
   /**
-   * Per-sidecar positive allowlist of same-named app secrets, resolved at wake in the deployment scope. Values refresh on restart; sidecars do not inherit main secrets.
+   * Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery through their image metadata. Sidecars never inherit main secrets.
    */
   env_secrets?: Record<string, string>;
   /**

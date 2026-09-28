@@ -30,7 +30,8 @@ func (e *CustomDomainQuotaError) Error() string {
 func (e *CustomDomainQuotaError) Unwrap() error { return ErrCustomDomainQuotaExceeded }
 
 func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (CustomDomain, error) {
-	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit)
+	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, nil)
+	return d, err
 }
 
 // CreateCustomDomainInEnvironmentIfUnderQuota claims a custom hostname for a
@@ -40,13 +41,33 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuota(ctx context.Contex
 	if environmentID == "" {
 		return CustomDomain{}, ErrInvalidArgument
 	}
-	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit)
+	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, nil)
+	return d, err
 }
 
-func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+func (s *PgStore) CreateCustomDomainIfUnderQuotaWithActivity(ctx context.Context, domain, appID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return CustomDomain{}, 0, err
+	}
+	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, &entry)
+}
+
+func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+	if environmentID == "" {
+		return CustomDomain{}, 0, ErrInvalidArgument
+	}
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return CustomDomain{}, 0, err
+	}
+	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, &entry)
+}
+
+func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry *OrgActivity) (CustomDomain, int64, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return CustomDomain{}, err
+		return CustomDomain{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
@@ -55,24 +76,24 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		where a.id=$1 and a.status <> 'deleted'
 		  and ($2 = '' or (a.project_id = e.project_id and a.account_id = e.account_id))
 		for update of a`, appID, environmentID).Scan(&accountID); err != nil {
-		return CustomDomain{}, mapErr(err)
+		return CustomDomain{}, 0, mapErr(err)
 	}
 	var n int
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains where app_id=$1 and verified_at is null and verification_expires_at > now()`, appID).Scan(&n); err != nil {
-		return CustomDomain{}, err
+		return CustomDomain{}, 0, err
 	}
 	if n >= appLimit {
-		return CustomDomain{}, &CustomDomainQuotaError{"app", appLimit}
+		return CustomDomain{}, 0, &CustomDomainQuotaError{"app", appLimit}
 	}
 	// The account row serializes creates made concurrently for different apps.
 	if err = tx.QueryRow(ctx, `select 1 from accounts where id=$1 for update`, accountID).Scan(&n); err != nil {
-		return CustomDomain{}, mapErr(err)
+		return CustomDomain{}, 0, mapErr(err)
 	}
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains d join apps a on a.id=d.app_id where a.account_id=$1 and d.verified_at is null and d.verification_expires_at > now()`, accountID).Scan(&n); err != nil {
-		return CustomDomain{}, err
+		return CustomDomain{}, 0, err
 	}
 	if n >= accountLimit {
-		return CustomDomain{}, &CustomDomainQuotaError{"account", accountLimit}
+		return CustomDomain{}, 0, &CustomDomainQuotaError{"account", accountLimit}
 	}
 	// A pending claim is deliberately exclusive only until its verification
 	// deadline. ON CONFLICT performs the handoff under the domain primary-key
@@ -106,11 +127,21 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 	var d CustomDomain
 	if err = scanCustomDomain(row, &d); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return d, ErrConflict
+			return d, 0, ErrConflict
 		}
-		return d, mapErr(err)
+		return d, 0, mapErr(err)
 	}
-	return d, tx.Commit(ctx)
+	var outboxID int64
+	if entry != nil {
+		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, *entry)
+		if err != nil {
+			return CustomDomain{}, 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CustomDomain{}, 0, err
+	}
+	return d, outboxID, nil
 }
 
 func (s *PgStore) ClaimCustomDomainsForVerification(ctx context.Context, limit int) ([]CustomDomain, error) {
@@ -166,6 +197,35 @@ func (m *MemStore) CreateCustomDomainInEnvironmentIfUnderQuota(ctx context.Conte
 func (m *MemStore) createCustomDomainIfUnderQuota(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+}
+
+func (m *MemStore) CreateCustomDomainIfUnderQuotaWithActivity(ctx context.Context, domain, appID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+	return m.createCustomDomainWithActivity(ctx, domain, appID, "", token, appLimit, accountLimit, entry)
+}
+
+func (m *MemStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+	if environmentID == "" {
+		return CustomDomain{}, 0, ErrInvalidArgument
+	}
+	return m.createCustomDomainWithActivity(ctx, domain, appID, environmentID, token, appLimit, accountLimit, entry)
+}
+
+func (m *MemStore) createCustomDomainWithActivity(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+	entry, err := normalizeOrgActivity(entry, time.Now())
+	if err != nil {
+		return CustomDomain{}, 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, err := m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+	if err != nil {
+		return CustomDomain{}, 0, err
+	}
+	return d, m.enqueueOrgActivityOutboxLocked(entry), nil
+}
+
+func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	a, ok := m.apps[appID]
 	if !ok {
 		return CustomDomain{}, ErrNotFound

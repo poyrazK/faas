@@ -447,6 +447,39 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
+	deployment, err := stateStore.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:managed-postgres-binding-freshness",
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	createSnapshots := func(label string) {
+		t.Helper()
+		for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+			if _, err := stateStore.CreateSnapshot(ctx, state.Snapshot{
+				DeploymentID: deployment.ID,
+				FCVersion:    "fc-test",
+				MemBytes:     1024,
+				DiskBytes:    512,
+				StorageKey:   "managed-postgres-binding/" + label + "/" + tier,
+				Tier:         tier,
+			}); err != nil {
+				t.Fatalf("create %s snapshot: %v", tier, err)
+			}
+		}
+	}
+	assertSnapshotsStale := func() {
+		t.Helper()
+		for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+			if _, err := stateStore.LatestSnapshotForTier(ctx, deployment.ID, tier); !errors.Is(err, state.ErrNotFound) {
+				t.Errorf("%s snapshot remains restorable after managed secret change: %v", tier, err)
+			}
+		}
+	}
+	createSnapshots("before-create")
 	start := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
 	database := postgresReadyDatabase(t, store, accountID, "binding-db", start)
 	input := testBinding(accountID, database.ID, app.ID, uuid.NewString(), start.Add(3*time.Second))
@@ -517,13 +550,24 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 	if err := stateStore.PutManagedPostgresSecret(ctx, managedSecret); err != nil {
 		t.Fatalf("insert managed secret: %v", err)
 	}
+	firstStamp, stamped, err := stateStore.AppRuntimeConfigChangedAt(ctx, app.ID)
+	if err != nil || !stamped {
+		t.Fatalf("managed secret create runtime stamp: %v %v %v", firstStamp, stamped, err)
+	}
+	assertSnapshotsStale()
 	if err := stateStore.PutManagedPostgresSecret(ctx, managedSecret); err != nil {
 		t.Fatalf("idempotent managed secret write: %v", err)
+	}
+	if retryStamp, _, err := stateStore.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !retryStamp.Equal(firstStamp) {
+		t.Fatalf("idempotent managed secret write moved runtime stamp from %v to %v: %v", firstStamp, retryStamp, err)
 	}
 	conflictingSecret := managedSecret
 	conflictingSecret.ManagedCredentialRef = credentialRef + "-other"
 	if err := stateStore.PutManagedPostgresSecret(ctx, conflictingSecret); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("same-generation credential replacement = %v, want state.ErrConflict", err)
+	}
+	if conflictStamp, _, err := stateStore.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !conflictStamp.Equal(firstStamp) {
+		t.Fatalf("conflicting managed secret write moved runtime stamp: %v (want %v), err=%v", conflictStamp, firstStamp, err)
 	}
 	ownedSecret, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, input.Scope, input.EnvironmentKey)
 	if err != nil || ownedSecret.ManagedPostgresBindingID != binding.ID || ownedSecret.ManagedCredentialRef != credentialRef {
@@ -556,6 +600,8 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 		t.Fatalf("maintenance reseal of managed secret: %v", err)
 	}
 
+	createSnapshots("before-delete")
+	time.Sleep(time.Millisecond)
 	deleteAt := claimAt.Add(2 * time.Second)
 	deleting, err := store.ClaimBinding(ctx, accountID, binding.ID, "delete-worker", BindingStateDeleting, deleteAt, deleteAt.Add(time.Minute))
 	if err != nil {
@@ -566,6 +612,17 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 	}
 	if err := stateStore.DeleteManagedPostgresSecret(ctx, credentialRef); err != nil {
 		t.Fatalf("delete managed secret: %v", err)
+	}
+	deleteStamp, stamped, err := stateStore.AppRuntimeConfigChangedAt(ctx, app.ID)
+	if err != nil || !stamped || !deleteStamp.After(firstStamp) {
+		t.Fatalf("managed secret delete runtime stamp: %v (previous %v), stamped=%v err=%v", deleteStamp, firstStamp, stamped, err)
+	}
+	assertSnapshotsStale()
+	if err := stateStore.DeleteManagedPostgresSecret(ctx, credentialRef); err != nil {
+		t.Fatalf("idempotent managed secret delete: %v", err)
+	}
+	if retryStamp, _, err := stateStore.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !retryStamp.Equal(deleteStamp) {
+		t.Fatalf("idempotent delete moved runtime stamp from %v to %v: %v", deleteStamp, retryStamp, err)
 	}
 	deleted, err := store.FinishBindingDelete(ctx, binding.ID, deleting.LeaseToken, deleteAt.Add(time.Second))
 	if err != nil || deleted.State != BindingStateDeleted || deleted.DeletedAt == nil {
@@ -665,9 +722,29 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	if err != nil || secret.ManagedPostgresBindingID != binding.ID || secret.ManagedCredentialRef != binding.CredentialRef {
 		t.Fatalf("ready binding secret: secret=%+v err=%v", secret, err)
 	}
+	rotated, err := service.Rotate(ctx, accountID, binding.ID)
+	if err != nil || rotated.CredentialGeneration != 2 || rotated.RotationPreviousGeneration != 1 || rotated.RotationWakeID == "" || provider.revokeCalls != 0 {
+		t.Fatalf("rotate binding: binding=%+v revoke_calls=%d err=%v", rotated, provider.revokeCalls, err)
+	}
+	secret, err = stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey)
+	if err != nil || secret.ManagedCredentialGeneration != 2 {
+		t.Fatalf("rotated binding secret: secret=%+v err=%v", secret, err)
+	}
+	if err := stateStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, app.ID, rotated.RotationWakeID); err != nil {
+		t.Fatalf("mark rotation delivered: %v", err)
+	}
+	// The finalization update uses the database clock. Advance the service's
+	// injected clock after that write so its retry_at comparison cannot race
+	// the database timestamp by a few milliseconds.
+	now = time.Now().UTC().Add(time.Second)
+	retired, err := service.ReconcileRotationCleanup(ctx, accountID, binding.ID)
+	if err != nil || retired.RotationPreviousGeneration != 0 || provider.revokeCalls != 1 {
+		t.Fatalf("retire previous credential: binding=%+v revoke_calls=%d err=%v", retired, provider.revokeCalls, err)
+	}
+	binding = retired
 
 	deleted, err := service.Delete(ctx, accountID, binding.ID)
-	if err != nil || deleted.State != BindingStateDeleted || provider.revokeCalls != 1 {
+	if err != nil || deleted.State != BindingStateDeleted || provider.revokeCalls != 2 {
 		t.Fatalf("delete binding: binding=%+v revoke_calls=%d err=%v", deleted, provider.revokeCalls, err)
 	}
 	if _, err := stateStore.GetAppSecretInScope(ctx, accountID, app.ID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {

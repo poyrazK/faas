@@ -115,6 +115,9 @@ type App struct {
 	// limiting, or capacity admission. Undeclared paths are answered directly
 	// by the gateway and never wake an application.
 	OnlyAllowDeclaredRoutes bool
+	// PreAuthRateLimit limits requests from one trusted source before
+	// consumer-key lookup. Empty/off preserves existing behavior.
+	PreAuthRateLimit *api.PreAuthRateLimitConfig
 	// DeclaredRoutes is an optional explicit route list. When non-empty it is
 	// preferred over the imported OpenAPI document by the matcher.
 	DeclaredRoutes []DeclaredRoute
@@ -892,6 +895,7 @@ type Handler struct {
 	backend        Backend
 	declaredRoutes DeclaredRouteMatcher
 	limiter        *Limiter
+	preAuthLimiter *preAuthSourceLimiter
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -1073,6 +1077,7 @@ type Handler struct {
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
 	requestTelemetry    *requestTelemetryRecorder
+	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
 	apiDiscoveryEnabled bool
@@ -1348,8 +1353,9 @@ func NewHandler(backend Backend) *Handler {
 // registry) and a custom slog logger.
 func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h := &Handler{
-		backend: backend,
-		limiter: NewLimiter(),
+		backend:        backend,
+		limiter:        NewLimiter(),
+		preAuthLimiter: newPreAuthSourceLimiter(),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -5369,6 +5375,13 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// WithRequestIDJournalWriter installs the synchronous durable index writer.
+// For debugger-enabled plans, ServeHTTP calls it after app resolution and
+// fails closed before guest work if the write cannot be confirmed.
+func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
+	h.requestIDJournal = writer
+}
+
 // WithUsageOutbox enables the durable financial fact independently of debug
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
@@ -5624,6 +5637,15 @@ haveApp:
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
+	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Request correlation is temporarily unavailable",
+				"the platform could not durably record this request ID; retry shortly"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+	}
 	if app.SecurityQuarantined {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			api.CodeSecurityPostureBlocked, "App is security quarantined",
@@ -5689,8 +5711,13 @@ haveApp:
 			r = withAuditSourceIP(r, ip.String())
 		}
 	}
-	// ADR-120: resolve end-customer identity before any edge rewrite, body
-	// buffering, throttling, or wake work. This keeps invalid credentials from
+	if h.applyPreAuthRateLimit(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	// ADR-120: resolve end-customer identity before edge rewrite, body
+	// buffering, customer rule throttling, or wake work. The optional source
+	// limit above is deliberately earlier so a burst can avoid credential
+	// lookup work. This keeps invalid credentials from
 	// consuming downstream resources and makes the same stable consumer ID
 	// available to later rate-limit and metering stages.
 	if !h.enforceConsumerAuth(w, r, rec, app) {
@@ -5987,6 +6014,7 @@ haveApp:
 		return
 	}
 	managedVersionSetCookie := ""
+	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
 		stripManagedVersionAffinityCookie(r)
 		if managedVersionToken != "" {
@@ -6036,6 +6064,42 @@ haveApp:
 	if !deploymentSmoke {
 		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
 		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+		if isWebSocketHandshake(r) {
+			protocolRelease, present, invalid := consumeManagedReleaseSubprotocol(r)
+			if invalid {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "Sec-WebSocket-Protocol must contain one valid Gregale release token"))
+				return
+			}
+			if present {
+				if revisionPresent || releasePresent {
+					api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+						"Conflicting version pins", "use one version-pin header or the Gregale release subprotocol"))
+					return
+				}
+				r.Header.Set(api.ReleaseHeader, protocolRelease)
+				releasePresent = true
+			}
+		}
+		// The browser WebSocket API cannot set custom request headers. A
+		// same-host SPA reconnect can use the platform bootstrap cookie as its
+		// release pin; the browser SDK uses a reserved subprotocol when the
+		// socket host differs. Keep cookie fallback specific to project WebSocket
+		// handshakes; ordinary requests and other Upgrade protocols retain their
+		// existing routing semantics. Explicit pins always take precedence.
+		if app.ProjectID != "" && !app.IsPreview && app.PinnedDeploymentID == "" &&
+			isWebSocketHandshake(r) && !revisionPresent && !releasePresent {
+			cookieRelease, present, duplicate := managedReleaseContextCookieValue(r)
+			if duplicate {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "the release context cookie must contain one release ID"))
+				return
+			}
+			if present {
+				r.Header.Set(api.ReleaseHeader, cookieRelease)
+				releasePresent = true
+			}
+		}
 		if revisionPresent && releasePresent {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Conflicting version pins", "send either X-Gregale-Revision or X-Gregale-Release"))
@@ -6088,6 +6152,15 @@ haveApp:
 				}
 			}
 		}
+		if isBrowserDocumentNavigation(r) {
+			if projectReleaseID != "" && app.RevisionPinTTLSeconds > 0 {
+				managedReleaseContextSetCookie = setManagedReleaseContextCookie(w, projectReleaseID)
+			} else {
+				managedReleaseContextSetCookie = clearManagedReleaseContextCookie(w)
+			}
+		}
+		r = withManagedReleaseContextCookieProtection(r)
+		stripManagedReleaseContextCookie(r)
 		if values, present := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]; present {
 			if len(values) != 1 || len(values[0]) != 36 {
 				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -6156,6 +6229,7 @@ haveApp:
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
+		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
 		defer func() {
 			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
@@ -8686,7 +8760,7 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
-		stripGuestManagedVersionCookieResponseHeader(resp)
+		stripGuestManagedPlatformCookiesResponseHeader(resp)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

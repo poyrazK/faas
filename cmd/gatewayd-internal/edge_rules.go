@@ -25,6 +25,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"path"
 	"sort"
 	"strconv"
@@ -1840,8 +1841,11 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 // toward the per-app cache metric).
 //
 // VaryOn is copied verbatim from the row (the closed-vocab
-// check happened at apid-Validate). Methods is built into a set
-// via buildMethodsMap so the applier's method filter is O(1).
+// check happened at apid-Validate). Methods is the intersection
+// of the cache action's cacheable-method allowlist and the edge
+// rule's match-method selector; the applier's method filter is
+// then O(1). An empty action allowlist defaults to GET + HEAD,
+// and an empty rule selector matches either of those methods.
 func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheResolved, []gateway.PathGlobError) {
 	if len(storeRules) == 0 {
 		return nil, nil
@@ -1890,7 +1894,7 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 			AppID:                       r.AppID,
 			Priority:                    r.Priority,
 			PathGlob:                    r.MatchPath,
-			Methods:                     buildMethodsMap(r.MatchMethods),
+			Methods:                     buildCacheMethodsMap(r.MatchMethods, r.Action.Cache.Methods),
 			MatchHeaders:                buildMatchHeadersMap(r.MatchHeaders),
 			MaxAgeSeconds:               maxAge,
 			StaleWhileRevalidateSeconds: staleWhileRevalidate,
@@ -1900,6 +1904,32 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
+}
+
+// buildCacheMethodsMap intersects the rule-level method selector with the
+// cache action's closed allowlist. The gateway independently hard-gates all
+// cache lookups to GET/HEAD, so only those methods can enter the resolved set.
+// Empty action methods use the documented GET/HEAD default; empty rule methods
+// mean the selector imposes no additional restriction.
+func buildCacheMethodsMap(matchMethods, cacheMethods []string) map[string]bool {
+	cacheable := map[string]bool{http.MethodGet: true, http.MethodHead: true}
+	if len(cacheMethods) > 0 {
+		cacheable = map[string]bool{}
+		for _, method := range cacheMethods {
+			if method == http.MethodGet || method == http.MethodHead {
+				cacheable[method] = true
+			}
+		}
+	}
+	if len(matchMethods) > 0 {
+		selector := buildMethodsMap(matchMethods)
+		for method := range cacheable {
+			if !selector[method] {
+				delete(cacheable, method)
+			}
+		}
+	}
+	return cacheable
 }
 
 // compileValidateRules mirrors compileIPRules for kind=validate.

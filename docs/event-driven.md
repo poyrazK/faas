@@ -404,6 +404,9 @@ Delivery is at least once. Verify the webhook signature and deduplicate by the
 durable delivery id in the webhook envelope or headers; retries keep that id.
 The existing delivery history and dead-letter retry API cover these events.
 
+Route-level regression notifications are documented in
+[Route regression webhooks](route-regression-webhooks.md).
+
 ## Rollout outcome webhooks
 
 Subscribe to `rollout.completed` and `rollout.aborted` when an external

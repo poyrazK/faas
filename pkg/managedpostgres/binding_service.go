@@ -178,6 +178,40 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	return ready, created, nil
 }
 
+// Rotate creates a new provider identity and replaces the managed app secret.
+// The previous generation remains valid until the scheduler confirms that a
+// rolling runtime refresh has completed; retries reuse the persisted wake ID
+// and generation rather than creating another credential.
+func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string) (Binding, error) {
+	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		return Binding{}, ErrUnavailable
+	}
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.RotationPreviousGeneration == 0 {
+		if binding.State != BindingStateReady {
+			return Binding{}, ErrConflict
+		}
+		binding, _, err = s.bindings.BeginBindingRotation(ctx, accountID, bindingID, s.newID(), s.now())
+		if err != nil {
+			return Binding{}, err
+		}
+	}
+	if binding.RotationPreviousGeneration < 1 || binding.RotationWakeID == "" {
+		return Binding{}, ErrConflict
+	}
+	switch binding.State {
+	case BindingStateProvisioning, BindingStateFailed:
+		return s.Reconcile(ctx, accountID, bindingID)
+	case BindingStateReady, BindingStateRetiring:
+		return binding, nil
+	default:
+		return Binding{}, ErrConflict
+	}
+}
+
 func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID string) (Binding, error) {
 	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
 	if err != nil {
@@ -190,7 +224,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 		if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 			return Binding{}, ErrUnavailable
 		}
-	case BindingStateDeleting, BindingStateDeleted:
+	case BindingStateDeleting, BindingStateRetiring, BindingStateDeleted:
 		return Binding{}, ErrConflict
 	default:
 		return Binding{}, ErrConflict
@@ -277,12 +311,17 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "database_not_ready", ErrConflict, time.Hour)
 	}
 
-	credentialRequest := bindingCredentialRequest(binding, database.ProviderResourceID)
-	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	err = backend.Provider.RevokeCredentials(providerContext, credentialRequest)
-	cancel()
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return Binding{}, s.releaseProviderError(ctx, binding, BindingStateDeleting, "credential_revoke", err)
+	for _, generation := range []int64{binding.CredentialGeneration, binding.RotationPreviousGeneration} {
+		if generation < 1 {
+			continue
+		}
+		credentialRequest := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, generation)
+		providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		err = backend.Provider.RevokeCredentials(providerContext, credentialRequest)
+		cancel()
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return Binding{}, s.releaseProviderError(ctx, binding, BindingStateDeleting, "credential_revoke", err)
+		}
 	}
 	if err := s.deleteCredential(ctx, binding); err != nil {
 		normalized := normalizeProviderError(err)
@@ -293,6 +332,43 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "secret_delete_failed", normalized, delay)
 	}
 	return s.finishDelete(ctx, binding)
+}
+
+// ReconcileRotationCleanup retires the old provider identity only after the
+// scheduler has marked the rotation wake as delivered. Revoke is idempotent,
+// so an expired lease or process crash is safe to retry.
+func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID, bindingID string) (Binding, error) {
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.RotationPreviousGeneration < 1 || binding.RotationWakeID == "" || !binding.RotationCleanupReady {
+		return binding, nil
+	}
+	now := s.now()
+	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateRetiring, now, now.Add(s.leaseDuration))
+	if err != nil {
+		return Binding{}, err
+	}
+	database, err := s.databases.Get(ctx, accountID, binding.DatabaseID)
+	if err != nil {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateRetiring, "database_unavailable", normalizeProviderError(err), time.Hour)
+	}
+	if database.ProviderResourceID == "" {
+		return s.finishBindingRotationCleanup(ctx, binding)
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateRetiring, "backend_unavailable", ErrUnavailable, time.Hour)
+	}
+	request := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, binding.RotationPreviousGeneration)
+	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
+	err = backend.Provider.RevokeCredentials(providerContext, request)
+	cancel()
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return Binding{}, s.releaseProviderError(ctx, binding, BindingStateRetiring, "rotation_revoke", err)
+	}
+	return s.finishBindingRotationCleanup(ctx, binding)
 }
 
 func (s *BindingService) Get(ctx context.Context, accountID, bindingID string) (Binding, error) {
@@ -346,7 +422,18 @@ func (s *BindingService) finishDelete(ctx context.Context, binding Binding) (Bin
 	return s.bindings.FinishBindingDelete(finishContext, binding.ID, binding.LeaseToken, s.now())
 }
 
+func (s *BindingService) finishBindingRotationCleanup(ctx context.Context, binding Binding) (Binding, error) {
+	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	return s.bindings.FinishBindingRotationCleanup(finishContext, binding.ID, binding.LeaseToken, binding.RotationWakeID, s.now())
+}
+
 func bindingCredentialRequest(binding Binding, providerResourceID string) CredentialRequest {
+	return bindingCredentialRequestForGeneration(binding, providerResourceID, binding.CredentialGeneration)
+}
+
+func bindingCredentialRequestForGeneration(binding Binding, providerResourceID string, generation int64) CredentialRequest {
+	binding.CredentialGeneration = generation
 	identityKey := bindingCredentialIdentity(binding)
 	return CredentialRequest{
 		ProviderResourceID: providerResourceID,

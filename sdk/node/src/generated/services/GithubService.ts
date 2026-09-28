@@ -161,8 +161,8 @@ export class GithubService {
    * Returns the project-level policy applied to source staging,
    * pull-request previews, and preview-to-production internal service
    * calls. A missing policy row resolves to the safe defaults for a new
-   * project; projects created before preview service isolation was
-   * introduced are migration-backed to the legacy allow_marked policy.
+   * project. Legacy allow_marked compatibility rows are migrated to deny;
+   * customers can explicitly opt back in when production calls are safe.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError

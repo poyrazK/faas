@@ -273,6 +273,32 @@ func TestStampSecretsFileEnvPlatformOwnsOptInPath(t *testing.T) {
 	}
 }
 
+func TestStampSecretsFileEnvAtPathsScopesSidecarProjection(t *testing.T) {
+	got := StampSecretsFileEnvAtPaths([]string{"A=1"}, true,
+		"/tmp/gregale-secret-reload/proxy/secrets.json",
+		"/tmp/gregale-secret-reload/proxy/revision",
+		metadataSecretReloadAckEndpoint+"?workload=proxy")
+	want := map[string]string{
+		SecretsFileEnv:      "/tmp/gregale-secret-reload/proxy/secrets.json",
+		SecretsRevisionEnv:  "/tmp/gregale-secret-reload/proxy/revision",
+		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint + "?workload=proxy",
+	}
+	for key, value := range want {
+		found := false
+		for _, entry := range got {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				if entry != key+"="+value {
+					t.Fatalf("%s env = %q, want workload-scoped value", key, entry)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s was not stamped: %v", key, got)
+		}
+	}
+}
+
 // TestStampOverridePortEnv_AppendsLast pins issue #460 / ADR-053
 // (PR-C): the platform contract for the per-deployment override port
 // must reach the runner as PORT=<port>, appended AFTER BuildEnv so

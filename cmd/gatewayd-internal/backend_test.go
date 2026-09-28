@@ -1115,6 +1115,7 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	requestRPS, requestBurst := 7, 31
 	app.RequestRateLimitRPS = &requestRPS
 	app.RequestRateLimitBurst = &requestBurst
+	app.Manifest.PreAuthRateLimit = &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 3, Burst: 6}
 	r := pgRouter{store: store}
 	got, ok, err := r.toApp(context.Background(), app)
 	if err != nil || !ok {
@@ -1128,6 +1129,9 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	}
 	if got.RequestRateLimitRPS != requestRPS || got.RequestRateLimitBurst != requestBurst {
 		t.Fatalf("request rate policy = %d/%d, want %d/%d", got.RequestRateLimitRPS, got.RequestRateLimitBurst, requestRPS, requestBurst)
+	}
+	if got.PreAuthRateLimit == nil || *got.PreAuthRateLimit != *app.Manifest.PreAuthRateLimit {
+		t.Fatalf("pre-auth rate policy = %+v, want %+v", got.PreAuthRateLimit, app.Manifest.PreAuthRateLimit)
 	}
 	if got.Type != gateway.AppTypeApp {
 		t.Fatalf("app type = %q, want %q", got.Type, gateway.AppTypeApp)

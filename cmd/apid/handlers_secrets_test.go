@@ -239,9 +239,27 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 
 	// DELETE.
-	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/secrets/STRIPE_KEY", nil, nil)
-	if delRec.Code != 204 {
+	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/secrets/STRIPE_KEY", nil, map[string]string{"Prefer": "return=representation"})
+	if delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE: %d %s", delRec.Code, delRec.Body.String())
+	}
+	if delRec.Header().Get("Preference-Applied") != "return=representation" {
+		t.Errorf("Preference-Applied = %q", delRec.Header().Get("Preference-Applied"))
+	}
+	var revocation api.AppSecretRevocationResponse
+	if err := json.Unmarshal(delRec.Body.Bytes(), &revocation); err != nil {
+		t.Fatalf("decode deletion revocation: %v", err)
+	}
+	if revocation.ID == "" || revocation.Key != "STRIPE_KEY" || revocation.Status != "blocked" ||
+		revocation.TargetCount != 2 || revocation.PendingCount != 2 || len(revocation.Targets) != 2 {
+		t.Errorf("deletion revocation = %+v, want two pending legacy targets", revocation)
+	}
+	if strings.Contains(delRec.Body.String(), "sk_test_abc") {
+		t.Errorf("plaintext leaked into revocation response: %s", delRec.Body.String())
+	}
+	statusRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/secret-revocations/"+revocation.ID, nil, nil)
+	if statusRec.Code != http.StatusOK || !strings.Contains(statusRec.Body.String(), `"id":"`+revocation.ID+`"`) {
+		t.Fatalf("GET revocation status: %d %s", statusRec.Code, statusRec.Body.String())
 	}
 
 	// List now empty.
@@ -261,6 +279,18 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("store after delete = %d, want 0", len(rows))
+	}
+}
+
+func TestSecrets_DeleteKeepsLegacyNoContentResponseByDefault(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "delete-secret-legacy-response")
+	if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/API_TOKEN", api.PutAppSecretRequest{Value: "token"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.do(t, http.MethodDelete, "/v1/apps/"+app.Slug+"/secrets/API_TOKEN", nil, nil)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("legacy DELETE: %d %s, want 204 with no body", rec.Code, rec.Body.String())
 	}
 }
 

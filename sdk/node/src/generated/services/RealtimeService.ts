@@ -648,7 +648,7 @@ export class RealtimeService {
   }
   /**
    * Publish a message to subscribed live connections.
-   * @returns ManagedRealtimePublishResponse Number of owner queues that accepted the message.
+   * @returns ManagedRealtimePublishResponse Queued recipients and whether every active realtime node accepted the publish.
    * @throws ApiError
    */
   public static publishManagedRealtimeChannel({

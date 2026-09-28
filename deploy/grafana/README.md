@@ -9,6 +9,14 @@ timeout rate. Their alert rules live under `family: tcp_ingress` in
 `deploy/ansible/roles/prometheus/files/faas.rules.yml`; triage steps are in
 `docs/runbooks/FaasTCPIngress.md`.
 
+The service-dependency panels (420-423) show the top caller-to-target error
+ratios and call volumes, p95 duration by edge, and a latency heatmap with
+sampled `trace_id` exemplars. Caller and target labels are trusted app UUIDs;
+use `docs/runbooks/FaasServiceDependencyErrorsHigh.md` to resolve them and
+triage an alert. The heatmap trace click-through follows
+`docs/runbooks/FaasTraceExemplars.md`. The duration histogram continues to
+record all calls even when tracing is unsampled.
+
 ## `bridge-protection.json` (ADR-127 §D3 / G19)
 
 Four-panel dashboard for the bridge wire-protocol framing protection

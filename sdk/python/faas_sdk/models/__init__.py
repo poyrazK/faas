@@ -179,6 +179,8 @@ from .app_secret_response_last_delivery_error_code import AppSecretResponseLastD
 from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
 from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
 from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
+from .app_secret_revocation_response import AppSecretRevocationResponse
+from .app_secret_revocation_response_status import AppSecretRevocationResponseStatus
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -234,6 +236,8 @@ from .apply_platform_tenant_request import ApplyPlatformTenantRequest
 from .apply_platform_tenant_response import ApplyPlatformTenantResponse
 from .apply_platform_tenant_response_action import ApplyPlatformTenantResponseAction
 from .apply_platform_tenant_response_status import ApplyPlatformTenantResponseStatus
+from .apply_platform_tenant_self_consumers_request import ApplyPlatformTenantSelfConsumersRequest
+from .apply_platform_tenant_self_consumers_response import ApplyPlatformTenantSelfConsumersResponse
 from .apply_platform_tenant_surface_request import ApplyPlatformTenantSurfaceRequest
 from .apply_platform_tenant_surface_request_cert_kind import ApplyPlatformTenantSurfaceRequestCertKind
 from .apply_platform_tenant_surface_response import ApplyPlatformTenantSurfaceResponse
@@ -401,8 +405,11 @@ from .create_platform_tenant_access_token_response import CreatePlatformTenantAc
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_request import CreatePlatformTenantRequest
+from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
+from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
+from .create_platform_tenant_webhook_request_event_filter_item import CreatePlatformTenantWebhookRequestEventFilterItem
 from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformTenantWebhookRequestRetryPolicy
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
@@ -522,6 +529,7 @@ from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
+from .debug_telemetry_request_item_evidence_status import DebugTelemetryRequestItemEvidenceStatus
 from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
@@ -539,6 +547,7 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
@@ -740,10 +749,13 @@ from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
+from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
+from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
+from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
@@ -1078,15 +1090,26 @@ from .platform_tenant_activation_surface_response import PlatformTenantActivatio
 from .platform_tenant_activity_filters import PlatformTenantActivityFilters
 from .platform_tenant_activity_item import PlatformTenantActivityItem
 from .platform_tenant_activity_response import PlatformTenantActivityResponse
+from .platform_tenant_consumer_provisioning_policy_response import PlatformTenantConsumerProvisioningPolicyResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
 from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
 from .platform_tenant_credential_metadata_scopes_item import PlatformTenantCredentialMetadataScopesItem
+from .platform_tenant_credential_policy_response import PlatformTenantCredentialPolicyResponse
+from .platform_tenant_credential_policy_response_allowed_scopes_item import (
+    PlatformTenantCredentialPolicyResponseAllowedScopesItem,
+)
 from .platform_tenant_credential_result import PlatformTenantCredentialResult
 from .platform_tenant_credential_result_action import PlatformTenantCredentialResultAction
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
+from .platform_tenant_customer_lifecycle_webhook_payload import PlatformTenantCustomerLifecycleWebhookPayload
+from .platform_tenant_customer_lifecycle_webhook_payload_customer_status import (
+    PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus,
+)
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
+from .platform_tenant_hostname_policy_response import PlatformTenantHostnamePolicyResponse
+from .platform_tenant_hostname_verified_webhook_payload import PlatformTenantHostnameVerifiedWebhookPayload
 from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
@@ -1094,6 +1117,25 @@ from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardRespo
 from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_self_activation_hostname_response import PlatformTenantSelfActivationHostnameResponse
+from .platform_tenant_self_activation_response import PlatformTenantSelfActivationResponse
+from .platform_tenant_self_activation_response_status import PlatformTenantSelfActivationResponseStatus
+from .platform_tenant_self_activation_surface_response import PlatformTenantSelfActivationSurfaceResponse
+from .platform_tenant_self_activation_surface_response_cert_state import (
+    PlatformTenantSelfActivationSurfaceResponseCertState,
+)
+from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
+from .platform_tenant_self_consumer_apply_item_response import PlatformTenantSelfConsumerApplyItemResponse
+from .platform_tenant_self_consumer_apply_item_response_action import PlatformTenantSelfConsumerApplyItemResponseAction
+from .platform_tenant_self_consumer_apply_item_response_status import PlatformTenantSelfConsumerApplyItemResponseStatus
+from .platform_tenant_self_consumer_response import PlatformTenantSelfConsumerResponse
+from .platform_tenant_self_consumer_response_status import PlatformTenantSelfConsumerResponseStatus
+from .platform_tenant_self_consumer_revocation_response import PlatformTenantSelfConsumerRevocationResponse
+from .platform_tenant_self_consumers_response import PlatformTenantSelfConsumersResponse
+from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
+from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
+from .platform_tenant_self_hostname_response import PlatformTenantSelfHostnameResponse
+from .platform_tenant_self_hostname_response_action import PlatformTenantSelfHostnameResponseAction
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
@@ -1106,6 +1148,18 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_surface_certificate_changed_webhook_payload import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayload,
+)
+from .platform_tenant_surface_certificate_changed_webhook_payload_cert_state import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState,
+)
+from .platform_tenant_surface_deployment_changed_webhook_payload import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayload,
+)
+from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_status import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
+)
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
@@ -1123,6 +1177,8 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_rate_limit_config import PreAuthRateLimitConfig
+from .pre_auth_rate_limit_config_mode import PreAuthRateLimitConfigMode
 from .preflight_finding import PreflightFinding
 from .preflight_level import PreflightLevel
 from .preflight_plan_budget import PreflightPlanBudget
@@ -1366,6 +1422,7 @@ from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
+from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
@@ -1384,6 +1441,7 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
@@ -1440,6 +1498,10 @@ from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
+from .secret_revocation_target import SecretRevocationTarget
+from .secret_revocation_target_error_code import SecretRevocationTargetErrorCode
+from .secret_revocation_target_reload_support import SecretRevocationTargetReloadSupport
+from .secret_revocation_target_status import SecretRevocationTargetStatus
 from .secret_runtime_reload_observation import SecretRuntimeReloadObservation
 from .secret_runtime_reload_observation_application_ack import SecretRuntimeReloadObservationApplicationAck
 from .secret_runtime_reload_observation_application_ack_error_code import (
@@ -1469,6 +1531,8 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_reliability_policies import ServiceReliabilityPolicies
+from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -1483,6 +1547,12 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
+from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
+from .set_platform_tenant_credential_policy_request_allowed_scopes_item import (
+    SetPlatformTenantCredentialPolicyRequestAllowedScopesItem,
+)
+from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostnamePolicyRequest
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
@@ -1832,6 +1902,8 @@ __all__ = (
     "ApplyPlatformTenantResponse",
     "ApplyPlatformTenantResponseAction",
     "ApplyPlatformTenantResponseStatus",
+    "ApplyPlatformTenantSelfConsumersRequest",
+    "ApplyPlatformTenantSelfConsumersResponse",
     "ApplyPlatformTenantSurfaceRequest",
     "ApplyPlatformTenantSurfaceRequestCertKind",
     "ApplyPlatformTenantSurfaceResponse",
@@ -1901,6 +1973,8 @@ __all__ = (
     "AppSecretResponseLastRuntimeReloadErrorCode",
     "AppSecretResponseLastRuntimeReloadProjection",
     "AppSecretResponseLastRuntimeReloadSignal",
+    "AppSecretRevocationResponse",
+    "AppSecretRevocationResponseStatus",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -2097,8 +2171,11 @@ __all__ = (
     "CreatePlatformTenantAccessTokenResponseScopesItem",
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRequest",
+    "CreatePlatformTenantSelfConsumerRequest",
+    "CreatePlatformTenantSelfHostnameRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
+    "CreatePlatformTenantWebhookRequestEventFilterItem",
     "CreatePlatformTenantWebhookRequestRetryPolicy",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
@@ -2214,6 +2291,7 @@ __all__ = (
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
+    "DebugTelemetryRequestItemEvidenceStatus",
     "DebugTelemetryRequestItemMethod",
     "DebugTelemetrySpan",
     "DebugTelemetrySpanDependencyType",
@@ -2231,6 +2309,7 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeleteSecretPrefer",
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
     "DeliverAppEventResponseStatus",
@@ -2434,10 +2513,13 @@ __all__ = (
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
+    "GitHubDeploymentPolicyPatchProductionTrigger",
     "GitHubDeploymentPolicyPreviewServicePolicy",
+    "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
+    "GitHubInstallStatusDeployBranches",
     "GitHubInstallStatusHealth",
     "GitHubInstallStatusState",
     "GitHubInstallStatusSyncResult",
@@ -2766,15 +2848,22 @@ __all__ = (
     "PlatformTenantActivityFilters",
     "PlatformTenantActivityItem",
     "PlatformTenantActivityResponse",
+    "PlatformTenantConsumerProvisioningPolicyResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
     "PlatformTenantCredentialMetadata",
     "PlatformTenantCredentialMetadataScopesItem",
+    "PlatformTenantCredentialPolicyResponse",
+    "PlatformTenantCredentialPolicyResponseAllowedScopesItem",
     "PlatformTenantCredentialResult",
     "PlatformTenantCredentialResultAction",
     "PlatformTenantCredentialsResponse",
+    "PlatformTenantCustomerLifecycleWebhookPayload",
+    "PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
+    "PlatformTenantHostnamePolicyResponse",
+    "PlatformTenantHostnameVerifiedWebhookPayload",
     "PlatformTenantListResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
@@ -2782,6 +2871,23 @@ __all__ = (
     "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantSelfActivationHostnameResponse",
+    "PlatformTenantSelfActivationResponse",
+    "PlatformTenantSelfActivationResponseStatus",
+    "PlatformTenantSelfActivationSurfaceResponse",
+    "PlatformTenantSelfActivationSurfaceResponseCertState",
+    "PlatformTenantSelfActivationSurfaceResponseStatus",
+    "PlatformTenantSelfConsumerApplyItemResponse",
+    "PlatformTenantSelfConsumerApplyItemResponseAction",
+    "PlatformTenantSelfConsumerApplyItemResponseStatus",
+    "PlatformTenantSelfConsumerResponse",
+    "PlatformTenantSelfConsumerResponseStatus",
+    "PlatformTenantSelfConsumerRevocationResponse",
+    "PlatformTenantSelfConsumersResponse",
+    "PlatformTenantSelfDeploymentResponse",
+    "PlatformTenantSelfDeploymentResponseStatus",
+    "PlatformTenantSelfHostnameResponse",
+    "PlatformTenantSelfHostnameResponseAction",
     "PlatformTenantSelfStatementListResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",
@@ -2792,6 +2898,10 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayload",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
@@ -2807,6 +2917,8 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthRateLimitConfig",
+    "PreAuthRateLimitConfigMode",
     "PreflightFinding",
     "PreflightLevel",
     "PreflightPlanBudget",
@@ -3030,6 +3142,7 @@ __all__ = (
     "RequestAnalyticsResponse",
     "RequestAnalyticsResponseGroupBy",
     "RequestAnalyticsRoute",
+    "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
@@ -3048,6 +3161,7 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "RevokePlatformTenantSelfConsumersRequest",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
@@ -3100,6 +3214,10 @@ __all__ = (
     "SeatUsageResponsePlan",
     "SecretFinding",
     "SecretFindingSeverity",
+    "SecretRevocationTarget",
+    "SecretRevocationTargetErrorCode",
+    "SecretRevocationTargetReloadSupport",
+    "SecretRevocationTargetStatus",
     "SecretRuntimeReloadObservation",
     "SecretRuntimeReloadObservationApplicationAck",
     "SecretRuntimeReloadObservationApplicationAckErrorCode",
@@ -3127,6 +3245,8 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceReliabilityPolicies",
+    "ServiceReliabilityPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
@@ -3141,6 +3261,10 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantConsumerProvisioningPolicyRequest",
+    "SetPlatformTenantCredentialPolicyRequest",
+    "SetPlatformTenantCredentialPolicyRequestAllowedScopesItem",
+    "SetPlatformTenantHostnamePolicyRequest",
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",

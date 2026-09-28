@@ -21,6 +21,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		RolloutCompletedAt:     &oldStarted,
 		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
 		OverrideMainDependsOn:  json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
+		GitHubSourceRef:        "main",
+		GitHubInstallationID:   77,
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -41,5 +43,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if string(got.OverrideMainDependsOn) != `[{"name":"proxy","condition":"healthy"}]` {
 		t.Fatalf("OverrideMainDependsOn = %s, want the source startup dependencies", got.OverrideMainDependsOn)
+	}
+	if got.GitHubSourceRef != "main" || got.GitHubInstallationID != 77 {
+		t.Fatalf("branch provenance lost on retry: (%q, %d)", got.GitHubSourceRef, got.GitHubInstallationID)
 	}
 }

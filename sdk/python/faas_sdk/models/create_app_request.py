@@ -39,8 +39,10 @@ from ..models.service_binding_transport import ServiceBindingTransport, check_se
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -71,6 +73,9 @@ class CreateAppRequest:
     """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
     derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
     canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
     """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""
@@ -134,6 +139,10 @@ class CreateAppRequest:
     crawler_policy: CreateAppRequestCrawlerPolicy | Unset = "wake"
     """Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
     wake."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A
+    gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path. Empty/omitted uses /healthz."""
     health_path_wakes: bool | Unset = False
@@ -209,6 +218,10 @@ class CreateAppRequest:
         service_binding_targets: list[str] | Unset = UNSET
         if not isinstance(self.service_binding_targets, Unset):
             service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
 
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
@@ -293,6 +306,10 @@ class CreateAppRequest:
         if not isinstance(self.crawler_policy, Unset):
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
         health_path = self.health_path
 
         health_path_wakes = self.health_path_wakes
@@ -350,6 +367,8 @@ class CreateAppRequest:
             field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if service_binding_targets is not UNSET:
             field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_binding_transport is not UNSET:
@@ -398,6 +417,8 @@ class CreateAppRequest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
@@ -439,8 +460,10 @@ class CreateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -472,6 +495,13 @@ class CreateAppRequest:
             allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         service_binding_targets = cast(list[str], d.pop("service_binding_targets", UNSET))
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
 
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset
@@ -597,6 +627,13 @@ class CreateAppRequest:
         else:
             crawler_policy = check_create_app_request_crawler_policy(_crawler_policy)
 
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
         health_path = d.pop("health_path", UNSET)
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
@@ -650,6 +687,7 @@ class CreateAppRequest:
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
             service_binding_policy=service_binding_policy,
             service_binding_transport=service_binding_transport,
             runtime=runtime,
@@ -674,6 +712,7 @@ class CreateAppRequest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,

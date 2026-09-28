@@ -24,6 +24,7 @@ type PutAppSecretRequest struct {
 // signal outcome with an optional separately-versioned application ack.
 type SecretRuntimeReloadObservation struct {
 	InstanceID              string `json:"instance_id"`
+	WorkloadName            string `json:"workload_name,omitempty"`
 	RuntimeState            string `json:"runtime_state"`
 	ReloadSupport           string `json:"reload_support"`
 	Reported                bool   `json:"reported"`
@@ -184,6 +185,33 @@ type AppSecretListResponse struct {
 	SecretsByScope SecretByScope       `json:"secrets_by_scope,omitempty"`
 	Quota          int                 `json:"quota_max"`
 	Count          int                 `json:"count"`
+}
+
+// AppSecretRevocationResponse reports a value-free secret deletion and the
+// exact runtime roster captured when it committed.
+type AppSecretRevocationResponse struct {
+	ID                string                   `json:"id"`
+	Scope             string                   `json:"scope"`
+	Key               string                   `json:"key"`
+	CreatedAt         string                   `json:"created_at"`
+	Status            string                   `json:"status"`
+	TargetCount       int                      `json:"target_count"`
+	AcknowledgedCount int                      `json:"acknowledged_count"`
+	PendingCount      int                      `json:"pending_count"`
+	Targets           []SecretRevocationTarget `json:"targets"`
+}
+
+// SecretRevocationTarget is a non-sensitive snapshot of one authorized
+// runtime's deletion acknowledgement state.
+type SecretRevocationTarget struct {
+	InstanceID    string `json:"instance_id"`
+	WorkloadName  string `json:"workload_name,omitempty"`
+	RuntimeState  string `json:"runtime_state"`
+	ReloadSupport string `json:"reload_support"`
+	Status        string `json:"status"`
+	AckRevision   string `json:"ack_revision,omitempty"`
+	AckAt         string `json:"ack_at,omitempty"`
+	ErrorCode     string `json:"error_code,omitempty"`
 }
 
 // AccountAppSecretResponse is one row in GET /v1/secrets — a sealed

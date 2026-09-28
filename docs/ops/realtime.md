@@ -12,6 +12,14 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+Disabling or deleting an endpoint stops new handshakes and closes its existing
+managed sockets on every node reached by the control-plane operation. The
+control plane compares the credential-free registration inventory on active
+nodes with durable endpoint rows every 30 seconds, so a node that missed a
+delete is cleaned up after it becomes reachable again. A delete response
+records customer intent; operators should check node reachability when
+immediate fleet-wide revocation matters.
+
 Register an endpoint (normally from an authorized control-plane process), then
 connect clients to `wss://<app-host>/__gregale/realtime/<endpoint-id>`:
 
@@ -76,8 +84,48 @@ active realtime nodes. In a single-box install this is the local
 `FAAS_REALTIME_SOCKET`; in a multi-node install apid uses each node's private
 `gateway_target_url` and the `gatewayd-internal` control proxy. Connection
 operations are routed through the leased owner directory, while publish is
-broadcast to active nodes. The daemon-socket example below remains useful for
-node-local bootstrap and recovery tooling.
+broadcast to active nodes by default. New apid versions also record shared
+PostgreSQL channel-to-node hints while routing is disabled. After every apid
+replica has been upgraded, set
+`FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
+nodes with subscribers. Each apid seeds its readiness from
+live connection snapshots; a node receives full-fleet fallback traffic until
+its snapshot succeeds. Directory read errors and endpoints over the 10,000
+route-row cap also fall back to full broadcast. The reconciler periodically
+rebuilds capped indexes from live connection snapshots and resumes targeted
+routing when the live route count is under the cap. Endpoints whose live fanout
+still exceeds the cap remain on full broadcast and are retried every five
+minutes. Stale route rows can add an unneeded node request, but cannot exclude
+a subscriber. The
+daemon-socket example below remains useful for node-local bootstrap and
+recovery tooling.
+
+Apid exports bounded-cardinality route-directory metrics in its operations
+registry. `apid_realtime_channel_route_publish_decisions_total` counts
+routing decisions as `routing_disabled`, `route_store_unavailable`,
+`directory_error`, `overflow`, `unready_fallback`, `targeted`, or
+`no_subscribers`. `apid_realtime_channel_route_publish_recipients` records the
+number of active nodes selected for each decision, so targeted fanout can be
+compared with fallback broadcasts. Rebuild health is reported by
+`apid_realtime_channel_route_rebuild_checks_total` (`started`, `idle`, `error`,
+`canceled`), `apid_realtime_channel_route_reconcile_passes_total`
+(`complete`, `incomplete`, `error`, `canceled`), and
+`apid_realtime_channel_route_node_snapshots_total` (`success`, `error`,
+`canceled`). `apid_realtime_channel_route_reconcile_duration_seconds` records
+the duration of passes that start. These metrics omit endpoint, channel, and
+node identifiers.
+
+```promql
+sum by (decision) (rate(apid_realtime_channel_route_publish_decisions_total[5m]))
+histogram_quantile(0.95, sum by (decision, le) (rate(apid_realtime_channel_route_publish_recipients_bucket[5m])))
+sum by (outcome) (rate(apid_realtime_channel_route_rebuild_checks_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_reconcile_passes_total[15m]))
+histogram_quantile(0.95, sum by (le) (rate(apid_realtime_channel_route_reconcile_duration_seconds_bucket[15m])))
+```
+
+Warnings for sustained publish fallbacks and unsuccessful overflow rebuilds,
+with recovery steps, are documented in the
+[managed realtime channel routing runbook](../runbooks/FaasManagedRealtimeChannelRouting.md).
 
 ## Zero-downtime static bearer rotation
 
@@ -141,6 +189,13 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
+Updating `callback_auth_token` with the endpoint PATCH applies the new bearer
+to future callbacks from existing connections without closing their sockets.
+Callbacks already persisted in the durable outbox keep the token captured when
+they were queued. During rotation, configure the handler to accept both tokens,
+update Gregale's endpoint, and keep accepting the old token until pending
+callbacks have drained. Review dead letters before revoking the old token if
+you may need to replay them manually.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;
@@ -150,8 +205,29 @@ with a bounded backoff before reporting a callback error. In multi-node mode, ap
 leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed
-for connection operations (`503`) and are skipped when another node accepts a
-publish.
+for connection operations (`503`). If another node accepts a publish, the
+response includes `partial: true`, `nodes_queried`, and `nodes_unavailable`
+when some nodes did not accept it. `queued` counts in-memory output queues,
+not client acknowledgements; retrying a partial publish may duplicate a
+message on nodes that already accepted it.
+
+Apid records bounded-cardinality publish outcomes in its standard
+operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
+`no_subscribers`, `unavailable`, and `canceled`;
+`managed_realtime_publish_node` uses `ok`, `endpoint_missing`, `error`, and
+`canceled`. Durations are available through
+`apid_op_duration_seconds`. These metrics intentionally omit endpoint, channel,
+and node identifiers. A node's `ok` outcome means its local queue accepted the
+publish; it does not confirm delivery to a client. Partial-success warnings
+include fleet counts and are rate-limited to one per minute per apid process.
+
+Inspect the publish outcome and per-node failure rates with:
+
+```promql
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish"}[5m]))
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish_node"}[5m]))
+histogram_quantile(0.99, sum by (le) (rate(apid_op_duration_seconds_bucket{op="managed_realtime_publish"}[5m])))
+```
 
 Inspect health and counters from the `faas` group:
 
@@ -159,7 +235,16 @@ Inspect health and counters from the `faas` group:
 curl --unix-socket /run/faas/realtimed.sock http://localhost/healthz
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
+curl --unix-socket /run/faas/realtimed.sock 'http://localhost/internal/callbacks/dead-letters?limit=100'
 ```
+
+The dead-letter endpoint returns metadata only. Use the `next_cursor` value as
+`after` to list another page. After correcting a callback receiver, POST to
+`/internal/callbacks/dead-letters/<event-id>:replay` on this Unix socket to
+return one event to the pending outbox. Replay preserves the event ID and
+resets its retry budget; HTTP 409 means pending capacity or an active
+same-connection delivery must clear first. See the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
 The customer CLI exposes the authenticated connection operations as well:
 
@@ -214,12 +299,59 @@ Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
 adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
-node-local callback spool (default `/run/faas/realtime-callbacks`). Message and
-disconnect events are fsynced before delivery and replayed after a realtimed
-restart; delivery is at-least-once, and poison events are retained under the
-outbox's `dead/` directory after the bounded retry budget. Keep the callback URL
+node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
+`FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` caps retained dead letters
+(default 64 MiB). The oldest dead letters are evicted first when the cap is
+exceeded, including on startup if an existing spool is over the limit. Copy
+records needed for investigation or manual replay before lowering the cap.
+Failed durable callbacks retry with jittered exponential backoff from one
+second, capped at one minute by default. `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL`
+can raise that cap up to one hour. HTTP 429 and 503 `Retry-After` hints set a
+minimum delay, subject to the configured cap; the scheduled time is persisted
+with the callback so restarts do not reset the backoff.
+The default directory is provisioned as `faas:faas` with mode `0700` and is writable
+through the realtimed systemd unit. On the first start after upgrading, realtimed
+moves pending events and dead letters from the former `/run/faas/realtime-callbacks`
+directory into the persistent spool before accepting connections. A conflicting
+event ID stops startup for operator inspection rather than discarding either
+copy. Message and disconnect events are fsynced before delivery and replayed
+after a daemon restart or host reboot; delivery is at-least-once, and poison
+events are retained under the outbox's `dead/` directory after the bounded
+retry budget. Unexpected outbox or filesystem errors stop a replay pass, which
+realtime retries in process with an exponential delay capped at 30 seconds.
+Process shutdown cancels the retry wait. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
-application to process an event.
+application to process an event. Pending callbacks for one connection replay in
+WebSocket sequence order, with disconnect after the final message. Existing
+`FAAS_REALTIME_CALLBACK_OUTBOX` overrides are unchanged; operators using an
+override must provide persistent storage if they need reboot survival. The
+spool contains callback payloads and bearer tokens, so keep it out of broadly
+readable backups. Callback handlers should deduplicate by event ID because
+delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
+and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
+the pending count and bytes, retained dead-letter count and bytes, retention
+capacity, eviction count, and last eviction time. It also exposes ready and
+delayed replay heads, replay attempts, and successful deliveries. The
+`realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
+loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
+restarts. `FaasRealtimeCallbackReplayStalled` fires when ready replay work
+receives no attempts; delayed retries do not trigger it. See the
+[callback delivery runbook](../runbooks/FaasRealtimeCallbacks.md). The pending
+outbox capacity gauge and
+`FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
+the enqueue limit. `realtimed_callback_outbox_full_total` counts events that
+could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
+`realtimed_callback_outbox_admission_errors_total` counts failures to persist
+callbacks caused by local admission or storage errors, and
+`FaasRealtimeCallbackOutboxAdmissionFailed` pages on any occurrence.
+`realtimed_callback_unpersisted_failures_total` counts failed direct HTTP
+callbacks without a durable outbox; `FaasRealtimeCallbackUnpersisted`
+pages on any occurrence.
+The `FaasRealtimeCallbackDeadLettersPresent`,
+`FaasRealtimeCallbackDeadLettersNearCapacity`, and
+`FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
-`/internal/stats` includes callback-pending, callback-pending-bytes, and
-callback-dead-letter counters alongside the connection and delivery counters.
+`/internal/stats` includes callback-pending, callback replay ready/delayed and
+attempt/delivery counters, and callback-dead-letter retention counters
+alongside the connection and delivery counters.

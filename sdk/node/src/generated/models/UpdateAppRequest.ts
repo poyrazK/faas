@@ -3,11 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DeclaredRoute } from './DeclaredRoute.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
@@ -30,6 +32,10 @@ export type UpdateAppRequest = {
    * Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
    */
   service_binding_targets?: any[] | null;
+  /**
+   * Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears. Project-managed and preview apps reject this PATCH.
+   */
+  service_reliability?: (ServiceReliabilityPolicies | null);
   /**
    * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    */
@@ -117,6 +123,10 @@ export type UpdateAppRequest = {
    * Policy for known monitor/crawler requests. Omit for no change.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  /**
+   * Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change.
+   */
+  pre_auth_rate_limit?: (PreAuthRateLimitConfig | null);
   /**
    * Monitor-facing health path. Omit for no change; empty resets to /healthz.
    */

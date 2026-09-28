@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,7 +25,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Ingress/auth policy, target-app rules after routing, throttle state, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const redactedHeaderValue = "[REDACTED]"
@@ -33,14 +35,16 @@ var traceOutputRedactor = redact.New(1 << 20)
 // Input is the request context that can be simulated without contacting the
 // gateway or app runtime. Call NormalizeInput before Simulate.
 type Input struct {
-	App      string
-	Host     string
-	Path     string
-	Method   string
-	ClientIP string
-	Country  string
-	Headers  http.Header
-	Body     []byte
+	Project     string
+	Environment string
+	App         string
+	Host        string
+	Path        string
+	Method      string
+	ClientIP    string
+	Country     string
+	Headers     http.Header
+	Body        []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -62,6 +66,9 @@ type Input struct {
 	// gateway. Explicit routes take precedence over the imported OpenAPI doc.
 	OnlyAllowDeclaredRoutes bool
 	DeclaredRoutes          []api.DeclaredRoute
+	// DeclaredRoutesLoaded distinguishes a known empty route allowlist from an
+	// app policy that may still need its imported OpenAPI document.
+	DeclaredRoutesLoaded bool
 	// DeclaredRouteDocumentLoaded distinguishes a loaded OpenAPI document from
 	// a caller that could not retrieve it. A missing document is tracked
 	// separately because the gateway treats that configured policy as a 503.
@@ -74,9 +81,19 @@ type Input struct {
 	// RequestBodyMaxBytes is the app's effective plan cap. Zero selects the
 	// platform maximum for callers that do not have app metadata.
 	RequestBodyMaxBytes int64
+	// AppRequestBudgetLoaded distinguishes a known app budget envelope from a
+	// caller that did not load the app's effective limits. RequestBudgetMS is
+	// the type-aware plan baseline; RequestTimeoutS, when positive, overrides
+	// that baseline and remains subject to RequestBudgetMaxMS.
+	AppRequestBudgetLoaded bool
+	RequestBudgetMS        int64
+	RequestBudgetMaxMS     int64
+	RequestTimeoutS        int
 }
 
 type Result struct {
+	Project      string              `json:"project,omitempty"`
+	Environment  string              `json:"environment,omitempty"`
 	App          string              `json:"app"`
 	Host         string              `json:"host"`
 	Path         string              `json:"path"`
@@ -128,6 +145,8 @@ type SimulationStep struct {
 	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	RequestOps        []api.EdgeRuleHeaderOp `json:"request_header_ops,omitempty"`
 	ResponseOps       []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
+	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
+	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
 	Reason            string                 `json:"reason"`
 }
 
@@ -161,12 +180,51 @@ type ActionPreview struct {
 	ValidationField   string                 `json:"validation_field,omitempty"`
 	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	Body              json.RawMessage        `json:"body,omitempty"`
+	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
+	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
+}
+
+// CachePolicyPreview contains the deterministic request-side cache policy
+// that can be shown without consulting gateway cache state. A lookup
+// candidate is not a predicted hit: authentication, async/pinned-deployment
+// context, and the live cache store can still alter runtime behavior.
+type CachePolicyPreview struct {
+	Methods                     []string `json:"methods"`
+	MaxAgeSeconds               int      `json:"max_age_seconds"`
+	StaleWhileRevalidateSeconds int      `json:"stale_while_revalidate_seconds"`
+	StaleIfErrorSeconds         int      `json:"stale_if_error_seconds"`
+	VaryOn                      []string `json:"vary_on,omitempty"`
+	RequestGate                 string   `json:"request_gate"`
+}
+
+// BudgetPolicyPreview reports the configured and effective request budget
+// without claiming that guest execution will actually consume the full
+// duration. The runtime starts this deadline only after upload, wake, routing,
+// and per-VM admission have completed.
+type BudgetPolicyPreview struct {
+	ConfiguredMS   int64  `json:"configured_ms"`
+	BudgetMS       int64  `json:"budget_ms"`
+	PlanMaxMS      int64  `json:"plan_max_ms"`
+	Source         string `json:"source"`
+	OverrideHeader string `json:"override_header,omitempty"`
+	OverrideStatus string `json:"override_status"`
 }
 
 // NormalizeInput validates user-supplied request context and canonicalizes
 // only the same fields the CLI has historically normalized (method, host,
 // client IP, and country). Header value comparisons remain exact.
 func NormalizeInput(input Input) (Input, error) {
+	input.Project = strings.TrimSpace(input.Project)
+	input.Environment = strings.TrimSpace(input.Environment)
+	if (input.Project == "") != (input.Environment == "") {
+		return Input{}, fmt.Errorf("project and environment must be supplied together")
+	}
+	if input.Project != "" && !api.ValidProjectSlug(input.Project) {
+		return Input{}, fmt.Errorf("project slug is invalid")
+	}
+	if input.Environment != "" && !api.ValidProjectEnvironmentSlug(input.Environment) {
+		return Input{}, fmt.Errorf("environment slug is invalid")
+	}
 	input.App = strings.TrimSpace(input.App)
 	if input.App == "" || len(input.App) > 40 {
 		return Input{}, fmt.Errorf("app slug is required and must be at most 40 characters")
@@ -214,6 +272,92 @@ func NormalizeInput(input Input) (Input, error) {
 	}
 	input.Headers = headers
 	return input, nil
+}
+
+// ApplyEnvironmentRoutePolicy overlays an explicitly selected environment's
+// route contract on the app metadata used by the trace. The environment
+// contract owns even an empty allowlist; it must not fall through to the
+// app's imported OpenAPI document.
+func ApplyEnvironmentRoutePolicy(input Input, policy api.ProjectEnvironmentRoutePolicyResponse) (Input, error) {
+	switch policy.Ownership {
+	case "application":
+		return input, nil
+	case "environment":
+		input.OnlyAllowDeclaredRoutes = policy.OnlyAllowDeclaredRoutes
+		input.DeclaredRoutes = append([]api.DeclaredRoute(nil), policy.DeclaredRoutes...)
+		input.DeclaredRoutesLoaded = true
+		input.DeclaredRouteDocumentLoaded = false
+		input.DeclaredRouteDocumentMissing = false
+		input.DeclaredRouteOpenAPIDoc = nil
+		return input, nil
+	default:
+		return Input{}, fmt.Errorf("environment route policy ownership %q is unsupported", policy.Ownership)
+	}
+}
+
+// ApplyEnvironmentEdgePolicy overlays environment-owned headers/CORS rules on
+// app rules, matching gateway replacement semantics. Other edge-rule kinds
+// remain app-owned. The selected request host must belong to this environment
+// workload so a trace cannot accidentally apply staging policy to production.
+func ApplyEnvironmentEdgePolicy(input Input, rules []api.EdgeRuleResponse, policy api.ProjectEnvironmentEdgePolicyResponse, workloadURL string, domains []api.ProjectEnvironmentDomainResponse) ([]api.EdgeRuleResponse, error) {
+	if input.Project == "" || input.Environment == "" {
+		return nil, fmt.Errorf("project and environment are required to apply environment policy")
+	}
+	if !environmentHostMatches(input.Host, workloadURL, domains) {
+		return nil, fmt.Errorf("request host %q is not the stable URL or a verified custom domain for project %q environment %q app %q", input.Host, input.Project, input.Environment, input.App)
+	}
+	switch policy.Ownership {
+	case "application":
+		return append([]api.EdgeRuleResponse(nil), rules...), nil
+	case "environment":
+		out := make([]api.EdgeRuleResponse, 0, len(rules)+len(policy.Rules))
+		for _, rule := range rules {
+			if rule.Kind != "headers" && rule.Kind != "cors" {
+				out = append(out, rule)
+			}
+		}
+		for i, rule := range policy.Rules {
+			if rule.Kind != "headers" && rule.Kind != "cors" {
+				return nil, fmt.Errorf("environment policy contains unsupported edge-rule kind %q", rule.Kind)
+			}
+			out = append(out, api.EdgeRuleResponse{
+				ID:      fmt.Sprintf("environment/%s/%s/%d", input.Environment, input.App, i+1),
+				Enabled: rule.Enabled, Kind: rule.Kind, MatchHost: input.Host,
+				MatchPath: rule.MatchPath, MatchMethods: append([]string(nil), rule.MatchMethods...),
+				MatchHeaders: cloneStringMap(rule.MatchHeaders), Priority: rule.Priority,
+				Action: append(json.RawMessage(nil), rule.Action...),
+			})
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("environment edge-policy ownership %q is unsupported", policy.Ownership)
+	}
+}
+
+func environmentHostMatches(host, workloadURL string, domains []api.ProjectEnvironmentDomainResponse) bool {
+	if workloadURL != "" {
+		parsed, err := url.Parse(workloadURL)
+		if err == nil && parsed != nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.EqualFold(parsed.Hostname(), host) {
+			return true
+		}
+	}
+	for _, domain := range domains {
+		if !domain.Verified {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSuffix(domain.Domain, "."))
+		requestHost := strings.ToLower(host)
+		if candidate == requestHost {
+			return true
+		}
+		if strings.HasPrefix(candidate, "*.") {
+			suffix := candidate[1:]
+			if requestHost != candidate[2:] && strings.HasSuffix(requestHost, suffix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ParseRequestHeaders parses repeated Name:Value inputs. It trims HTTP optional
@@ -279,6 +423,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
 	result := Result{
+		Project: input.Project, Environment: input.Environment,
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
 		ClientIP: input.ClientIP, Country: input.Country,
 		BodyProvided: input.BodyProvided, BodyBytes: len(input.Body),
@@ -370,7 +515,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "cache", "budget"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -444,6 +589,24 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
 		if rule == nil {
+			if phase == "budget" && hasAppRequestBudget(input) {
+				policy := resolveBudgetPolicy(input, nil, workingHeaders)
+				reason := budgetPolicyReason(policy)
+				simulation.Steps = append(simulation.Steps, SimulationStep{
+					Phase: phase, Kind: phase, Outcome: "budget_candidate",
+					PathBefore: requestPath, PathAfter: requestPath,
+					BudgetPolicy: &policy, Reason: reason,
+				})
+				simulation.Reason = "deterministic policy checks did not terminate the request; the reported budget applies only if the request reaches guest forwarding, and no elapsed-time or deadline outcome is predicted"
+				continue
+			}
+			if phase == "budget" {
+				// Budget policy is app-scoped, so callers that do not load
+				// app metadata cannot report the plan/app fallback. If a
+				// budget rule did match, the rule branch below stops as
+				// incomplete rather than guessing its plan ceiling.
+				continue
+			}
 			if phase == "cors" && RequiresAppCORSDefaultData(workingHeaders) {
 				if !input.AppCORSDefaultsLoaded {
 					stopped := stop("incomplete", "needs_app_cors_defaults", phase, "app CORS defaults were not loaded, so the gateway fallback cannot be evaluated", nil)
@@ -469,6 +632,16 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			step.ValidationField, step.ValidationKeyword = preview.ValidationField, preview.ValidationKeyword
 			step.RequestOps = append([]api.EdgeRuleHeaderOp(nil), preview.RequestHeaderOps...)
 			step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), preview.ResponseHeaderOps...)
+			if preview.CachePolicy != nil {
+				cachePolicy := *preview.CachePolicy
+				cachePolicy.Methods = append([]string(nil), preview.CachePolicy.Methods...)
+				cachePolicy.VaryOn = append([]string(nil), preview.CachePolicy.VaryOn...)
+				step.CachePolicy = &cachePolicy
+			}
+			if preview.BudgetPolicy != nil {
+				budgetPolicy := *preview.BudgetPolicy
+				step.BudgetPolicy = &budgetPolicy
+			}
 		}
 
 		switch phase {
@@ -582,6 +755,36 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			simulation.Steps = append(simulation.Steps, step)
 			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 			return simulation
+		case "cache":
+			switch outcome {
+			case "cache_bypassed_method", "cache_bypassed_credentials":
+				step.PathAfter = requestPath
+				simulation.Steps = append(simulation.Steps, step)
+			case "cache_lookup_candidate":
+				simulation.Status, simulation.Outcome = "incomplete", "needs_cache_runtime_context"
+				simulation.StoppedAt = phase
+				simulation.Reason = "the request passes the deterministic cache method and credential checks, but app authentication, async/pinned-deployment context, and live cache contents are unavailable; hit, miss, and stale outcomes are not inferred"
+				step.Reason = simulation.Reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+		case "budget":
+			if !hasAppRequestBudget(input) {
+				return stop("incomplete", "needs_app_request_budget", phase, "a matching budget rule was found, but the app's effective request budget and plan ceiling were not loaded", rule)
+			}
+			if outcome == "unavailable" {
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+			policy := resolveBudgetPolicy(input, rule, workingHeaders)
+			step.Outcome = "budget_candidate"
+			step.BudgetPolicy = &policy
+			step.PathAfter = requestPath
+			step.Reason = budgetPolicyReason(policy)
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.Reason = "deterministic policy checks did not terminate the request; the reported budget applies only if the request reaches guest forwarding, and no elapsed-time or deadline outcome is predicted"
 		case "validate":
 			switch outcome {
 			case "validated", "validation_failed_observe", "validation_failed_warn":
@@ -610,7 +813,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 // The public path/method are supplied separately from the rewritten path so
 // edge rewrites cannot change the app's public contract.
 func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
-	if len(input.DeclaredRoutes) > 0 {
+	if input.DeclaredRoutesLoaded || len(input.DeclaredRoutes) > 0 {
 		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
 		return allowed, err != nil, true
 	}
@@ -893,9 +1096,164 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewValidateRule(rule, input)
 	case "limit":
 		return previewLimitRule(rule, input)
+	case "cache":
+		return previewCacheRule(rule, input)
+	case "budget":
+		return previewBudgetRule(rule, input)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
+}
+
+func previewCacheRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleCacheAction](rule.Action, "cache")
+	if !ok {
+		return "unavailable", "cache action is missing or invalid; gateway compilation would drop it", nil
+	}
+	methods := append([]string(nil), action.Methods...)
+	if len(methods) == 0 {
+		methods = []string{http.MethodGet, http.MethodHead}
+	}
+	effectiveMethods := make([]string, 0, len(methods))
+	for _, method := range methods {
+		if (method == http.MethodGet || method == http.MethodHead) && ruleMethodMatches(rule.Kind, rule.MatchMethods, method) {
+			effectiveMethods = append(effectiveMethods, method)
+		}
+	}
+	methods = effectiveMethods
+	varyOn := append([]string(nil), action.VaryOn...)
+	sort.Strings(varyOn)
+	policy := &CachePolicyPreview{
+		Methods: methods, MaxAgeSeconds: action.MaxAgeSeconds,
+		StaleWhileRevalidateSeconds: action.StaleWhileRevalidateSeconds,
+		StaleIfErrorSeconds:         action.StaleIfErrorSeconds,
+		VaryOn:                      varyOn,
+	}
+	preview := &ActionPreview{Type: "cache", CachePolicy: policy}
+
+	methodAllowed := false
+	for _, method := range methods {
+		if method == input.Method {
+			methodAllowed = true
+			break
+		}
+	}
+	if !methodAllowed || (input.Method != http.MethodGet && input.Method != http.MethodHead) {
+		policy.RequestGate = "bypassed_method"
+		return "cache_bypassed_method", fmt.Sprintf("request method %q is outside the cacheable method set %s; cache lookup is skipped", input.Method, strings.Join(methods, ", ")), preview
+	}
+	if input.Headers.Get("Authorization") != "" || requestHasCookie(input.Headers) {
+		policy.RequestGate = "bypassed_credentials"
+		return "cache_bypassed_credentials", "request carries Authorization or Cookie; credentialed requests bypass the cache", preview
+	}
+	policy.RequestGate = "lookup_candidate"
+	return "cache_lookup_candidate", "request passes the deterministic cache method and credential checks; this is only a lookup candidate, not a predicted hit", preview
+}
+
+func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleBudgetAction](rule.Action, "budget")
+	if !ok {
+		return "unavailable", "budget action is missing or invalid; gateway compilation would drop it", nil
+	}
+	if !hasAppRequestBudget(input) {
+		headerName := action.AllowOverrideHeader
+		if headerName == "" {
+			headerName = api.RequestBudgetDefaultOverrideHeader
+		}
+		policy := &BudgetPolicyPreview{
+			ConfiguredMS: int64(action.BudgetMs), OverrideHeader: headerName,
+			OverrideStatus: "unresolved", Source: "unavailable",
+		}
+		return "needs_app_request_budget", "a matching budget rule is configured, but the app's effective request budget and plan ceiling were not loaded", &ActionPreview{Type: "budget", BudgetPolicy: policy}
+	}
+	policy := resolveBudgetPolicy(input, &rule, input.Headers)
+	return "budget_candidate", budgetPolicyReason(policy), &ActionPreview{Type: "budget", BudgetPolicy: &policy}
+}
+
+func hasAppRequestBudget(input Input) bool {
+	return input.AppRequestBudgetLoaded && input.RequestBudgetMS > 0 && input.RequestBudgetMaxMS > 0
+}
+
+func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.Header) BudgetPolicyPreview {
+	policy := BudgetPolicyPreview{
+		PlanMaxMS: input.RequestBudgetMaxMS, OverrideStatus: "not_applicable",
+	}
+	configuredMS := input.RequestBudgetMS
+	candidateMS := configuredMS
+	source := "plan_default"
+	if input.RequestTimeoutS > 0 {
+		configuredMS = int64(input.RequestTimeoutS) * 1000
+		candidateMS, source = configuredMS, "app"
+	}
+	if rule != nil {
+		action, ok := decodeAction[api.EdgeRuleBudgetAction](rule.Action, "budget")
+		if !ok {
+			return BudgetPolicyPreview{PlanMaxMS: input.RequestBudgetMaxMS, Source: "unavailable", OverrideStatus: "unavailable"}
+		}
+		configuredMS = int64(action.BudgetMs)
+		candidateMS, source = configuredMS, "rule"
+		policy.OverrideHeader = action.AllowOverrideHeader
+		if policy.OverrideHeader == "" {
+			policy.OverrideHeader = api.RequestBudgetDefaultOverrideHeader
+		}
+		policy.OverrideStatus = "not_present"
+		if value := headers.Get(policy.OverrideHeader); value != "" {
+			parsed, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || parsed <= 0 {
+				policy.OverrideStatus = "ignored_invalid"
+			} else {
+				candidateMS, source = int64(parsed), "header_override"
+				policy.OverrideStatus = "applied"
+			}
+		}
+	}
+	policy.ConfiguredMS = configuredMS
+	platformMaxMS := api.RequestBudgetMax.Milliseconds()
+	if rule != nil && (candidateMS <= 0 || candidateMS > platformMaxMS) {
+		candidateMS, source = platformMaxMS, "ceiling_clamp"
+		if policy.OverrideStatus == "applied" {
+			policy.OverrideStatus = "applied_clamped"
+		}
+	}
+	if candidateMS <= 0 || candidateMS > policy.PlanMaxMS {
+		candidateMS, source = policy.PlanMaxMS, "ceiling_clamp"
+		if policy.OverrideStatus == "applied" {
+			policy.OverrideStatus = "applied_clamped"
+		}
+	}
+	policy.BudgetMS, policy.Source = candidateMS, source
+	return policy
+}
+
+func budgetPolicyReason(policy BudgetPolicyPreview) string {
+	if policy.OverrideStatus == "unavailable" || policy.Source == "unavailable" {
+		return "the effective request budget could not be resolved from the available app metadata"
+	}
+	if policy.OverrideStatus == "not_applicable" {
+		return fmt.Sprintf("no budget rule matched; app/plan fallback would configure %d ms from %s (plan ceiling %d ms) if the request reaches guest forwarding", policy.BudgetMS, policy.Source, policy.PlanMaxMS)
+	}
+	reason := fmt.Sprintf("effective budget candidate is %d ms from %s (configured rule budget %d ms; plan ceiling %d ms)", policy.BudgetMS, policy.Source, policy.ConfiguredMS, policy.PlanMaxMS)
+	switch policy.OverrideStatus {
+	case "applied":
+		reason += fmt.Sprintf("; request header %q overrides the rule", policy.OverrideHeader)
+	case "applied_clamped":
+		reason += fmt.Sprintf("; request header %q is accepted then clamped to the plan ceiling", policy.OverrideHeader)
+	case "ignored_invalid":
+		reason += fmt.Sprintf("; request header %q is not a positive integer and is ignored", policy.OverrideHeader)
+	case "not_present":
+		reason += fmt.Sprintf("; request header %q is absent", policy.OverrideHeader)
+	}
+	return reason + "; this deadline starts only after upload, wake, routing, and admission, and the trace does not predict when it expires"
+}
+
+func requestHasCookie(headers http.Header) bool {
+	request := &http.Request{Header: headers}
+	for _, cookie := range request.Cookies() {
+		if cookie.Name != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // corsMatchMethod mirrors applyEdgeRuleCORS: browser preflights match a CORS

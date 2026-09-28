@@ -106,6 +106,28 @@ func TestNewClientWithDeployTimeout(t *testing.T) {
 	})
 }
 
+func TestUnsetSecretWithScopeAndStatusRequestsRevocationRepresentation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/my-app/secrets/DATABASE_URL" || r.URL.Query().Get("scope") != "prod" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Prefer"); got != "return=representation" {
+			t.Errorf("Prefer = %q", got)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Error("missing Idempotency-Key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"revocation-1","status":"complete","acknowledged_count":0}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fp_test")
+	progress, err := client.UnsetSecretWithScopeAndStatus(context.Background(), "my-app", "DATABASE_URL", "prod")
+	if err != nil || progress.ID != "revocation-1" || progress.Status != "complete" {
+		t.Fatalf("unset status = %+v, err=%v", progress, err)
+	}
+}
+
 func TestParkWaitsForMultiRevisionDrain(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

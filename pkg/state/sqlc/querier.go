@@ -66,7 +66,9 @@ type Querier interface {
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	// Change only the debugger workflow state for one app-scoped observation.
-	// The handler maps reopen to active before calling this query.
+	// The handler maps reopen to active before calling this query. Reopening a
+	// non-active observation starts a new detection lifecycle so the transition
+	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
@@ -110,6 +112,8 @@ type Querier interface {
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
 	CreateAccount(ctx context.Context, db DBTX, arg CreateAccountParams) (CreateAccountRow, error)
 	CreateApp(ctx context.Context, db DBTX, arg CreateAppParams) (CreateAppRow, error)
+	CreateAppSecretRevocation(ctx context.Context, db DBTX, arg CreateAppSecretRevocationParams) (CreateAppSecretRevocationRow, error)
+	CreateAppSecretRevocationTarget(ctx context.Context, db DBTX, arg CreateAppSecretRevocationTargetParams) error
 	CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (CreateBuildRow, error)
 	CreateCron(ctx context.Context, db DBTX, arg CreateCronParams) (CreateCronRow, error)
 	CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error)
@@ -182,6 +186,7 @@ type Querier interface {
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
 	DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error
+	DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg DeleteCustomerAppSecretParams) (int64, error)
 	// DELETE /v1/apps/{slug}/upstreams/{id} (PR-B). Soft-
 	// delete is rejected by ADR-098 (a soft-deleted row
 	// would still trigger pg_notify and confuse schedd);
@@ -272,6 +277,8 @@ type Querier interface {
 	// headers_sample + redactions for the wire-side "we redacted
 	// X / Y / Z" badge.
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
+	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
+	GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, arg GetCustomerAppSecretForDeletionParams) (GetCustomerAppSecretForDeletionRow, error)
 	// Single-row read for the dashboard's "edit upstream"
 	// pane (PR-B). Cursor-safe: no pagination; the handler
 	// reads the row directly. Projects the new deployment_scope
@@ -307,6 +314,10 @@ type Querier interface {
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
+	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
+	// expires_at is checked as well as received_at so plan downgrades do not
+	// extend the original request-time retention window.
+	GetRequestIDJournalByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestIDJournalByAppAndIdentifierParams) (GetRequestIDJournalByAppAndIdentifierRow, error)
 	// Direct request drill-down for the customer debugger. Customers normally
 	// have the public x-faas-request-id stored as trace_id, while older clients
 	// may retain the internal telemetry-row UUID. Accept both without weakening
@@ -577,6 +588,7 @@ type Querier interface {
 	// types — without them sqlc infers $5 as timestamptz from the
 	// leading (received_at) reference, breaking pagination.
 	ListAppErrorRequests(ctx context.Context, db DBTX, arg ListAppErrorRequestsParams) ([]ListAppErrorRequestsRow, error)
+	ListAppSecretRevocationTargets(ctx context.Context, db DBTX, revocationID pgtype.UUID) ([]ListAppSecretRevocationTargetsRow, error)
 	// Build the complete active roster for each secret from the deployment's
 	// persisted scope/allowlist and reload opt-in. A missing observation remains
 	// a target with nullable outcome fields rather than disappearing from the
@@ -898,6 +910,13 @@ type Querier interface {
 	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
 	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
 	ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error)
+	ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error)
+	ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg ObjectS3BindingLockAppParams) (pgtype.UUID, error)
+	ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg ObjectS3BindingRevokeLockParams) (ObjectStorageS3Credential, error)
+	ObjectS3BindingSecretCount(ctx context.Context, db DBTX, arg ObjectS3BindingSecretCountParams) (int64, error)
+	ObjectS3BindingSecretInsert(ctx context.Context, db DBTX, arg ObjectS3BindingSecretInsertParams) (string, error)
+	ObjectS3BindingStaleSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
 	ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error)
@@ -907,8 +926,15 @@ type Querier interface {
 	ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error)
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)
-	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationFinalizeForApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationFinalizeForAppParams) (int64, error)
+	ObjectS3CredentialRotationParentForUpdate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationParentForUpdateParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationPending(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationPendingParams) (string, error)
+	ObjectS3CredentialRotationReplace(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationReplaceParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStageParams) (ObjectStorageS3Credential, error)
+	ObjectS3CredentialRotationStampApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampAppParams) error
+	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
+	ObjectStorageManagedSecretRotate(ctx context.Context, db DBTX, arg ObjectStorageManagedSecretRotateParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
 	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
@@ -999,6 +1025,7 @@ type Querier interface {
 	// as a follow-up ADR rather than conflated into PR-1's
 	// migration slot 533.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
+	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
 	// (ADR-115 §D.3, RFC 8058 follow-on). One row per (source,
@@ -1024,6 +1051,11 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	// The request-ID journal is independent from sampled request telemetry. Only
+	// insert when the app is still owned by the authenticated account. The
+	// caller-generated record UUID makes an RPC retry idempotent without
+	// collapsing two customer requests that happen to reuse a public ID.
+	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
 	// apidsource.Enqueue and BEFORE writing the 201 response. On
@@ -1049,6 +1081,12 @@ type Querier interface {
 	// Top route/method rows for the customer analytics overview. `count` is
 	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
+	// Per-route deployment split for the customer analytics window. Routes are
+	// bounded to the same top-N surface as route analytics, and each route keeps
+	// only its top deployments by request count; the remaining revisions are
+	// folded into __other__ so the response cardinality is bounded by
+	// route_limit * (deployment_limit + 1).
+	RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteDeploymentParams) ([]RequestTelemetryAnalyticsByRouteDeploymentRow, error)
 	// Customer-facing request analytics over a bounded retention window.
 	// The recorder collapses identical requests into bounded latency-bucket
 	// rows with `count`, so all request/error/cold-boot totals and percentiles
@@ -1117,6 +1155,7 @@ type Querier interface {
 	// Publication is insert-only; retirement is the sole mutable transition.
 	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
+	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
@@ -1138,6 +1177,7 @@ type Querier interface {
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
+	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
@@ -1319,13 +1359,11 @@ type Querier interface {
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row
-	// per cron tick. Mirrors UpsertDoctorObservation's primary-key upsert
-	// shape (migrations/00313). first_detected_at is set on INSERT only;
-	// the ON CONFLICT clause does NOT touch it, so the column survives
-	// subsequent upserts and the dashboard shows "regression detected 4h
-	// ago" correctly. last_detected_at is refreshed to EXCLUDED on every
-	// pass; the column backs the `since=<duration>` filter on the dashboard
-	// and the GET /v1/apps/{slug}/debug/regressions endpoint.
+	// per cron tick. first_detected_at remains stable during one active
+	// lifecycle, then resets when a resolved regression is detected again
+	// (or a dismissal expires). The webhook trigger uses that timestamp as
+	// the detection transition's idempotency key. last_detected_at is
+	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
 }

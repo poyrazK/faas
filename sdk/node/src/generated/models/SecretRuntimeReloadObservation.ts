@@ -3,13 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Non-sensitive active runtime target and optional guest-init projection/signal outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not independent verification.
+ * Non-sensitive active main or explicitly authorized sidecar workload target and optional guest-init projection/signal outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not independent verification.
  */
 export type SecretRuntimeReloadObservation = {
   /**
    * Authorized active runtime instance ID.
    */
   instance_id: string;
+  /**
+   * Sidecar workload name. Omitted for the main workload.
+   */
+  workload_name?: string;
   /**
    * Current active instance state.
    */

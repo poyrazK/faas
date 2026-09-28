@@ -1376,7 +1376,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PreAuthRateLimit: app.Manifest.PreAuthRateLimit, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -2400,6 +2400,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	retryBudget := gateway.NewRetryBudget(0, nil)
+	budgetURL, budgetConfigErr := retryBudgetRedisURL(osGetenv)
+	if budgetConfigErr != nil {
+		return fmt.Errorf("gatewayd-internal: %w", budgetConfigErr)
+	}
+	if budgetURL != "" {
+		sharedBudget, budgetErr := gateway.NewRedisRetryBudget(ctx, budgetURL, 0)
+		if budgetErr != nil {
+			return fmt.Errorf("gatewayd-internal: connect shared retry budget: %w", budgetErr)
+		}
+		retryBudget = sharedBudget
+		deps.metrics.SetRetryBudgetShared(true)
+		deps.metrics.SetRetryBudgetBackendID(sharedBudget.BackendID())
+		log.Info("gatewayd-internal: shared retry budget enabled")
+	}
+	retryBudget.WithObserver(deps.metrics)
+	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
@@ -2758,6 +2774,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// publisher goroutine. Single-box deployments use the dedicated
 	// Unix socket; split-box deployments reuse the private mTLS AppErrors
 	// endpoint, which is served by the same apid gRPC server.
+	// The exact request-ID journal is independent of this optional,
+	// sampled telemetry stream. It is written synchronously before guest
+	// work so a debugger-enabled request can always be looked up by its
+	// public x-faas-request-id.
+	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
+	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
+	if journalTLSErr != nil {
+		return fmt.Errorf("gatewayd: load request ID journal TLS: %w", journalTLSErr)
+	}
+	journalClient, journalDialErr := apidgrpc.DialRequestTelemetry(ctx, journalTarget, journalTLS)
+	if journalDialErr != nil {
+		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
+	}
+	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+		if journalClient == nil {
+			return errors.New("request ID journal apid client unavailable")
+		}
+		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		response, err := journalClient.RecordRequestIDJournal(rpcCtx, &apidpb.RecordRequestIDJournalRequest{
+			RecordId: record.ID, AccountId: record.AccountID, AppId: record.AppID,
+			RequestId: record.RequestID, TraceId: record.TraceID,
+			ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(),
+		})
+		if err != nil {
+			return fmt.Errorf("persist request ID journal: %w", err)
+		}
+		if response == nil || !response.GetRecorded() {
+			return errors.New("apid did not record the request ID journal entry")
+		}
+		return nil
+	})
+	if journalClient != nil {
+		defer func() {
+			if err := journalClient.Close(); err != nil {
+				log.Warn("request ID journal: close apid client", "err", err)
+			}
+		}()
+	}
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
 	if requestTelemetryEnabled {
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{
@@ -2944,16 +2999,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			case <-ctx.Done():
 				return
 			case <-hup:
-				// Reset both per-app and per-account buckets (ADR-040).
-				// appDropped = per-app buckets cleared; acctDropped =
-				// per-account buckets cleared. Operators see the sum.
+				// Reset app, account, and pre-auth source buckets.
+				// Operators see each count and their sum.
 				appDropped := handler.Limiter().ForgetAll()
 				acctDropped := handler.AccountLimiter().ForgetAll()
+				preAuthDropped := handler.ForgetPreAuthRateLimits()
 				log.Info("gatewayd sighup reload",
 					"action", "rate_limit_buckets_dropped",
 					"app_count", appDropped,
 					"account_count", acctDropped,
-					"count", appDropped+acctDropped)
+					"pre_auth_app_count", preAuthDropped,
+					"count", appDropped+acctDropped+preAuthDropped)
 			}
 		}
 	}()

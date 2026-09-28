@@ -84,6 +84,44 @@ func TestManagedPostgresCredentialSinkSealsURLAndRecoversUncommittedPut(t *testi
 	}
 }
 
+func TestManagedPostgresCredentialSinkDeleteRecoversDuringPartialRotation(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewMemStore()
+	sink, err := newAppSecretCredentialSink(
+		store,
+		func() *age.X25519Recipient { return identity.Recipient() },
+		func() []byte { return []byte("0123456789abcdef0123456789abcdef") },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := managedpostgres.Binding{
+		ID: "binding-rotation", AccountID: "account-a", AppID: "app-a", Scope: "production",
+		EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite, CredentialGeneration: 1,
+	}
+	material := managedpostgres.CredentialMaterial{
+		ProviderIdentityID: "provider-role-a", Username: "role", Password: "secret", Database: "app", TLSMode: "require",
+		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointPooled, Host: "pool.db.example", Port: 5432}},
+	}
+	oldRef, err := sink.Put(context.Background(), binding, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotating := binding
+	rotating.CredentialGeneration = 2
+	rotating.RotationPreviousGeneration = 1
+	rotating.CredentialRef = oldRef // crash after rotation reservation, before the replacement secret write
+	if err := sink.Delete(context.Background(), rotating); err != nil {
+		t.Fatalf("delete during partial rotation: %v", err)
+	}
+	if _, err := store.GetAppSecretInScope(context.Background(), binding.AccountID, binding.AppID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old-generation secret survived partial-rotation delete: %v", err)
+	}
+}
+
 func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 	material := managedpostgres.CredentialMaterial{
 		ProviderIdentityID: "provider-role-a", Username: "reader", Password: "secret", Database: "app", TLSMode: "verify-full",

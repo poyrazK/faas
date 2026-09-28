@@ -186,7 +186,7 @@ func (s *server) postOperatorDeploymentCancel(w http.ResponseWriter, r *http.Req
 			"deployment is not cancellable", "only pending, building, imaging, or snapshotting deployments can be cancelled"))
 		return
 	}
-	deployment, cancelledBuilds, err := s.store.CancelDeploymentTx(r.Context(), id, "operator:"+caller.ID, state.CancelReasonSystem)
+	deployment, cancelledBuilds, activityOutboxID, err := s.cancelDeploymentWithActivity(r.Context(), r, caller, app, prior, state.CancelReasonSystem, true)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such deployment")
@@ -200,6 +200,9 @@ func (s *server) postOperatorDeploymentCancel(w http.ResponseWriter, r *http.Req
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not cancel deployment"))
 		return
+	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
 	for _, buildID := range cancelledBuilds {
 		payload, _ := json.Marshal(buildChangedPayload{

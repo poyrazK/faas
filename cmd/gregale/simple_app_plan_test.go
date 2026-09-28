@@ -165,6 +165,20 @@ func TestRenderSimpleAppPlanExplainsEphemeralState(t *testing.T) {
 	}
 }
 
+func TestRenderSimpleAppPlanShowsTCPListenerReadinessForImage(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{Slug: "demo", Source: simpleapp.SourceImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := renderSimpleAppPlan(&out, plan, false); code != 0 {
+		t.Fatalf("renderSimpleAppPlan exit = %d", code)
+	}
+	if !strings.Contains(out.String(), "listener:           :8080 · TCP listener readiness") {
+		t.Fatalf("plan did not explain TCP listener readiness:\n%s", out.String())
+	}
+}
+
 func TestApplySimpleAppPlanToCreateRequestUsesResolvedDefaults(t *testing.T) {
 	plan, err := simpleapp.Resolve(simpleapp.Spec{
 		Slug:       "demo",

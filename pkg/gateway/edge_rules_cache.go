@@ -63,7 +63,7 @@ type EdgeRuleCacheResolved struct {
 	AppID                       string
 	Priority                    int
 	PathGlob                    string          // "" = any path
-	Methods                     map[string]bool // nil = any method
+	Methods                     map[string]bool // effective cache allowlist; nil = any method for direct callers
 	MatchHeaders                map[string]string
 	MaxAgeSeconds               int      // fresh window; 0 = no fresh hits
 	StaleWhileRevalidateSeconds int      // serve stale immediately while refreshing; 0 = disabled

@@ -219,10 +219,46 @@ provided, and pins later calls from that adapter instance. It serializes
 concurrent unpinned startup calls while discovering the release. The
 discovery request itself follows the active release, so inject `initialRelease`
 from the HTML/SSR/bootstrap response when the API must match the exact release
-that served the client. State is in-memory per adapter instance; create a new
+that served the client. For static SPAs, Gregale sets the host-only,
+JavaScript-readable `__Host-gregale_release` cookie on a document navigation
+when a release graph is selected. The browser adapter reads that cookie when
+created and uses it as the initial release, including for configured
+cross-origin API origins. The cookie is a routing identifier, not a secret;
+Gregale removes it before forwarding requests to the guest. Apps must have
+revision pin retention enabled, and any cache in front of the app must preserve
+the document response's `Set-Cookie` header with its body. It is a browser
+session cookie; the release graph's server-side TTL controls whether its value
+is still routable.
+
+Same-host browser WebSocket reconnects use the same bootstrap cookie without a
+custom header: the native `WebSocket` API does not expose request headers. The
+gateway reads the cookie only on a WebSocket handshake, routes to that release
+if it remains eligible, and strips the platform cookie before the guest sees
+the request. Because `__Host-` cookies are host-only, this automatic browser
+behavior applies when the SPA and WebSocket endpoint share a hostname.
+
+For a WebSocket endpoint on a separate managed API hostname, use the adapter's
+`webSocket` helper after seeding or discovering the release:
+
+```ts
+const socket = gregale.webSocket('wss://api.example.com/events', ['graphql-transport-ws']);
+```
+
+The helper appends a reserved `Sec-WebSocket-Protocol` token carrying the
+release UUID. Gregale consumes it before the application handshake, preserves
+your application protocols, and removes any guest attempt to negotiate the
+reserved token back to the browser. The token is a routing identifier, not a
+secret; it is not placed in the URL. The endpoint origin must be listed in
+`managedOrigins`. If the adapter has no release yet, `webSocket` throws rather
+than opening an unpinned socket; seed `initialRelease` from SSR/bootstrap or
+make a managed fetch first. Ordinary browser `new WebSocket(...)` calls do not
+automatically pin cross-host endpoints.
+
+State is in-memory per adapter instance after initialization; create a new
 instance for a new client session. A 410 expired-release response is returned
 unchanged and is never retried against the active release. Call `clearRelease()`
-only when the application intentionally wants to start a new release context.
+only when the application intentionally wants to start a new release context;
+it also clears the bootstrap cookie for the current host.
 
 For cross-origin APIs, configure CORS to expose `X-Gregale-Release` and allow
 it as a request header. The default CORS policy already exposes both release

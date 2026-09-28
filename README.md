@@ -60,11 +60,14 @@ No project handy:
 gregale deploy --template hello-node
 ```
 
-The CLI is also distributed through npm:
+The npm channel uses the `rc` tag for prereleases. Check the
+[installation guide](docs/cli-install.md) for its publication status before
+using it:
 
 ```bash
-npm install -g gregale
-npx gregale deploy
+npm view gregale dist-tags --json
+npm install -g gregale@rc
+npx gregale@rc deploy
 ```
 
 See the [quickstart](docs/quickstart.md) for the first-deploy flow, the

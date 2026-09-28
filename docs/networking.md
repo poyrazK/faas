@@ -233,6 +233,32 @@ retain their persisted policy on reapply. For an intentional same-account
 escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
 reports declared service bindings as `enforced`.
 
+Each declared outbound dependency can carry a request deadline and retry
+policy. For a project workload, put it beside `depends_on`:
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      billing:
+        timeout_ms: 1500
+        max_attempts: 2
+        min_remaining_ms: 200
+        retry_budget_percent: 10
+```
+
+The timeout covers routing, a cold wake, forwarding, and any retry after caller
+authorization. An earlier caller deadline takes precedence. `max_attempts: 1`
+disables proxy replay for that dependency; omitted settings keep platform
+defaults. Retries still require a safe method or an explicit
+`allow_non_idempotent: true`, a replayable body, enough remaining time, and an
+available aggregate retry token. Only transport-stale attempts are retried.
+Policies can name only services in `depends_on`; on reapply, an omitted extension
+retains stored policies and removing a binding removes its policy. A WebSocket
+handshake uses the deadline, but an established session is not cut off by it.
+
 The target can independently restrict who calls it with
 `x-gregale-allow-callers`. In the example, `billing` admits `public-api` but
 not other same-account apps, even if they declare a dependency on `billing`.
@@ -284,7 +310,10 @@ Standalone callers can declare outbound targets without a Compose project:
 ```json
 {
   "service_binding_targets": ["billing", "identity", "email"],
-  "service_binding_policy": "declared"
+  "service_binding_policy": "declared",
+  "service_reliability": {
+    "billing": {"timeout_ms": 1500, "max_attempts": 1}
+  }
 }
 ```
 
@@ -302,6 +331,10 @@ exists. Authorization changes take effect at the gateway immediately; new URL
 environment variables appear when the caller next starts or redeploys, while
 already-running instances retain their current environment. The generated
 `GREGALE_SERVICE_*_URL` namespace is platform-owned.
+For `service_reliability`, PATCH omission retains the map, `null` or `{}`
+clears it, and an object replaces it. A policy must name one of the app's
+declared `service_binding_targets`. Removing a binding also removes its
+stored policy when the reliability map is omitted from the same PATCH.
 Project-managed and preview apps reject changes to these fields on PATCH; edit the
 project source instead. Binding declarations do not expose services publicly.
 
@@ -370,6 +403,38 @@ and WebSocket reconnect handshakes, not already-open connections.
 The default CORS policy exposes both pin response headers. If you configure a
 custom CORS rule, include `X-Gregale-Revision` and `X-Gregale-Release` in its
 exposed headers and permit them as request headers for browser clients.
+
+For a static SPA, the gateway sets a host-only `__Host-gregale_release` cookie
+on document navigation when revision pin retention is enabled and an active
+release graph was selected. The Node browser adapter reads it at initialization
+and adds the release header to configured managed origins, including
+cross-origin APIs. Gregale strips this platform cookie before forwarding the
+request to the app. If a CDN sits in front of the app, preserve the document
+response's `Set-Cookie` header with its body; the cached body and cookie must
+describe the same release. The cookie is a routing identifier, not a secret.
+It is a browser session cookie, while the graph's server-side TTL controls its
+routing eligibility. If the graph expires, requests fail with 410 and are not
+retried against the active graph.
+
+Same-host browser WebSocket reconnects also inherit this cookie: the browser's
+native `WebSocket` API cannot set a custom release header, so the gateway reads
+the cookie only from a WebSocket handshake, validates the graph and TTL, then
+strips the cookie before forwarding. The SPA and WebSocket endpoint must use
+the same hostname for the host-only cookie to be sent. Already-open sockets
+stay on their selected deployment until they disconnect.
+
+For a browser socket on a separate managed API hostname, use the Node SDK's
+browser adapter `webSocket(url, protocols)` helper after it has learned the
+release or has been seeded from SSR/bootstrap. The helper adds the reserved
+`gregale.release.<release-uuid>` WebSocket subprotocol; the gateway consumes it
+before the app handshake, preserves application subprotocols, and filters the
+reserved token from the guest response. The release is not placed in the URL.
+The target origin must be included in `managedOrigins`, and opening a managed
+socket before the adapter knows a release fails instead of silently routing to
+the active graph. Plain native `WebSocket` calls and non-browser clients need a
+same-host bootstrap cookie or another explicit pin mechanism. This carrier is
+for the handshake only; an established socket stays on its selected deployment
+until it disconnects.
 
 For a multi-workload project, publish a complete release set after all member
 deployments are ready. An incompatible new service deployment can be deployed
@@ -498,17 +563,16 @@ same account, project, and PR. It never selects a preview from another PR,
 project, or account. The target preview's protocol and WebSocket settings are
 used exactly as they are on the public edge.
 
-Preview provisioning currently creates **one app**, derived from the app the
-PR touches, rather than cloning the whole project. A same-PR dependency may
-therefore be absent. In that case the gateway considers the production app
-and applies the project's production-dependency policy.
+Preview provisioning creates the bound app and the transitive `depends_on`
+workloads present at the PR head. A dependency that is absent from that
+closure can still resolve to the production app, so the gateway applies the
+project's production-dependency policy.
 
-New projects default to `preview_service_policy: deny`. A denied call returns
+All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before the proxy discovers or wakes the
-target. Projects that existed when this policy shipped were migration-backed
-to `allow_marked`, preserving their live behaviour. Opt an existing project
-into isolation with:
+target. Legacy `allow_marked` rows are migrated to `deny`. To configure the
+policy from a checkout, run:
 
 ```bash
 gregale github setup public-api --preview-service-policy deny

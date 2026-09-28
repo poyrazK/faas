@@ -132,7 +132,7 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
-	// SecretReloadSignal opts the main workload into live secret-file
+	// SecretReloadSignal opts this image's workload into live secret-file
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
@@ -182,6 +182,9 @@ type AppManifest struct {
 	// CrawlerPolicy controls known monitor/crawler cold requests. Empty is
 	// equivalent to wake for backwards compatibility.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit optionally throttles a source before credential lookup.
+	// An absent configuration leaves the ingress path unchanged.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath is the monitor-facing health endpoint. Empty uses /healthz.
 	HealthPath string `json:"health_path,omitempty"`
 	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
@@ -201,6 +204,12 @@ type AppManifest struct {
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
+
+// ManagedReleaseContextCookieName stores the immutable project release
+// selected for a browser document navigation. Unlike the rollout cookie, the
+// value is intentionally readable by the page so browser SDKs can pin
+// cross-origin managed API calls to the graph that served the SPA.
+const ManagedReleaseContextCookieName = "__Host-gregale_release"
 
 const (
 	CrawlerPolicyWake   = "wake"
@@ -225,6 +234,44 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 	return fmt.Errorf("crawler_policy must be one of wake, cached, block")
 }
 
+// PreAuthRateLimitConfig is an app-owned, per-source gateway guard. It runs
+// before consumer-key lookup and JWT verification. The configured rate is
+// local to each gateway replica; the existing app/account limits remain the
+// authoritative fleet-wide ceilings.
+type PreAuthRateLimitConfig struct {
+	Mode              string `json:"mode"` // off | observe | enforce
+	RequestsPerSecond int    `json:"requests_per_second,omitempty"`
+	Burst             int    `json:"burst,omitempty"`
+}
+
+const (
+	PreAuthRateLimitOff     = "off"
+	PreAuthRateLimitObserve = "observe"
+	PreAuthRateLimitEnforce = "enforce"
+)
+
+func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
+	if c == nil {
+		return nil
+	}
+	switch c.Mode {
+	case PreAuthRateLimitOff:
+		return nil
+	case PreAuthRateLimitObserve, PreAuthRateLimitEnforce:
+	default:
+		return fmt.Errorf("pre_auth_rate_limit.mode must be off, observe, or enforce")
+	}
+	limits, ok := LimitsFor(plan)
+	if !ok {
+		return fmt.Errorf("pre_auth_rate_limit: unknown plan %q", plan)
+	}
+	if c.RequestsPerSecond < 1 || c.RequestsPerSecond > limits.RateLimitRPS ||
+		c.Burst < 1 || c.Burst > limits.RateLimitBurst {
+		return fmt.Errorf("pre_auth_rate_limit requests_per_second must be 1..%d and burst must be 1..%d", limits.RateLimitRPS, limits.RateLimitBurst)
+	}
+	return nil
+}
+
 var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
 
 // ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
@@ -233,7 +280,7 @@ func ValidateVersionAffinityCookieName(name string) error {
 	if name == "" {
 		return nil
 	}
-	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName {
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName || name == ManagedReleaseContextCookieName {
 		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than reserved platform cookies")
 	}
 	return nil
@@ -455,6 +502,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		return fmt.Errorf("app manifest: empty entrypoint[0]")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if err := m.PreAuthRateLimit.Validate(plan); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	if err := ValidateVersionAffinityCookieName(m.VersionAffinityCookie); err != nil {

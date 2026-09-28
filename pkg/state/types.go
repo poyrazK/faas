@@ -1513,9 +1513,15 @@ type ProjectEnvironmentEdgeRule struct {
 
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
-// have a positive PR number and remain on the normal deployed-app quota.
+// have a positive PR number and have a separate bounded quota.
 func IsDeveloperApp(app App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
+// IsPRPreviewApp identifies a leased pull-request preview. It is separate
+// from both production and developer environments for quota accounting.
+func IsPRPreviewApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0
 }
 
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
@@ -1605,6 +1611,9 @@ type AppManifest struct {
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceReliability is caller-owned policy keyed by a declared target name.
+	// It lives in the existing manifest JSONB, so no app-row migration is needed.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
@@ -1633,15 +1642,16 @@ type AppManifest struct {
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
-	RequestTimeoutS int              `json:"request_timeout_s,omitempty"`
-	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
-	Favicon         []byte           `json:"favicon,omitempty"`
-	RobotsTxt       string           `json:"robots_txt,omitempty"`
-	HeadWakes       bool             `json:"head_wakes,omitempty"`
-	CrawlerPolicy   string           `json:"crawler_policy,omitempty"`
-	HealthPath      string           `json:"health_path,omitempty"`
-	HealthPathWakes bool             `json:"health_path_wakes,omitempty"`
+	RequestTimeoutS  int                         `json:"request_timeout_s,omitempty"`
+	ServiceReplicas  *ServiceReplicas            `json:"service_replicas,omitempty"`
+	WorkerReplicas   *WorkerScaling              `json:"worker_replicas,omitempty"`
+	Favicon          []byte                      `json:"favicon,omitempty"`
+	RobotsTxt        string                      `json:"robots_txt,omitempty"`
+	HeadWakes        bool                        `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string                      `json:"crawler_policy,omitempty"`
+	PreAuthRateLimit *api.PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
+	HealthPath       string                      `json:"health_path,omitempty"`
+	HealthPathWakes  bool                        `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
@@ -1686,13 +1696,13 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
 }
 
@@ -1700,6 +1710,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	existing.ServiceBindingTransport = desired.ServiceBindingTransport
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
@@ -2056,6 +2067,11 @@ type Deployment struct {
 	// migrations/00047). Empty for image/tarball deploys that don't
 	// have an upstream commit.
 	CommitSHA string
+	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
+	// for source-ref deployments. Empty/zero for pinned SHAs, tags, and all
+	// other deployment kinds; imaged checks the branch head before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).
@@ -3347,6 +3363,8 @@ const (
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
+	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
+	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3373,6 +3391,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventPlatformTenantStatementFinalized,
+	AppWebhookEventDebugRegressionDetected,
+	AppWebhookEventDebugRegressionResolved,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -5961,6 +5981,15 @@ type Session struct {
 // (ListAppSecretsInScope, UpsertAppSecretWithKidInScope, …) take an
 // explicit scope parameter and are the canonical path. The flat
 // methods hardcode scope='default' as a thin delegation.
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
+func validSecretClass(value string) bool {
+	return value == SecretClassPersistent || value == SecretClassEphemeral
+}
+
 type AppSecret struct {
 	AccountID string
 	AppID     string
@@ -5972,9 +6001,13 @@ type AppSecret struct {
 	// helper — the same shape as `app_envs.scope` (00203).
 	// Sealing (the secretbox step) is scope-agnostic; scope is
 	// purely a per-row address, not a seal-time identity.
-	Scope      string
-	Key        string
-	Ciphertext []byte
+	Scope string
+	Key   string
+	// SecretClass controls whether a VM that has received this value may
+	// be persisted as a resumable memory snapshot. Empty is treated as
+	// persistent for compatibility with legacy in-memory fixtures.
+	SecretClass string
+	Ciphertext  []byte
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext. Set by the apid PUT
 	// handler (cmd/apid/handlers_secrets.go::setSecret) and by
@@ -6101,28 +6134,30 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
-	AccountID   string
-	AppID       string
-	InstanceID  string
-	Revision    string
-	Projection  SecretReloadProjectionStatus
-	Signal      SecretReloadSignalStatus
-	ErrorCode   string
-	AttemptedAt time.Time
-	Candidates  []AppSecretDeliveryCandidate
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Projection   SecretReloadProjectionStatus
+	Signal       SecretReloadSignalStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
 }
 
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
-	AccountID   string
-	AppID       string
-	InstanceID  string
-	Revision    string
-	Status      SecretApplicationReloadAckStatus
-	ErrorCode   string
-	AttemptedAt time.Time
-	Candidates  []AppSecretDeliveryCandidate
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Status       SecretApplicationReloadAckStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
 }
 
 // AppSecretRuntimeReloadObservation is the latest guest-init projection and
@@ -6133,6 +6168,7 @@ type AppSecretRuntimeReloadObservation struct {
 	Scope                   string
 	Key                     string
 	InstanceID              string
+	WorkloadName            string
 	Version                 int64
 	Projection              SecretReloadProjectionStatus
 	Signal                  SecretReloadSignalStatus
@@ -6153,6 +6189,7 @@ type AppSecretRuntimeReloadTarget struct {
 	Scope                   string
 	Key                     string
 	InstanceID              string
+	WorkloadName            string
 	RuntimeState            string
 	ReloadSupport           string
 	Reported                bool
@@ -6165,6 +6202,58 @@ type AppSecretRuntimeReloadTarget struct {
 	ApplicationAck          SecretApplicationReloadAckStatus
 	ApplicationAckAt        *time.Time
 	ApplicationAckErrorCode string
+}
+
+// AppSecretRevocation is a durable, value-free record of one secret deletion
+// and the active authorized workloads that were expected to remove it.
+type AppSecretRevocation struct {
+	ID        string
+	AccountID string
+	AppID     string
+	Scope     string
+	Key       string
+	CreatedAt time.Time
+	Targets   []AppSecretRevocationTarget
+}
+
+// AppSecretRevocationTarget snapshots one authorized runtime at deletion
+// time. InstanceID intentionally has no lifetime FK: acknowledgement evidence
+// must survive deletion of the secret row and later instance cleanup.
+type AppSecretRevocationTarget struct {
+	InstanceID    string
+	WorkloadName  string
+	RuntimeState  string
+	ReloadSupport string
+	Status        string
+	AckRevision   string
+	AckAt         *time.Time
+	ErrorCode     string
+}
+
+// Progress summarizes a revocation without treating missing or failed
+// acknowledgements as success. An empty target roster is complete because no
+// active authorized runtime existed when the deletion committed.
+func (r AppSecretRevocation) Progress() (status string, acknowledged, pending int) {
+	blocked, failed := false, false
+	for _, target := range r.Targets {
+		if target.Status == "applied" {
+			acknowledged++
+			continue
+		}
+		pending++
+		blocked = blocked || target.ReloadSupport != "enabled"
+		failed = failed || target.Status == "failed"
+	}
+	if pending == 0 {
+		return "complete", acknowledged, 0
+	}
+	if blocked {
+		return "blocked", acknowledged, pending
+	}
+	if failed {
+		return "failed", acknowledged, pending
+	}
+	return "pending", acknowledged, pending
 }
 
 // AccountAppSecret is the per-row shape returned by
@@ -6187,15 +6276,16 @@ type AppSecretRuntimeReloadTarget struct {
 // ValueHash mirrors AppSecret.ValueHash (ADR-117 PR-C). Same
 // semantic + same empty-string-for-NULL posture.
 type AccountAppSecret struct {
-	AccountID  string
-	AppID      string
-	AppSlug    string
-	Key        string
-	Scope      string
-	Ciphertext []byte
-	ValueHash  string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	AccountID   string
+	AppID       string
+	AppSlug     string
+	Key         string
+	Scope       string
+	SecretClass string
+	Ciphertext  []byte
+	ValueHash   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // AppEnv is one row of customer runtime env vars (issue #395 / ADR-045).

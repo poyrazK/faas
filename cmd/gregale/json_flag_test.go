@@ -128,6 +128,14 @@ func TestApplyJSONFlag_EqualsTruthyValue(t *testing.T) {
 	}
 }
 
+func TestRunRejectsMisspelledJSONFlag(t *testing.T) {
+	for _, args := range [][]string{{"--json=flase", "deploy", "--plan"}, {"apps", "--json=tru"}} {
+		if code := run(args); code != 1 {
+			t.Errorf("run(%v) = %d, want 1", args, code)
+		}
+	}
+}
+
 func TestWriteJSON_IndentedScalar(t *testing.T) {
 	resetJSONOutput()
 	var buf bytes.Buffer

@@ -114,6 +114,9 @@ def sync_detailed(
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
+    An in-flight managed canary owns the app's traffic weights; direct
+    traffic changes during `pending` or `rolling_out` return 409
+    `traffic_change_during_canary` without changing traffic.
 
     Args:
         id (str):
@@ -161,6 +164,9 @@ def sync(
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
+    An in-flight managed canary owns the app's traffic weights; direct
+    traffic changes during `pending` or `rolling_out` return 409
+    `traffic_change_during_canary` without changing traffic.
 
     Args:
         id (str):
@@ -203,6 +209,9 @@ async def asyncio_detailed(
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
+    An in-flight managed canary owns the app's traffic weights; direct
+    traffic changes during `pending` or `rolling_out` return 409
+    `traffic_change_during_canary` without changing traffic.
 
     Args:
         id (str):
@@ -248,6 +257,9 @@ async def asyncio(
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
+    An in-flight managed canary owns the app's traffic weights; direct
+    traffic changes during `pending` or `rolling_out` return 409
+    `traffic_change_during_canary` without changing traffic.
 
     Args:
         id (str):

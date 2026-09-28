@@ -111,6 +111,9 @@ func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenant
 			item.Consumer.PlatformTenantID = result.Tenant.ID
 			m.apiConsumers[item.Consumer.ID] = item.Consumer
 			m.platformTenantByConsumer[item.Consumer.ID] = result.Tenant.ID
+			if item.Consumer.Active() {
+				m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(item.Consumer, PlatformTenantCustomerLinkedEvent, now)
+			}
 		}
 	}
 	for i := range result.Surfaces {

@@ -70,6 +70,10 @@ const (
 	RevisionHeader = "X-Gregale-Revision"
 	// ReleaseHeader identifies an immutable project deployment graph.
 	ReleaseHeader = "X-Gregale-Release"
+	// ManagedReleaseSubprotocolPrefix is the reserved WebSocket subprotocol
+	// prefix used by browser clients to carry a project release without custom
+	// handshake headers. The gateway consumes this token before guest forwarding.
+	ManagedReleaseSubprotocolPrefix = "gregale.release."
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about

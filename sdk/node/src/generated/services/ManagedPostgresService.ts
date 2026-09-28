@@ -274,4 +274,37 @@ export class ManagedPostgresService {
       },
     });
   }
+  /**
+   * Rotate a workload database credential
+   * Creates a replacement credential, refreshes the app runtime, and retains the previous provider identity until the rolling refresh completes.
+   * @returns ManagedPostgresBinding Binding credential generation and rotation status
+   * @returns Problem Authentication or binding rotation error
+   * @throws ApiError
+   */
+  public static rotateManagedPostgresBinding({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/bindings/{id}/rotate',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
 }

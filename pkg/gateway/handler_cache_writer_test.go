@@ -320,6 +320,25 @@ func TestCacheWriter_DropsPerRequestPlatformHeaders(t *testing.T) {
 	}
 }
 
+func TestCacheWriterExcludesMultipleManagedPlatformCookies(t *testing.T) {
+	versionCookie := api.ManagedVersionAffinityCookieName + "=00112233445566778899aabbccddeeff; Path=/; Secure"
+	releaseCookie := api.ManagedReleaseContextCookieName + "=a91f2000-0000-4000-8000-000000000001; Path=/; Secure"
+	rec := newTestStatusRecorder(httptest.NewRecorder())
+	rec.Header().Add("Set-Cookie", versionCookie)
+	rec.Header().Add("Set-Cookie", releaseCookie)
+	cw := newCacheWriter(rec, rec, &EdgeRuleCacheResolved{ID: "rule-1"}, ResponseCachePerEntryMaxBytes)
+	cw.excludeManagedVersionCookie(versionCookie)
+	cw.excludeManagedCookie(releaseCookie)
+	cw.WriteHeader(http.StatusOK)
+
+	if got := cw.header.Values("Set-Cookie"); len(got) != 0 {
+		t.Fatalf("cached platform cookies = %q, want none", got)
+	}
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 2 || got[0] != versionCookie || got[1] != releaseCookie {
+		t.Fatalf("live platform cookies = %q", got)
+	}
+}
+
 // TestCacheWriter_OnlyOneWriteHeader is a stdlib-contract
 // regression: calling WriteHeader twice must not flip the
 // status. Mirrors statusRecorder's behaviour.

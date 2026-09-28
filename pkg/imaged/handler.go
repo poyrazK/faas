@@ -104,6 +104,9 @@ type Handler struct {
 	// It keeps the safety invariant in the handler rather than relying only on
 	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
 	hostingSmokeRequired bool
+	// githubSourceRefVerifier is queried immediately before a source-ref branch
+	// deployment switches traffic. Nil fails closed for branch-backed rows.
+	githubSourceRefVerifier GitHubSourceRefVerifier
 	// releasePhaseEnabled turns a pinned deployment release command into an
 	// internal app task after the immutable rootfs is published and before any
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
@@ -2499,6 +2502,12 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
 		}
+		if sc.Type == api.SidecarTypeSidecar {
+			if err := h.store.SetDeploymentSidecarSecretReloadSignal(ctx, dep.ID, sc.Name, workloadManifest.SecretReloadSignal); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q secret reload metadata", sc.Name))
+				return findings, fmt.Errorf("imaged: persist sidecar %q secret reload support: %w", sc.Name, err)
+			}
+		}
 		if err := h.replicateLayer(ctx, layerKey); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "replicate sidecar layer")
 			return findings, err
@@ -2552,15 +2561,16 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	}
 
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:              cloneEnvMap(cfg.Env),
-		Entrypoint:       entrypoint,
-		Cmd:              cmd,
-		WorkingDir:       cfg.WorkingDir,
-		User:             cfg.User,
-		ExposedPorts:     cfg.ExposedPorts,
-		Healthcheck:      cfg.Healthcheck,
-		StopSignal:       cfg.StopSignal,
-		StopGracePeriodS: cfg.StopGracePeriodS,
+		Env:                cloneEnvMap(cfg.Env),
+		Entrypoint:         entrypoint,
+		Cmd:                cmd,
+		WorkingDir:         cfg.WorkingDir,
+		User:               cfg.User,
+		ExposedPorts:       cfg.ExposedPorts,
+		Healthcheck:        cfg.Healthcheck,
+		StopSignal:         cfg.StopSignal,
+		StopGracePeriodS:   cfg.StopGracePeriodS,
+		SecretReloadSignal: cfg.SecretReloadSignal,
 	})
 	if err != nil {
 		return api.AppManifest{}, err
@@ -3150,7 +3160,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// candidate restore or failed smoke cannot remove the serving revision.
 	var hostingApp state.App
 	verificationStarted := time.Now()
-	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || h.hostingSmokeRequired)
+	smokeRequired := h.hostingSmokeRequired || (ready == nil && dep.CanaryTotalSteps > 0)
+	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || smokeRequired)
 	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ready == nil && ok {
 		hostingReceiptEnabled = true
 	}
@@ -3202,7 +3213,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath
 		}
-		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+		if h.hostingSmoke == nil && smokeRequired {
 			smoke.Status = apihostingreceipt.SmokeFailed
 			smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
 			smoke.Error = "public hosting smoke verifier is required but not configured"
@@ -3210,7 +3221,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if h.hostingSmoke != nil {
 			var smokeErr error
 			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
-			if smokeErr == nil && h.hostingSmokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
+			if smokeErr == nil && smokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
 				if smoke.ErrorCode == "" {
 					smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
 				}
@@ -3232,7 +3243,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
 			}
 		}
-		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+		if h.hostingSmoke == nil && smokeRequired {
 			if h.ops != nil {
 				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 			}
@@ -3259,8 +3270,34 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
-	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
-		return fmt.Errorf("imaged: mark live: %w", err)
+	var promoteErr error
+	if dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
+		if stale || verifyErr != nil {
+			code := api.CodeSourceRefStale
+			detail := fmt.Sprintf("GitHub branch %q no longer points to deployment commit %s", dep.GitHubSourceRef, dep.CommitSHA)
+			if verifyErr != nil {
+				code = api.CodeSourceRefUnavailable
+				detail = "could not verify GitHub source branch before promotion: " + verifyErr.Error()
+			}
+			if _, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail); markErr != nil {
+				return fmt.Errorf("imaged: mark unverified GitHub source ref failed: %w", markErr)
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return nil
+		}
+	}
+	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
+		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
+	} else {
+		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
+	}
+	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
+		return nil
+	}
+	if promoteErr != nil {
+		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {

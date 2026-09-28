@@ -710,6 +710,9 @@ type WorkloadSpec struct {
 	// SealedSecrets carries the explicitly referenced app-secret ciphertext
 	// rows. It is unsealed into this sidecar's instance-scoped env file only.
 	SealedSecrets []SealedEnvEntry
+	// GrantedEnvNames carries only the names of app secrets explicitly granted to
+	// this sidecar. Values never enter the workload roster.
+	GrantedEnvNames []string
 	// preparedEnvJSON is the per-instance plaintext env file produced by
 	// Manager.Wake. It is intentionally internal so plaintext cannot cross the
 	// scheduler/vmmd wire or be accidentally serialized as part of WorkloadSpec.

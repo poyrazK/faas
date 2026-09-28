@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -34,6 +36,10 @@ export type CreateAppRequest = {
    * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
+  /**
+   * Optional timeout and retry overrides for service_binding_targets.
+   */
+  service_reliability?: ServiceReliabilityPolicies;
   /**
    * Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only service_binding_targets.
    */
@@ -112,6 +118,7 @@ export type CreateAppRequest = {
    * Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
   /**
    * Monitor-facing health path. Empty/omitted uses /healthz.
    */

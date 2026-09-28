@@ -34,7 +34,7 @@ func TestPgPRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 			WorkloadName: "pg-swap-" + name, PreviewOfSlug: "pg-swap-" + name, PreviewPrNumber: 42,
 			PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry, RAMMB: 128, Status: state.AppActive}
 	}
-	limits := api.Limits{DeployedApps: 5}
+	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
 	head := state.PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	first, err := store.ReservePRPreviewSet(ctx, head, []state.App{preview("api"), preview("worker")}, limits)
 	if err != nil || len(first) != 2 {
@@ -91,8 +91,8 @@ func TestPgPRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 		t.Fatalf("retired worker = (%+v, %v)", oldWorker, err)
 	}
 	count, err := store.CountDeployedApps(ctx, account.ID)
-	if err != nil || count != 5 {
-		t.Fatalf("post-swap quota = (%d, %v), want 5", count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("post-swap production quota = (%d, %v), want 3", count, err)
 	}
 	set, err = store.GetPRPreviewSet(ctx, 7, "octo/api", 42)
 	if err != nil || set.CommitSHA != head.CommitSHA || len(set.MemberAppIDs) != 2 || set.MemberAppIDs[1] != second[1].ID {

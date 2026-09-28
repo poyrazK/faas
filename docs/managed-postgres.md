@@ -127,6 +127,16 @@ Binding provisioning follows `provisioning_enabled`; binding deletion runs even
 while the flag is false. A missing host age recipient or HMAC key leaves the
 binding failed with a retry rather than storing plaintext or marking it ready.
 
+Rotate a binding with `POST /v1/postgres/bindings/{id}/rotate`. The operation
+creates the next deterministic provider identity and replaces the sealed app
+secret, which invalidates old runtime snapshots. It keeps the previous provider
+identity valid until the scheduler completes the rolling runtime refresh, then
+the binding reconciler revokes that identity with retry-safe cleanup. The
+response sets `rotation_pending` while the previous identity is still retained;
+retries during that interval reuse the same generation and wake ID. If the app
+has no live deployment or resident instances, the previous identity is queued
+for cleanup immediately.
+
 ## Neon backend configuration
 
 Copy `deploy/managed-postgres.example.json` to an operator-owned path, set

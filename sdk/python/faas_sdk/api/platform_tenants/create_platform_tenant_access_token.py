@@ -86,12 +86,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> Response[CreatePlatformTenantAccessTokenResponse | Problem]:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
-    these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
-    after a lost response, list token metadata and create a replacement under a new name.
+     The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service
+    scopes. Credential management additionally requires the owner to enable a scope allowlist and per-
+    consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation
+    cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key
+    retries; after a lost response, list token metadata and create a replacement under a new name.
 
     Args:
         id (UUID):
@@ -124,12 +125,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> CreatePlatformTenantAccessTokenResponse | Problem | None:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
-    these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
-    after a lost response, list token metadata and create a replacement under a new name.
+     The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service
+    scopes. Credential management additionally requires the owner to enable a scope allowlist and per-
+    consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation
+    cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key
+    retries; after a lost response, list token metadata and create a replacement under a new name.
 
     Args:
         id (UUID):
@@ -157,12 +159,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> Response[CreatePlatformTenantAccessTokenResponse | Problem]:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
-    these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
-    after a lost response, list token metadata and create a replacement under a new name.
+     The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service
+    scopes. Credential management additionally requires the owner to enable a scope allowlist and per-
+    consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation
+    cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key
+    retries; after a lost response, list token metadata and create a replacement under a new name.
 
     Args:
         id (UUID):
@@ -193,12 +196,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreatePlatformTenantAccessTokenRequest,
 ) -> CreatePlatformTenantAccessTokenResponse | Problem | None:
-    """Mint a tenant-bound read-only self-service credential.
+    """Mint a tenant-bound, explicitly scoped self-service credential.
 
-     The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement
-    reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint
-    these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries;
-    after a lost response, list token metadata and create a replacement under a new name.
+     The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service
+    scopes. Credential management additionally requires the owner to enable a scope allowlist and per-
+    consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation
+    cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key
+    retries; after a lost response, list token metadata and create a replacement under a new name.
 
     Args:
         id (UUID):

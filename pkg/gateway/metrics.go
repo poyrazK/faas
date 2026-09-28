@@ -21,6 +21,7 @@
 //     through the bounded accountLabelSet primitive (cap=10k,
 //     overflow="__other__") — see SetQueueDepth below.
 //   - gateway_rate_limited_total{app, plan}          counter
+//   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
 //     consume failures that fell back to process-local counters; scope is a
 //     closed app|account|rule|other set)
@@ -117,6 +118,8 @@ type Metrics struct {
 	requestTelemetryDropped     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
+	requestIDJournalWrites      *prometheus.CounterVec
+	requestIDJournalWriteTime   prometheus.Histogram
 	usageOutboxPending          prometheus.Gauge
 	usageOutboxBytes            prometheus.Gauge
 	usageOutboxFailures         prometheus.Counter
@@ -216,6 +219,7 @@ type Metrics struct {
 	concurrencyQueueDepth *prometheus.GaugeVec
 	concurrencyQueueWait  *prometheus.HistogramVec
 	rateLimited           *prometheus.CounterVec
+	preAuthRateLimited    *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
@@ -319,9 +323,12 @@ type Metrics struct {
 	// registry per the rule at the top of this file: no wire-side mirror
 	// without a cross-daemon consumer, and the instance breaker + retry
 	// loop both run here.
-	retryAttempts      *prometheus.CounterVec
-	retryExhausted     *prometheus.CounterVec
-	circuitTransitions *prometheus.CounterVec
+	retryAttempts          *prometheus.CounterVec
+	retryExhausted         *prometheus.CounterVec
+	retryBudgetShared      prometheus.Gauge
+	retryBudgetBackendInfo *prometheus.GaugeVec
+	retryBudgetBackend     *prometheus.CounterVec
+	circuitTransitions     *prometheus.CounterVec
 	// circuitOpenTargets is a COUNT per app, deliberately not a per-instance
 	// state gauge. ADR-201's original sketch had {app_id, target} keyed by
 	// instance_id; instance IDs churn on every wake, so that series set
@@ -694,6 +701,9 @@ type Metrics struct {
 	// the node-local instance resolver are admitted; service names and paths
 	// are intentionally not labels.
 	serviceDependencyCalls *prometheus.CounterVec
+	// Unsampled caller-to-target outcome and latency, labelled only by UUIDs.
+	serviceDependencyEdges    *prometheus.CounterVec
+	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
 	// speculative wake-ahead along depends_on edges "until measured evidence";
@@ -907,6 +917,15 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_telemetry_overwritten_total",
 			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
 		}),
+		requestIDJournalWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_request_id_journal_write_total",
+			Help: "Synchronous exact public request-ID journal write outcomes; result is recorded or failed.",
+		}, []string{"result"}),
+		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "gateway_request_id_journal_write_duration_seconds",
+			Help:    "Time spent synchronously recording exact public request-ID mappings before guest work.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
+		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
 		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
 		usageOutboxFailures:   prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_outbox_failures_total", Help: "Financial usage events that could not be appended to the durable outbox."}),
@@ -958,6 +977,18 @@ func NewMetrics() *Metrics {
 			Name: "gateway_retry_exhausted_total",
 			Help: "Times the ADR-201 §1 retry loop declined to replay, labelled by the safety rule that stopped it (response_committed|non_idempotent_method|missing_idempotency_key|no_healthy_sibling|insufficient_budget|aggregate_budget|max_attempts|body_not_replayable). Lets an operator tell \"we chose not to retry\" from \"we tried and ran out\": a high missing_idempotency_key rate means opted-in POST/PATCH callers are missing their replay key; aggregate_budget means the app-wide retry allowance prevented an outage from multiplying traffic. A SUCCESSFUL attempt increments nothing here — that is the normal path and counting it would drown the signal.",
 		}, []string{"reason"}),
+		retryBudgetShared: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_retry_budget_shared",
+			Help: "Whether this gateway uses the shared Redis retry budget (1) or a process-local budget (0).",
+		}),
+		retryBudgetBackendInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_retry_budget_backend_info",
+			Help: "Shared retry-budget Redis endpoint identity, hashed from transport address and logical DB without credentials.",
+		}, []string{"backend_id"}),
+		retryBudgetBackend: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_retry_budget_backend_operations_total",
+			Help: "Shared retry-budget Redis operations by observe/admit and ok/allowed/denied/error. A backend error denies retry admission.",
+		}, []string{"operation", "result"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
 			Help: "ADR-201 §2 instance-breaker state changes, labelled by {from, to}. A sustained closed->open rate is instance churn; a repeating open->half_open->open cycle that never reaches half_open->closed means the target is persistently dead and the exponential backoff is doing its job.",
@@ -1248,6 +1279,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_rate_limited_total",
 			Help: "Requests rejected by the per-app rate limiter.",
 		}, []string{"app", "plan"}),
+		preAuthRateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_pre_auth_rate_limit_total",
+			Help: "Pre-auth source limit decisions by app and outcome (would_block, blocked, or untrusted_source).",
+		}, []string{"app", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
 			Help: "Central rate-limit consumes that failed and fell back to process-local counters, labelled by closed scope (app|account|rule|other).",
@@ -1461,6 +1496,19 @@ func NewMetrics() *Metrics {
 				Help: "Unsampled managed service-proxy calls attributed to the trusted caller app and deployment, labelled by final outcome (success or error). Errors are final 5xx responses; caller and target identity failures are excluded.",
 			},
 			[]string{"app", "deployment", "outcome"},
+		),
+		serviceDependencyEdges: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_dependency_edge_calls_total",
+				Help: "Unsampled service calls by trusted caller and target app UUID and final outcome; excludes identity and authorization failures.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
+		serviceDependencyDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "gateway_service_dependency_duration_seconds",
+				Help:    "Complete internal HTTP call duration, including routing, wake, forwarding, and retries, by trusted caller and target app UUID.",
+				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300},
+			}, []string{"caller_app", "target_app", "outcome"},
 		),
 		// Buckets span 10 ms (a warm in-rack hop) to 30 s (the wake gate's
 		// lifecycle TTL). The middle of the range is where the platform wake
@@ -1823,8 +1871,15 @@ func NewMetrics() *Metrics {
 			m.versionAffinityKeys.WithLabelValues(surface, outcome)
 		}
 	}
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
+	for _, result := range []string{"recorded", "failed"} {
+		m.requestIDJournalWrites.WithLabelValues(result)
+	}
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.retryBudgetBackendInfo)
+	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
+	reg.MustRegister(m.preAuthRateLimited)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
+	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -2360,6 +2415,13 @@ func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 // ObserveRateLimit records a 429 outcome.
 func (m *Metrics) ObserveRateLimit(appID, plan string) {
 	m.rateLimited.WithLabelValues(appID, plan).Inc()
+}
+
+func (m *Metrics) ObservePreAuthRateLimit(appID, outcome string) {
+	if m == nil || m.preAuthRateLimited == nil {
+		return
+	}
+	m.preAuthRateLimited.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveRateLimitDegraded records a failed authoritative central consume
@@ -3371,6 +3433,32 @@ func (m *Metrics) ObserveServiceDependencyCall(appID, deploymentID string, faile
 	m.serviceDependencyCalls.WithLabelValues(appUUID.String(), deploymentUUID.String(), outcome).Inc()
 }
 
+// ObserveServiceDependencyEdge records one final, unsampled managed HTTP call.
+// Both identities come from the authorizer and resolver, never from a guest
+// header. Invalid identities are excluded to keep metric labels bounded. A
+// sampled trace ID is attached to the duration observation as an exemplar; it
+// is never a metric label and does not affect the unsampled health counter.
+func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, failed bool, duration time.Duration, traceID string) {
+	if m == nil || m.serviceDependencyEdges == nil || m.serviceDependencyDuration == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	labels := []string{caller.String(), target.String(), outcome}
+	m.serviceDependencyEdges.WithLabelValues(labels...).Inc()
+	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
+}
+
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
@@ -3475,6 +3563,20 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
+// ObserveRequestIDJournalWrite records the mandatory pre-proxy journal RPC.
+// Labels are a closed outcome set and intentionally omit tenant/request IDs.
+func (m *Metrics) ObserveRequestIDJournalWrite(duration time.Duration, err error) {
+	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil {
+		return
+	}
+	result := "recorded"
+	if err != nil {
+		result = "failed"
+	}
+	m.requestIDJournalWrites.WithLabelValues(result).Inc()
+	m.requestIDJournalWriteTime.Observe(duration.Seconds())
+}
+
 func (m *Metrics) IncUsageOutboxFailure() {
 	if m != nil {
 		m.usageOutboxFailures.Inc()
@@ -3518,6 +3620,34 @@ func (m *Metrics) IncRetryExhausted(reason string) {
 	m.retryExhausted.WithLabelValues(reason).Inc()
 }
 
+// SetRetryBudgetShared exposes the selected backend from process startup.
+func (m *Metrics) SetRetryBudgetShared(shared bool) {
+	if m == nil || m.retryBudgetShared == nil {
+		return
+	}
+	if shared {
+		m.retryBudgetShared.Set(1)
+	} else {
+		m.retryBudgetShared.Set(0)
+	}
+}
+
+// SetRetryBudgetBackendID permits a fleet check for one common Redis endpoint.
+func (m *Metrics) SetRetryBudgetBackendID(id string) {
+	if m == nil || m.retryBudgetBackendInfo == nil || id == "" {
+		return
+	}
+	m.retryBudgetBackendInfo.WithLabelValues(id).Set(1)
+}
+
+// RecordRetryBudgetOperation records Redis outcomes without tenant labels.
+func (m *Metrics) RecordRetryBudgetOperation(operation, result string) {
+	if m == nil || m.retryBudgetBackend == nil {
+		return
+	}
+	m.retryBudgetBackend.WithLabelValues(operation, result).Inc()
+}
+
 // IncCircuitTransition records an ADR-201 §2 instance-breaker state change.
 // Nil-safe.
 func (m *Metrics) IncCircuitTransition(from, to string) {
@@ -3534,6 +3664,15 @@ func (m *Metrics) SetCircuitOpenTargets(appID string, count float64) {
 		return
 	}
 	m.circuitOpenTargets.WithLabelValues(appID).Set(count)
+}
+
+// DeleteCircuitOpenTargets removes a retired app's series after its breaker
+// keys have aged out, so deleted apps do not retain gauge labels forever.
+func (m *Metrics) DeleteCircuitOpenTargets(appID string) {
+	if m == nil || m.circuitOpenTargets == nil {
+		return
+	}
+	m.circuitOpenTargets.DeleteLabelValues(appID)
 }
 
 // PreInstantiateTrafficResilience surfaces the ADR-201 closed-set series at
@@ -3560,6 +3699,11 @@ func (m *Metrics) PreInstantiateTrafficResilience() {
 			RetrySkipIdempotency, RetrySkipAggregate,
 		} {
 			m.retryExhausted.WithLabelValues(r)
+		}
+	}
+	if m.retryBudgetBackend != nil {
+		for _, pair := range [][2]string{{"observe", "ok"}, {"observe", "error"}, {"admit", "allowed"}, {"admit", "denied"}, {"admit", "error"}} {
+			m.retryBudgetBackend.WithLabelValues(pair[0], pair[1])
 		}
 	}
 	if m.circuitTransitions != nil {

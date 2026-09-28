@@ -62,6 +62,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -95,21 +96,23 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd            []string                 `json:"cmd,omitempty"`
-	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
-	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint     []string                 `json:"entrypoint,omitempty"`
-	Essential      bool                     `json:"essential"`
-	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
-	Name           string                   `json:"name"`
-	Port           int                      `json:"port"`
-	Ports          []api.WorkloadPort       `json:"ports,omitempty"`
-	RamMB          int                      `json:"ram_mb"`
-	ScratchMB      int                      `json:"scratch_mb,omitempty"`
-	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
-	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
-	Type           string                   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd             []string                 `json:"cmd,omitempty"`
+	CPUMillicores   int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile   string                   `json:"disk_io_profile,omitempty"`
+	DependsOn       []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint      []string                 `json:"entrypoint,omitempty"`
+	Essential       bool                     `json:"essential"`
+	LivenessProbe   *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name            string                   `json:"name"`
+	Port            int                      `json:"port"`
+	Ports           []api.WorkloadPort       `json:"ports,omitempty"`
+	RamMB           int                      `json:"ram_mb"`
+	ScratchMB       int                      `json:"scratch_mb,omitempty"`
+	GrantedEnvNames []string                 `json:"secret_keys,omitempty"`
+	StartupProbe    *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe  *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type            string                   `json:"type"` // "main" | "init" | "sidecar"
+	runtimeSecrets  *runtimeSecretsState
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -147,9 +150,12 @@ type workloadRoster struct {
 }
 
 type workloadRuntime struct {
-	spec  workloadSpec
-	sup   *Supervisor
-	state *workloadDependencyState
+	spec             workloadSpec
+	sup              *Supervisor
+	state            *workloadDependencyState
+	secretManifest   *api.AppManifest
+	secretProjection string
+	secretRevision   string
 }
 
 // discoverRoster reads the workload roster from the merged
@@ -328,17 +334,48 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
 	for _, sc := range roster.Sidecars {
-		sup := newSupervisorFor(sc, apiEnv, log, sidecarProxy, workloadEnv)
-		if baked, found, manifestErr := sidecarManifestForRuntime(sc.Name); manifestErr != nil {
+		baked, found, manifestErr := sidecarManifestForRuntime(sc.Name)
+		if manifestErr != nil {
 			return fmt.Errorf("workload %q: load sidecar runtime manifest: %w", sc.Name, manifestErr)
-		} else if found {
+		}
+		var reloadManifest *api.AppManifest
+		if found {
 			// Sidecar image metadata is immutable and stays outside the
 			// deployment roster. Project the OCI stop contract onto the
 			// supervisor before it can receive a shutdown signal.
+			if baked.SecretReloadSignal != "" && len(sc.GrantedEnvNames) > 0 && sc.Type == "sidecar" {
+				initialEnv, envErr := loadSidecarEnv(sc.Name)
+				if envErr != nil && !isNotExist(envErr) {
+					return fmt.Errorf("workload %q: load secret grants for reload: %w", sc.Name, envErr)
+				}
+				initialSecrets := make(map[string]string, len(sc.GrantedEnvNames))
+				for _, key := range sc.GrantedEnvNames {
+					value, ok := initialEnv[key]
+					if !ok {
+						return fmt.Errorf("workload %q: granted secret %q is missing from its wake-time env", sc.Name, key)
+					}
+					initialSecrets[key] = value
+				}
+				sc.runtimeSecrets = newRuntimeSecretsState(initialSecrets)
+				bakedCopy := baked
+				reloadManifest = &bakedCopy
+			}
+		}
+		sup := newSupervisorFor(sc, apiEnv, log, sidecarProxy, workloadEnv)
+		if found {
 			sup.stopSignal = parseStopSignal(baked.StopSignal)
 			sup.stopGrace = stopGraceForManifest(baked.StopGracePeriod)
 		}
-		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: sup, state: newWorkloadDependencyState()}
+		projectionPath, revisionPath := sidecarSecretReloadProjectionPaths(sc.Name, "")
+		if directRoot, rootErr := fullRootfsSidecarRoot(sc.Name); rootErr != nil {
+			return fmt.Errorf("workload %q: resolve sidecar root: %w", sc.Name, rootErr)
+		} else if directRoot != "" {
+			projectionPath, revisionPath = sidecarSecretReloadProjectionPaths(sc.Name, directRoot)
+		}
+		runtimes[sc.Name] = &workloadRuntime{
+			spec: sc, sup: sup, state: newWorkloadDependencyState(), secretManifest: reloadManifest,
+			secretProjection: projectionPath, secretRevision: revisionPath,
+		}
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -363,6 +400,12 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 
 	coordCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	for _, rt := range runtimes {
+		if rt.secretManifest != nil && rt.spec.runtimeSecrets != nil {
+			startRuntimeSecretReloaderForWorkload(coordCtx, *rt.secretManifest, rt.spec.runtimeSecrets, rt.sup, log,
+				rt.spec.Name, rt.secretProjection, rt.secretRevision)
+		}
+	}
 	var wg sync.WaitGroup
 	var resultMu sync.Mutex
 	var mainErr error
@@ -760,6 +803,14 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// shared env fallback), but main-workload secrets/API env never leak into
 	// the new sidecar manifest path.
 	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
+		if spec.runtimeSecrets != nil {
+			currentSecrets := spec.runtimeSecrets.snapshot()
+			for _, key := range spec.GrantedEnvNames {
+				if value, ok := currentSecrets[key]; ok {
+					sidecarEnv[key] = value
+				}
+			}
+		}
 		env = applySidecarEnvOverrides(env, sidecarEnv)
 	} else if !isNotExist(envErr) {
 		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
@@ -767,6 +818,21 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// Sidecars keep their own customer env boundary, but share the platform
 	// identity with the main workload for log/error correlation.
 	env = StampPlatformIdentityEnv(env, apiEnv)
+	if spec.runtimeSecrets != nil && manifestErr == nil && baked.SecretReloadSignal != "" {
+		hostProjection, hostRevision, guestProjection, guestRevision := sidecarSecretReloadProjectionPathsForRuntime(spec.Name, directRoot)
+		uid := lookupUID(baked.EffectiveUser())
+		if directRoot != "" {
+			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+		}
+		if err := writeRuntimeSecretsProjection(hostProjection, uid, spec.runtimeSecrets.snapshot()); err != nil {
+			return fmt.Errorf("run sidecar %s: prepare secret projection: %w", spec.Name, err)
+		}
+		if err := writeRuntimeSecretRevisionProjection(hostRevision, uid, ""); err != nil {
+			return fmt.Errorf("run sidecar %s: prepare secret revision: %w", spec.Name, err)
+		}
+		ackEndpoint := metadataSecretReloadAckEndpoint + "?workload=" + url.QueryEscape(spec.Name)
+		env = StampSecretsFileEnvAtPaths(env, true, guestProjection, guestRevision, ackEndpoint)
+	}
 	// The scheduler-selected/listen port is authoritative, so stamp it after
 	// deployment env overrides rather than allowing a PORT override to change
 	// the port advertised to the host bridge.
@@ -967,6 +1033,28 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 		sup.reportHealth("unready", "process_exited")
 	}
 	return nil
+}
+
+func sidecarSecretReloadProjectionPaths(name, root string) (string, string) {
+	secretsPath, revisionPath, _, _ := sidecarSecretReloadProjectionPathsForRuntime(name, root)
+	return secretsPath, revisionPath
+}
+
+func sidecarSecretReloadProjectionPathsForRuntime(name, root string) (hostSecrets, hostRevision, guestSecrets, guestRevision string) {
+	guestDir := filepath.Join(filepath.Dir(secretReloadFilePath), name)
+	if root != "" {
+		// A chrooted sidecar has its own tmpfs /tmp. Reuse the standard path
+		// inside that root so the app contract does not vary by image layout.
+		guestDir = filepath.Dir(secretReloadFilePath)
+	}
+	guestSecrets = filepath.Join(guestDir, filepath.Base(secretReloadFilePath))
+	guestRevision = filepath.Join(guestDir, filepath.Base(secretReloadRevisionFilePath))
+	if root == "" {
+		return guestSecrets, guestRevision, guestSecrets, guestRevision
+	}
+	hostSecrets = filepath.Join(root, strings.TrimPrefix(guestSecrets, "/"))
+	hostRevision = filepath.Join(root, strings.TrimPrefix(guestRevision, "/"))
+	return hostSecrets, hostRevision, guestSecrets, guestRevision
 }
 
 func firstWorkloadEnv(options []map[string]string) map[string]string {

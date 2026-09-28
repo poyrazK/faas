@@ -500,7 +500,7 @@ export class StorageService {
   }
   /**
    * Rotate a compute binding credential
-   * Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+   * Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
    * @returns ObjectStorageComputeBinding Binding rotated; Cache-Control no-store
    * @returns Problem Binding unavailable, sealing key unavailable, or access denied
    * @throws ApiError

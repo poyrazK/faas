@@ -86,6 +86,11 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext := *traceInput
 			traceContext.AppMaintenanceLoaded = true
 			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			budgetLimits := appEffectiveLimits(app, acct.Plan)
+			traceContext.AppRequestBudgetLoaded = budgetLimits.RequestBudgetMS > 0 && budgetLimits.RequestBudgetMaxMS > 0
+			traceContext.RequestBudgetMS = budgetLimits.RequestBudgetMS
+			traceContext.RequestBudgetMaxMS = budgetLimits.RequestBudgetMaxMS
+			traceContext.RequestTimeoutS = app.Manifest.RequestTimeoutS
 			traceContext.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 			traceContext.DeclaredRoutes = make([]api.DeclaredRoute, 0, len(app.DeclaredRoutes))
 			for _, route := range app.DeclaredRoutes {

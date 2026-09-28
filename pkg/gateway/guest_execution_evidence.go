@@ -165,7 +165,17 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(name), "Sec-WebSocket-Protocol") {
+		var keep bool
+		value, keep = stripManagedReleaseSubprotocol(value)
+		if !keep {
+			return
+		}
+	}
 	if guestSetsManagedVersionCookie(ctx, name, value) {
+		return
+	}
+	if guestSetsManagedReleaseContextCookie(ctx, name, value) {
 		return
 	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !isGuestEvidenceHeader(name) {
@@ -174,15 +184,15 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 }
 
 // The legacy reverse-proxy path copies response headers in one batch rather
-// than calling forwardedResponseHeader. Filter only guest-authored cookies
-// with the reserved name; the edge's cookie lives on the downstream writer
-// and is not part of resp.Header.
-func stripGuestManagedVersionCookieResponseHeader(resp *http.Response) {
+// than calling forwardedResponseHeader. Filter guest attempts to overwrite
+// edge-owned cookies; the edge's cookies live on the downstream writer and
+// are not part of resp.Header.
+func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 	if resp == nil || resp.Header == nil || resp.Request == nil {
 		return
 	}
 	ctx := resp.Request.Context()
-	if !managedVersionCookieProtected(ctx) {
+	if !managedVersionCookieProtected(ctx) && !managedReleaseContextCookieProtected(ctx) {
 		return
 	}
 	values := resp.Header.Values("Set-Cookie")
@@ -191,7 +201,8 @@ func stripGuestManagedVersionCookieResponseHeader(resp *http.Response) {
 	}
 	resp.Header.Del("Set-Cookie")
 	for _, value := range values {
-		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) {
+		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) &&
+			!guestSetsManagedReleaseContextCookie(ctx, "Set-Cookie", value) {
 			resp.Header.Add("Set-Cookie", value)
 		}
 	}

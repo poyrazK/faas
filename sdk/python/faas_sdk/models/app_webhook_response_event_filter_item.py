@@ -3,6 +3,8 @@ from typing import Literal
 AppWebhookResponseEventFilterItem = Literal[
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "job.finished",
@@ -14,6 +16,8 @@ AppWebhookResponseEventFilterItem = Literal[
 APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilterItem] = {
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "job.finished",

@@ -221,6 +221,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return c.doWithIdempotencyKey(ctx, method, path, body, out, "")
 }
 
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+}
+
 // doWithIdempotencyKey is the same request path as do, with an optional
 // caller-supplied key. Safe-release actions use a rollout-scoped key so two
 // alert rules cannot repeat the same mutation after a meterd race.
@@ -233,6 +237,10 @@ func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, 
 // Most calls use c.http; rollback uses rollbackHTTP because its integrity gate
 // may need one complete OCI artifact fetch on a cold cache.
 func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string) error {
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, idempotencyKey, nil)
+}
+
+func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -265,6 +273,11 @@ func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Cl
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
 	}
 	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
@@ -3997,6 +4010,24 @@ func (c *Client) UnsetSecretWithScope(ctx context.Context, slug, key, scope stri
 	return c.do(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
 }
 
+// UnsetSecretWithScopeAndStatus deletes a secret and returns the durable
+// runtime acknowledgement snapshot created by the same transaction.
+func (c *Client) UnsetSecretWithScopeAndStatus(ctx context.Context, slug, key, scope string) (AppSecretRevocationResponse, error) {
+	var out AppSecretRevocationResponse
+	headers := make(http.Header)
+	headers.Set("Prefer", "return=representation")
+	err := c.doWithHeaders(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
+	return out, err
+}
+
+// GetSecretRevocation reads the durable, value-free progress record for a
+// deleted app secret.
+func (c *Client) GetSecretRevocation(ctx context.Context, slug, revocationID string) (AppSecretRevocationResponse, error) {
+	var out AppSecretRevocationResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/secret-revocations/" + url.PathEscape(revocationID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // RotateSecret (ADR-089 PR-B) re-seals the (slug, key) row under
 // the current host identity. Distinct verb from SetSecret so the
 // server can emit the secret.rotated audit kind (vs secret.set).
@@ -6156,7 +6187,7 @@ func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since st
 // id from another app is indistinguishable from a missing request.
 func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
 	var out DebugTelemetryRequestItem
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID)
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6164,7 +6195,7 @@ func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (De
 // deterministic explanation for one request telemetry row.
 func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID string) (DebugRequestEvidenceResponse, error) {
 	var out DebugRequestEvidenceResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/evidence"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/evidence"
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6250,7 +6281,7 @@ func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) 
 // deployment.
 func (c *Client) ReplayAppDebugRequestWithTarget(ctx context.Context, slug, reqID, mirrorDeploymentID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/replay"
 	var body any
 	if strings.TrimSpace(mirrorDeploymentID) != "" {
 		body = DebugReplayRequest{MirrorDeploymentID: strings.TrimSpace(mirrorDeploymentID)}

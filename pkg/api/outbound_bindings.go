@@ -5,6 +5,27 @@ import (
 	"time"
 )
 
+// MaxOutboundRetries is the platform ceiling for extra upstream attempts
+// within one admitted outbound request.
+const MaxOutboundRetries = 2
+
+// MaxOutboundResponseCacheTTLSeconds bounds freshness for opt-in outbound
+// response caching. It is intentionally short because provider data may
+// change outside Gregale's control.
+const MaxOutboundResponseCacheTTLSeconds = 300
+
+// MaxOutboundRetryBudgetPerMinute bounds extra provider attempts shared by
+// all outbound gateway replicas for one integration.
+const MaxOutboundRetryBudgetPerMinute = 3000
+
+// Outbound circuit-breaker settings are deliberately bounded. A zero pair
+// disables the breaker; enabled policies need a failure threshold and a
+// finite cool-down before one half-open probe is allowed.
+const (
+	MaxOutboundCircuitBreakerFailureThreshold = 20
+	MaxOutboundCircuitBreakerOpenSeconds      = 300
+)
+
 // OutboundIntegrationOffer is an account-visible managed integration. It
 // intentionally contains no provider credential or gateway admission token;
 // its request limits are effective for customer integrations after applying
@@ -30,6 +51,24 @@ type OutboundRequestPolicy struct {
 	Burst            int     `json:"burst"`
 	MaxInFlight      int     `json:"max_in_flight"`
 	RequestTimeoutMS int     `json:"request_timeout_ms"`
+	// MaxRetries is the maximum number of extra upstream attempts for safe,
+	// bodyless GET/HEAD requests. Zero preserves the original single-attempt
+	// behavior. The gateway applies retries within RequestTimeoutMS.
+	MaxRetries int `json:"max_retries"`
+	// ResponseCacheTTLSeconds opts into a private, process-local cache for
+	// eligible GET responses. Zero disables caching.
+	ResponseCacheTTLSeconds int `json:"response_cache_ttl_seconds"`
+	// CircuitBreakerFailureThreshold opens the integration after this many
+	// consecutive transient provider failures. Zero disables the breaker and
+	// requires CircuitBreakerOpenSeconds to be zero too.
+	CircuitBreakerFailureThreshold int `json:"circuit_breaker_failure_threshold"`
+	// CircuitBreakerOpenSeconds is the cool-down before one provider probe is
+	// admitted. Zero disables the breaker and requires a zero threshold.
+	CircuitBreakerOpenSeconds int `json:"circuit_breaker_open_seconds"`
+	// RetryBudgetPerMinute caps extra safe-method attempts with a shared token
+	// bucket. Its capacity equals the configured rate; zero leaves the existing
+	// per-request MaxRetries policy as the only retry limit.
+	RetryBudgetPerMinute int `json:"retry_budget_per_minute"`
 }
 
 // DefaultOutboundRequestPolicy preserves the original customer-integration
@@ -37,10 +76,15 @@ type OutboundRequestPolicy struct {
 func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 	limits := MustLimitsFor(PlanFree)
 	return OutboundRequestPolicy{
-		RatePerSecond:    limits.OutboundRatePerSecondMax,
-		Burst:            limits.OutboundBurstMax,
-		MaxInFlight:      limits.OutboundMaxInFlightMax,
-		RequestTimeoutMS: limits.OutboundRequestTimeoutMSMax,
+		RatePerSecond:                  limits.OutboundRatePerSecondMax,
+		Burst:                          limits.OutboundBurstMax,
+		MaxInFlight:                    limits.OutboundMaxInFlightMax,
+		RequestTimeoutMS:               limits.OutboundRequestTimeoutMSMax,
+		MaxRetries:                     0,
+		ResponseCacheTTLSeconds:        0,
+		CircuitBreakerFailureThreshold: 0,
+		CircuitBreakerOpenSeconds:      0,
+		RetryBudgetPerMinute:           0,
 	}
 }
 
@@ -50,9 +94,12 @@ func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPolicy) (OutboundRequestPolicy, bool) {
 	limits, ok := LimitsFor(plan)
 	if !ok || limits.OutboundRatePerSecondMax <= 0 || limits.OutboundBurstMax < 1 ||
-		limits.OutboundMaxInFlightMax < 1 || limits.OutboundRequestTimeoutMSMax < 1 ||
+		limits.OutboundMaxInFlightMax < 1 || limits.OutboundRequestTimeoutMSMax < 1 || limits.OutboundMaxRetriesMax < 0 ||
+		limits.OutboundResponseCacheTTLSecondsMax < 0 || limits.OutboundRetryBudgetPerMinuteMax < 0 ||
 		policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
-		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 {
+		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 || policy.MaxRetries < 0 ||
+		policy.ResponseCacheTTLSeconds < 0 || !ValidOutboundCircuitBreakerPolicy(policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds) ||
+		policy.RetryBudgetPerMinute < 0 || policy.RetryBudgetPerMinute > MaxOutboundRetryBudgetPerMinute {
 		return OutboundRequestPolicy{}, false
 	}
 	if policy.RatePerSecond > limits.OutboundRatePerSecondMax {
@@ -67,7 +114,26 @@ func EffectiveOutboundRequestPolicyForPlan(plan Plan, policy OutboundRequestPoli
 	if policy.RequestTimeoutMS > limits.OutboundRequestTimeoutMSMax {
 		policy.RequestTimeoutMS = limits.OutboundRequestTimeoutMSMax
 	}
+	if policy.MaxRetries > limits.OutboundMaxRetriesMax {
+		policy.MaxRetries = limits.OutboundMaxRetriesMax
+	}
+	if policy.ResponseCacheTTLSeconds > limits.OutboundResponseCacheTTLSecondsMax {
+		policy.ResponseCacheTTLSeconds = limits.OutboundResponseCacheTTLSecondsMax
+	}
+	if policy.RetryBudgetPerMinute > limits.OutboundRetryBudgetPerMinuteMax {
+		policy.RetryBudgetPerMinute = limits.OutboundRetryBudgetPerMinuteMax
+	}
 	return policy, true
+}
+
+// ValidOutboundCircuitBreakerPolicy accepts either the disabled zero pair or
+// a bounded threshold/cool-down pair. Partial configurations are rejected.
+func ValidOutboundCircuitBreakerPolicy(failureThreshold, openSeconds int) bool {
+	if failureThreshold == 0 || openSeconds == 0 {
+		return failureThreshold == 0 && openSeconds == 0
+	}
+	return failureThreshold >= 1 && failureThreshold <= MaxOutboundCircuitBreakerFailureThreshold &&
+		openSeconds >= 1 && openSeconds <= MaxOutboundCircuitBreakerOpenSeconds
 }
 
 // OutboundRequestPolicyAllowedForPlan reports whether a customer-selected
@@ -88,7 +154,8 @@ type CreateOutboundIntegrationRequest struct {
 	RequestPolicy       *OutboundRequestPolicy `json:"request_policy,omitempty"`
 }
 
-// PutOutboundRequestPolicyRequest replaces all four admission policy values.
+// PutOutboundRequestPolicyRequest replaces the complete admission policy.
+// Omitting max_retries preserves the zero-retry behavior for older clients.
 type PutOutboundRequestPolicyRequest struct {
 	RequestPolicy OutboundRequestPolicy `json:"request_policy"`
 }

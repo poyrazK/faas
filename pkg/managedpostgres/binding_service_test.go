@@ -53,6 +53,11 @@ func (s *bindingCredentialSink) Put(_ context.Context, binding Binding, _ Creden
 	if s.putErr != nil {
 		return "", s.putErr
 	}
+	if binding.RotationPreviousGeneration > 0 {
+		previous := binding
+		previous.CredentialGeneration = binding.RotationPreviousGeneration
+		delete(s.references, "secret-"+bindingCredentialIdentity(previous))
+	}
 	ref := "secret-" + bindingCredentialIdentity(binding)
 	s.references[ref] = binding
 	return ref, nil
@@ -64,6 +69,11 @@ func (s *bindingCredentialSink) Delete(_ context.Context, binding Binding) error
 		return s.deleteErr
 	}
 	delete(s.references, "secret-"+bindingCredentialIdentity(binding))
+	if binding.RotationPreviousGeneration > 0 {
+		previous := binding
+		previous.CredentialGeneration = binding.RotationPreviousGeneration
+		delete(s.references, "secret-"+bindingCredentialIdentity(previous))
+	}
 	return nil
 }
 
@@ -188,6 +198,89 @@ func TestBindingServiceCreatesAndDeletesIdempotently(t *testing.T) {
 	}
 	if again, err := service.Delete(context.Background(), first.AccountID, first.ID); err != nil || again.State != BindingStateDeleted || provider.revokeCalls != 1 {
 		t.Fatalf("idempotent delete: %+v revoke=%d err=%v", again, provider.revokeCalls, err)
+	}
+}
+
+func TestBindingServiceRotationRetainsOldIdentityUntilRuntimeRefreshCompletes(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 5, 0, 0, time.UTC)
+	enabled := true
+	provider := &bindingProvider{}
+	store := &failFinishBindingStore{MemoryStore: NewMemoryStore()}
+	service, _, database := readyBindingFixture(t, provider, store, &now, &enabled)
+	service.newID = func() string { return "rotation-wake-a" }
+	ready, err := service.Create(context.Background(), CreateBindingRequest{
+		AccountID: "account-a", DatabaseID: database.ID, AppID: "app-a",
+		Scope: "production", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rotated, err := service.Rotate(context.Background(), ready.AccountID, ready.ID)
+	if err != nil {
+		t.Fatalf("rotate binding: %+v %v", rotated, err)
+	}
+	if rotated.State != BindingStateReady || rotated.CredentialGeneration != 2 ||
+		rotated.RotationPreviousGeneration != 1 || rotated.RotationWakeID != "rotation-wake-a" || rotated.RotationCleanupReady {
+		t.Fatalf("rotation state = %+v", rotated)
+	}
+	if provider.issueCalls != 2 || provider.revokeCalls != 0 || service.sink.(*bindingCredentialSink).putCalls != 2 {
+		t.Fatalf("rotation side effects issue=%d revoke=%d put=%d", provider.issueCalls, provider.revokeCalls, service.sink.(*bindingCredentialSink).putCalls)
+	}
+	if provider.lastIssueRequest.IdentityKey == bindingCredentialIdentity(ready) {
+		t.Fatalf("rotation reused the old provider identity: %+v", provider.lastIssueRequest)
+	}
+
+	// API retries reuse the in-flight rotation instead of minting generation 3.
+	retry, err := service.Rotate(context.Background(), ready.AccountID, ready.ID)
+	if err != nil || retry.CredentialGeneration != 2 || retry.RotationWakeID != rotated.RotationWakeID || provider.issueCalls != 2 {
+		t.Fatalf("rotation retry = %+v issueCalls=%d err=%v", retry, provider.issueCalls, err)
+	}
+
+	store.mu.Lock()
+	pending := store.bindings[ready.ID]
+	pending.RotationCleanupReady = true
+	store.bindings[ready.ID] = pending
+	store.mu.Unlock()
+	now = now.Add(time.Second)
+	retired, err := service.ReconcileRotationCleanup(context.Background(), ready.AccountID, ready.ID)
+	if err != nil {
+		t.Fatalf("retire previous identity: %+v %v", retired, err)
+	}
+	if provider.revokeCalls != 1 || provider.lastRevokeRequest.IdentityKey != bindingCredentialIdentity(ready) {
+		t.Fatalf("retirement did not revoke generation 1: calls=%d request=%+v", provider.revokeCalls, provider.lastRevokeRequest)
+	}
+	if retired.State != BindingStateReady || retired.RotationPreviousGeneration != 0 || retired.RotationWakeID != "" || retired.RotationCleanupReady {
+		t.Fatalf("retirement left rotation pending: %+v", retired)
+	}
+}
+
+func TestBindingServiceDeleteRevokesBothGenerationsDuringPendingRotation(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 10, 0, 0, time.UTC)
+	enabled := true
+	provider := &bindingProvider{}
+	store := &failFinishBindingStore{MemoryStore: NewMemoryStore()}
+	service, _, database := readyBindingFixture(t, provider, store, &now, &enabled)
+	service.newID = func() string { return "rotation-wake-b" }
+	ready, err := service.Create(context.Background(), CreateBindingRequest{
+		AccountID: "account-a", DatabaseID: database.ID, AppID: "app-a",
+		Scope: "production", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Rotate(context.Background(), ready.AccountID, ready.ID); err != nil {
+		t.Fatalf("rotate binding: %v", err)
+	}
+	deleted, err := service.Delete(context.Background(), ready.AccountID, ready.ID)
+	if err != nil || deleted.State != BindingStateDeleted {
+		t.Fatalf("delete pending rotation: %+v %v", deleted, err)
+	}
+	if provider.revokeCalls != 2 {
+		t.Fatalf("delete revoked %d provider identities, want both generations", provider.revokeCalls)
+	}
+	if len(service.sink.(*bindingCredentialSink).references) != 0 {
+		t.Fatalf("delete left credential references: %+v", service.sink.(*bindingCredentialSink).references)
 	}
 }
 

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from ..models.app_manifest_env import AppManifestEnv
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -96,9 +97,10 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing
-    FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222).
-   """
+    """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
+    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this
+    remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must
+    differ from stop_signal (ADR-222)."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""
@@ -142,6 +144,10 @@ class AppManifest:
     """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
     crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
     """Effective policy for known monitor/crawler requests."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. A
+    gateway replica enforces its own buckets; the existing app/account limits remain aggregate ceilings. Observe
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path."""
     health_path_wakes: bool | Unset = False
@@ -295,6 +301,10 @@ class AppManifest:
         if not isinstance(self.crawler_policy, Unset):
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
         health_path = self.health_path
 
         health_path_wakes = self.health_path_wakes
@@ -358,6 +368,8 @@ class AppManifest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
@@ -378,6 +390,7 @@ class AppManifest:
         from ..models.app_manifest_env import AppManifestEnv
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -681,6 +694,13 @@ class AppManifest:
         else:
             crawler_policy = check_app_manifest_crawler_policy(_crawler_policy)
 
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
         health_path = d.pop("health_path", UNSET)
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
@@ -717,6 +737,7 @@ class AppManifest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,

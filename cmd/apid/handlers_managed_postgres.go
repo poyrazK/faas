@@ -125,7 +125,7 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 }
 
 func managedPostgresBindingView(binding managedpostgres.Binding) api.ManagedPostgresBinding {
-	return api.ManagedPostgresBinding{ID: binding.ID, DatabaseID: binding.DatabaseID, AppID: binding.AppID, Scope: binding.Scope, EnvironmentKey: binding.EnvironmentKey, Access: string(binding.Access), CredentialGeneration: binding.CredentialGeneration, State: string(binding.State), LastErrorCode: binding.LastErrorCode, CreatedAt: binding.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: binding.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	return api.ManagedPostgresBinding{ID: binding.ID, DatabaseID: binding.DatabaseID, AppID: binding.AppID, Scope: binding.Scope, EnvironmentKey: binding.EnvironmentKey, Access: string(binding.Access), CredentialGeneration: binding.CredentialGeneration, RotationPending: binding.RotationPreviousGeneration > 0, State: string(binding.State), LastErrorCode: binding.LastErrorCode, CreatedAt: binding.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: binding.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 }
 
 func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Request, acct state.Account) {

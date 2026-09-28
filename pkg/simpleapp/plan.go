@@ -106,26 +106,34 @@ func Resolve(spec Spec) (Plan, error) {
 		return Plan{}, fmt.Errorf("port must be between 1 and 65535")
 	}
 	health := strings.TrimSpace(spec.HealthPath)
+	defaults := []string{"execution_mode=request", "scale_to_zero=true", "local_storage=ephemeral", "durable_state=external"}
 	if health == "" {
-		health = DefaultHealthPath
+		if source == SourceDirectory {
+			health = DefaultHealthPath
+			defaults = append(defaults, "health_path="+health)
+		} else {
+			// Direct OCI images use the listener as their readiness
+			// contract unless the operator supplies an explicit path.
+			// Inventing /healthz here makes previews disagree with the
+			// image hosting receipt and scheduler.
+			defaults = append(defaults, "readiness=tcp-listener")
+		}
 	}
-	if !strings.HasPrefix(health, "/") || strings.ContainsAny(health, "\x00\r\n") {
-		return Plan{}, fmt.Errorf("health path must start with '/' and contain no control characters")
-	}
-	if len(health) > 1024 {
-		return Plan{}, fmt.Errorf("health path must be at most 1024 characters")
+	if health != "" {
+		if !strings.HasPrefix(health, "/") || strings.ContainsAny(health, "\x00\r\n") {
+			return Plan{}, fmt.Errorf("health path must start with '/' and contain no control characters")
+		}
+		if len(health) > 1024 {
+			return Plan{}, fmt.Errorf("health path must be at most 1024 characters")
+		}
 	}
 	framework := strings.TrimSpace(spec.Framework)
-	defaults := []string{"execution_mode=request", "scale_to_zero=true", "local_storage=ephemeral", "durable_state=external"}
 	if profile == "" {
 		profile = "plan-default"
 		defaults = append(defaults, "resource_profile=plan-default")
 	}
 	if spec.Port == 0 {
 		defaults = append(defaults, fmt.Sprintf("port=%d", port))
-	}
-	if strings.TrimSpace(spec.HealthPath) == "" {
-		defaults = append(defaults, "health_path="+health)
 	}
 	return Plan{
 		Slug:            slug,

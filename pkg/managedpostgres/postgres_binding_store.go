@@ -12,7 +12,8 @@ import (
 
 const postgresBindingColumns = `id::text, account_id::text, database_id::text,
 app_id::text, scope, environment_key, access, provider_identity_id,
-credential_ref, credential_generation, state, last_error_code, lease_token,
+credential_ref, credential_generation, rotation_previous_generation,
+rotation_wake_id::text, rotation_cleanup_ready, state, last_error_code, lease_token,
 lease_until, attempt_count, retry_at, created_at, updated_at, deleted_at`
 
 var _ BindingStore = (*PostgresStore)(nil)
@@ -219,7 +220,8 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings
-		 WHERE (state = 'deleting' OR ($1 AND state IN ('provisioning','failed')))
+		 WHERE (state = 'deleting' OR ($1 AND state IN ('provisioning','failed'))
+		   OR (rotation_cleanup_ready AND state IN ('ready','retiring')))
 		   AND retry_at <= $2 AND (lease_until IS NULL OR lease_until <= $2)
 		 ORDER BY retry_at, id LIMIT $3`,
 		includeProvisioning, now, limit,
@@ -242,9 +244,58 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 	return items, nil
 }
 
+func (s *PostgresStore) BeginBindingRotation(ctx context.Context, accountID, bindingID, wakeID string, now time.Time) (Binding, bool, error) {
+	if wakeID == "" || now.IsZero() {
+		return Binding{}, false, ErrInvalid
+	}
+	account, err := postgresUUID(accountID)
+	if err != nil {
+		return Binding{}, false, err
+	}
+	id, err := postgresUUID(bindingID)
+	if err != nil {
+		return Binding{}, false, err
+	}
+	wake, err := postgresUUID(wakeID)
+	if err != nil {
+		return Binding{}, false, err
+	}
+	binding, err := queryBinding(ctx, s.pool,
+		`UPDATE managed_postgres_bindings SET
+			credential_generation = credential_generation + 1,
+			rotation_previous_generation = credential_generation,
+			rotation_wake_id = $1, rotation_cleanup_ready = false,
+			state = 'provisioning', last_error_code = NULL,
+			lease_token = NULL, lease_until = NULL, attempt_count = 0,
+			retry_at = $2, updated_at = $2
+		 WHERE account_id = $3 AND id = $4 AND state = 'ready'
+		   AND rotation_previous_generation IS NULL
+		   AND credential_generation < 9223372036854775807
+		 RETURNING `+postgresBindingColumns,
+		wake, now, account, id,
+	)
+	if err == nil {
+		return binding, true, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Binding{}, false, err
+	}
+	existing, getErr := queryBinding(ctx, s.pool,
+		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings WHERE account_id = $1 AND id = $2`,
+		account, id,
+	)
+	if getErr != nil {
+		return Binding{}, false, getErr
+	}
+	if existing.RotationPreviousGeneration > 0 && existing.RotationWakeID != "" {
+		return existing, false, nil
+	}
+	return Binding{}, false, ErrConflict
+}
+
 func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, leaseToken string, operation BindingState, now, leaseUntil time.Time) (Binding, error) {
 	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) ||
-		(operation != BindingStateProvisioning && operation != BindingStateDeleting) {
+		(operation != BindingStateProvisioning && operation != BindingStateDeleting && operation != BindingStateRetiring) {
 		return Binding{}, ErrInvalid
 	}
 	account, err := postgresUUID(accountID)
@@ -258,14 +309,16 @@ func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, 
 	binding, err := queryBinding(ctx, s.pool,
 		`UPDATE managed_postgres_bindings SET
 			state = $1, lease_token = $2, lease_until = $3, updated_at = $4,
-			attempt_count = CASE WHEN $1 = 'deleting' AND state <> 'deleting'
+			attempt_count = CASE WHEN $1 IN ('deleting','retiring') AND state <> $1
 				THEN 1 ELSE least(attempt_count + 1, 30) END,
 			last_error_code = CASE WHEN state <> $1 THEN NULL ELSE last_error_code END,
 			retry_at = $4
 		 WHERE account_id = $5 AND id = $6 AND state <> 'deleted'
 		   AND (lease_until IS NULL OR lease_until <= $4)
 		   AND (($1 = 'provisioning' AND state IN ('provisioning','failed') AND retry_at <= $4)
-		     OR ($1 = 'deleting'))
+		     OR ($1 = 'deleting')
+		     OR ($1 = 'retiring' AND state IN ('ready','retiring') AND rotation_cleanup_ready
+		         AND rotation_previous_generation IS NOT NULL AND retry_at <= $4))
 		 RETURNING `+postgresBindingColumns,
 		string(operation), leaseToken, leaseUntil, now, account, id,
 	)
@@ -317,7 +370,7 @@ func (s *PostgresStore) FinishBindingProvision(ctx context.Context, bindingID, l
 
 func (s *PostgresStore) ReleaseBinding(ctx context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {
 	if leaseToken == "" || now.IsZero() || retryAt.Before(now) || !validErrorCode(errorCode) ||
-		(next != BindingStateProvisioning && next != BindingStateDeleting && next != BindingStateFailed) {
+		(next != BindingStateProvisioning && next != BindingStateDeleting && next != BindingStateRetiring && next != BindingStateFailed) {
 		return ErrInvalid
 	}
 	id, err := postgresUUID(bindingID)
@@ -339,6 +392,36 @@ func (s *PostgresStore) ReleaseBinding(ctx context.Context, bindingID, leaseToke
 	return nil
 }
 
+func (s *PostgresStore) FinishBindingRotationCleanup(ctx context.Context, bindingID, leaseToken, wakeID string, now time.Time) (Binding, error) {
+	if leaseToken == "" || wakeID == "" || now.IsZero() {
+		return Binding{}, ErrInvalid
+	}
+	id, err := postgresUUID(bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	wake, err := postgresUUID(wakeID)
+	if err != nil {
+		return Binding{}, err
+	}
+	binding, err := queryBinding(ctx, s.pool,
+		`UPDATE managed_postgres_bindings SET state = 'ready',
+			rotation_previous_generation = NULL, rotation_wake_id = NULL,
+			rotation_cleanup_ready = false, last_error_code = NULL,
+			lease_token = NULL, lease_until = NULL, attempt_count = 0,
+			retry_at = $1, updated_at = $1
+		 WHERE id = $2 AND state = 'retiring' AND lease_token = $3 AND lease_until > $1
+		   AND rotation_wake_id = $4 AND rotation_cleanup_ready
+		   AND rotation_previous_generation IS NOT NULL
+		 RETURNING `+postgresBindingColumns,
+		now, id, leaseToken, wake,
+	)
+	if errors.Is(err, ErrNotFound) {
+		return Binding{}, ErrConflict
+	}
+	return binding, err
+}
+
 func (s *PostgresStore) FinishBindingDelete(ctx context.Context, bindingID, leaseToken string, now time.Time) (Binding, error) {
 	if leaseToken == "" || now.IsZero() {
 		return Binding{}, ErrInvalid
@@ -350,6 +433,7 @@ func (s *PostgresStore) FinishBindingDelete(ctx context.Context, bindingID, leas
 	binding, err := queryBinding(ctx, s.pool,
 		`UPDATE managed_postgres_bindings AS binding SET state = 'deleted',
 			last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+			rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
 			attempt_count = 0, retry_at = $1, updated_at = $1, deleted_at = $1
 		 WHERE binding.id = $2 AND binding.state = 'deleting' AND binding.lease_token = $3
 		   AND binding.lease_until > $1
@@ -377,11 +461,14 @@ func queryBinding(ctx context.Context, queryer databaseQueryer, query string, ar
 func scanBinding(row bindingScanner) (Binding, error) {
 	var binding Binding
 	var providerIdentityID, credentialRef, lastErrorCode, leaseToken pgtype.Text
+	var rotationPreviousGeneration pgtype.Int8
+	var rotationWakeID pgtype.Text
 	var leaseUntil, deletedAt pgtype.Timestamptz
 	if err := row.Scan(
 		&binding.ID, &binding.AccountID, &binding.DatabaseID, &binding.AppID,
 		&binding.Scope, &binding.EnvironmentKey, &binding.Access,
 		&providerIdentityID, &credentialRef, &binding.CredentialGeneration,
+		&rotationPreviousGeneration, &rotationWakeID, &binding.RotationCleanupReady,
 		&binding.State, &lastErrorCode, &leaseToken, &leaseUntil,
 		&binding.AttemptCount, &binding.RetryAt, &binding.CreatedAt,
 		&binding.UpdatedAt, &deletedAt,
@@ -393,6 +480,12 @@ func scanBinding(row bindingScanner) (Binding, error) {
 	}
 	if credentialRef.Valid {
 		binding.CredentialRef = credentialRef.String
+	}
+	if rotationPreviousGeneration.Valid {
+		binding.RotationPreviousGeneration = rotationPreviousGeneration.Int64
+	}
+	if rotationWakeID.Valid {
+		binding.RotationWakeID = rotationWakeID.String
 	}
 	if lastErrorCode.Valid {
 		binding.LastErrorCode = lastErrorCode.String
