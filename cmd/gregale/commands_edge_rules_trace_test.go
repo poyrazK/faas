@@ -432,6 +432,87 @@ func TestCmdEdgeRulesTraceLoadsDeclaredRouteOpenAPIFallback(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceUsesSelectedEnvironmentPolicies(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{
+				OnlyAllowDeclaredRoutes: true,
+				DeclaredRoutes:          []api.DeclaredRoute{{Path: "/app-only", Methods: []string{http.MethodGet}}},
+			})
+		case "/v1/projects/shop/environments/staging/state":
+			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentStateResponse{
+				ProjectSlug: "shop", Environment: "staging",
+				Workloads: []api.ProjectEnvironmentStateWorkloadResponse{{
+					WorkloadSlug: "demo",
+					Release:      api.ProjectEnvironmentReleaseWorkloadResponse{WorkloadSlug: "demo", URL: "https://staging.example.com"},
+					Variables:    []api.ProjectEnvironmentVariableResponse{{Key: "TRACE_TEST_SECRET", Value: "must-not-appear-in-output"}},
+					Routes: api.ProjectEnvironmentRoutePolicyResponse{
+						Ownership: "environment", OnlyAllowDeclaredRoutes: true,
+						DeclaredRoutes: []api.DeclaredRoute{{Path: "/staging-only", Methods: []string{http.MethodGet}}},
+					},
+					Policies: api.ProjectEnvironmentEdgePolicyResponse{
+						Ownership: "environment",
+						Rules: []api.ProjectEnvironmentEdgeRuleResponse{{
+							Kind: "headers", MatchPath: "*", Priority: 10, Enabled: true,
+							Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Environment","action":"set","value":"staging"}]}}`),
+						}},
+					},
+				}},
+			})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{
+				{ID: "app-headers", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "*",
+					Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Environment","action":"set","value":"application"}]}}`)},
+				{ID: "app-respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "*", MatchHeaders: map[string]string{"x-environment": "staging"},
+					Action: json.RawMessage(`{"respond":{"status_code":202,"body":{"environment":"staging"}}}`)},
+			})
+		case "/v1/apps/demo/openapi":
+			t.Error("environment route policy should override the app OpenAPI fallback")
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{
+		"--app", "demo", "--project", "shop", "--environment", "staging",
+		"--url", "https://staging.example.com/staging-only",
+	}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Project != "shop" || result.Environment != "staging" || result.Simulation.Outcome != "fixed_response" || result.Simulation.StatusCode != http.StatusAccepted {
+		t.Fatalf("environment trace = %#v", result)
+	}
+	if len(result.Rules) != 2 || result.Rules[0].ID != "app-respond" || result.Rules[1].ID != "environment/staging/demo/1" {
+		t.Fatalf("effective environment rules = %#v", result.Rules)
+	}
+	if got := result.Simulation.RequestHeaders["x-environment"]; len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("simulated request headers = %#v", result.Simulation.RequestHeaders)
+	}
+	if strings.Contains(stdout.String(), "must-not-appear-in-output") {
+		t.Fatalf("environment configuration value leaked into trace output: %s", stdout.String())
+	}
+}
+
 func TestCmdEdgeRulesTraceReportsMissingDeclaredRouteDocument(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

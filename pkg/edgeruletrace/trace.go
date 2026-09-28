@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -23,7 +24,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Ingress/auth policy, target-app rules after routing, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const redactedHeaderValue = "[REDACTED]"
@@ -33,14 +34,16 @@ var traceOutputRedactor = redact.New(1 << 20)
 // Input is the request context that can be simulated without contacting the
 // gateway or app runtime. Call NormalizeInput before Simulate.
 type Input struct {
-	App      string
-	Host     string
-	Path     string
-	Method   string
-	ClientIP string
-	Country  string
-	Headers  http.Header
-	Body     []byte
+	Project     string
+	Environment string
+	App         string
+	Host        string
+	Path        string
+	Method      string
+	ClientIP    string
+	Country     string
+	Headers     http.Header
+	Body        []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -62,6 +65,9 @@ type Input struct {
 	// gateway. Explicit routes take precedence over the imported OpenAPI doc.
 	OnlyAllowDeclaredRoutes bool
 	DeclaredRoutes          []api.DeclaredRoute
+	// DeclaredRoutesLoaded distinguishes a known empty route allowlist from an
+	// app policy that may still need its imported OpenAPI document.
+	DeclaredRoutesLoaded bool
 	// DeclaredRouteDocumentLoaded distinguishes a loaded OpenAPI document from
 	// a caller that could not retrieve it. A missing document is tracked
 	// separately because the gateway treats that configured policy as a 503.
@@ -77,6 +83,8 @@ type Input struct {
 }
 
 type Result struct {
+	Project      string              `json:"project,omitempty"`
+	Environment  string              `json:"environment,omitempty"`
 	App          string              `json:"app"`
 	Host         string              `json:"host"`
 	Path         string              `json:"path"`
@@ -167,6 +175,17 @@ type ActionPreview struct {
 // only the same fields the CLI has historically normalized (method, host,
 // client IP, and country). Header value comparisons remain exact.
 func NormalizeInput(input Input) (Input, error) {
+	input.Project = strings.TrimSpace(input.Project)
+	input.Environment = strings.TrimSpace(input.Environment)
+	if (input.Project == "") != (input.Environment == "") {
+		return Input{}, fmt.Errorf("project and environment must be supplied together")
+	}
+	if input.Project != "" && !api.ValidProjectSlug(input.Project) {
+		return Input{}, fmt.Errorf("project slug is invalid")
+	}
+	if input.Environment != "" && !api.ValidProjectEnvironmentSlug(input.Environment) {
+		return Input{}, fmt.Errorf("environment slug is invalid")
+	}
 	input.App = strings.TrimSpace(input.App)
 	if input.App == "" || len(input.App) > 40 {
 		return Input{}, fmt.Errorf("app slug is required and must be at most 40 characters")
@@ -214,6 +233,92 @@ func NormalizeInput(input Input) (Input, error) {
 	}
 	input.Headers = headers
 	return input, nil
+}
+
+// ApplyEnvironmentRoutePolicy overlays an explicitly selected environment's
+// route contract on the app metadata used by the trace. The environment
+// contract owns even an empty allowlist; it must not fall through to the
+// app's imported OpenAPI document.
+func ApplyEnvironmentRoutePolicy(input Input, policy api.ProjectEnvironmentRoutePolicyResponse) (Input, error) {
+	switch policy.Ownership {
+	case "application":
+		return input, nil
+	case "environment":
+		input.OnlyAllowDeclaredRoutes = policy.OnlyAllowDeclaredRoutes
+		input.DeclaredRoutes = append([]api.DeclaredRoute(nil), policy.DeclaredRoutes...)
+		input.DeclaredRoutesLoaded = true
+		input.DeclaredRouteDocumentLoaded = false
+		input.DeclaredRouteDocumentMissing = false
+		input.DeclaredRouteOpenAPIDoc = nil
+		return input, nil
+	default:
+		return Input{}, fmt.Errorf("environment route policy ownership %q is unsupported", policy.Ownership)
+	}
+}
+
+// ApplyEnvironmentEdgePolicy overlays environment-owned headers/CORS rules on
+// app rules, matching gateway replacement semantics. Other edge-rule kinds
+// remain app-owned. The selected request host must belong to this environment
+// workload so a trace cannot accidentally apply staging policy to production.
+func ApplyEnvironmentEdgePolicy(input Input, rules []api.EdgeRuleResponse, policy api.ProjectEnvironmentEdgePolicyResponse, workloadURL string, domains []api.ProjectEnvironmentDomainResponse) ([]api.EdgeRuleResponse, error) {
+	if input.Project == "" || input.Environment == "" {
+		return nil, fmt.Errorf("project and environment are required to apply environment policy")
+	}
+	if !environmentHostMatches(input.Host, workloadURL, domains) {
+		return nil, fmt.Errorf("request host %q is not the stable URL or a verified custom domain for project %q environment %q app %q", input.Host, input.Project, input.Environment, input.App)
+	}
+	switch policy.Ownership {
+	case "application":
+		return append([]api.EdgeRuleResponse(nil), rules...), nil
+	case "environment":
+		out := make([]api.EdgeRuleResponse, 0, len(rules)+len(policy.Rules))
+		for _, rule := range rules {
+			if rule.Kind != "headers" && rule.Kind != "cors" {
+				out = append(out, rule)
+			}
+		}
+		for i, rule := range policy.Rules {
+			if rule.Kind != "headers" && rule.Kind != "cors" {
+				return nil, fmt.Errorf("environment policy contains unsupported edge-rule kind %q", rule.Kind)
+			}
+			out = append(out, api.EdgeRuleResponse{
+				ID:      fmt.Sprintf("environment/%s/%s/%d", input.Environment, input.App, i+1),
+				Enabled: rule.Enabled, Kind: rule.Kind, MatchHost: input.Host,
+				MatchPath: rule.MatchPath, MatchMethods: append([]string(nil), rule.MatchMethods...),
+				MatchHeaders: cloneStringMap(rule.MatchHeaders), Priority: rule.Priority,
+				Action: append(json.RawMessage(nil), rule.Action...),
+			})
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("environment edge-policy ownership %q is unsupported", policy.Ownership)
+	}
+}
+
+func environmentHostMatches(host, workloadURL string, domains []api.ProjectEnvironmentDomainResponse) bool {
+	if workloadURL != "" {
+		parsed, err := url.Parse(workloadURL)
+		if err == nil && parsed != nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.EqualFold(parsed.Hostname(), host) {
+			return true
+		}
+	}
+	for _, domain := range domains {
+		if !domain.Verified {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSuffix(domain.Domain, "."))
+		requestHost := strings.ToLower(host)
+		if candidate == requestHost {
+			return true
+		}
+		if strings.HasPrefix(candidate, "*.") {
+			suffix := candidate[1:]
+			if requestHost != candidate[2:] && strings.HasSuffix(requestHost, suffix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ParseRequestHeaders parses repeated Name:Value inputs. It trims HTTP optional
@@ -279,6 +384,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
 	result := Result{
+		Project: input.Project, Environment: input.Environment,
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
 		ClientIP: input.ClientIP, Country: input.Country,
 		BodyProvided: input.BodyProvided, BodyBytes: len(input.Body),
@@ -610,7 +716,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 // The public path/method are supplied separately from the rewritten path so
 // edge rewrites cannot change the app's public contract.
 func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
-	if len(input.DeclaredRoutes) > 0 {
+	if input.DeclaredRoutesLoaded || len(input.DeclaredRoutes) > 0 {
 		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
 		return allowed, err != nil, true
 	}
