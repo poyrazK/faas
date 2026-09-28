@@ -22331,6 +22331,21 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 	if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
 		return err
 	}
+	var existingGeneration int64
+	var existingValueHash string
+	lookupErr := tx.QueryRow(ctx,
+		`select coalesce(managed_credential_generation, 0), coalesce(value_hash, '')
+		 from app_secrets where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+		 for update`,
+		secret.AccountID, secret.AppID, secret.Scope, secret.Key,
+	).Scan(&existingGeneration, &existingValueHash)
+	configChanged := errors.Is(lookupErr, pgx.ErrNoRows)
+	if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+		return mapErr(lookupErr)
+	}
+	if lookupErr == nil {
+		configChanged = existingGeneration < secret.ManagedCredentialGeneration || existingValueHash != secret.ValueHash
+	}
 	tag, err := tx.Exec(ctx,
 		`insert into app_secrets (
 			account_id, app_id, scope, key, ciphertext, kid, value_hash,
@@ -22345,21 +22360,25 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 			managed_credential_generation = excluded.managed_credential_generation,
 			delivery_version = CASE
 				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				  OR app_secrets.value_hash IS DISTINCT FROM excluded.value_hash
 				THEN app_secrets.delivery_version + 1
 				ELSE app_secrets.delivery_version
 			END,
 			delivery_status = CASE
 				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				  OR app_secrets.value_hash IS DISTINCT FROM excluded.value_hash
 				THEN 'pending'
 				ELSE app_secrets.delivery_status
 			END,
 			last_delivery_attempt_at = CASE
 				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				  OR app_secrets.value_hash IS DISTINCT FROM excluded.value_hash
 				THEN NULL
 				ELSE app_secrets.last_delivery_attempt_at
 			END,
 			last_delivery_error_code = CASE
 				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				  OR app_secrets.value_hash IS DISTINCT FROM excluded.value_hash
 				THEN NULL
 				ELSE app_secrets.last_delivery_error_code
 			END,
@@ -22381,6 +22400,11 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	if configChanged {
+		if err := stampManagedBindingRuntimeConfigChange(ctx, tx, secret.AppID); err != nil {
+			return err
+		}
 	}
 	return mapErr(tx.Commit(ctx))
 }
@@ -22411,12 +22435,42 @@ func (s *PgStore) DeleteManagedPostgresSecret(ctx context.Context, credentialRef
 	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`delete from app_secrets where managed_credential_ref = $1`,
-		credentialRef); err != nil {
+		credentialRef)
+	if err != nil {
 		return mapErr(err)
 	}
+	if tag.RowsAffected() == 0 {
+		return mapErr(tx.Commit(ctx))
+	}
+	if err := stampManagedBindingRuntimeConfigChange(ctx, tx, appID); err != nil {
+		return err
+	}
 	return mapErr(tx.Commit(ctx))
+}
+
+// stampManagedBindingRuntimeConfigChange records the config boundary and
+// invalidates every existing app snapshot inside the same transaction as a
+// managed PostgreSQL secret change. A later wake cannot restore credentials
+// from a snapshot captured before the binding mutation.
+func stampManagedBindingRuntimeConfigChange(ctx context.Context, tx pgx.Tx, appID string) error {
+	if _, err := tx.Exec(ctx,
+		`insert into app_runtime_config_changes (app_id, changed_at) values ($1, now())
+		 on conflict (app_id) do update set changed_at = excluded.changed_at`,
+		appID,
+	); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`update snapshots set stale = true
+		 where deployment_id in (select id from deployments where app_id = $1)
+		   and stale = false`,
+		appID,
+	); err != nil {
+		return mapErr(err)
+	}
+	return nil
 }
 
 // PutManagedObjectStorageSecret stores a sealed compute-binding value under

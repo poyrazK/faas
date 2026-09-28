@@ -18606,7 +18606,8 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 			return ErrConflict
 		}
 	}
-	now := time.Now()
+	now := time.Now().UTC()
+	configChanged := !ok || existing.ManagedCredentialGeneration < secret.ManagedCredentialGeneration || existing.ValueHash != secret.ValueHash
 	if ok {
 		secret.CreatedAt = existing.CreatedAt
 		secret.DeliveryVersion = existing.DeliveryVersion
@@ -18617,7 +18618,7 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 		secret.LastDeliveryErrorCode = existing.LastDeliveryErrorCode
 		secret.LastDeliveredWakeID = existing.LastDeliveredWakeID
 		secret.LastDeliveredInstanceID = existing.LastDeliveredInstanceID
-		if secret.ManagedCredentialGeneration > existing.ManagedCredentialGeneration {
+		if secret.ManagedCredentialGeneration > existing.ManagedCredentialGeneration || existing.ValueHash != secret.ValueHash {
 			secret.DeliveryVersion++
 			secret.DeliveryStatus = SecretDeliveryPending
 			secret.LastDeliveryAttemptAt = nil
@@ -18630,6 +18631,9 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 	}
 	secret.UpdatedAt = now
 	m.secrets[k] = secret
+	if configChanged {
+		m.markAppRuntimeConfigChangedAndSnapshotsStaleLocked(secret.AppID, now)
+	}
 	return nil
 }
 
@@ -18642,10 +18646,29 @@ func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef 
 	for key, secret := range m.secrets {
 		if secret.ManagedCredentialRef == credentialRef {
 			delete(m.secrets, key)
+			m.markAppRuntimeConfigChangedAndSnapshotsStaleLocked(secret.AppID, time.Now().UTC())
 			return nil
 		}
 	}
 	return nil
+}
+
+// markAppRuntimeConfigChangedAndSnapshotsStaleLocked mirrors the transaction
+// used by managed binding stores. The caller must hold m.mu so the secret
+// mutation, runtime stamp, and snapshot invalidation appear together.
+func (m *MemStore) markAppRuntimeConfigChangedAndSnapshotsStaleLocked(appID string, changedAt time.Time) {
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	m.runtimeConfigChangedAt[appID] = changedAt
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != appID || m.snapshots[i].Stale {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
 }
 
 func (m *MemStore) PutManagedObjectStorageSecret(_ context.Context, secret AppSecret) error {
