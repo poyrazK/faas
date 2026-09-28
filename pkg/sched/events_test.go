@@ -1,5 +1,7 @@
 package sched
 
+// adr: 343 — a rejected before_checkpoint callback has a closed park reason.
+
 import (
 	"context"
 	"encoding/hex"

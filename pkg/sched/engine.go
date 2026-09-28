@@ -6197,9 +6197,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
-	if code == api.CodeStageSnapshotPrepareTimeout {
+	switch code {
+	case api.CodeStageSnapshotPrepareTimeout:
 		message = "snapshot prime failed: " + problem.Error()
-	} else if code == api.CodeBeforeCheckpointFailed {
+	case api.CodeBeforeCheckpointFailed:
 		// Keep the customer-facing deployment row independent of vmmd's
 		// transport wording and any guest-local callback detail.
 		message = "snapshot prime failed: before_checkpoint callback did not complete successfully"
