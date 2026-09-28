@@ -342,7 +342,7 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 		nodes = o.publishRecipients(ctx, endpointID, channel, nodes)
 		if len(nodes) == 0 {
 			o.observePublish("no_subscribers", started)
-			return 0, nil
+			return result, nil
 		}
 	}
 	// Keep one result per node so aggregation and error selection stay in
