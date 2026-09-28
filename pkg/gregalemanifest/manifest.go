@@ -106,6 +106,14 @@ type EventTrigger struct {
 	Filter     string `yaml:"filter,omitempty" toml:"filter"`
 	WorkPolicy string `yaml:"work_policy,omitempty" toml:"work_policy"`
 	WorkKey    string `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkAction string `yaml:"work_action,omitempty" toml:"work_action"`
+}
+
+func (t EventTrigger) EffectiveWorkAction() string {
+	if t.WorkAction == "" {
+		return "invoke"
+	}
+	return t.WorkAction
 }
 
 // WorkPolicy declares one named app policy shared by async invocations and
@@ -363,6 +371,12 @@ func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
 // Validate checks the event pattern and content filter without requiring an
 // account ID. Account ownership is assigned by the authenticated apply path.
 func (t EventTrigger) Validate(idx int) error {
+	if t.WorkAction != "" && t.WorkAction != "invoke" && t.WorkAction != "cancel_pending" {
+		return fmt.Errorf("triggers.event[%d].work_action must be invoke or cancel_pending", idx)
+	}
+	if t.WorkAction == "cancel_pending" && t.WorkPolicy == "" {
+		return fmt.Errorf("triggers.event[%d]: cancel_pending requires work_policy and work_key", idx)
+	}
 	if (t.WorkPolicy == "") != (t.WorkKey == "") {
 		return fmt.Errorf("triggers.event[%d]: work_policy and work_key must be set together", idx)
 	}

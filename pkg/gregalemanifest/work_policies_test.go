@@ -62,3 +62,14 @@ func TestManifestWorkPoliciesRejectInvalidAndDuplicate(t *testing.T) {
 		t.Fatalf("unsupported policy = %v", err)
 	}
 }
+
+func TestEventTriggerCancelPendingRequiresPolicyKey(t *testing.T) {
+	trigger := EventTrigger{Source: "orders", Type: "order.completed", WorkAction: "cancel_pending"}
+	if err := trigger.Validate(0); err == nil || !strings.Contains(err.Error(), "requires work_policy") {
+		t.Fatalf("missing policy/key = %v", err)
+	}
+	trigger.WorkPolicy, trigger.WorkKey = "reminders", "data.order_id"
+	if err := trigger.Validate(0); err != nil {
+		t.Fatalf("valid cancellation trigger: %v", err)
+	}
+}

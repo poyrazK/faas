@@ -1237,6 +1237,8 @@ Schedule a deferred invocation
 | `--payload <JSON|@FILE|->` | JSON request payload |  |
 | `--method <METHOD>` | HTTP method (default POST) |  |
 | `--path <PATH>` | app path (default /) |  |
+| `--work-policy <NAME>` | named app work policy |  |
+| `--work-key <JSON>` | JSON scalar identifying related work |  |
 | `--header <NAME:VALUE>` | request header (repeatable) |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--retry-base-seconds <N>` | base retry delay in seconds |  |

@@ -17845,6 +17845,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/work-policies/{name}/cancel-pending:
+    post:
+      tags: [invocations]
+      operationId: cancelPendingAppWork
+      summary: Cancel pending work for one policy and application key.
+      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: name
+          required: true
+          description: Policy whose pending lane is being cancelled.
+          schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelPendingWorkRequest' }
+      responses:
+        '200':
+          description: Durable cancellation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancelPendingWorkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/queues/send:
     post:
       tags: [queues]
@@ -29355,6 +29383,7 @@ components:
           description: Normalized JSON filter evaluated by the event matcher.
         work_policy: { type: string, description: "Named app policy for keyed event deliveries, when configured." }
         work_key: { type: string, description: "Dot selector into the CloudEvents envelope for the work key." }
+        work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -38887,6 +38916,23 @@ components:
           type: array
           items: { $ref: '#/components/schemas/WorkPolicyResponse' }
 
+    CancelPendingWorkRequest:
+      description: Typed application key identifying pending work in one policy lane.
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key: { description: "A bounded JSON string, number, or boolean." }
+
+    CancelPendingWorkResponse:
+      description: Durable receipt for a cancel-pending operation.
+      type: object
+      additionalProperties: false
+      required: [id, cancelled_count]
+      properties:
+        id: { type: string, format: uuid }
+        cancelled_count: { type: integer, minimum: 0 }
+
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth."
       type: object
@@ -39029,6 +39075,7 @@ components:
       required: [scheduled_at]
       properties:
         payload: { type: object, additionalProperties: true }
+        work: { $ref: '#/components/schemas/InvokeWork' }
         scheduled_at: { type: string, format: date-time }
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }
@@ -39043,6 +39090,7 @@ components:
       required: [delay_seconds]
       properties:
         payload: { type: object, additionalProperties: true }
+        work: { $ref: '#/components/schemas/InvokeWork' }
         delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }

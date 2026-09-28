@@ -543,10 +543,15 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				}
 			}
 			previous := bindingByID[row.ID]
-			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey {
+			previousAction := previous.Action
+			if previousAction == "" {
+				previousAction = state.EventWorkInvoke
+			}
+			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
+				previousAction == declaration.EffectiveWorkAction() {
 				continue
 			}
-			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy, declaration.WorkKey)
+			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy, declaration.WorkKey, declaration.EffectiveWorkAction())
 			if bindingErr != nil {
 				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 					"Invalid manifest", "event work policy must exist on the target app")
@@ -556,7 +561,8 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 					sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
 			}
 			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
-				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey}
+				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
+				Action: declaration.EffectiveWorkAction()}
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -732,12 +738,12 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {
 			for i := len(staged.eventWorkChanges) - 1; i >= 0; i-- {
 				change := staged.eventWorkChanges[i]
-				policy, selector := "", ""
+				policy, selector, action := "", "", state.EventWorkInvoke
 				if change.previous != nil {
-					policy, selector = change.previous.PolicyName, change.previous.KeySelector
+					policy, selector, action = change.previous.PolicyName, change.previous.KeySelector, change.previous.Action
 				}
 				if _, err := bindings.SetEventWorkBinding(ctx, staged.appID,
-					change.subscriptionID, policy, selector); err != nil {
+					change.subscriptionID, policy, selector, action); err != nil {
 					errs = append(errs, err)
 				}
 			}

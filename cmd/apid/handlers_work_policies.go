@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -111,4 +112,44 @@ func (s *server) deleteWorkPolicy(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) cancelPendingWork(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req api.CancelPendingWorkRequest
+	if !decodeJSONLimit(w, r, &req, 1024) {
+		return
+	}
+	key, err := workpolicy.CanonicalScalar(req.Key)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("work key must be a bounded string, number, or boolean"))
+		return
+	}
+	policies, ok := s.store.(state.AppWorkPolicyStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("work policy store unavailable"))
+		return
+	}
+	if _, err := policies.AppWorkPolicyByName(r.Context(), app.ID, r.PathValue("name")); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Work policy not found", "the app has no work policy with this name"))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("lookup work policy"))
+		}
+		return
+	}
+	cancellations, ok := s.store.(state.WorkCancellationStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("work cancellation store unavailable"))
+		return
+	}
+	receipt, err := cancellations.CancelPendingKeyedInvocations(r.Context(), app.ID, r.PathValue("name"), key, uuid.NewString())
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("cancel pending work"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CancelPendingWorkResponse{ID: receipt.ID, CancelledCount: receipt.CancelledCount})
 }

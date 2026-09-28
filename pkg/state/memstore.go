@@ -498,6 +498,7 @@ type MemStore struct {
 	invocations       map[string]Invocation
 	workPolicies      map[string]AppWorkPolicy
 	eventWorkBindings map[string]EventWorkBinding
+	workCancellations map[string]WorkCancellation
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
@@ -1163,6 +1164,7 @@ func NewMemStore() *MemStore {
 		invocations:             map[string]Invocation{},
 		workPolicies:            map[string]AppWorkPolicy{},
 		eventWorkBindings:       map[string]EventWorkBinding{},
+		workCancellations:       map[string]WorkCancellation{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
 		executionUsageLedger:    map[string]executionUsageLedgerRow{},

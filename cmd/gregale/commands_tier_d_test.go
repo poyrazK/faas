@@ -525,6 +525,7 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	if code := cmdDelayedTaskAdd([]string{
 		"--app", "demo", "--delay", "30m", "--path", "/remind",
 		"--idempotency-key", "invoice-123-reminder",
+		"--work-policy", "reminders", "--work-key", `"invoice-123"`,
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -537,6 +538,10 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	}
 	if got["delay_seconds"] != float64(1800) || got["path"] != "/remind" {
 		t.Fatalf("body = %v", got)
+	}
+	work, ok := got["work"].(map[string]any)
+	if !ok || work["policy"] != "reminders" || work["key"] != "invoice-123" {
+		t.Fatalf("work = %v", got["work"])
 	}
 	if _, present := got["scheduled_at"]; present {
 		t.Fatalf("relative request unexpectedly serialized scheduled_at: %v", got)

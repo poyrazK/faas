@@ -532,6 +532,69 @@ func TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion(t *test
 	}
 }
 
+func TestRoutePublishedEventCancelsPendingWorkOnce(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "events-cancel-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "events-cancel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := workpolicy.Policy{Name: "reminders", MaxRunningPerKey: 1}
+	if _, err := store.UpsertAppWorkPolicy(ctx, accountID, app.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	reminder, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "order.reminder", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "order.completed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, reminder.ID, policy.Name, "data.order_id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, completion.ID, policy.Name, "data.order_id", state.EventWorkCancelPending); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: store}}
+	route := func(id, eventType string) string {
+		t.Helper()
+		envelope := events.Envelope{SpecVersion: events.CloudEventsSpecVersion, ID: id, Source: "orders", Type: eventType, Time: time.Now().UTC(), DataContentType: events.JSONDataContentType, Data: json.RawMessage(`{"order_id":"o1"}`), AccountID: accountID}
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := loop.routePublishedEvent(ctx, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+		identity, _ := json.Marshal([4]string{accountID, "orders", id, reminder.ID})
+		return uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	}
+	firstID := route(uuid.NewString(), "order.reminder")
+	completionEventID := uuid.NewString()
+	route(completionEventID, "order.completed")
+	first, err := store.InvocationByID(ctx, firstID)
+	if err != nil || first.State != state.InvocationCancelled {
+		t.Fatalf("first reminder = %+v, %v", first, err)
+	}
+	laterID := route(uuid.NewString(), "order.reminder")
+	route(completionEventID, "order.completed")
+	later, err := store.InvocationByID(ctx, laterID)
+	if err != nil || later.State != state.InvocationPending {
+		t.Fatalf("later reminder = %+v, %v", later, err)
+	}
+	rows, err := store.ListInvocationsForApp(ctx, app.ID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("invocations = %+v, %v", rows, err)
+	}
+}
+
 func mustCanonicalEventAccountID(t *testing.T, id string) string {
 	t.Helper()
 	parsed, err := uuid.Parse(id)

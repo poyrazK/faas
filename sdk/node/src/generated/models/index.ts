@@ -157,6 +157,8 @@ export type { CSRFTokenResponse } from './CSRFTokenResponse.js';
 export type { CanaryAdvanceResponse } from './CanaryAdvanceResponse.js';
 export type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 export type { CancelDeploymentRequest } from './CancelDeploymentRequest.js';
+export type { CancelPendingWorkRequest } from './CancelPendingWorkRequest.js';
+export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';

@@ -301,6 +301,8 @@ from .canary_preset_spec_preset import CanaryPresetSpecPreset
 from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
+from .cancel_pending_work_request import CancelPendingWorkRequest
+from .cancel_pending_work_response import CancelPendingWorkResponse
 from .capabilities_response import CapabilitiesResponse
 from .capabilities_response_plan import CapabilitiesResponsePlan
 from .capability_status import CapabilityStatus
@@ -719,6 +721,7 @@ from .event_schema import EventSchema
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
+from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -2162,6 +2165,8 @@ __all__ = (
     "CancelDeploymentRequest",
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
+    "CancelPendingWorkRequest",
+    "CancelPendingWorkResponse",
     "CapabilitiesResponse",
     "CapabilitiesResponsePlan",
     "CapabilityStatus",
@@ -2570,6 +2575,7 @@ __all__ = (
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
+    "EventSubscriptionResponseWorkAction",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",

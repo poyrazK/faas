@@ -30,6 +30,9 @@ gregale invoke my-app --async --payload '{"document_id":"d1"}' \
 
 The `work.key` API field and CLI `--work-key` accept a bounded JSON string,
 number, or boolean. Types are distinct: `"1"` and `1` use different lanes.
+`POST /v1/apps/{slug}/delayed-tasks` also accepts `work` with the same
+`policy` and `key` fields. Its scheduled time remains the earliest dispatch
+time; a pending expiry can occur before that time if the policy TTL is shorter.
 An event subscription can derive the key from its CloudEvents payload:
 
 ```yaml
@@ -39,6 +42,27 @@ event_triggers:
     work_policy: document-index
     work_key: data.document_id
 ```
+
+A matching completion event can cancel pending work in that lane without
+invoking the application handler:
+
+```yaml
+event_triggers:
+  - source: orders
+    type: order.completed
+    work_policy: reminders
+    work_key: data.order_id
+    work_action: cancel_pending
+```
+
+The same operation is available at
+`POST /v1/apps/{slug}/work-policies/{name}/cancel-pending` with a JSON `key`.
+It returns the number of pending rows cancelled. A replay of the same event
+uses its original cancellation receipt, so it cannot cancel work admitted
+afterward. For API callers, reuse an `Idempotency-Key` when retrying an
+uncertain response. Cancellation is a point-in-time operation: an older
+producer retry may enqueue work later. Use an application version check or
+watermark when that race matters.
 
 The event selector is a dot path through JSON objects; the selected value
 must be a scalar. A missing or non-scalar key prevents that delivery from
@@ -59,7 +83,7 @@ ownership can still have contacted an external service. Protect external
 side effects with an application idempotency key, version predicate, or
 external fencing mechanism. Delivery remains at least once.
 
-This release applies keyed policies to explicit async invocations and
-internal event subscriptions. Queue and broker producers, delayed tasks,
+This release applies keyed policies to explicit async invocations, delayed
+tasks, and internal event subscriptions. Queue and broker producers,
 independent app tasks, and tenant fairness caps still use their existing
 execution behavior.

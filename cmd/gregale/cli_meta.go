@@ -908,6 +908,8 @@ var cliCommands = []cliCommand{
 				{Name: "payload", Value: "JSON|@FILE|-", Short: "JSON request payload"},
 				{Name: "method", Value: "METHOD", Short: "HTTP method (default POST)"},
 				{Name: "path", Value: "PATH", Short: "app path (default /)"},
+				{Name: "work-policy", Value: "NAME", Short: "named app work policy"},
+				{Name: "work-key", Value: "JSON", Short: "JSON scalar identifying related work"},
 				{Name: "header", Value: "NAME:VALUE", Short: "request header (repeatable)"},
 				{Name: "max-attempts", Value: "N", Short: "maximum delivery attempts"},
 				{Name: "retry-base-seconds", Value: "N", Short: "base retry delay in seconds"},

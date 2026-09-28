@@ -28,6 +28,10 @@ export type EventSubscriptionResponse = {
    * Dot selector into the CloudEvents envelope for the work key.
    */
   work_key?: string;
+  /**
+   * Action taken on a matching event.
+   */
+  work_action?: 'invoke' | 'cancel_pending';
   enabled: boolean;
   created_at: string;
   updated_at: string;

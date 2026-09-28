@@ -216,6 +216,7 @@ type EventSubscriptionResponse struct {
 	Filter     json.RawMessage `json:"filter"`
 	WorkPolicy string          `json:"work_policy,omitempty"`
 	WorkKey    string          `json:"work_key,omitempty"`
+	WorkAction string          `json:"work_action,omitempty"`
 	Enabled    bool            `json:"enabled"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
@@ -5148,6 +5149,15 @@ type WorkPolicyListResponse struct {
 	Policies []WorkPolicyResponse `json:"policies"`
 }
 
+type CancelPendingWorkRequest struct {
+	Key json.RawMessage `json:"key"`
+}
+
+type CancelPendingWorkResponse struct {
+	ID             string `json:"id"`
+	CancelledCount int64  `json:"cancelled_count"`
+}
+
 // InvocationDestinations configures terminal callbacks for an invocation.
 // OnSuccess is used only after a completed dispatch; OnFailure is used for
 // permanent failures and retry-budget exhaustion. The referenced webhook
@@ -5212,6 +5222,7 @@ type QueueSendRequest struct {
 // Exactly one of ScheduledAt or DelaySeconds must be supplied.
 type DelayedTaskRequest struct {
 	Payload          json.RawMessage         `json:"payload,omitempty"`
+	Work             *InvokeWork             `json:"work,omitempty"`
 	ScheduledAt      time.Time               `json:"scheduled_at,omitzero"`
 	DelaySeconds     int64                   `json:"delay_seconds,omitempty"`
 	Headers          json.RawMessage         `json:"headers,omitempty"`

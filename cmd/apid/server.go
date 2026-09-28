@@ -2051,6 +2051,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/work-policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkPolicies))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/work-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertWorkPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/work-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteWorkPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/work-policies/{name}/cancel-pending", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelPendingWork)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventFanoutAttemptHistory))))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries:replay-fanout-failure", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayEventFanoutFailure)))))

@@ -16,16 +16,39 @@ type EventWorkBinding struct {
 	AppID          string
 	PolicyName     string
 	KeySelector    string
+	Action         string
 }
 
+const (
+	EventWorkInvoke        = "invoke"
+	EventWorkCancelPending = "cancel_pending"
+)
+
 type EventWorkBindingStore interface {
-	SetEventWorkBinding(context.Context, string, string, string, string) (*EventWorkBinding, error)
+	SetEventWorkBinding(context.Context, string, string, string, string, ...string) (*EventWorkBinding, error)
 	EventWorkBindingsByIDs(context.Context, []string) (map[string]EventWorkBinding, error)
+}
+
+func normalizeEventWorkAction(action []string) (string, error) {
+	if len(action) > 1 {
+		return "", ErrInvalidArgument
+	}
+	if len(action) == 0 || action[0] == "" {
+		return EventWorkInvoke, nil
+	}
+	if action[0] != EventWorkInvoke && action[0] != EventWorkCancelPending {
+		return "", ErrInvalidArgument
+	}
+	return action[0], nil
 }
 
 // Empty policyName removes a binding. The previous value is returned for
 // source-deployment compensation if a later manifest step fails.
-func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID, policyName, selector string) (*EventWorkBinding, error) {
+func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID, policyName, selector string, action ...string) (*EventWorkBinding, error) {
+	mode, err := normalizeEventWorkAction(action)
+	if err != nil {
+		return nil, err
+	}
 	if policyName != "" {
 		if _, err := workpolicy.ParseSelector(selector); err != nil {
 			return nil, err
@@ -45,10 +68,10 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		return nil, err
 	}
 	var current EventWorkBinding
-	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector
+	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector, action
 		from event_subscription_work_bindings where subscription_id = $1 and app_id = $2
 		for update`, subscriptionID, appID).Scan(&current.SubscriptionID, &current.AppID,
-		&current.PolicyName, &current.KeySelector)
+		&current.PolicyName, &current.KeySelector, &current.Action)
 	var previous *EventWorkBinding
 	if err == nil {
 		previous = &current
@@ -62,12 +85,13 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		}
 	} else {
 		tag, err := tx.Exec(ctx, `insert into event_subscription_work_bindings
-			(subscription_id, app_id, policy_name, key_selector)
-			values ($1, $2, $3, $4)
+			(subscription_id, app_id, policy_name, key_selector, action)
+			values ($1, $2, $3, $4, $5)
 			on conflict (subscription_id) do update set
-			policy_name = excluded.policy_name, key_selector = excluded.key_selector
+			policy_name = excluded.policy_name, key_selector = excluded.key_selector,
+			action = excluded.action
 			where event_subscription_work_bindings.app_id = excluded.app_id`,
-			subscriptionID, appID, policyName, selector)
+			subscriptionID, appID, policyName, selector, mode)
 		if err != nil {
 			return nil, mapErr(err)
 		}
@@ -86,7 +110,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector
+	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector, action
 		from event_subscription_work_bindings where subscription_id = any($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
@@ -95,7 +119,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	for rows.Next() {
 		var binding EventWorkBinding
 		if err := rows.Scan(&binding.SubscriptionID, &binding.AppID,
-			&binding.PolicyName, &binding.KeySelector); err != nil {
+			&binding.PolicyName, &binding.KeySelector, &binding.Action); err != nil {
 			return nil, err
 		}
 		out[binding.SubscriptionID] = binding
@@ -103,7 +127,11 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	return out, rows.Err()
 }
 
-func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID, policyName, selector string) (*EventWorkBinding, error) {
+func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID, policyName, selector string, action ...string) (*EventWorkBinding, error) {
+	mode, err := normalizeEventWorkAction(action)
+	if err != nil {
+		return nil, err
+	}
 	if policyName != "" {
 		if _, err := workpolicy.ParseSelector(selector); err != nil {
 			return nil, err
@@ -136,7 +164,7 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 	} else {
 		m.eventWorkBindings[subscriptionID] = EventWorkBinding{
 			SubscriptionID: subscriptionID, AppID: canonicalMemUUID(appID),
-			PolicyName: policyName, KeySelector: selector}
+			PolicyName: policyName, KeySelector: selector, Action: mode}
 	}
 	return previous, nil
 }

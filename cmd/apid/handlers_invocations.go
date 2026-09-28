@@ -723,7 +723,7 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	}, "enqueue delayed task")
+	}, "enqueue delayed task", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
 		return

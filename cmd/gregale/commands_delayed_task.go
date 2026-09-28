@@ -99,6 +99,8 @@ func cmdDelayedTaskAdd(args []string) int {
 	payload := fs.String("payload", "", "JSON payload (inline | @file | - for stdin; empty is valid)")
 	method := fs.String("method", "POST", "HTTP method used to invoke the app")
 	path := fs.String("path", "/", "app path invoked when the task becomes due")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key)")
+	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key to reuse when retrying this create")
 	var headers multiFlag
 	fs.Var(&headers, "header", "request header as Name:Value (repeatable)")
@@ -126,6 +128,12 @@ func cmdDelayedTaskAdd(args []string) int {
 	req, err := delayedTaskRequestFromFlags(fs, body, *method, *path, headers, *maxAttempts, *retryBaseSeconds, *retryMaxSeconds, *retryJitterSeconds, *retention, *onSuccessWebhook, *onFailureWebhook)
 	if err != nil {
 		return printErr("Invalid delayed-task options", err)
+	}
+	if *workPolicy != "" || *workKey != "" {
+		if *workPolicy == "" || *workKey == "" || !json.Valid([]byte(*workKey)) {
+			return printErr("Invalid delayed-task work", fmt.Errorf("--work-policy and a JSON --work-key must be used together"))
+		}
+		req.Work = &api.InvokeWork{Policy: *workPolicy, Key: json.RawMessage(*workKey)}
 	}
 	if *scheduledAt != "" {
 		when, err := time.Parse(time.RFC3339, *scheduledAt)

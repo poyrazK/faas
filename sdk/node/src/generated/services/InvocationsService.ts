@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { CancelPendingWorkRequest } from '../models/CancelPendingWorkRequest.js';
+import type { CancelPendingWorkResponse } from '../models/CancelPendingWorkResponse.js';
 import type { Invocation } from '../models/Invocation.js';
 import type { InvokeRequest } from '../models/InvokeRequest.js';
 import type { InvokeResponse } from '../models/InvokeResponse.js';
@@ -215,6 +217,52 @@ export class InvocationsService {
         'slug': slug,
         'name': name,
       },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Cancel pending work for one policy and application key.
+   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+   * @returns CancelPendingWorkResponse Durable cancellation receipt.
+   * @throws ApiError
+   */
+  public static cancelPendingAppWork({
+    slug,
+    name,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Policy whose pending lane is being cancelled.
+     */
+    name: string,
+    requestBody: CancelPendingWorkRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CancelPendingWorkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/work-policies/{name}/cancel-pending',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,

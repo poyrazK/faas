@@ -68,6 +68,40 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if app != second.AppID {
 		t.Fatalf("invocation app = %s, want %s", second.AppID, app)
 	}
+	cancel := e.do(t, http.MethodPost, path+"/cancel-pending", api.CancelPendingWorkRequest{Key: json.RawMessage(`"d2"`)}, nil)
+	if cancel.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s", cancel.Code, cancel.Body.String())
+	}
+	var cancelled api.CancelPendingWorkResponse
+	if err := json.Unmarshal(cancel.Body.Bytes(), &cancelled); err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.ID == "" || cancelled.CancelledCount != 1 {
+		t.Fatalf("cancel receipt = %+v", cancelled)
+	}
+	other, _ = e.store.InvocationByID(context.Background(), other.ID)
+	if other.State != state.InvocationCancelled {
+		t.Fatalf("cancelled state = %s", other.State)
+	}
+	delayed := e.do(t, http.MethodPost, "/v1/apps/work-api/delayed-tasks", api.DelayedTaskRequest{
+		DelaySeconds: 30,
+		Payload:      json.RawMessage(`{"document_id":"d3"}`),
+		Work:         &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d3"`)},
+	}, nil)
+	if delayed.Code != http.StatusCreated {
+		t.Fatalf("delayed = %d %s", delayed.Code, delayed.Body.String())
+	}
+	var task api.DelayedTaskResponse
+	if err := json.Unmarshal(delayed.Body.Bytes(), &task); err != nil {
+		t.Fatal(err)
+	}
+	delayedRow, err := e.store.InvocationByID(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delayedRow.WorkPolicyName != "document-index" || delayedRow.WorkPolicyRevision != 1 || delayedRow.WorkExpiresAt == nil || delayedRow.DueAt.Before(task.ScheduledAt) {
+		t.Fatalf("delayed policy admission = %+v", delayedRow)
+	}
 	bad := e.do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`{"not":"scalar"}`)},
 	}, nil)

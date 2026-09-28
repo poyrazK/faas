@@ -81,6 +81,13 @@ func assertEventWorkBinding(t *testing.T, ctx context.Context, store eventWorkSt
 	if err != nil || old == nil || old.KeySelector != "data.order_id" {
 		t.Fatalf("previous binding = %+v, %v", old, err)
 	}
+	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, policy.Name, "data.customer_id", state.EventWorkCancelPending); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err = store.EventWorkBindingsByIDs(ctx, []string{sub.ID})
+	if err != nil || bindings[sub.ID].Action != state.EventWorkCancelPending {
+		t.Fatalf("cancel action = %+v, %v", bindings, err)
+	}
 	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}

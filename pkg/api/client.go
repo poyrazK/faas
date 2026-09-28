@@ -3134,6 +3134,11 @@ func (c *Client) DeleteAppWorkPolicy(ctx context.Context, slug, name string) err
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name), nil, nil)
 }
 
+func (c *Client) CancelPendingAppWork(ctx context.Context, slug, name string, req CancelPendingWorkRequest) (CancelPendingWorkResponse, error) {
+	var out CancelPendingWorkResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name)+"/cancel-pending", req, &out)
+}
+
 // QueueSend enqueues a payload on the per-app FIFO queue. Cap-checked
 // against the plan's MaxQueueDepth at the handler.
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
