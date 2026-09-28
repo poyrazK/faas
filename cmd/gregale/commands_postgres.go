@@ -412,8 +412,15 @@ func cmdPostgresBindingsGet(args []string) int {
 }
 
 func cmdPostgresBindingsRotate(args []string) int {
-	id, ok := onePostgresID("postgres bindings rotate", args)
+	usage := "usage: gregale postgres bindings rotate ID [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
+	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "postgres bindings rotate", 1)
 	if !ok {
+		PrintUsage(osStderr, usage, "postgres")
+		return 1
+	}
+	id := strings.TrimSpace(positionals[0])
+	if id == "" {
+		PrintUsage(osStderr, usage, "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -424,10 +431,29 @@ func cmdPostgresBindingsRotate(args []string) int {
 	if err != nil {
 		return printErr("Could not rotate PostgreSQL binding", err)
 	}
-	if jsonOutput {
-		return jsonOut(writeJSON(result))
+	timedOut := false
+	if waitOptions.Wait {
+		result, timedOut, err = waitForBindingRotation(context.Background(), result, waitOptions,
+			func(binding api.ManagedPostgresBinding) bool { return binding.RotationPending },
+			func(ctx context.Context) (api.ManagedPostgresBinding, error) {
+				return client.GetManagedPostgresBinding(ctx, id)
+			},
+		)
+		if err != nil {
+			return printErr("Could not check PostgreSQL binding rotation", err)
+		}
 	}
-	renderPostgresBinding(osStdout, result)
+	if jsonOutput {
+		if code := jsonOut(writeJSON(result)); code != 0 {
+			return code
+		}
+	} else {
+		renderPostgresBinding(osStdout, result)
+	}
+	if timedOut {
+		PrintFail(osStderr, "timed out after %s waiting for PostgreSQL binding %s rotation", waitOptions.WaitTimeout, id)
+		return 1
+	}
 	return 0
 }
 

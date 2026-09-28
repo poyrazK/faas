@@ -227,7 +227,7 @@ from the CLI with:
 
 ```sh
 gregale bindings object-storage list my-api assets
-gregale bindings object-storage rotate my-api assets BINDING_ID
+gregale bindings object-storage rotate my-api assets BINDING_ID --wait
 gregale bindings object-storage revoke my-api assets BINDING_ID
 ```
 
@@ -235,6 +235,12 @@ The bucket argument accepts its name or ID. The list command prints the
 binding ID needed by rotate and revoke; output includes rotation status but
 omits access-key IDs and sealed secret names. Use the API operations below for
 automation that needs direct access to the resource endpoints.
+
+Rotation returns after the new key is issued. Add `--wait` to poll until the
+previous key is retired and `rotation_pending` clears. The wait defaults to
+five minutes with one-second polling; use `--wait-timeout` and
+`--poll-interval` to adjust those limits. If the timeout expires, the command
+prints the latest binding status and exits with status 1.
 
 Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
 workload should use the branded S3 endpoint without carrying credentials in

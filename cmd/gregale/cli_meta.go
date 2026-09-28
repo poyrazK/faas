@@ -323,7 +323,11 @@ var cliCommands = []cliCommand{
 				Short: "Manage app-to-bucket compute bindings",
 				Subcommands: []cliSub{
 					{Name: "list", Short: "List safe binding metadata", Positionals: []string{"<app>", "<bucket>"}, Examples: []string{"gregale bindings object-storage list my-api assets"}},
-					{Name: "rotate", Short: "Rotate a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage rotate my-api assets BINDING_ID"}},
+					{Name: "rotate", Short: "Rotate a binding credential and optionally wait for retirement", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Flags: []cliFlag{
+						{Name: "wait", Short: "wait for the previous credential to retire"},
+						{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
+						{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
+					}, Examples: []string{"gregale bindings object-storage rotate my-api assets BINDING_ID --wait"}},
 					{Name: "revoke", Short: "Revoke a binding credential", Positionals: []string{"<app>", "<bucket>", "<binding-id>"}, Examples: []string{"gregale bindings object-storage revoke my-api assets BINDING_ID"}},
 				},
 			},
@@ -1687,7 +1691,13 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "bindings", Short: "Manage app database bindings"},
+			{Name: "bindings", Short: "Manage app database bindings", Subcommands: []cliSub{
+				{Name: "rotate", Short: "Rotate a binding and optionally wait for the previous credential to retire", Positionals: []string{"<id>"}, Flags: []cliFlag{
+					{Name: "wait", Short: "wait for the previous credential to retire"},
+					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
+					{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
+				}, Examples: []string{"gregale postgres bindings rotate BINDING_ID --wait"}},
+			}},
 			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},

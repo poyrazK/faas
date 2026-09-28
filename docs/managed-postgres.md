@@ -317,10 +317,16 @@ gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
 gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
-gregale postgres bindings rotate BINDING_ID
+gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+Binding rotation returns as soon as the new credential is active. Add
+`--wait` to poll until `rotation_pending` clears; the wait defaults to five
+minutes with one-second polling. Set `--wait-timeout` or `--poll-interval` to
+adjust those limits. If the timeout expires, the command prints the latest
+binding state and exits with status 1.
 
 For the App Platform-style happy path, `gregale add postgres` composes the
 same lifecycle and binding APIs. It reuses a matching account database when

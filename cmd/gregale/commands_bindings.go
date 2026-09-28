@@ -171,7 +171,13 @@ func cmdBindingsObjectStorageList(args []string) int {
 }
 
 func cmdBindingsObjectStorageRotate(args []string) int {
-	app, bucketRef, bindingID, ok := parseObjectStorageBindingActionArgs("bindings object-storage rotate", args)
+	usage := "usage: gregale bindings object-storage rotate <app> <bucket> <binding-id> [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
+	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "bindings object-storage rotate", 3)
+	if !ok {
+		PrintUsage(osStderr, usage, "bindings")
+		return 1
+	}
+	app, bucketRef, bindingID, ok := parseObjectStorageBindingActionArgs("bindings object-storage rotate", positionals)
 	if !ok {
 		return 1
 	}
@@ -188,12 +194,44 @@ func cmdBindingsObjectStorageRotate(args []string) int {
 	if err != nil {
 		return printErr("Could not rotate object-storage binding", err)
 	}
+	timedOut := false
+	if waitOptions.Wait {
+		binding, timedOut, err = waitForBindingRotation(ctx, binding, waitOptions,
+			func(binding api.ObjectStorageComputeBinding) bool { return binding.RotationPending },
+			func(pollCtx context.Context) (api.ObjectStorageComputeBinding, error) {
+				return getObjectStorageComputeBinding(pollCtx, client, app, bucket.ID, bindingID)
+			},
+		)
+		if err != nil {
+			return printErr("Could not check object-storage binding rotation", err)
+		}
+	}
 	result := objectStorageBindingCLIView(bucket, binding)
 	if jsonOutput {
-		return jsonOut(writeJSON(result))
+		if code := jsonOut(writeJSON(result)); code != 0 {
+			return code
+		}
+	} else {
+		renderObjectStorageBinding(result)
 	}
-	renderObjectStorageBinding(result)
+	if timedOut {
+		PrintFail(osStderr, "timed out after %s waiting for object-storage binding %s rotation", waitOptions.WaitTimeout, bindingID)
+		return 1
+	}
 	return 0
+}
+
+func getObjectStorageComputeBinding(ctx context.Context, client *api.Client, app, bucketID, bindingID string) (api.ObjectStorageComputeBinding, error) {
+	bindings, err := client.ListObjectStorageComputeBindings(ctx, app, bucketID)
+	if err != nil {
+		return api.ObjectStorageComputeBinding{}, err
+	}
+	for _, binding := range bindings.Items {
+		if binding.ID == bindingID {
+			return binding, nil
+		}
+	}
+	return api.ObjectStorageComputeBinding{}, fmt.Errorf("object-storage binding %q was not found for bucket %q", bindingID, bucketID)
 }
 
 func cmdBindingsObjectStorageRevoke(args []string) int {

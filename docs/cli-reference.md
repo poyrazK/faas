@@ -193,14 +193,20 @@ gregale bindings object-storage list my-api assets
 
 #### bindings object-storage rotate
 
-Rotate a binding credential
+Rotate a binding credential and optionally wait for retirement
 
-`gregale bindings object-storage rotate <app> <bucket> <binding-id>`
+`gregale bindings object-storage rotate <app> <bucket> <binding-id> [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
 
 Examples:
 
 ```sh
-gregale bindings object-storage rotate my-api assets BINDING_ID
+gregale bindings object-storage rotate my-api assets BINDING_ID --wait
 ```
 
 #### bindings object-storage revoke
