@@ -1,5 +1,8 @@
 //go:build metal
 
+// spec: §6.2
+// adr: 025
+
 package e2e_test
 
 import (
@@ -57,6 +60,7 @@ type wakeBurstTrace struct {
 	BootToCompleteMS      int64            `json:"boot_to_complete_ms"`
 	BootToFirstByteMS     int64            `json:"boot_to_first_byte_ms"`
 	CompleteToFirstByteMS int64            `json:"complete_to_first_byte_ms"`
+	RestoreGateWaitMS     int64            `json:"restore_gate_wait_ms"`
 	RestoreTotalMS        int64            `json:"restore_total_ms"`
 	GatewayPhasesMS       map[string]int64 `json:"gateway_phases_ms"`
 }
@@ -199,12 +203,14 @@ func TestColdWakeBurstPhaseAttributionMetal(t *testing.T) {
 		restoreSamples = append(restoreSamples, trace.RestoreTotalMS)
 		nodePlacement[trace.NodeID]++
 	}
+	restoreGateWaitSamples := durationSamples(traces, func(trace wakeBurstTrace) int64 { return trace.RestoreGateWaitMS })
 	summary := map[string]any{
 		"samples":                   len(traces),
 		"first_byte_p50_ms":         wakeBurstPercentile(firstByteSamples, 0.50),
 		"first_byte_p95_ms":         wakeBurstPercentile(firstByteSamples, 0.95),
 		"boot_to_first_byte_p95_ms": wakeBurstPercentile(durationSamples(traces, func(trace wakeBurstTrace) int64 { return trace.BootToFirstByteMS }), 0.95),
-		"restore_p95_ms":            wakeBurstPercentile(restoreSamples, 0.95),
+		"restore_latency_p95_ms":    wakeBurstPercentile(restoreSamples, 0.95),
+		"restore_gate_wait_p95_ms":  wakeBurstPercentile(restoreGateWaitSamples, 0.95),
 		"node_placement":            nodePlacement,
 	}
 	encoded, err := json.Marshal(summary)
@@ -315,7 +321,8 @@ func decodeWakeBurstTrace(t *testing.T, result wakeBurstRequestResult, byKind ma
 		Method string `json:"method"`
 	}
 	var restore struct {
-		TotalMS int64 `json:"total_ms"`
+		TotalMS           int64 `json:"total_ms"`
+		RestoreGateWaitMS int64 `json:"restore_gate_wait_ms"`
 	}
 	var firstByte struct {
 		AppID           string           `json:"app_id"`
@@ -357,6 +364,7 @@ func decodeWakeBurstTrace(t *testing.T, result wakeBurstRequestResult, byKind ma
 		BootToCompleteMS:      completedAt.Sub(startedAt).Milliseconds(),
 		BootToFirstByteMS:     firstByteAt.Sub(startedAt).Milliseconds(),
 		CompleteToFirstByteMS: firstByteAt.Sub(completedAt).Milliseconds(),
+		RestoreGateWaitMS:     restore.RestoreGateWaitMS,
 		RestoreTotalMS:        restore.TotalMS, GatewayPhasesMS: firstByte.GatewayPhasesMS,
 	}
 }
