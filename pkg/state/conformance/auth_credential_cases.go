@@ -245,3 +245,43 @@ func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
 		t.Fatal("RotateAPIKey revived a revoked key")
 	}
 }
+
+// testConsumerKeyLookupIsAppScoped pins the gateway's consumer-key lookup:
+// a key resolves only under its own account and app, a revoked consumer
+// reads back inactive, and no new key can be minted for it.
+func testConsumerKeyLookupIsAppScoped(t *testing.T, fx *Fixture) {
+	consumer, err := fx.Store.CreateAPIConsumer(fx.Ctx, fx.Account.ID, fx.App.ID, "cust-"+uuid.NewString()[:8], "Customer")
+	if err != nil {
+		t.Fatalf("CreateAPIConsumer: %v", err)
+	}
+	prefix := "ck_" + uuid.NewString()[:8]
+	key, err := fx.Store.CreateConsumerKeyForConsumer(fx.Ctx, fx.Account.ID, consumer.ID, "primary", prefix, randomTokenHash(t), []string{"read"}, nil)
+	if err != nil {
+		t.Fatalf("CreateConsumerKeyForConsumer: %v", err)
+	}
+	got, err := fx.Store.ConsumerKeyByAppAndPrefix(fx.Ctx, fx.Account.ID, fx.App.ID, prefix)
+	if err != nil || got.ID != key.ID || got.ConsumerID != consumer.ID || !got.Active(time.Now()) {
+		t.Fatalf("ConsumerKeyByAppAndPrefix = %+v, %v; want the active key", got, err)
+	}
+	other, err := fx.Store.CreateAccount(fx.Ctx, "consumer-other-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.ConsumerKeyByAppAndPrefix(fx.Ctx, other.ID, fx.App.ID, prefix); err == nil {
+		t.Fatal("ConsumerKeyByAppAndPrefix resolved under another account")
+	}
+	if _, err := fx.Store.CreateConsumerKeyForConsumer(fx.Ctx, other.ID, consumer.ID, "cross", "ck_"+uuid.NewString()[:8], randomTokenHash(t), []string{"read"}, nil); err == nil {
+		t.Fatal("CreateConsumerKeyForConsumer minted a key for another account's consumer")
+	}
+	if _, err := fx.Store.RevokeAPIConsumer(fx.Ctx, fx.Account.ID, consumer.ID); err != nil {
+		t.Fatalf("RevokeAPIConsumer: %v", err)
+	}
+	// The gateway authenticates a consumer key and then requires the
+	// consumer itself to be active; revocation lands on the consumer.
+	if revoked, err := fx.Store.GetAPIConsumerByID(fx.Ctx, fx.Account.ID, consumer.ID); err != nil || revoked.Active() {
+		t.Fatalf("GetAPIConsumerByID after revoke = %+v, %v; want an inactive consumer", revoked, err)
+	}
+	if _, err := fx.Store.CreateConsumerKeyForConsumer(fx.Ctx, fx.Account.ID, consumer.ID, "after-revoke", "ck_"+uuid.NewString()[:8], randomTokenHash(t), []string{"read"}, nil); err == nil {
+		t.Fatal("CreateConsumerKeyForConsumer minted a key for a revoked consumer")
+	}
+}

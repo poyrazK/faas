@@ -70,7 +70,6 @@ ComputeNodeByName
 ConsumeCliAuthCode
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
-ConsumerKeyByAppAndPrefix
 CountAPIKeys
 CountActiveCronInvocations
 CountActiveOrgMembers
@@ -102,7 +101,6 @@ CountPendingOrgInvitations
 CountTenantHostnamesForSurface
 CountTenantSurfacesForAccount
 CountWakeBootStarted24h
-CreateAPIConsumer
 CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
@@ -112,7 +110,6 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
-CreateConsumerKeyForConsumer
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
@@ -192,7 +189,6 @@ FailSourceDeployment
 FinalizeServiceRollout
 FindGdprRequestByRequestID
 FindMatchingEvent
-GetAPIConsumerByID
 GetAPIKey
 GetAccountEgressAllowlistExtra
 GetAccountKeyGraceWindow
@@ -536,7 +532,6 @@ RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
 RetryTriggerRecordByOperator
-RevokeAPIConsumer
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation
