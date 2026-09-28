@@ -83,7 +83,7 @@ func (s *pgSnapshotRestorePressureSession) ReserveSnapshotRestore(ctx context.Co
 		return nil, fmt.Errorf("state: reserve snapshot restore pressure: %w", err)
 	}
 	var once sync.Once
-	return func() {
+	return func() { //nolint:contextcheck // Lease cleanup must outlive the canceled request context; cleanup is bounded below.
 		once.Do(func() {
 			// Cleanup is best-effort because expiry is authoritative; bound the
 			// RPC completion path if the pool is contended or the database is down.
