@@ -107,6 +107,172 @@ func TestRenderGithubSetupWorkflowPinsDeployAction(t *testing.T) {
 	}
 }
 
+func TestParseGithubActionTagResolution(t *testing.T) {
+	commitSHA := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	tagObjectSHA := "0123456789abcdef0123456789abcdef01234567"
+	tests := []struct {
+		name    string
+		output  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "annotated tag uses peeled commit",
+			output: tagObjectSHA + "\trefs/tags/v0\n" + commitSHA + "\trefs/tags/v0^{}\n",
+			want:   commitSHA,
+		},
+		{
+			name:   "lightweight tag uses direct commit",
+			output: commitSHA + "\trefs/tags/v0\n",
+			want:   commitSHA,
+		},
+		{
+			name:    "missing tag",
+			output:  "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid SHA",
+			output:  "not-a-sha\trefs/tags/v0\n",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGithubActionTagResolution(tt.output)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseGithubActionTagResolution() error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("parseGithubActionTagResolution() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCmdGithubSetupPinActionResolvesAnnotatedTag(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+
+	commitSHA := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	tagObjectSHA := "0123456789abcdef0123456789abcdef01234567"
+	installFakeGithubActionTagGit(t, tagObjectSHA+" refs/tags/v0\n"+commitSHA+" refs/tags/v0^{}\n")
+
+	var getCalls, patchCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github":
+			getCalls++
+			_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			patchCalls++
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdGithubSetup([]string{"--pin-action", "api"}); code != 0 {
+		t.Fatalf("setup exit = %d, output = %s", code, out.String())
+	}
+	if getCalls != 1 || patchCalls != 1 {
+		t.Fatalf("setup API calls = GET %d, PATCH %d; want one each", getCalls, patchCalls)
+	}
+	workflow, err := os.ReadFile(filepath.Join(repoDir, defaultGithubSetupWorkflow))
+	if err != nil {
+		t.Fatalf("read generated workflow: %v", err)
+	}
+	for _, want := range []string{
+		"# Action: poyrazK/faas/.github/actions/deploy@" + commitSHA,
+		"uses: poyrazK/faas/.github/actions/deploy@" + commitSHA,
+	} {
+		if !strings.Contains(string(workflow), want) {
+			t.Errorf("generated workflow does not contain %q:\n%s", want, workflow)
+		}
+	}
+	if strings.Contains(string(workflow), "@v0") {
+		t.Fatalf("generated workflow still uses moving tag:\n%s", workflow)
+	}
+}
+
+func installFakeGithubActionTagGit(t *testing.T, output string) {
+	t.Helper()
+	gitDir := t.TempDir()
+	gitScript := "#!/bin/sh\n" +
+		"[ \"$1\" = ls-remote ] && [ \"$2\" = --exit-code ] && [ \"$3\" = https://github.com/poyrazK/faas.git ] && [ \"$4\" = refs/tags/v0 ] && [ \"$5\" = 'refs/tags/v0^{}' ] || exit 90\n" +
+		"cat <<'FAAS_TEST_OUTPUT'\n" + strings.TrimSuffix(output, "\n") + "\nFAAS_TEST_OUTPUT\n"
+	if err := os.WriteFile(filepath.Join(gitDir, "git"), []byte(gitScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", gitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCmdGithubSetupPinActionFailureDoesNotMutate(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+	installFakeGithubActionTagGit(t, "not-a-sha refs/tags/v0\n")
+
+	var patchCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github":
+			_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			patchCalls++
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+
+	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	var out, errOut bytes.Buffer
+	osStdout, osStderr, jsonOutput = &out, &errOut, false
+	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+
+	if code := cmdGithubSetup([]string{"api", "--pin-action"}); code == 0 {
+		t.Fatalf("setup succeeded with an invalid remote tag SHA; output = %s", out.String())
+	}
+	if patchCalls != 0 {
+		t.Fatalf("deployment policy was patched %d times after pin resolution failed", patchCalls)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, defaultGithubSetupWorkflow)); !os.IsNotExist(err) {
+		t.Fatalf("setup wrote a workflow after pin resolution failed, stat err = %v", err)
+	}
+}
+
+func TestCmdGithubSetupPinActionRejectsDryRunAndExplicitSHA(t *testing.T) {
+	for _, args := range [][]string{
+		{"api", "--pin-action", "--dry-run", "--repo", "acme/api"},
+		{"api", "--pin-action", "--pinned-sha", "f1e2d3c4b5a6987654321098765432109abcdef0"},
+	} {
+		t.Run(strings.Join(args[1:], "_"), func(t *testing.T) {
+			if code := cmdGithubSetup(args); code == 0 {
+				t.Fatalf("cmdGithubSetup(%v) succeeded; wanted invalid flag combination", args)
+			}
+		})
+	}
+}
+
 func TestCmdGithubSetupRestoresWorkflowWhenPolicyUpdateFails(t *testing.T) {
 	for _, existed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(existed), func(t *testing.T) {

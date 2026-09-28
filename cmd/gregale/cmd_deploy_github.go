@@ -2,9 +2,8 @@
 // (issue #270, Gregale deploy action). Companion to the customer-facing
 // composite Action at poyrazK/faas/.github/actions/deploy (monorepo
 // shape, ADR-093). Emits a copy-paste GitHub Actions workflow snippet
-// to stdout and exits 0 with no auth and no side effects. Mirrors
-// the `cmdBillingPortal --print` shape (cmd/gregale/commands_billing.go:
-// 104-157) — just print, no auth.
+// to stdout without authentication or file writes. By default it makes no
+// network calls; --pin-action opts into resolving the public v0 tag.
 //
 // Detection: when GITHUB_REPOSITORY and GITHUB_SHA are set (i.e. the
 // process is itself running inside an Actions runner), the snippet
@@ -14,14 +13,15 @@
 // `${{ github.repository }}` / `${{ github.sha }}` expressions so the
 // file is portable across repos.
 //
-// The user-facing helper is cmdDeployGithubSnippet(args []string) int —
-// the --github flag short-circuit in cmdDeployTarball (commands2.go)
+// The user-facing helper is cmdDeployGithubSnippet(ctx, args) int — the
+// --github flag short-circuit in cmdDeployTarball (commands2.go)
 // calls it. The pure builder is renderGithubSnippet(env, app, pinnedSHA)
-// so the test can drive it without flag-parsing gymnastics.
+// so tests can drive it directly.
 
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,9 +31,9 @@ import (
 
 // githubActionVersion is the moving major Action tag maintained by the
 // release workflow. Gregale is pre-1.0, so public beta releases publish v0.
-// The snippet defaults to the moving major tag. Passing --pinned-sha makes
-// the generated `uses:` reference immutable and leaves a comment with the pin
-// for review. The bundled CLI version is surfaced as `cli-version`.
+// The snippet defaults to the moving major tag. Passing --pinned-sha or
+// --pin-action makes the generated `uses:` reference immutable. The bundled
+// CLI version is surfaced as `cli-version`.
 const githubActionVersion = "v0"
 
 // githubActionPath is the monorepo path to the composite action. ADR-093
@@ -194,14 +194,15 @@ jobs:
 // when --app is missing (the deploy subcommand already resolves the
 // slug from --name or cwd before the short-circuit fires, so a
 // missing --app is a programmer error — the CLI boundary defence).
-func cmdDeployGithubSnippet(args []string) int {
+func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	fs := newFlagSet("deploy --github", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated Action to this full 40-character commit SHA")
+	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA]", "deploy")
+		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA | --pin-action]", "deploy")
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
@@ -215,6 +216,16 @@ func cmdDeployGithubSnippet(args []string) int {
 		sha, err := normalizeGithubActionSHA(*pinnedSHA)
 		if err != nil {
 			return printErr("Invalid --pinned-sha", err)
+		}
+		*pinnedSHA = sha
+	}
+	if *pinAction && *pinnedSHA != "" {
+		return printErr("Invalid Action pin flags", errors.New("--pin-action and --pinned-sha cannot be used together"))
+	}
+	if *pinAction {
+		sha, err := resolveGithubActionSHA(ctx)
+		if err != nil {
+			return printErr("Could not pin the deploy Action", err)
 		}
 		*pinnedSHA = sha
 	}

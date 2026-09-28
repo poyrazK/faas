@@ -2315,11 +2315,23 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 		t.Errorf("snippet did not use immutable Action SHA %q; got:\n%s", sha, got)
 	}
 
-	// No HTTP server is set up — the flag must NOT have hit the network.
-	// The test would fail with a different error if it had tried to
-	// auth or call the API (authedClient would return an error and
-	// printErr would write to stderr). The empty stderr is the
-	// contract.
+	stdout.Reset()
+	tagObjectSHA := "0123456789abcdef0123456789abcdef01234567"
+	installFakeGithubActionTagGit(t, tagObjectSHA+" refs/tags/v0\n"+sha+" refs/tags/v0^{}\n")
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action"}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pin-action: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not resolve the current Action tag to commit %q; got:\n%s", sha, got)
+	}
+	stdout.Reset()
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action", "--pinned-sha", sha}); code == 0 {
+		t.Fatal("cmdDeployTarball accepted --pin-action with --pinned-sha")
+	}
+
+	// No Gregale API server is set up — snippet generation must not
+	// authenticate or call the control plane. --pin-action only uses the
+	// explicitly requested public Git tag lookup.
 }
 
 // TestStreamDeployLogs_DrivesStageTicker pins ADR-117 §3 end-to-end

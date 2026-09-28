@@ -2143,11 +2143,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	installID := fs.Int64("install-id", 0, "GitHub installation id for a project binding")
 	productionBranch := fs.String("production-branch", "main", "production branch for a project binding")
 	// Issue #270: --github emits a copy-paste-ready GitHub Actions
-	// workflow snippet to stdout and exits 0. No auth, no side effects,
-	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
+	// workflow snippet to stdout and exits 0. It does not authenticate or
+	// write files; --pin-action explicitly resolves the public Action tag.
 	// See cmd_deploy_github.go for the snippet body.
 	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
 	pinnedActionSHA := fs.String("pinned-sha", "", "with --github only, pin the generated deploy Action to this full 40-character commit SHA")
+	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -2720,8 +2721,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var dirtyFileCount int
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
-	// stdout and exits 0 (issue #270). No auth, no side effects — this
-	// is a documentation-generation path, not a deploy path. The snippet
+	// stdout and exits 0 (issue #270). This path does not authenticate or
+	// write files; --pin-action opts into a public tag lookup. The snippet
 	// uses the resolved slug from --name / cwd (slug variable above)
 	// and emits ${{ github.* }} placeholders by default, or concrete
 	// values when running inside a Actions runner (GITHUB_REPOSITORY +
@@ -2738,10 +2739,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *noTraffic {
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
-		return cmdDeployGithubSnippet([]string{"--app", slug, "--pinned-sha", *pinnedActionSHA})
+		snippetArgs := []string{"--app", slug}
+		if *pinnedActionSHA != "" {
+			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
+		}
+		if *pinGithubAction {
+			snippetArgs = append(snippetArgs, "--pin-action")
+		}
+		return cmdDeployGithubSnippet(ctx, snippetArgs)
 	}
-	if *pinnedActionSHA != "" {
-		return printErr("Invalid flags", fmt.Errorf("--pinned-sha requires --github"))
+	if *pinnedActionSHA != "" || *pinGithubAction {
+		return printErr("Invalid flags", fmt.Errorf("--pinned-sha and --pin-action require --github"))
 	}
 
 	// --repo is the headless source-ref deploy path (issue #739 /

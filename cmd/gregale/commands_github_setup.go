@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,6 +53,7 @@ func cmdGithubSetup(args []string) int {
 	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or main)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: moving v0 tag)")
+	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
 	workflow := fs.String("workflow", defaultGithubSetupWorkflow, "workflow path relative to the repository root")
 	preview := fs.Bool("preview", false, "enable pull-request previews")
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
@@ -62,7 +65,7 @@ func cmdGithubSetup(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "show the workflow without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
-	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force")
+	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force", "pin-action")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -88,6 +91,12 @@ func cmdGithubSetup(args []string) int {
 			return printErr("Invalid --pinned-sha", err)
 		}
 		*pinnedSHA = sha
+	}
+	if *pinAction && *pinnedSHA != "" {
+		return printErr("Invalid Action pin flags", errors.New("--pin-action and --pinned-sha cannot be used together"))
+	}
+	if *pinAction && *dryRun {
+		return printErr("Invalid --pin-action", errors.New("--pin-action resolves a remote tag and cannot be used with --dry-run; pass --pinned-sha for a network-free preview"))
 	}
 
 	workflowPath, err := githubSetupWorkflowPath(*workflow)
@@ -191,7 +200,14 @@ func cmdGithubSetup(args []string) int {
 	if err := validateGithubSetupDeployBranches(workflowBranches); err != nil {
 		return printErr("Invalid saved deploy branch mappings", err)
 	}
-	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, *pinnedSHA)
+	actionSHA := *pinnedSHA
+	if *pinAction {
+		actionSHA, err = resolveGithubActionSHA(ctx)
+		if err != nil {
+			return printErr("Could not pin the deploy Action", err)
+		}
+	}
+	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, actionSHA)
 	existing, exists, err := readGithubSetupWorkflow(workflowFile)
 	if err != nil {
 		return printErr("Could not inspect the workflow file", err)
@@ -246,6 +262,67 @@ func cmdGithubSetup(args []string) int {
 	}
 
 	return renderGithubSetupReceipt(receipt, existing, exists)
+}
+
+const githubActionPinResolveTimeout = 20 * time.Second
+
+func resolveGithubActionSHA(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, githubActionPinResolveTimeout)
+	defer cancel()
+
+	tagRef := "refs/tags/" + githubActionVersion
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", "https://github.com/"+githubActionRepo+".git", tagRef, tagRef+"^{}")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("timed out resolving %s@%s: %w", githubActionRepo, githubActionVersion, ctx.Err())
+		}
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return "", fmt.Errorf("could not resolve %s@%s with git: %s", githubActionRepo, githubActionVersion, message)
+	}
+	sha, err := parseGithubActionTagResolution(string(output))
+	if err != nil {
+		return "", fmt.Errorf("could not resolve %s@%s: %w", githubActionRepo, githubActionVersion, err)
+	}
+	return sha, nil
+}
+
+func parseGithubActionTagResolution(output string) (string, error) {
+	tagRef := "refs/tags/" + githubActionVersion
+	peeledRef := tagRef + "^{}"
+	refs := make(map[string]string, 2)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return "", errors.New("git returned an invalid tag reference")
+		}
+		ref := fields[1]
+		if ref != tagRef && ref != peeledRef {
+			continue
+		}
+		if _, exists := refs[ref]; exists {
+			return "", fmt.Errorf("git returned more than one %s reference", ref)
+		}
+		sha, err := normalizeGithubActionSHA(fields[0])
+		if err != nil {
+			return "", fmt.Errorf("git returned an invalid commit SHA for %s", ref)
+		}
+		refs[ref] = sha
+	}
+	if sha := refs[peeledRef]; sha != "" {
+		return sha, nil
+	}
+	if sha := refs[tagRef]; sha != "" {
+		return sha, nil
+	}
+	return "", fmt.Errorf("no %s tag was found", githubActionVersion)
 }
 
 func restoreGithubSetupWorkflow(path string, previous []byte, existed bool) error {

@@ -207,9 +207,11 @@ across repos.
 
 Both `gregale github setup` and `gregale deploy --github` accept
 `--pinned-sha <SHA>` to put an immutable Action commit directly in the
-generated `uses:` line. Resolve the moving `v0` tag with
-`git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0` when you want
-to pin the current release.
+generated `uses:` line. For the full workflow, `gregale github setup` can
+resolve the current `v0` commit automatically with `--pin-action`. The smaller
+`gregale deploy --github` snippet supports the same option. Both resolve the
+public tag over the network; `github setup` cannot combine it with `--dry-run`.
+Use `--pinned-sha` for a network-free preview or to pin a chosen commit.
 
 ### What goes in the snippet
 

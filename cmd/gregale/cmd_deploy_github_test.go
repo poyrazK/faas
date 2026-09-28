@@ -9,6 +9,7 @@
 //   - runner env (GITHUB_REPOSITORY + GITHUB_SHA) → concrete values
 //   - explicit CLI overrides (--repo / --ref) → concrete values
 //   - pinned SHA → `# pin:` comment line points at the SHA
+//   - --pin-action resolves the current tag through git
 //   - missing app → CLI exit 1 (cmdDeployGithubSnippet path)
 //
 // The test does NOT exercise the Action's vendored binary — that's
@@ -19,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,7 +467,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		}()
 
 		// No --app → exit 1.
-		if code := cmdDeployGithubSnippet([]string{}); code != 1 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{}); code != 1 {
 			t.Errorf("missing --app: exit code = %d, want 1", code)
 		}
 		if !strings.Contains(buf.String(), "missing --app") {
@@ -488,7 +490,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "my-app"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "my-app"}); code != 0 {
 			t.Errorf("happy path: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -517,7 +519,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "acme/widget")
 		t.Setenv("GITHUB_SHA", "a1b2c3d4e5f6789012345678901234567890abcd")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget"}); code != 0 {
 			t.Errorf("runner env: exit code = %d, want 0", code)
 		}
 		out := stdout.String()
@@ -551,7 +553,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
 			t.Errorf("--repo only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -577,7 +579,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
 			t.Errorf("--ref only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()

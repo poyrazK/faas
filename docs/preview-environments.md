@@ -218,15 +218,16 @@ production deploys. To opt into production service calls from previews, pass
 `--preview-service-policy allow_marked` explicitly.
 
 The generated workflow uses the maintained `@v0` deploy Action tag by default.
-For an immutable reference, resolve the tag to its current commit and pass it
-to setup with `--pinned-sha`:
+Pass `--pin-action` to resolve the tag to its current commit and write that
+immutable SHA into the workflow:
 
 ```bash
-set -euo pipefail
-ACTION_SHA="$(git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0 | cut -f1)"
-test "${#ACTION_SHA}" -eq 40
-gregale github setup checkout --repo OWNER/NAME --pinned-sha "$ACTION_SHA"
+gregale github setup checkout --repo OWNER/NAME --pin-action
 ```
+
+`--pin-action` contacts the public Gregale repository to resolve the tag, so
+it cannot be combined with `--dry-run`. Pass a full commit with `--pinned-sha`
+when you need a network-free preview or want to choose a specific release.
 
 Generated workflows serialize deployments by app and Gregale target scope.
 Pushes to separate mapped environments can proceed independently, while

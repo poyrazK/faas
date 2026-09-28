@@ -112,21 +112,30 @@ in the step summary and Check Run title.
 
 The action uses `@v0` during public beta by default. The `release.yml` workflow
 force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always
-resolves to the latest vendored binary. For full immutability, resolve that
-moving tag once and pass its commit SHA to a workflow generator:
+resolves to the latest vendored binary. For full immutability, setup can
+resolve that moving tag and write its commit SHA into the generated workflow:
+
+```bash
+gregale github setup my-app --repo OWNER/NAME --pin-action
+gregale deploy --github --name my-app --pin-action
+```
+
+`--pin-action` resolves the current `v0` tag and writes its commit SHA into
+the generated workflow or snippet. It needs network access; on `github setup`
+it cannot be combined with `--dry-run`. To pin a chosen SHA explicitly,
+resolve the tag yourself and pass it with `--pinned-sha`:
 
 ```bash
 set -euo pipefail
 ACTION_SHA="$(git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0 | cut -f1)"
 test "${#ACTION_SHA}" -eq 40
-gregale github setup my-app --repo OWNER/NAME --pinned-sha "$ACTION_SHA"
-# Or generate the smaller workflow snippet:
+# Generate the smaller workflow snippet:
 gregale deploy --github --name my-app --pinned-sha "$ACTION_SHA"
 ```
 
-Both commands put the SHA directly in the workflow's `uses:` reference and
-include it in a comment for review. Without `--pinned-sha`, they keep using the
-moving `@v0` tag.
+Both `--pinned-sha` options put the SHA directly in the generated workflow's
+`uses:` reference. Without a pin, generated workflows keep using the moving
+`@v0` tag.
 
 The bundled `cli-version` output lets you lint for drift in enterprise monorepos.
 
