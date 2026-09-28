@@ -1,3 +1,5 @@
+-- filename: 20260928111918832_managed_realtime_channel_route_compaction.sql
+
 -- Generation-fenced snapshots let apid prune stale node membership without
 -- racing Subscribe, and let capped indexes rebuild safely before re-enabling.
 
