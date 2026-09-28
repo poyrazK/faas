@@ -384,11 +384,15 @@ func secretsSet(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
+	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		if err := client.SetSecretWithScope(context.Background(), *app, p.Key, p.Value, *scope); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
-		PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(*scope))
+		keys = append(keys, p.Key)
+		if !jsonOutput {
+			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(*scope))
+		}
 	}
 	// Move 1 PR-A: post-write quota stamp. After every successful
 	// set, follow up with a ListSecrets and print "<slug>: N/M
@@ -410,17 +414,41 @@ func secretsSet(args []string) int {
 	// ADR-092 PR-B: stamp counts across all scopes (per-app-across
 	// scopes posture — pkg/api/limits.go::SecretCountMax doc). Pass
 	// scope="" to ListSecretsWithScope for the cross-scope total.
-	printSecretsQuotaStamp(client, *app, *scope)
+	if !jsonOutput {
+		printSecretsQuotaStamp(client, *app, *scope)
+	}
 	if *restart {
 		out, err := client.RestartAppFresh(context.Background(), *app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(secretsSetReceipt{
+				App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+				RestartRequested: true, WakeID: out.WakeID,
+			}))
+		}
 		PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", out.WakeID)
 		return 0
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(secretsSetReceipt{
+			App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+			Warnings: []string{"Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now."},
+		}))
+	}
 	PrintWarn(osStdout, "Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
+}
+
+type secretsSetReceipt struct {
+	App              string   `json:"app"`
+	Status           string   `json:"status"`
+	Scope            string   `json:"scope"`
+	Keys             []string `json:"keys"`
+	RestartRequested bool     `json:"restart_requested"`
+	WakeID           string   `json:"wake_id,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
 }
 
 // reorderSecretsSetArgs keeps the documented "KEY=VALUE ... [flags]" form
@@ -655,6 +683,29 @@ func secretsUnset(args []string) int {
 	revocation, err := client.UnsetSecretWithScopeAndStatus(context.Background(), *app, key, *scope)
 	if err != nil {
 		return printErr("Unset failed", err)
+	}
+	if jsonOutput {
+		receipt := map[string]any{
+			"app": *app, "status": "deleted", "scope": scopeOrDefault(*scope), "key": key,
+			"deleted": true, "revocation_id": revocation.ID,
+			"revocation_status":  revocation.Status,
+			"target_count":       revocation.TargetCount,
+			"acknowledged_count": revocation.AcknowledgedCount,
+			"pending_count":      revocation.PendingCount,
+		}
+		if *waitForAck {
+			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			defer cancel()
+			progress, err := waitForSecretRevocationAck(ctx, client, *app, revocation.ID)
+			if err != nil {
+				return printErr("Secret revocation acknowledgement incomplete", err)
+			}
+			receipt["revocation_status"] = progress.Status
+			receipt["target_count"] = progress.TargetCount
+			receipt["acknowledged_count"] = progress.AcknowledgedCount
+			receipt["pending_count"] = progress.PendingCount
+		}
+		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "%s unset (scope=%s, revocation=%s)", key, scopeOrDefault(*scope), revocation.ID)
 	if *waitForAck {

@@ -12,6 +12,21 @@ gregale secrets list --app my-api
 gregale secrets unset --app my-api STRIPE_SECRET_KEY
 ```
 
+Use `--json` or `FAAS_JSON=1` in scripts. Successful `set`, `rotate`, and
+`unset` commands print one JSON receipt to stdout; secret values are never
+included. A `set` receipt includes the app, scope, updated key names, and
+whether a restart was requested (plus its `wake_id` when returned). A `rotate`
+receipt includes the app, scope, key, `rotated_at`, sealing `kid`, and any
+restart or runtime-acknowledgement details. An `unset` receipt includes the app,
+scope, key, and `deleted: true`. Any deferred-application guidance is returned
+in a `warnings` array, so stdout remains parseable JSON.
+
+```bash
+gregale --json secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | FAAS_JSON=1 gregale secrets rotate --app my-api --from-stdin
+gregale --json secrets unset --app my-api OLD_API_KEY
+```
+
 Grant one app secret to a single companion in the deployment's `companions`
 declaration (legacy field name: `sidecars`):
 

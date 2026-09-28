@@ -4847,6 +4847,9 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Create failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(k))
+		}
 		PrintOK(osStdout, "New API key (shown ONCE):\n  %s", k.Plaintext)
 		return 0
 	case subRm:
@@ -4860,6 +4863,9 @@ func cmdKeys(args []string) int {
 		}
 		if err := client.DeleteKey(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"id": args[1], "revoked": true}))
 		}
 		PrintOK(osStdout, "Removed")
 		return 0
