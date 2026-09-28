@@ -132,6 +132,40 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	if cooldownPage.Code != http.StatusOK || !strings.Contains(cooldownPage.Body.String(), "receiver cooldown until") {
 		t.Fatalf("dashboard cooldown = %d: %s", cooldownPage.Code, cooldownPage.Body)
 	}
+	newURL := webhook.TargetURL + "/replacement"
+	if _, err := store.UpdateAppWebhook(t.Context(), webhook.ID, state.UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+			Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+			NextAttemptAt: time.Now().Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now())
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial replacement claim = %+v, %v", initial, err)
+	}
+	expired := time.Now().Add(-time.Second)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", expired, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &expired, ReceiverCooldownTargetURL: newURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now())
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("recovery probe = %+v, %v", probe, err)
+	}
+	probePage := httptest.NewRecorder()
+	probeReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	probeReq.AddCookie(cookie)
+	h.ServeHTTP(probePage, probeReq)
+	if probePage.Code != http.StatusOK || !strings.Contains(probePage.Body.String(), "receiver recovery probe in flight") ||
+		!strings.Contains(probePage.Body.String(), "oldest overdue: none") {
+		t.Fatalf("dashboard probe state = %d: %s", probePage.Code, probePage.Body)
+	}
 }
 
 func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {

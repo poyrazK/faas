@@ -6120,10 +6120,10 @@ type Store interface {
 	// ListAppWebhookDeliveryAttempts returns a bounded, newest-first history.
 	// The delivery, webhook, and account IDs are all enforced in the store query.
 	ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error)
-	// AppWebhookDeliveryHealth returns current queue counts and 24-hour terminal
-	// outcomes for one account-owned webhook.
+	// AppWebhookDeliveryHealth returns receiver recovery state, claimable queue
+	// age, counts, and 24-hour terminal outcomes for one account-owned webhook.
 	AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error)
-	// OldestOverdueAppWebhookDeliveryAt backs the fleet queue-age signal.
+	// OldestOverdueAppWebhookDeliveryAt backs the fleet claimable queue-age signal.
 	OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error)
 	// PruneAppWebhookDeliveries deletes at most limit terminal deliveries last
 	// updated before cutoff. Attempt history follows via cascade.

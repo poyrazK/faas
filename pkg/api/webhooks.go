@@ -551,7 +551,8 @@ type AppWebhookDeliveryListResponse struct {
 	NextToken  string                       `json:"next_token,omitempty"`
 }
 
-// AppWebhookDeliveryHealthResponse summarizes one subscription at snapshot_at.
+// AppWebhookDeliveryHealthResponse summarizes one subscription at snapshot_at,
+// including whether a receiver cooldown or live probe is holding claims.
 // The 24-hour success rate counts terminal deliveries only; it is absent when
 // the window has no succeeded or dead deliveries.
 type AppWebhookDeliveryHealthResponse struct {
@@ -560,6 +561,7 @@ type AppWebhookDeliveryHealthResponse struct {
 	PendingCount          int64    `json:"pending_count"`
 	InFlightCount         int64    `json:"in_flight_count"`
 	DeadCount             int64    `json:"dead_count"`
+	ReceiverState         string   `json:"receiver_state"`
 	ReceiverCooldownUntil string   `json:"receiver_cooldown_until,omitempty"`
 	OldestOverdueAt       string   `json:"oldest_overdue_at,omitempty"`
 	OldestOverdueSeconds  *int64   `json:"oldest_overdue_seconds,omitempty"`

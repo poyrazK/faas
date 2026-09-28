@@ -833,23 +833,35 @@ func (s *PgStore) ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID
 func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error) {
 	var health AppWebhookDeliveryHealth
 	var oldest, receiverCooldown pgtype.Timestamptz
+	var receiverState string
 	err := s.pool.QueryRow(ctx, `
 		select w.id,
 		       count(d.id) filter (where d.status = 'pending'),
 		       count(d.id) filter (where d.status = 'in_flight'),
 		       count(d.id) filter (where d.status = 'dead'),
-		       min(d.next_attempt_at) filter (where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $3
-		           and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $3)),
+		       case
+		           when w.receiver_cooldown_until > $3 then null
+		           when count(d.id) filter (where d.status = 'in_flight' and d.next_attempt_at > $3) >=
+		               case when w.receiver_cooldown_until is null then $5 else 1 end then null
+		           else min(d.next_attempt_at) filter (where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $3)
+		       end,
 		       count(d.id) filter (where d.status = 'succeeded' and d.delivered_at >= $4),
 		       count(d.id) filter (where d.status = 'dead' and d.updated_at >= $4),
-		       max(w.receiver_cooldown_until) filter (where w.receiver_cooldown_until > $3)
+		       max(w.receiver_cooldown_until) filter (where w.receiver_cooldown_until > $3),
+		       case
+		           when w.receiver_cooldown_until is null then 'ready'
+		           when w.receiver_cooldown_until > $3 then 'cooling_down'
+		           when count(d.id) filter (where d.id = w.receiver_recovery_probe_delivery_id
+		               and d.status = 'in_flight' and d.next_attempt_at > $3) > 0 then 'probing'
+		           else 'awaiting_probe'
+		       end
 		  from app_webhooks w
 		  left join app_webhook_deliveries d on d.webhook_id = w.id and d.account_id = w.account_id
 		 where w.id = $1 and w.account_id = $2
 		 group by w.id
-	`, webhookID, accountID, now, now.Add(-24*time.Hour)).Scan(
+	`, webhookID, accountID, now, now.Add(-24*time.Hour), AppWebhookMaxInFlightPerSubscription).Scan(
 		&health.WebhookID, &health.PendingCount, &health.InFlightCount, &health.DeadCount,
-		&oldest, &health.RecentSucceededCount, &health.RecentDeadCount, &receiverCooldown)
+		&oldest, &health.RecentSucceededCount, &health.RecentDeadCount, &receiverCooldown, &receiverState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppWebhookDeliveryHealth{}, ErrNotFound
 	}
@@ -864,18 +876,27 @@ func (s *PgStore) AppWebhookDeliveryHealth(ctx context.Context, webhookID, accou
 		at := receiverCooldown.Time
 		health.ReceiverCooldownUntil = &at
 	}
+	health.ReceiverState = AppWebhookReceiverState(receiverState)
 	return health, nil
 }
 
 func (s *PgStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
 	var oldest pgtype.Timestamptz
 	if err := s.pool.QueryRow(ctx, `
+		with live_claims as materialized (
+			select webhook_id, count(*) as n
+			  from app_webhook_deliveries
+			 where status = 'in_flight' and next_attempt_at > $1
+			 group by webhook_id
+		)
 		select min(d.next_attempt_at)
 		  from app_webhook_deliveries d
 		  join app_webhooks w on w.id = d.webhook_id
+		  left join live_claims live on live.webhook_id = d.webhook_id
 		 where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $1
 		   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-	`, now).Scan(&oldest); err != nil {
+		   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $2 else 1 end
+	`, now, AppWebhookMaxInFlightPerSubscription).Scan(&oldest); err != nil {
 		return nil, fmt.Errorf("state: oldest overdue webhook delivery: %w", err)
 	}
 	if !oldest.Valid {

@@ -95,11 +95,12 @@ next probe, and a new valid receiver deadline takes precedence. A terminal
 4xx other than 429 also restores normal capacity. The probe identity is
 persisted on the subscription and the delivery claim fences its outcome, so
 multiple schedd processes and an expired lease cannot release the queue from
-an older probe. Health responses and the dashboard show an active cooldown
-while pending counts remain visible; intentionally paused rows do not count
-as overdue until the deadline passes. Changing a subscription's target URL
-clears its cooldown and probe; a late response from the old URL cannot pause
-or reopen the replacement target.
+an older probe. Health responses and the dashboard distinguish `ready`,
+`cooling_down`, `awaiting_probe`, and `probing` from the live lease state.
+Pending counts remain visible, while deliveries held by a cooldown or a full
+probe slot do not count as claimable overdue work. Changing a subscription's
+target URL clears its cooldown and probe; a late response from the old URL
+cannot pause or reopen the replacement target.
 
 ### 3.4 Plan-tier gate: `WebhookPerApp` + `WebhookPerAccount`
 

@@ -337,7 +337,8 @@ func TestMemStoreAppWebhookDeliveryHealth(t *testing.T) {
 	delivered := now.Add(-time.Hour)
 	add("succeeded", AppWebhookDeliverySucceeded, now, &delivered)
 	health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, now)
-	if err != nil || health.PendingCount != 2 || health.InFlightCount != 1 || health.DeadCount != 1 ||
+	if err != nil || health.ReceiverState != AppWebhookReceiverReady ||
+		health.PendingCount != 2 || health.InFlightCount != 1 || health.DeadCount != 1 ||
 		health.RecentSucceededCount != 1 || health.RecentDeadCount != 1 || health.OldestOverdueAt == nil ||
 		!health.OldestOverdueAt.Equal(now.Add(-2*time.Minute)) {
 		t.Fatalf("health = %+v, err=%v", health, err)
@@ -452,6 +453,9 @@ func TestMemStoreAppWebhookDelivery_ClaimCapsEachSubscription(t *testing.T) {
 	}
 	if len(slowClaims) != AppWebhookMaxInFlightPerSubscription || otherClaims != 2 {
 		t.Fatalf("first claim: slow=%d other=%d, want %d and 2", len(slowClaims), otherClaims, AppWebhookMaxInFlightPerSubscription)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(time.Second)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest with full live capacity = %v, %v; want nil", oldest, err)
 	}
 	blocked, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
 	if err != nil || len(blocked) != 0 {
@@ -630,7 +634,8 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 		t.Fatal(err)
 	}
 	health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, now.Add(2*time.Minute))
-	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||
+	if err != nil || health.ReceiverState != AppWebhookReceiverCoolingDown ||
+		health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||
 		health.PendingCount != 3 || health.OldestOverdueAt != nil {
 		t.Fatalf("paused health = %+v, %v", health, err)
 	}
@@ -644,6 +649,10 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(2*time.Minute)); err != nil || oldest != nil {
 		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
 	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil); err != nil ||
+		health.ReceiverState != AppWebhookReceiverAwaitingProbe || health.OldestOverdueAt == nil {
+		t.Fatalf("health awaiting recovery probe = %+v, %v", health, err)
+	}
 	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil)
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claims at cooldown expiry = %+v, %v; want one recovery probe", claims, err)
@@ -652,10 +661,21 @@ func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.
 	if err != nil || len(blocked) != 0 {
 		t.Fatalf("claims while probe is live = %+v, %v; want none", blocked, err)
 	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil.Add(time.Second)); err != nil ||
+		health.ReceiverState != AppWebhookReceiverProbing || health.OldestOverdueAt != nil {
+		t.Fatalf("health during probe = %+v, %v", health, err)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, longUntil.Add(time.Second)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest during probe = %v, %v; want nil", oldest, err)
+	}
 	finished := longUntil.Add(2 * time.Second)
 	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt,
 		finished, AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
 		t.Fatal(err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, finished); err != nil ||
+		health.ReceiverState != AppWebhookReceiverReady || health.OldestOverdueAt == nil {
+		t.Fatalf("health after successful probe = %+v, %v", health, err)
 	}
 	reopened, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, finished)
 	if err != nil || len(reopened) != 2 {
@@ -800,7 +820,15 @@ func TestMemStoreAppWebhookRecoveryProbeExpiredLease(t *testing.T) {
 	if err != nil || len(probe) != 1 {
 		t.Fatalf("recovery claim = %+v, %v", probe, err)
 	}
-	reclaimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, probe[0].NextAttemptAt.Add(time.Microsecond))
+	if health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, until); err != nil || health.ReceiverState != AppWebhookReceiverProbing {
+		t.Fatalf("live probe health = %+v, %v", health, err)
+	}
+	expiredAt := probe[0].NextAttemptAt.Add(time.Microsecond)
+	if health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, expiredAt); err != nil ||
+		health.ReceiverState != AppWebhookReceiverAwaitingProbe || health.OldestOverdueAt == nil {
+		t.Fatalf("expired probe health = %+v, %v", health, err)
+	}
+	reclaimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, expiredAt)
 	if err != nil || len(reclaimed) != 1 || reclaimed[0].ID != probe[0].ID {
 		t.Fatalf("reclaim expired probe = %+v, %v", reclaimed, err)
 	}

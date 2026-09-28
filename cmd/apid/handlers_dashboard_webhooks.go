@@ -154,6 +154,7 @@ func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger,
 		} else {
 			h := &dashboard.WebhookHealthPageItem{
 				PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
+				ReceiverState:        string(health.ReceiverState),
 				RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
 			}
 			if health.ReceiverCooldownUntil != nil {

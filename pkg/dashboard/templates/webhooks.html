@@ -105,7 +105,7 @@
             <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}all events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
             {{with .Health}}
               <p role="status">Queue: <strong>{{.PendingCount}} pending</strong> · {{.InFlightCount}} in flight · {{.DeadCount}} dead
-                {{if .ReceiverCooldownUntil}}· receiver cooldown until {{.ReceiverCooldownUntil}}{{end}}
+                {{if eq .ReceiverState "cooling_down"}}· receiver cooldown until {{.ReceiverCooldownUntil}}{{else if eq .ReceiverState "probing"}}· receiver recovery probe in flight{{else if eq .ReceiverState "awaiting_probe"}}· receiver waiting for recovery probe{{else}}· receiver ready{{end}}
                 · oldest overdue: {{if .OldestOverdueAge}}{{.OldestOverdueAge}}{{else}}none{{end}}
                 · 24h terminal success: {{if .RecentSuccessRate}}{{.RecentSuccessRate}} ({{.RecentSucceededCount}} succeeded, {{.RecentDeadCount}} dead){{else}}no completed deliveries{{end}}
               </p>

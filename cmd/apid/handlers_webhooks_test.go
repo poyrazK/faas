@@ -125,7 +125,7 @@ func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
 		t.Fatal(err)
 	}
-	if health.PendingCount != 1 || health.InFlightCount != 0 || health.DeadCount != 0 ||
+	if health.ReceiverState != "ready" || health.PendingCount != 1 || health.InFlightCount != 0 || health.DeadCount != 0 ||
 		health.OldestOverdueSeconds == nil || *health.OldestOverdueSeconds < 119 || health.RecentSuccessRate != nil {
 		t.Errorf("health = %+v", health)
 	}
@@ -168,8 +168,64 @@ func TestGetAppWebhookDeliveryHealth_ShowsReceiverCooldown(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
 		t.Fatal(err)
 	}
-	if health.ReceiverCooldownUntil == "" || health.PendingCount != 1 || health.OldestOverdueAt != "" {
+	if health.ReceiverState != "cooling_down" || health.ReceiverCooldownUntil == "" || health.PendingCount != 1 || health.OldestOverdueAt != "" {
 		t.Fatalf("health = %+v, want active cooldown and paused pending row", health)
+	}
+}
+
+func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "probe-health-api")
+	hook := mustCreateWebhook(t, e, "probe-health-api", webhookReq())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 2; i++ {
+		if _, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+			Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+			NextAttemptAt: now.Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial claim = %+v, %v", initial, err)
+	}
+	until := now.Add(-time.Second)
+	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/probe-health-api/webhooks/" + hook.ID + "/health"
+	read := func() api.AppWebhookDeliveryHealthResponse {
+		t.Helper()
+		rec := e.do(t, http.MethodGet, path, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+		}
+		var health api.AppWebhookDeliveryHealthResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+			t.Fatal(err)
+		}
+		return health
+	}
+	if health := read(); health.ReceiverState != "awaiting_probe" || health.OldestOverdueAt == "" {
+		t.Fatalf("awaiting probe health = %+v", health)
+	}
+	probe, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now().UTC())
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("probe claim = %+v, %v", probe, err)
+	}
+	if health := read(); health.ReceiverState != "probing" || health.OldestOverdueAt != "" {
+		t.Fatalf("live probe health = %+v", health)
+	}
+	finished := time.Now().UTC()
+	if err := e.store.MarkAppWebhookDeliverySucceeded(t.Context(), probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	if health := read(); health.ReceiverState != "ready" || health.OldestOverdueAt == "" {
+		t.Fatalf("reopened health = %+v", health)
 	}
 }
 

@@ -891,6 +891,7 @@ type WebhookHealthPageItem struct {
 	InFlightCount         int64
 	DeadCount             int64
 	OldestOverdueAge      string
+	ReceiverState         string
 	ReceiverCooldownUntil string
 	RecentSucceededCount  int64
 	RecentDeadCount       int64

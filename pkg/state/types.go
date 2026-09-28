@@ -3655,10 +3655,23 @@ type AppWebhookDeliveryAttempt struct {
 	NextAttemptAt    *time.Time
 }
 
+// AppWebhookReceiverState describes the subscription's claim gate at the
+// health snapshot. A probe is active only while its delivery lease is live.
+type AppWebhookReceiverState string
+
+const (
+	AppWebhookReceiverReady         AppWebhookReceiverState = "ready"
+	AppWebhookReceiverCoolingDown   AppWebhookReceiverState = "cooling_down"
+	AppWebhookReceiverAwaitingProbe AppWebhookReceiverState = "awaiting_probe"
+	AppWebhookReceiverProbing       AppWebhookReceiverState = "probing"
+)
+
 // AppWebhookDeliveryHealth is a scoped snapshot of one webhook's queue.
 // Recent terminal counts use a rolling 24-hour window ending at the query time.
+// OldestOverdueAt includes only work the subscription has claim capacity for.
 type AppWebhookDeliveryHealth struct {
 	WebhookID             string
+	ReceiverState         AppWebhookReceiverState
 	ReceiverCooldownUntil *time.Time
 	PendingCount          int64
 	InFlightCount         int64

@@ -24,7 +24,7 @@ func NewDeliveryHealthMetrics(reg prometheus.Registerer, prefix string) *Deliver
 	m := &DeliveryHealthMetrics{
 		overdueSeconds: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: prefix + "_webhook_delivery_oldest_overdue_seconds",
-			Help: "Age of the oldest due outbound webhook delivery, or zero when no delivery is overdue.",
+			Help: "Age of the oldest claimable overdue outbound webhook delivery, or zero when no subscription has claim capacity.",
 		}),
 		deadTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: prefix + "_webhook_delivery_dead_total",

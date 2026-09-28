@@ -728,9 +728,14 @@ func (s *server) writeAppWebhookDeliveryHealth(w http.ResponseWriter, r *http.Re
 }
 
 func appWebhookDeliveryHealthResponse(health state.AppWebhookDeliveryHealth, now time.Time) api.AppWebhookDeliveryHealthResponse {
+	receiverState := health.ReceiverState
+	if receiverState == "" {
+		receiverState = state.AppWebhookReceiverReady
+	}
 	out := api.AppWebhookDeliveryHealthResponse{
 		WebhookID: health.WebhookID, SnapshotAt: api.FormatAlertTime(now),
 		PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
+		ReceiverState:        string(receiverState),
 		RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
 	}
 	if health.ReceiverCooldownUntil != nil {
