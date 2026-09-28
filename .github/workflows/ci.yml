@@ -256,6 +256,12 @@ jobs:
       - name: installer edge worker
         run: node --test deploy/cloudflare/get-gregale-dev/worker.test.mjs
 
+      # Keep the credential-free CLI scenario path executable on every PR.
+      # The simulation starts the app and sink over local HTTP, including a
+      # planned failed delivery and retry.
+      - name: scenario simulation fixture
+        run: ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario delivery-smoke --engine simulated
+
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
       # Keep checked-in examples schema-valid so the workflow can consume a
