@@ -133,6 +133,17 @@ func TestReplayEventFanoutFailure_RequeuesOneRecipient(t *testing.T) {
 	if err := e.store.FinishPublishedEvent(context.Background(), work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("finish event: %v", err)
 	}
+	list := e.do(t, http.MethodGet, "/v1/apps/replay-event-app/event-deliveries?event_id=evt-replay-api", nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200; body=%s", list.Code, list.Body.String())
+	}
+	var listed api.EventDeliveryListResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode event deliveries: %v", err)
+	}
+	if len(listed.FanoutFailures) != 1 || listed.FanoutFailures[0].EventID != "evt-replay-api" {
+		t.Fatalf("fanout failures = %+v, want the seeded event failure", listed.FanoutFailures)
+	}
 
 	rec := e.do(t, http.MethodPost, "/v1/apps/replay-event-app/event-deliveries:replay-fanout-failure", api.ReplayEventFanoutFailureRequest{
 		EventID: "evt-replay-api", EventSource: "orders", SubscriptionID: subscription.ID,

@@ -514,7 +514,7 @@ func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string
 			continue
 		}
 		for _, recipient := range work.RecipientSnapshot {
-			if recipient.AppID != appID {
+			if !sameMemUUID(recipient.AppID, appID) {
 				continue
 			}
 			progress, ok := work.RecipientProgress[recipient.ID]
@@ -560,7 +560,7 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		}
 		var recipientFound bool
 		for _, recipient := range work.RecipientSnapshot {
-			if recipient.ID == subscriptionID && recipient.AppID == appID && recipient.AccountID == accountID {
+			if recipient.ID == subscriptionID && sameMemUUID(recipient.AppID, appID) && sameMemUUID(recipient.AccountID, accountID) {
 				recipientFound = true
 				break
 			}
