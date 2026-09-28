@@ -311,7 +311,7 @@ leaves the existing per-request `max_retries` behavior unchanged. The
 `outbound_retry_budget_events_total` metric records bounded `consumed`,
 `exhausted`, `state_error`, and `unavailable` events using the same integration
 label policy as the other outbound metrics. See
-[ADR-291](../adr/291-shared-outbound-retry-budget.md).
+[ADR-292](../adr/292-shared-outbound-retry-budget.md).
 When a provider returns `429` with a valid `Retry-After`, outboundd shares a
 per-integration cooldown through Postgres, capped at one hour. Fresh requests
 are rejected locally with `429` and
@@ -324,7 +324,7 @@ the old provider cooldown. Cooldown checks run after normal admission, so
 blocked uncached requests count against configured request budgets. The
 `outbound_provider_cooldown_events_total` metric reports bounded `recorded`,
 `blocked`, `state_error`, and `unavailable` events. See
-[ADR-292](../adr/292-shared-outbound-provider-cooldown.md).
+[ADR-293](../adr/293-shared-outbound-provider-cooldown.md).
 An optional `response_cache_ttl_seconds` (0–300; default 0) enables a
 process-local, bounded cache for bodyless `GET` responses with status 200.
 Range and conditional requests bypass it. Responses marked `private`,
@@ -358,7 +358,7 @@ breaker returns 503 with `X-Gregale-Outbound-Rejection: circuit_breaker_open`
 and `Retry-After`. It is checked after normal admission, so an open-circuit
 response counts toward configured admission budgets. Eligible response-cache
 hits still return while the breaker is open because they do not call the provider. See
-[ADR-290](../adr/290-outbound-circuit-breaker.md).
+[ADR-291](../adr/291-outbound-circuit-breaker.md).
 
 The listener also serves `/metrics` and `/readyz` on port `8095` by default.
 Daemon HTTP request metrics record bounded status classes (`1xx` through `5xx`),

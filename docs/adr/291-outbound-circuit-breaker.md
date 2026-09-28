@@ -1,4 +1,4 @@
-# ADR-290 · Per-integration outbound circuit breaker
+# ADR-291 · Per-integration outbound circuit breaker
 
 - **Status:** accepted
 - **Date:** 2026-09-27

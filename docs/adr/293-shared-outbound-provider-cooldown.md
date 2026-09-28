@@ -1,4 +1,4 @@
-# ADR-292 · Shared outbound provider cooldown
+# ADR-293 · Shared outbound provider cooldown
 
 - **Status:** proposed
 - **Date:** 2026-09-27
