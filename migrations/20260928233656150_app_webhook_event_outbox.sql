@@ -1,4 +1,4 @@
--- filename: 20260928200000000_app_webhook_event_outbox.sql
+-- filename: 20260928233656150_app_webhook_event_outbox.sql
 
 -- +goose Up
 -- The producer commits an event and its recipient snapshot with the source
