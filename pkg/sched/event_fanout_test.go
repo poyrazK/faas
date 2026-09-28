@@ -435,7 +435,7 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
-			[]byte(`{"id":"evt-invalid-filter","source":"orders","type":"created","data":{}}`)); err != nil {
+			[]byte(`{"specversion":"1.0","id":"evt-invalid-filter","source":"orders","type":"created","time":"2026-09-28T00:00:00Z","datacontenttype":"application/json","accountid":"`+accountID+`","data":{}}`)); err != nil {
 			t.Fatal(err)
 		}
 		work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
@@ -471,7 +471,7 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
-			[]byte(`{"id":"evt-missing-target","source":"orders","type":"created","data":{}}`)); err != nil {
+			[]byte(`{"specversion":"1.0","id":"evt-missing-target","source":"orders","type":"created","time":"2026-09-28T00:00:00Z","datacontenttype":"application/json","accountid":"`+accountID+`","data":{}}`)); err != nil {
 			t.Fatal(err)
 		}
 		work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
@@ -508,7 +508,7 @@ func TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion(t *test
 		t.Fatal(err)
 	}
 	if err := mem.AppendEvent(ctx, "apid", "event.published", &accountID,
-		[]byte(`{"id":"evt-transient-failure","source":"orders","type":"created","data":{}}`)); err != nil {
+		[]byte(`{"specversion":"1.0","id":"evt-transient-failure","source":"orders","type":"created","time":"2026-09-28T00:00:00Z","datacontenttype":"application/json","accountid":"`+accountID+`","data":{}}`)); err != nil {
 		t.Fatal(err)
 	}
 	work, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC())
