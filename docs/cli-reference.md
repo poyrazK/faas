@@ -370,7 +370,7 @@ Inspect event deliveries and pre-invocation fanout failures
 
 ### events replay
 
-Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from `events deliveries`
+Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries
 
 `gregale events replay <app> --event-id <ID> --event-source <SOURCE> --subscription-id <ID>`
 
