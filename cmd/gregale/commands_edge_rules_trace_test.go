@@ -686,6 +686,68 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceReportsRetryPolicy(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "retry", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "/orders/*",
+				Action: json.RawMessage(`{"retry":{"max_attempts":3,"allow_non_idempotent":true,"min_remaining_ms":300,"backoff_ms":75,"budget_percent":15,"budget_min_retries":2}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/orders/42", "--method", "POST", "--header", "Idempotency-Key: opaque-key"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Outcome != "needs_retry_runtime_context" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("retry trace = %#v", result.Simulation)
+	}
+	policy := result.Simulation.Steps[0].RetryPolicy
+	if policy == nil || policy.MaxAttempts != 3 || policy.MaxReplays != 2 || policy.MethodEligibility != "non_idempotent_allowed_with_key" || !policy.IdempotencyKeyPresent || policy.MinRemainingMS != 300 || policy.BackoffMS != 75 || policy.BudgetPercent != 15 || policy.BudgetMinRetries != 2 {
+		t.Fatalf("retry policy = %#v", policy)
+	}
+	if strings.Contains(stdout.String(), "opaque-key") {
+		t.Fatalf("trace output leaked the Idempotency-Key value: %s", stdout.String())
+	}
+	stdout.Reset()
+	jsonOutput = false
+	renderEdgeRuleTrace(result)
+	for _, want := range []string{
+		"retry policy: up to 3 total attempts (2 replay(s), rule)",
+		"method eligibility=non_idempotent_allowed_with_key", "idempotency_key_present=true",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("human-readable trace missing %q\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "opaque-key") {
+		t.Fatalf("human-readable trace leaked the Idempotency-Key value: %s", stdout.String())
+	}
+}
+
 func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

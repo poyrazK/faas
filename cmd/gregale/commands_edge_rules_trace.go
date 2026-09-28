@@ -261,6 +261,12 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 					policy.AppRequestRPS, policy.AppRequestBurst, policy.AccountRequestRPM)
 			}
 		}
+		if step.RetryPolicy != nil {
+			policy := step.RetryPolicy
+			_, _ = fmt.Fprintf(osStdout, "    retry policy: up to %d total attempts (%d replay(s), %s); min remaining budget %d ms; backoff %d ms; aggregate budget %d%% or at least %d replay(s); allow_non_idempotent=%t; method eligibility=%s; idempotency_key_present=%t\n",
+				policy.MaxAttempts, policy.MaxReplays, policy.MaxAttemptsSource, policy.MinRemainingMS, policy.BackoffMS,
+				policy.BudgetPercent, policy.BudgetMinRetries, policy.AllowNonIdempotent, policy.MethodEligibility, policy.IdempotencyKeyPresent)
+		}
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)

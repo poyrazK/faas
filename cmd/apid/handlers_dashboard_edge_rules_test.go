@@ -91,6 +91,53 @@ func TestDashboardEdgeRuleTraceShowsThrottlePolicy(t *testing.T) {
 	}
 }
 
+func TestDashboardEdgeRuleTraceShowsRetryPolicy(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-retry-trace", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/orders/*", Priority: 10, Enabled: true,
+		Kind: state.EdgeRuleKindRetry,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRetry, Retry: &state.EdgeRuleRetryAction{
+			MaxAttempts: 3, AllowNonIdempotent: true, MinRemainingMs: 350, BackoffMs: 80, BudgetPercent: 15, BudgetMinRetries: 2,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-retry-trace/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/orders/42", "trace_method": "POST",
+		"trace_headers": "Idempotency-Key: opaque-key",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"Simulation: incomplete · needs_retry_runtime_context", "Retry policy:", "3 total attempts (2 replay(s), rule)",
+		"min remaining budget 350 ms", "aggregate budget 15% or at least 2 replay(s)",
+		"method eligibility non_idempotent_allowed_with_key", "idempotency key present true",
+		"no replay or response outcome is predicted",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
+	}
+	if strings.Contains(rec.Body.String(), "opaque-key") {
+		t.Fatalf("dashboard trace leaked the Idempotency-Key value\n%s", rec.Body.String())
+	}
+}
+
 func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
 	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")

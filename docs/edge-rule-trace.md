@@ -93,6 +93,16 @@ reads/consumes a token bucket; therefore it does not predict whether this
 request is admitted or receives HTTP 429. Those runtime gates remain explicitly
 incomplete.
 
+For a matching `kind=retry` rule, the trace reports effective total attempts
+and replays, the request-budget floor, backoff, aggregate replay budget, and
+whether this request's method/idempotency-key guard permits replay. It reports
+only whether an `Idempotency-Key` is present, never its value. A replay still
+requires the operator retry gate and a transport failure; body replayability,
+remaining budget, a healthy sibling, response commitment, and live aggregate
+budget are runtime state, so no retry or response outcome is inferred. The
+gateway retries transport failures only; it does not replay an application
+HTTP error status.
+
 ```json
 {
   "version": 1,

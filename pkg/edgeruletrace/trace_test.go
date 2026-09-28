@@ -319,8 +319,8 @@ func TestSimulateRedactsSensitiveHeadersAcrossTraceOutput(t *testing.T) {
 }
 
 func TestRedactHeaderInputForDisplay(t *testing.T) {
-	got := edgeruletrace.RedactHeaderInputForDisplay("Authorization: Bearer form-auth-sentinel\r\nX-Session-Token:\tform-token-sentinel\nX-Region: west\nbroken form-cookie-sentinel")
-	want := "Authorization: [REDACTED]\r\nX-Session-Token:\t[REDACTED]\nX-Region: west\n[REDACTED]"
+	got := edgeruletrace.RedactHeaderInputForDisplay("Authorization: Bearer form-auth-sentinel\r\nX-Session-Token:\tform-token-sentinel\nIdempotency-Key: order-opaque\nX-Region: west\nbroken form-cookie-sentinel")
+	want := "Authorization: [REDACTED]\r\nX-Session-Token:\t[REDACTED]\nIdempotency-Key: [REDACTED]\nX-Region: west\n[REDACTED]"
 	if got != want {
 		t.Fatalf("RedactHeaderInputForDisplay() = %q, want %q", got, want)
 	}
@@ -1197,6 +1197,112 @@ func TestSimulateThrottleRuleShowsGatewayDefensiveClamps(t *testing.T) {
 	}
 	if !strings.Contains(result.Rules[0].OutcomeReason, "configured 0.5 requests/s, burst 0 (gateway effective 1 requests/s and burst 1)") {
 		t.Fatalf("clamp explanation = %q", result.Rules[0].OutcomeReason)
+	}
+}
+
+func TestSimulateRetryRuleReportsPolicyWithoutPredictingReplay(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "retry-rule", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "/orders/*", Priority: 4,
+		Action: json.RawMessage(`{"retry":{"max_attempts":3,"allow_non_idempotent":true,"min_remaining_ms":400,"backoff_ms":100,"budget_percent":20,"budget_min_retries":2}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders/42", Method: http.MethodPost,
+		Headers: http.Header{"Idempotency-Key": []string{"opaque-request-key"}}, AppMaintenanceLoaded: true,
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_retry_runtime_context" || result.Simulation.StoppedAt != "retry" {
+		t.Fatalf("simulation = %#v; a configured retry must not imply a replay", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "retry_policy_candidate" || result.Simulation.Steps[0].RuleID != "retry-rule" {
+		t.Fatalf("retry step = %#v", result.Simulation.Steps)
+	}
+	policy := result.Simulation.Steps[0].RetryPolicy
+	if policy == nil || policy.MaxAttempts != 3 || policy.MaxReplays != 2 || policy.MaxAttemptsSource != "rule" || !policy.AllowNonIdempotent || policy.MethodEligibility != "non_idempotent_allowed_with_key" || !policy.IdempotencyKeyPresent {
+		t.Fatalf("retry policy = %#v", policy)
+	}
+	if policy.MinRemainingMS != 400 || policy.BackoffMS != 100 || policy.BudgetPercent != 20 || policy.BudgetMinRetries != 2 {
+		t.Fatalf("effective retry limits = %#v", policy)
+	}
+	if !strings.Contains(result.Simulation.Reason, "transport failure") || !strings.Contains(result.Simulation.Reason, "no replay or response outcome is predicted") {
+		t.Fatalf("retry runtime caveat = %q", result.Simulation.Reason)
+	}
+	if result.Rules[0].Outcome != "retry_policy_candidate" || result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.RetryPolicy == nil {
+		t.Fatalf("per-rule retry preview = %#v", result.Rules[0])
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "opaque-request-key") {
+		t.Fatalf("trace leaked the Idempotency-Key value: %s", encoded)
+	}
+}
+
+func TestSimulateRetryRuleUsesRuntimeDefaultsAndMethodGuard(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "retry-defaults", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"retry":{"max_attempts":99,"allow_non_idempotent":false,"min_remaining_ms":0,"backoff_ms":9999,"budget_percent":0,"budget_min_retries":0}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders", Method: http.MethodPost, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].RetryPolicy
+	if policy == nil || policy.MaxAttempts != api.EdgeRuleRetryMaxAttempts || policy.MaxReplays != api.EdgeRuleRetryMaxAttempts-1 || policy.MaxAttemptsSource != "platform_ceiling" {
+		t.Fatalf("attempt ceiling = %#v", policy)
+	}
+	if policy.MinRemainingMS != api.EdgeRuleRetryDefaultMinRemainingMs || policy.BackoffMS != 0 || policy.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || policy.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
+		t.Fatalf("retry defaults = %#v", policy)
+	}
+	if policy.MethodEligibility != "non_idempotent_disabled" || policy.IdempotencyKeyPresent {
+		t.Fatalf("method guard = %#v", policy)
+	}
+	if !strings.Contains(result.Simulation.Reason, "prevents replay") {
+		t.Fatalf("blocked method explanation = %q", result.Simulation.Reason)
+	}
+}
+
+func TestSimulateRetryRuleRequiresIdempotencyKeyForOptedInPost(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "retry-key-guard", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"retry":{"max_attempts":2,"allow_non_idempotent":true}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders", Method: http.MethodPost, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].RetryPolicy
+	if policy == nil || !policy.AllowNonIdempotent || policy.IdempotencyKeyPresent || policy.MethodEligibility != "idempotency_key_required" {
+		t.Fatalf("method guard = %#v", policy)
+	}
+	if !strings.Contains(result.Simulation.Reason, "idempotency_key_required") || !strings.Contains(result.Simulation.Reason, "prevents replay") {
+		t.Fatalf("missing-key explanation = %q", result.Simulation.Reason)
+	}
+}
+
+func TestSimulateRetryRuleRequiresEffectiveAttemptCount(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "invalid-retry", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"retry":{"max_attempts":1}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders", Method: http.MethodGet, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Rules[0].Outcome != "unavailable" || !strings.Contains(result.Rules[0].OutcomeReason, "gateway compilation would drop this rule") {
+		t.Fatalf("invalid rule preview = %#v", result.Rules[0])
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "unavailable" || result.Simulation.StoppedAt != "retry" {
+		t.Fatalf("invalid rule simulation = %#v", result.Simulation)
 	}
 }
 
