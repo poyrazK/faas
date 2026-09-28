@@ -131,7 +131,7 @@ func cmdBindingsObjectStorage(args []string) int {
 	case "revoke":
 		return cmdBindingsObjectStorageRevoke(args[1:])
 	default:
-		fmt.Fprintf(osStderr, "unknown object-storage binding subcommand %q\n", args[0])
+		_, _ = fmt.Fprintf(osStderr, "unknown object-storage binding subcommand %q\n", args[0])
 		return 1
 	}
 }
