@@ -1,4 +1,4 @@
-# ADR-284 · Tenant-scoped hostname verification webhooks
+# ADR-289 · Tenant-scoped hostname verification webhooks
 
 - **Status:** accepted
 - **Date:** 2026-09-27
