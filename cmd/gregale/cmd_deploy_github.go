@@ -241,7 +241,7 @@ func normalizeGithubActionSHA(raw string) (string, error) {
 		return "", errors.New("expected a full 40-character Git commit SHA")
 	}
 	for _, r := range sha {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 			return "", errors.New("expected a full 40-character Git commit SHA")
 		}
 	}
