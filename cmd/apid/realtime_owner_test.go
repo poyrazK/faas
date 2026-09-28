@@ -16,17 +16,20 @@ import (
 )
 
 type fakeRealtimeNode struct {
-	connections []realtime.ConnectionInfo
-	endpoints   []string
-	sends       int
-	closes      int
-	subs        int
-	pubs        int
-	registered  int
-	removed     int
-	connReads   int
-	connErr     error
-	publishErr  error
+	connections      []realtime.ConnectionInfo
+	endpoints        []string
+	channelRoutes    []realtime.ChannelRoute
+	channelRoutesErr error
+	sends            int
+	closes           int
+	subs             int
+	pubs             int
+	registered       int
+	removed          int
+	connReads        int
+	routeReads       int
+	connErr          error
+	publishErr       error
 }
 
 func (f *fakeRealtimeNode) Send(context.Context, string, string, realtime.Message) error {
@@ -64,6 +67,25 @@ func (f *fakeRealtimeNode) Endpoints(context.Context) ([]string, error) {
 		return nil, f.connErr
 	}
 	return append([]string(nil), f.endpoints...), nil
+}
+func (f *fakeRealtimeNode) ChannelRoutes(context.Context) ([]realtime.ChannelRoute, error) {
+	f.routeReads++
+	if f.channelRoutesErr != nil {
+		return nil, f.channelRoutesErr
+	}
+	if f.channelRoutes != nil {
+		return append([]realtime.ChannelRoute(nil), f.channelRoutes...), nil
+	}
+	if f.connErr != nil {
+		return nil, f.connErr
+	}
+	routes := make([]realtime.ChannelRoute, 0)
+	for _, connection := range f.connections {
+		for _, channel := range connection.Channels {
+			routes = append(routes, realtime.ChannelRoute{EndpointID: connection.EndpointID, Channel: channel})
+		}
+	}
+	return routes, nil
 }
 func (f *fakeRealtimeNode) RegisterEndpoint(context.Context, realtime.Endpoint) error {
 	f.registered++

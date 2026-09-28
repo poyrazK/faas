@@ -69,6 +69,48 @@ func TestManagerPublishSelectsEndpointAndChannel(t *testing.T) {
 	<-otherEndpoint.outbound
 }
 
+func TestManagerChannelRouteSnapshotReturnsUniqueEndpointChannelPairs(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer m.cancel()
+	for _, endpointID := range []string{"first", "second"} {
+		if err := m.RegisterEndpoint(Endpoint{ID: endpointID, MaxMessageBytes: 1024}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := addSyntheticConnection(t, m, "first")
+	second := addSyntheticConnection(t, m, "first")
+	otherEndpoint := addSyntheticConnection(t, m, "second")
+	for _, subscription := range []struct {
+		id      string
+		channel string
+	}{
+		{first.info.ID, "alerts"},
+		{first.info.ID, "alerts"},
+		{second.info.ID, "alerts"},
+		{second.info.ID, "updates"},
+		{otherEndpoint.info.ID, "alerts"},
+	} {
+		if err := m.Subscribe(subscription.id, subscription.channel); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := []ChannelRoute{
+		{EndpointID: "first", Channel: "alerts"},
+		{EndpointID: "first", Channel: "updates"},
+		{EndpointID: "second", Channel: "alerts"},
+	}
+	got := m.ChannelRouteSnapshot()
+	if len(got) != len(want) {
+		t.Fatalf("ChannelRouteSnapshot = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ChannelRouteSnapshot = %+v, want %+v", got, want)
+		}
+	}
+}
+
 func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 	m := NewManager(Config{OutboundQueue: 512}, nil)
 	defer m.cancel()

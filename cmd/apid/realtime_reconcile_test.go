@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,44 @@ type reconcileRealtimeRegistrar struct {
 	removed    []string
 	fail       map[string]error
 	inventory  []string
+}
+
+func TestNodeChannelRouteSnapshotUsesCompactEndpoint(t *testing.T) {
+	op := &fakeRealtimeNode{
+		connections:   []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"connection-snapshot"}}},
+		channelRoutes: []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}},
+	}
+
+	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
+	if err != nil {
+		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
+	}
+	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}}
+	if len(routes) != len(want) || routes[0] != want[0] {
+		t.Fatalf("routes = %+v, want %+v", routes, want)
+	}
+	if op.routeReads != 1 || op.connReads != 0 {
+		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 0)", op.routeReads, op.connReads)
+	}
+}
+
+func TestNodeChannelRouteSnapshotFallsBackForOlderNode(t *testing.T) {
+	op := &fakeRealtimeNode{
+		connections:      []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"updates"}}},
+		channelRoutesErr: &realtime.ManagementError{StatusCode: http.StatusNotFound},
+	}
+
+	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
+	if err != nil {
+		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
+	}
+	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "updates"}}
+	if len(routes) != len(want) || routes[0] != want[0] {
+		t.Fatalf("routes = %+v, want fallback %+v", routes, want)
+	}
+	if op.routeReads != 1 || op.connReads != 1 {
+		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 1)", op.routeReads, op.connReads)
+	}
 }
 
 func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (realtime.EndpointInventory, error) {
