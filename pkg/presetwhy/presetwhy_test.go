@@ -144,14 +144,15 @@ func TestDecorate_ZeroObservedUsesStatic(t *testing.T) {
 
 // TestCodes_SortedAndComplete asserts Codes returns a deterministic
 // sorted list of all customer-facing catalog rows (the 3 originally-enabled
-// + the 5 ADR-123 signals + the SLO burn signal). The tripwire in
+// + the 5 ADR-123 signals + the SLO burn signal + the login target
+// pressure signal). The tripwire in
 // cmd/gregale/lint_tripwires_test.go uses Codes() for the inverse
 // membership check (every preset seed row → catalog row), so a
 // stable ordering keeps the diff readable when a row is added.
 func TestCodes_SortedAndComplete(t *testing.T) {
 	codes := Codes()
-	if len(codes) != 9 {
-		t.Errorf("Codes() returned %d entries; want 9 customer-facing presets", len(codes))
+	if len(codes) != 10 {
+		t.Errorf("Codes() returned %d entries; want 10 customer-facing presets", len(codes))
 	}
 	// Spot-check the first + last (sorted) entries.
 	if codes[0] != "api_down" {

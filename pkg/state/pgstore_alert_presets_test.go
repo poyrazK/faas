@@ -299,6 +299,7 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"new_error":                     true,
 		"daily_spend_eur_1":             true,
 		"slo_burn_rate":                 true,
+		"login_target_pressure":         true,
 	}
 	got := make(map[string]bool)
 	for rows.Next() {
