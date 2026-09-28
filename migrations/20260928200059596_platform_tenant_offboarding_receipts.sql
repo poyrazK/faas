@@ -1,3 +1,5 @@
+-- filename: 20260928200059596_platform_tenant_offboarding_receipts.sql
+
 -- +goose Up
 -- +goose StatementBegin
 -- Successful confirmed offboarding leaves a secret-free outcome that an
@@ -18,4 +20,6 @@ CREATE INDEX IF NOT EXISTS platform_tenant_offboarding_receipts_history_idx
 -- +goose StatementEnd
 
 -- +goose Down
+-- +goose StatementBegin
 DROP TABLE IF EXISTS platform_tenant_offboarding_receipts;
+-- +goose StatementEnd
