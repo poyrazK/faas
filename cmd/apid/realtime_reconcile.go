@@ -42,7 +42,7 @@ func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owne
 			if err != nil {
 				return fmt.Errorf("node %s route lock: %w", node.ID, err)
 			}
-			defer lock.Release()
+			defer lock.Release(ctx)
 			generation, err := owner.channelRoutes.CurrentManagedRealtimeChannelRouteGeneration(ctx)
 			if err != nil {
 				return fmt.Errorf("node %s route generation: %w", node.ID, err)

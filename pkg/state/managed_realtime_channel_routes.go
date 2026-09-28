@@ -38,12 +38,12 @@ type ManagedRealtimeChannelRouteView struct {
 // ManagedRealtimeChannelRouteLock serializes a node's Subscribe operation
 // with its live-connection snapshot and route replacement.
 type ManagedRealtimeChannelRouteLock interface {
-	Release()
+	Release(context.Context)
 }
 
-type managedRealtimeChannelRouteLockFunc func()
+type managedRealtimeChannelRouteLockFunc func(context.Context)
 
-func (f managedRealtimeChannelRouteLockFunc) Release() { f() }
+func (f managedRealtimeChannelRouteLockFunc) Release(ctx context.Context) { f(ctx) }
 
 // ManagedRealtimeChannelRouteStore is optional so narrow state-store
 // integrations retain full-broadcast behavior.
@@ -108,7 +108,7 @@ func (s *PgStore) AcquireManagedRealtimeChannelRouteLock(ctx context.Context, no
 	if err != nil {
 		return nil, err
 	}
-	return managedRealtimeChannelRouteLockFunc(func() { release(context.Background()) }), nil
+	return managedRealtimeChannelRouteLockFunc(func(ctx context.Context) { release(ctx) }), nil
 }
 
 func (s *PgStore) AddManagedRealtimeChannelRoutes(ctx context.Context, routes []ManagedRealtimeChannelRoute) error {
@@ -164,7 +164,7 @@ func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeI
 	if err != nil {
 		return fmt.Errorf("state: begin realtime channel route snapshot: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	endpointIDs := managedRealtimeChannelRouteEndpointIDs(unique)
 	oldRows, err := tx.Query(ctx, `
 		select distinct endpoint_id::text
@@ -227,7 +227,7 @@ func (s *PgStore) BeginManagedRealtimeChannelRouteRebuild(ctx context.Context) (
 	if err != nil {
 		return false, fmt.Errorf("state: begin realtime channel route rebuild: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var generation int64
 	if err := tx.QueryRow(ctx, `
 		select generation from managed_realtime_channel_route_generation
@@ -326,7 +326,7 @@ func (s *PgStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Context
 	if err != nil {
 		return false, fmt.Errorf("state: begin realtime channel route rebuild finalization: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		select endpoint_id::text
 		  from managed_realtime_channel_route_overflow
@@ -468,12 +468,12 @@ func (s *PgStore) pruneInactiveManagedRealtimeChannelRoutes(ctx context.Context)
 			return err
 		}
 		err = func() error {
-			defer lock.Release()
+			defer lock.Release(ctx)
 			tx, err := s.pool.Begin(ctx)
 			if err != nil {
 				return fmt.Errorf("state: begin inactive realtime route cleanup: %w", err)
 			}
-			defer tx.Rollback(ctx)
+			defer func() { _ = tx.Rollback(ctx) }()
 			var active bool
 			if err := tx.QueryRow(ctx, `select active from compute_nodes where id = $1 for update`, nodeID).Scan(&active); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
@@ -683,7 +683,7 @@ func (m *MemStore) AcquireManagedRealtimeChannelRouteLock(ctx context.Context, n
 	m.mu.Unlock()
 	select {
 	case lock <- struct{}{}:
-		return managedRealtimeChannelRouteLockFunc(func() { <-lock }), nil
+		return managedRealtimeChannelRouteLockFunc(func(context.Context) { <-lock }), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -842,7 +842,7 @@ func (m *MemStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Contex
 			delete(m.realtimeChannelRouteSnapshots, nodeID)
 		}
 		m.mu.Unlock()
-		lock.Release()
+		lock.Release(ctx)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

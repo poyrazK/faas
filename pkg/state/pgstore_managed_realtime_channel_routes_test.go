@@ -1,7 +1,9 @@
 package state_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -51,4 +53,25 @@ func TestPgStoreManagedRealtimeChannelRouteSnapshot(t *testing.T) {
 	if err != nil || !disabled || len(nodeIDs) != 0 {
 		t.Fatalf("overflow snapshot = (%v, %v, %v), want ([], true, nil)", nodeIDs, disabled, err)
 	}
+}
+
+func TestPgStoreManagedRealtimeChannelRouteLockReleaseAfterCancellation(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	nodeID := uuid.NewString()
+	lock, err := s.AcquireManagedRealtimeChannelRouteLock(ctx, nodeID)
+	if err != nil {
+		t.Fatalf("AcquireManagedRealtimeChannelRouteLock: %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	lock.Release(canceledCtx)
+
+	acquireCtx, acquireCancel := context.WithTimeout(context.Background(), time.Second)
+	defer acquireCancel()
+	nextLock, err := s.AcquireManagedRealtimeChannelRouteLock(acquireCtx, nodeID)
+	if err != nil {
+		t.Fatalf("reacquire route lock after canceled release: %v", err)
+	}
+	nextLock.Release(context.Background())
 }

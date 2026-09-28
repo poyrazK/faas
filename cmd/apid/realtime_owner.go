@@ -293,7 +293,7 @@ func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connect
 			if err != nil {
 				return fmt.Errorf("realtime: lock channel route snapshot before subscribe: %w", err)
 			}
-			defer lock.Release()
+			defer lock.Release(ctx)
 			if err := o.channelRoutes.AddManagedRealtimeChannelRoutes(ctx, []state.ManagedRealtimeChannelRoute{{
 				EndpointID: endpointID, Channel: channel, NodeID: lease.NodeID,
 			}}); err != nil {
