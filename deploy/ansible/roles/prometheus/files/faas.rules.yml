@@ -24,7 +24,7 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRealtimeCallbackReplayStalled
-        expr: realtimed_callback_pending > 0 and realtimed_callback_oldest_pending_age_seconds > 300 and increase(realtimed_callback_replay_deliveries_total[5m]) == 0
+        expr: realtimed_callback_replay_ready > 0 and increase(realtimed_callback_replay_attempts_total[5m]) == 0
         for: 5m
         labels:
           severity: warn
@@ -32,7 +32,7 @@ groups:
           family: realtime_callbacks
         annotations:
           summary: "Realtime callback replay has stalled"
-          description: "The node has pending callbacks older than five minutes but no successful replay deliveries in the last five minutes. Check realtimed logs, callback receiver failures, and outbox disk health."
+          description: "The node has callbacks eligible for replay but no replay attempts in the last five minutes. Check the replay supervisor, realtimed logs, and outbox disk health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
       - alert: FaasRealtimeCallbackReplayRestarting
@@ -45,6 +45,54 @@ groups:
         annotations:
           summary: "Realtime callback replay keeps restarting"
           description: "The node restarted its callback replay loop at least three times in the last 15 minutes. Inspect realtimed logs and local outbox storage health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxNearCapacity
+        expr: realtimed_callback_pending_capacity_bytes > 0 and (realtimed_callback_pending_bytes / realtimed_callback_pending_capacity_bytes) > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback outbox is near capacity"
+          description: "Pending callbacks use more than 80% of this node's outbox capacity. Restore callback delivery so the durable queue can drain before it stops accepting new records."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxFull
+        expr: increase(realtimed_callback_outbox_full_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback event could not be persisted"
+          description: "The node rejected a callback event because its durable outbox remained full until the admission deadline. A live WebSocket was closed with code 1013 when a message event was rejected."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackOutboxAdmissionFailed
+        expr: increase(realtimed_callback_outbox_admission_errors_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback could not be saved to the outbox"
+          description: "The node failed to admit a callback to its durable outbox for a reason other than capacity exhaustion. Check local storage health and permissions; a live WebSocket is closed with code 1013 when its message cannot be saved."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
+
+      - alert: FaasRealtimeCallbackUnpersisted
+        expr: increase(realtimed_callback_unpersisted_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: realtimed
+          family: realtime_callbacks
+        annotations:
+          summary: "Realtime callback failed without durable persistence"
+          description: "A message or disconnect callback failed while no durable outbox was configured. Message failures close the live WebSocket with code 1013. Configure a durable outbox for production callback delivery."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeCallbacks.md"
 
       - alert: FaasRealtimeCallbackDeadLettersPresent
