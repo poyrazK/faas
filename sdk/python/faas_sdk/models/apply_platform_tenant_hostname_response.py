@@ -27,6 +27,9 @@ class ApplyPlatformTenantHostnameResponse:
     verified_at: datetime.datetime | Unset = UNSET
     last_error: str | Unset = UNSET
     txt_record: str | Unset = UNSET
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only after the tenant bundle created this hostname; omitted for unmanaged resources and dry-run
+    creates."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +49,8 @@ class ApplyPlatformTenantHostnameResponse:
 
         txt_record = self.txt_record
 
+        managed_by_platform_tenant = self.managed_by_platform_tenant
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -63,6 +68,8 @@ class ApplyPlatformTenantHostnameResponse:
             field_dict["last_error"] = last_error
         if txt_record is not UNSET:
             field_dict["txt_record"] = txt_record
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
 
         return field_dict
 
@@ -88,6 +95,8 @@ class ApplyPlatformTenantHostnameResponse:
 
         txt_record = d.pop("txt_record", UNSET)
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         apply_platform_tenant_hostname_response = cls(
             hostname=hostname,
             verified=verified,
@@ -96,6 +105,7 @@ class ApplyPlatformTenantHostnameResponse:
             verified_at=verified_at,
             last_error=last_error,
             txt_record=txt_record,
+            managed_by_platform_tenant=managed_by_platform_tenant,
         )
 
         apply_platform_tenant_hostname_response.additional_properties = d

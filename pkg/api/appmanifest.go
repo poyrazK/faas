@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -239,9 +240,19 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 // local to each gateway replica; the existing app/account limits remain the
 // authoritative fleet-wide ceilings.
 type PreAuthRateLimitConfig struct {
-	Mode              string `json:"mode"` // off | observe | enforce
-	RequestsPerSecond int    `json:"requests_per_second,omitempty"`
-	Burst             int    `json:"burst,omitempty"`
+	Mode              string              `json:"mode"` // off | observe | enforce
+	RequestsPerSecond int                 `json:"requests_per_second,omitempty"`
+	Burst             int                 `json:"burst,omitempty"`
+	Routes            []PreAuthRouteLimit `json:"routes,omitempty"`
+}
+
+// PreAuthRouteLimit adds a separate source bucket for one public method/path.
+// Matching is exact, against the decoded public URL path before edge rewrites.
+type PreAuthRouteLimit struct {
+	Method            string `json:"method"`
+	Path              string `json:"path"`
+	RequestsPerSecond int    `json:"requests_per_second"`
+	Burst             int    `json:"burst"`
 }
 
 const (
@@ -268,6 +279,35 @@ func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
 	if c.RequestsPerSecond < 1 || c.RequestsPerSecond > limits.RateLimitRPS ||
 		c.Burst < 1 || c.Burst > limits.RateLimitBurst {
 		return fmt.Errorf("pre_auth_rate_limit requests_per_second must be 1..%d and burst must be 1..%d", limits.RateLimitRPS, limits.RateLimitBurst)
+	}
+	return c.ValidateRoutes()
+}
+
+// ValidateRoutes checks configured route overrides without a plan lookup. The
+// gateway also calls this on persisted policies before applying plan-clamped rates.
+func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
+	if len(c.Routes) > 16 {
+		return fmt.Errorf("pre_auth_rate_limit.routes allows at most 16 entries")
+	}
+	for i, route := range c.Routes {
+		switch route.Method {
+		case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
+		default:
+			return fmt.Errorf("pre_auth_rate_limit.routes method %q is unsupported", route.Method)
+		}
+		if len(route.Path) == 0 || len(route.Path) > 256 || route.Path[0] != '/' ||
+			strings.ContainsAny(route.Path, "?#%\\\r\n\t") || path.Clean(route.Path) != route.Path {
+			return fmt.Errorf("pre_auth_rate_limit.routes path %q must be a canonical absolute path of at most 256 bytes", route.Path)
+		}
+		for _, previous := range c.Routes[:i] {
+			if previous.Method == route.Method && previous.Path == route.Path {
+				return fmt.Errorf("pre_auth_rate_limit.routes has duplicate %s %s", route.Method, route.Path)
+			}
+		}
+		if route.RequestsPerSecond < 1 || route.RequestsPerSecond > c.RequestsPerSecond ||
+			route.Burst < 1 || route.Burst > c.Burst {
+			return fmt.Errorf("pre_auth_rate_limit.routes %s %s must not exceed the app-wide rate and burst", route.Method, route.Path)
+		}
 	}
 	return nil
 }

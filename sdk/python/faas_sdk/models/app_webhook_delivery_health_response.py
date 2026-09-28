@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_webhook_delivery_health_response_receiver_state import (
+    AppWebhookDeliveryHealthResponseReceiverState,
+    check_app_webhook_delivery_health_response_receiver_state,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="AppWebhookDeliveryHealthResponse")
@@ -15,19 +19,23 @@ T = TypeVar("T", bound="AppWebhookDeliveryHealthResponse")
 
 @_attrs_define
 class AppWebhookDeliveryHealthResponse:
-    """Current queue counts and terminal outcomes over the 24 hours ending at snapshot_at."""
+    """Receiver recovery state, claimable queue age, and terminal outcomes over the 24 hours ending at snapshot_at."""
 
     webhook_id: UUID
     snapshot_at: datetime.datetime
     pending_count: int
     in_flight_count: int
     dead_count: int
+    receiver_state: AppWebhookDeliveryHealthResponseReceiverState
+    """Claim gate at snapshot_at; probing requires a live recovery delivery lease."""
     recent_succeeded_count: int
     recent_dead_count: int
     receiver_cooldown_until: datetime.datetime | Unset = UNSET
-    """Active receiver Retry-After deadline; new claims for this subscription resume when it expires."""
+    """Active receiver pause deadline; after it expires, one recovery delivery probes before normal capacity
+    resumes."""
     oldest_overdue_at: datetime.datetime | Unset = UNSET
-    """Earliest due time among claimable pending or expired in-flight deliveries; omitted during an active receiver cooldown."""
+    """Earliest due time among claimable pending or expired in-flight deliveries; omitted while the subscription
+    has no claim capacity."""
     oldest_overdue_seconds: int | Unset = UNSET
     """Age of the oldest overdue delivery at snapshot_at."""
     recent_success_rate: float | Unset = UNSET
@@ -44,6 +52,8 @@ class AppWebhookDeliveryHealthResponse:
         in_flight_count = self.in_flight_count
 
         dead_count = self.dead_count
+
+        receiver_state: str = self.receiver_state
 
         recent_succeeded_count = self.recent_succeeded_count
 
@@ -70,6 +80,7 @@ class AppWebhookDeliveryHealthResponse:
                 "pending_count": pending_count,
                 "in_flight_count": in_flight_count,
                 "dead_count": dead_count,
+                "receiver_state": receiver_state,
                 "recent_succeeded_count": recent_succeeded_count,
                 "recent_dead_count": recent_dead_count,
             }
@@ -97,6 +108,8 @@ class AppWebhookDeliveryHealthResponse:
         in_flight_count = d.pop("in_flight_count")
 
         dead_count = d.pop("dead_count")
+
+        receiver_state = check_app_webhook_delivery_health_response_receiver_state(d.pop("receiver_state"))
 
         recent_succeeded_count = d.pop("recent_succeeded_count")
 
@@ -126,6 +139,7 @@ class AppWebhookDeliveryHealthResponse:
             pending_count=pending_count,
             in_flight_count=in_flight_count,
             dead_count=dead_count,
+            receiver_state=receiver_state,
             recent_succeeded_count=recent_succeeded_count,
             recent_dead_count=recent_dead_count,
             receiver_cooldown_until=receiver_cooldown_until,

@@ -3997,8 +3997,15 @@ func (c *Client) SetSecret(ctx context.Context, slug, key, value string) error {
 // env_scope_reserved; the client doesn't pre-validate so the
 // error envelope reaches the caller verbatim.
 func (c *Client) SetSecretWithScope(ctx context.Context, slug, key, value, scope string) error {
+	return c.SetSecretWithScopeAndClass(ctx, slug, key, value, scope, "")
+}
+
+// SetSecretWithScopeAndClass updates one sealed secret and optionally changes
+// its snapshot-retention class. Empty class preserves an existing class and
+// defaults a new row to persistent.
+func (c *Client) SetSecretWithScopeAndClass(ctx context.Context, slug, key, value, scope, secretClass string) error {
 	return c.do(ctx, "PUT", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
-		PutAppSecretRequest{Value: value}, nil)
+		PutAppSecretRequest{Value: value, SecretClass: secretClass}, nil)
 }
 func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
 	return c.UnsetSecretWithScope(ctx, slug, key, "")

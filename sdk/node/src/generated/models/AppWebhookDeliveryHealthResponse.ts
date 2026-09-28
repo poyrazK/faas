@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Current queue counts and terminal outcomes over the 24 hours ending at snapshot_at.
+ * Receiver recovery state, claimable queue age, and terminal outcomes over the 24 hours ending at snapshot_at.
  */
 export type AppWebhookDeliveryHealthResponse = {
   webhook_id: string;
@@ -12,11 +12,15 @@ export type AppWebhookDeliveryHealthResponse = {
   in_flight_count: number;
   dead_count: number;
   /**
-   * Active receiver Retry-After deadline; new claims for this subscription resume when it expires.
+   * Claim gate at snapshot_at; probing requires a live recovery delivery lease.
+   */
+  receiver_state: 'ready' | 'cooling_down' | 'awaiting_probe' | 'probing';
+  /**
+   * Active receiver pause deadline; after it expires, one recovery delivery probes before normal capacity resumes.
    */
   receiver_cooldown_until?: string;
   /**
-   * Earliest due time among claimable pending or expired in-flight deliveries; omitted during an active receiver cooldown.
+   * Earliest due time among claimable pending or expired in-flight deliveries; omitted while the subscription has no claim capacity.
    */
   oldest_overdue_at?: string;
   /**
@@ -30,3 +34,4 @@ export type AppWebhookDeliveryHealthResponse = {
    */
   recent_success_rate?: number;
 };
+

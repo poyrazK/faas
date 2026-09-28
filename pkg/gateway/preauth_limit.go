@@ -3,6 +3,8 @@ package gateway
 import (
 	"container/list"
 	"net/http"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,6 +163,12 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	// the app remains reachable while still honoring its new plan.
 	rps := min(config.RequestsPerSecond, limits.RateLimitRPS)
 	burst := min(config.Burst, limits.RateLimitBurst)
+	if err := config.ValidateRoutes(); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Pre-auth rate limit unavailable", "the app's pre-auth rate limit configuration is invalid"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return true
+	}
 	ip, ok := clientIPFromTrustedXFF(r)
 	if !ok {
 		if config.Mode == api.PreAuthRateLimitObserve {
@@ -174,21 +182,46 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return true
 	}
-	if h.preAuthLimiter.Allow(app.ID, ip.String(), rps, burst) {
+	allowed := h.preAuthLimiter.Allow(app.ID, ip.String(), rps, burst)
+	scope := "pre-auth"
+	if allowed && len(config.Routes) > 0 {
+		// Match the decoded public path before edge rewrites. Cleaning covers
+		// common router normalization, so /login/../login cannot bypass an
+		// exact /login policy when the application normalizes that path.
+		publicPath := path.Clean(strings.ReplaceAll(r.URL.Path, "\\", "/"))
+		for _, route := range config.Routes {
+			if route.Method != r.Method || route.Path != publicPath {
+				continue
+			}
+			policyID := app.ID + "\x00" + route.Method + " " + route.Path
+			allowed = h.preAuthLimiter.Allow(policyID, ip.String(), min(route.RequestsPerSecond, rps), min(route.Burst, burst))
+			scope = "pre-auth-route"
+			break
+		}
+	}
+	if allowed {
 		return false
 	}
 	if config.Mode == api.PreAuthRateLimitObserve {
 		if h.metrics != nil {
-			h.metrics.ObservePreAuthRateLimit(app.ID, "would_block")
+			outcome := "would_block"
+			if scope == "pre-auth-route" {
+				outcome = "route_would_block"
+			}
+			h.metrics.ObservePreAuthRateLimit(app.ID, outcome)
 		}
 		return false
 	}
 	w.Header().Set("Retry-After", "1")
-	w.Header().Set("x-faas-rate-limit-scope", "pre-auth")
+	w.Header().Set("x-faas-rate-limit-scope", scope)
 	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-		"Pre-auth rate limit exceeded", "this source has sent too many requests to the app"))
+		"Pre-auth rate limit exceeded", "this source has sent too many requests"))
 	if h.metrics != nil {
-		h.metrics.ObservePreAuthRateLimit(app.ID, "blocked")
+		outcome := "blocked"
+		if scope == "pre-auth-route" {
+			outcome = "route_blocked"
+		}
+		h.metrics.ObservePreAuthRateLimit(app.ID, outcome)
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return true

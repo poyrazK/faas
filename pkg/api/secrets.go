@@ -5,6 +5,11 @@ import (
 	"regexp"
 )
 
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
 // Secret DTOs (spec §11/G2). Plaintext VALUES only appear in PutAppSecretRequest
 // and never leave apid except transiently during the seal call
 // (pkg/secretbox.Seal). All response shapes omit the value entirely.
@@ -18,6 +23,9 @@ type PutAppSecretRequest struct {
 	// enforced against Limits.SecretValueMaxBytes BEFORE the seal so
 	// over-cap payloads never reach the seal path.
 	Value string `json:"value"`
+	// SecretClass is an optional snapshot-retention policy. Empty preserves
+	// an existing class and defaults a new secret to persistent.
+	SecretClass string `json:"secret_class,omitempty"`
 }
 
 // SecretRuntimeReloadObservation combines guest-init's latest projection/
@@ -49,6 +57,9 @@ func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
 	}
+	if r.SecretClass != "" && r.SecretClass != SecretClassPersistent && r.SecretClass != SecretClassEphemeral {
+		return ErrValidation("secret_class must be persistent or ephemeral")
+	}
 	return nil
 }
 
@@ -63,10 +74,11 @@ func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
 // the same JSON tag verbatim so SDK generators handle both surfaces
 // with one rule.
 type AppSecretResponse struct {
-	Key       string `json:"key"`
-	Scope     string `json:"scope"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Key         string `json:"key"`
+	Scope       string `json:"scope"`
+	SecretClass string `json:"secret_class"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext (ADR-089). Returns ""
 	// for rows sealed before migration 00166 — those rows have
@@ -130,11 +142,12 @@ type AppSecretResponse struct {
 //
 // ValueHash mirrors AppSecretResponse.ValueHash (ADR-117 PR-C).
 type ScopedAppSecretResponse struct {
-	Scope     string `json:"scope"`
-	Key       string `json:"key"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	Kid       string `json:"kid,omitempty"`
+	Scope       string `json:"scope"`
+	Key         string `json:"key"`
+	SecretClass string `json:"secret_class"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	Kid         string `json:"kid,omitempty"`
 	// ValueHash — see AppSecretResponse.ValueHash for the
 	// semantics. omitempty so pre-PR-C clients see no field.
 	ValueHash                    string                           `json:"value_hash,omitempty"`
@@ -231,11 +244,12 @@ type SecretRevocationTarget struct {
 // list crosses scopes — a customer with prod + staging rows needs
 // to render "scope: prod" alongside the (app_slug, key) pair.
 type AccountAppSecretResponse struct {
-	AppID      string `json:"app_id"`
-	AppSlug    string `json:"app_slug"`
-	Key        string `json:"key"`
-	Scope      string `json:"scope"`
-	Ciphertext string `json:"ciphertext"`
+	AppID       string `json:"app_id"`
+	AppSlug     string `json:"app_slug"`
+	Key         string `json:"key"`
+	Scope       string `json:"scope"`
+	SecretClass string `json:"secret_class"`
+	Ciphertext  string `json:"ciphertext"`
 	// ValueHash — see AppSecretResponse.ValueHash (ADR-117 PR-C).
 	// Empty for rows sealed before migration 00296.
 	ValueHash string `json:"value_hash,omitempty"`

@@ -156,6 +156,7 @@ func (s *server) getPlatformTenant(w http.ResponseWriter, r *http.Request, acct 
 	for _, surface := range surfaces {
 		out.Surfaces = append(out.Surfaces, api.PlatformTenantSurfaceResponse{
 			ID: surface.ID, AppID: surface.AppID, Name: surface.Name, Status: string(surface.Status),
+			ManagedByPlatformTenant: surface.PlatformTenantManaged,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -250,6 +251,7 @@ func (s *server) linkPlatformTenantSurface(w http.ResponseWriter, r *http.Reques
 	})
 	writeJSON(w, http.StatusOK, api.PlatformTenantSurfaceResponse{
 		ID: surface.ID, AppID: surface.AppID, Name: surface.Name, Status: string(surface.Status),
+		ManagedByPlatformTenant: surface.PlatformTenantManaged,
 	})
 }
 

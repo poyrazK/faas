@@ -1,8 +1,8 @@
-# ADR-341 · Durable app park webhook completion
+# ADR-342 · Durable app park webhook completion
 
 - **Status:** accepted
 - **Date:** 2026-09-28
-- **Extends:** ADR-076, ADR-340
+- **Extends:** ADR-076, ADR-341
 
 ## Decision
 

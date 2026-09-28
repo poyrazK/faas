@@ -54,9 +54,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 342 | [Durable app wake webhook completion](342-app-wake-webhook-completion.md) | accepted | Track parked-to-active wakes until a ready instance exists, recover app.woken in schedd, and supersede pending wakes when park wins |
-| 341 | [Durable app park webhook completion](341-app-park-webhook-completion.md) | accepted | Track park transitions through instance drain, recover completion in schedd, then enqueue `app.parked` through ADR-340's outbox |
-| 340 | [Atomic usage statement webhook production](340-usage-statement-webhook-outbox.md) | accepted | Commit the finalized statement and webhook event together, then relay to the delivery ledger with event/subscription dedupe; extends ADR-076 |
+| 343 | [Durable app wake webhook completion](343-app-wake-webhook-completion.md) | accepted | Track parked-to-active wakes until a ready instance exists, recover app.woken in schedd, and supersede pending wakes when park wins |
+| 342 | [Durable app park webhook completion](342-app-park-webhook-completion.md) | accepted | Track park transitions through instance drain, recover completion in schedd, then enqueue `app.parked` through ADR-341's outbox |
+| 341 | [Atomic usage statement webhook production](341-usage-statement-webhook-outbox.md) | accepted | Commit the finalized statement and webhook event together, then relay to the delivery ledger with event/subscription dedupe; extends ADR-076 |
+| 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
 | 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
 | 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
 | 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |

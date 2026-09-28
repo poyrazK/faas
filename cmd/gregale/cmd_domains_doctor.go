@@ -22,8 +22,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -33,7 +33,8 @@ import (
 // cmdDomainsDoctor is the `gregale domains doctor <domain>` handler.
 // Calls apid's GET /v1/domains/{domain}/doctor and renders the
 // 5-check report with remediation. Returns 0 on Healthy, 1
-// otherwise; --json emits the raw DomainDoctorReport.
+// otherwise; --json emits the raw DomainDoctorReport with the same
+// health-based exit code.
 func cmdDomainsDoctor(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "usage: gregale domains doctor <domain>\n")
@@ -51,11 +52,12 @@ func cmdDomainsDoctor(args []string) int {
 		return printErr("Doctor failed", err)
 	}
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return printErrOnEncode(enc.Encode(report))
+		if code := jsonOut(writeJSON(report)); code != 0 {
+			return code
+		}
+	} else {
+		printDoctorReport(osStdout, report)
 	}
-	printDoctorReport(os.Stdout, report)
 	if report.Healthy {
 		return 0
 	}
@@ -75,7 +77,7 @@ func cmdDomainsDoctor(args []string) int {
 // All writes use _ = fmt.Fprint*(w, ...) — writer failures (closed
 // pipe, broken TTY) are unrecoverable and we never want a status
 // line to crash the CLI on its way out. Mirrors output.writeStatus.
-func printDoctorReport(w *os.File, r api.DomainDoctorReport) {
+func printDoctorReport(w io.Writer, r api.DomainDoctorReport) {
 	failing := 0
 	for _, c := range r.Checks {
 		if c.Status == doctorCheckFail {
@@ -84,7 +86,11 @@ func printDoctorReport(w *os.File, r api.DomainDoctorReport) {
 	}
 	status := fmt.Sprintf("%d of %d checks failing", failing, len(r.Checks))
 	if failing == 0 {
-		status = fmt.Sprintf("all %d checks OK", len(r.Checks))
+		if r.Healthy {
+			status = fmt.Sprintf("all %d checks OK", len(r.Checks))
+		} else {
+			status = "domain is not ready"
+		}
 	}
 	_, _ = fmt.Fprintf(w, "Domain:      %s\n", r.Domain)
 	_, _ = fmt.Fprintf(w, "AppID:       %s\n", r.AppID)
@@ -141,14 +147,4 @@ func glyphFail() string {
 		return GlyphFail + " "
 	}
 	return ""
-}
-
-// printErrOnEncode returns the standard CLI exit code for an
-// encode error. Wrapped here so cmdDomainsDoctor matches the
-// one-return-statement shape used by other handlers.
-func printErrOnEncode(err error) int {
-	if err != nil {
-		return printErr("Encode failed", err)
-	}
-	return 0
 }

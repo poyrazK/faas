@@ -139,6 +139,60 @@ func TestEngineWake_BootStartedCarriesColdReason(t *testing.T) {
 	}
 }
 
+type activeSnapshotBackoffStore struct{ *state.MemStore }
+
+func (activeSnapshotBackoffStore) DeploymentSnapshotBackoffActive(context.Context, string) (state.Deployment, bool, error) {
+	return state.Deployment{}, true, nil
+}
+
+// An ephemeral credential makes old captures unusable even if API-side
+// snapshot invalidation was missed. It also bypasses snapshot-miss backoff:
+// these wakes are deliberately cold boots, not failed cache lookups.
+func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	acct, app, dep := seedApp(t, mem, api.PlanPro, 512, 5)
+	enableWarmSnapshot(t, mem, app.ID)
+	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+		if _, err := mem.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
+			StorageKey: state.SnapshotCaptureMemKey(dep.ID, tier, "before-ephemeral"),
+			Tier:       tier,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
+		}
+	}
+	if err := mem.UpsertAppSecretWithClassInScope(ctx, acct.ID, app.ID, api.DefaultEnvScope,
+		"SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
+		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
+	}
+
+	vmm := &fakeVMM{}
+	store := activeSnapshotBackoffStore{MemStore: mem}
+	e := wakeEngineWithEvents(t, store, vmm, &fakeNotifier{})
+	res, err := e.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake with ephemeral secret and active snapshot backoff: %v", err)
+	}
+	if vmm.restores != 0 || vmm.coldBoots != 1 {
+		t.Fatalf("VMM wake calls: restores=%d cold_boots=%d, want 0/1", vmm.restores, vmm.coldBoots)
+	}
+	for _, row := range eventuallyEventsForInstance(t, store, res.WakeID, 3) {
+		if row.Kind != "wake.boot_started" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if data["cold_reason"] != ColdReasonEphemeralSecret {
+			t.Fatalf("cold_reason = %v, want %s", data["cold_reason"], ColdReasonEphemeralSecret)
+		}
+		return
+	}
+	t.Fatal("no wake.boot_started event")
+}
+
 // historyStore reports snapshot history the way PgStore does (any row,
 // stale or not). MemStore.HasSnapshotHistory always answers false.
 type historyStore struct{ *state.MemStore }

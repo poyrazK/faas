@@ -137,7 +137,7 @@ def regen(overwrite: bool = True) -> None:
     # the spec (e.g. a route that was removed between regens).
     # Stash hand-written wrapper modules before `rmtree` wipes them.
     # The wrapper (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    # `_transport.py`, `idempotency.py`, `release_context.py`) lives INSIDE `faas_sdk/`
+    # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`) lives INSIDE `faas_sdk/`
     # because it imports the generated service classes, but the
     # regen deletes the whole tree. We copy them to a temp dir,
     # rmtree, run the generator, then copy them back so the
@@ -154,6 +154,7 @@ def regen(overwrite: bool = True) -> None:
             "idempotency.py",
             "executions.py",
             "release_context.py",
+            "webhook.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -240,7 +241,7 @@ def regen(overwrite: bool = True) -> None:
     # replaced by our hand-written wrapper) and OVERWRITE the
     # generated `__init__.py` with the hand-written barrel that
     # re-exports the wrapper's `FaaSClient` + sentinels + idempotency
-    # helpers + SSE and release-context helpers. The generated service functions still
+    # helpers + SSE, release-context, and webhook verification helpers. The generated service functions still
     # ship under `faas_sdk.api.<tag>.` and are reached through the
     # wrapper's `client.inner`.
     #
@@ -330,7 +331,7 @@ def regen(overwrite: bool = True) -> None:
                     "--quiet",
                     str(sdk_root),
                     "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,__init__.py",
+                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,webhook.py,__init__.py",
                 ],
                 check=False,
                 capture_output=True,
@@ -615,6 +616,8 @@ Public surface:
   resumable streams for disposable agent executions.
 * `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
   request's project release to managed service calls.
+* `verify_webhook` - verify signed outbound deliveries against their raw body
+  and return the stable delivery ID for receiver-side deduplication.
 """
 
 from ._rfc7807 import (
@@ -650,6 +653,15 @@ from .release_context import (
     current_gregale_release,
     with_gregale_release,
 )
+from .webhook import (
+    DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
+    WEBHOOK_DELIVERY_ID_HEADER,
+    WEBHOOK_SIGNATURE_HEADER,
+    WEBHOOK_TIMESTAMP_HEADER,
+    VerifiedWebhook,
+    WebhookVerificationError,
+    verify_webhook,
+)
 
 __version__ = "0.1.0"
 
@@ -672,6 +684,13 @@ __all__ = (
     "AsyncGregaleReleaseTransport",
     "current_gregale_release",
     "with_gregale_release",
+    "verify_webhook",
+    "VerifiedWebhook",
+    "WebhookVerificationError",
+    "WEBHOOK_SIGNATURE_HEADER",
+    "WEBHOOK_TIMESTAMP_HEADER",
+    "WEBHOOK_DELIVERY_ID_HEADER",
+    "DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE",
     "Problem",
     "FaasError",
     "FaasProblemError",
@@ -699,7 +718,8 @@ def _rewrite_init_py(init_path: Path) -> None:
     """Overwrite the generator's `__init__.py` stub with the wrapper
     barrel. The generated stub only re-exports `Client` and
     `AuthenticatedClient`; the wrapper adds the chain
-    (`FaaSClient`), the four sentinels, idempotency helpers, and SSE.
+    (`FaaSClient`), the four sentinels, idempotency helpers, SSE,
+    release context, and webhook verification.
     """
     init_path.write_text(_INIT_PY_TEMPLATE)
 
@@ -722,7 +742,7 @@ def _canonicalise_to_head(
 
     Wrapper files (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
     `_transport.py`, `idempotency.py`, `executions.py`,
-    `release_context.py`, `__init__.py`) are
+    `release_context.py`, `webhook.py`, `__init__.py`) are
     unaffected: they are restored from `wrapper_stash` /
     overwritten by `_rewrite_init_py` to equal HEAD bytes, so their
     regen SHA matches HEAD's and the loop's `continue` fires.

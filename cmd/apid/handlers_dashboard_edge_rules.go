@@ -86,11 +86,20 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext := *traceInput
 			traceContext.AppMaintenanceLoaded = true
 			traceContext.AppMaintenanceMode = app.MaintenanceMode
-			budgetLimits := appEffectiveLimits(app, acct.Plan)
-			traceContext.AppRequestBudgetLoaded = budgetLimits.RequestBudgetMS > 0 && budgetLimits.RequestBudgetMaxMS > 0
-			traceContext.RequestBudgetMS = budgetLimits.RequestBudgetMS
-			traceContext.RequestBudgetMaxMS = budgetLimits.RequestBudgetMaxMS
+			effectiveLimits := appEffectiveLimits(app, acct.Plan)
+			traceContext.AppRequestBudgetLoaded = effectiveLimits.RequestBudgetMS > 0 && effectiveLimits.RequestBudgetMaxMS > 0
+			traceContext.RequestBudgetMS = effectiveLimits.RequestBudgetMS
+			traceContext.RequestBudgetMaxMS = effectiveLimits.RequestBudgetMaxMS
 			traceContext.RequestTimeoutS = app.Manifest.RequestTimeoutS
+			traceContext.AppThrottleContextLoaded = effectiveLimits.AppRequestRateRPS > 0 && effectiveLimits.AppRequestBurst > 0
+			traceContext.AppRequestRateRPS = effectiveLimits.AppRequestRateRPS
+			traceContext.AppRequestRateBurst = effectiveLimits.AppRequestBurst
+			traceContext.AccountRequestRateRPM = effectiveLimits.AccountRequestRateRPM
+			if planLimits, ok := api.LimitsFor(acct.Plan); ok {
+				traceContext.ThrottlePlanLimitsLoaded = planLimits.RateLimitRPS > 0 && planLimits.RateLimitBurst > 0
+				traceContext.ThrottlePlanMaxRPS = planLimits.RateLimitRPS
+				traceContext.ThrottlePlanMaxBurst = planLimits.RateLimitBurst
+			}
 			traceContext.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
 			traceContext.DeclaredRoutes = make([]api.DeclaredRoute, 0, len(app.DeclaredRoutes))
 			for _, route := range app.DeclaredRoutes {

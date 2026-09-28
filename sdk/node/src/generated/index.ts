@@ -610,6 +610,7 @@ export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageRe
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
 export type { PreAuthRateLimitConfig } from './models/PreAuthRateLimitConfig.js';
+export type { PreAuthRouteLimit } from './models/PreAuthRouteLimit.js';
 export type { PreflightFinding } from './models/PreflightFinding.js';
 export type { PreflightLevel } from './models/PreflightLevel.js';
 export type { PreflightPlanBudget } from './models/PreflightPlanBudget.js';

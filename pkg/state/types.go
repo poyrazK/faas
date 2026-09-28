@@ -633,6 +633,9 @@ type APIConsumer struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	RevokedAt        *time.Time
+	// PlatformTenantManaged marks rows created by the account owner's
+	// platform-tenant bundle apply. A tenant link alone does not imply ownership.
+	PlatformTenantManaged bool
 }
 
 // Active reports whether the consumer can authenticate requests.

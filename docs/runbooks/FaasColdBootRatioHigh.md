@@ -93,6 +93,8 @@ journalctl -u schedd --since '-30m' --no-pager | grep 'wake: no usable snapshot'
 | `base_image_mismatch` | HTTP/2 or gRPC app, runner base changed | Expected once after a base-image release |
 | `snapshot_lookup_failed` | The snapshot query failed | Check Postgres health |
 | `instance_mode` | Worker or job instance (never restores by design) | None |
+| `ephemeral_secret` | Current secret policy forbids restoring captured state | Expected for apps with ephemeral credentials; rotate the value if prior captures must stop working immediately |
+| `secret_policy_unavailable` | Secret retention policy could not be read, so restore was refused | Check Postgres health; wakes cold-boot until policy reads recover |
 
 ### Reasons-and-triage table
 

@@ -190,3 +190,79 @@ func TestPreAuthRateLimitClampsAfterPlanDowngrade(t *testing.T) {
 		}
 	}
 }
+
+func TestPreAuthRouteLimitBlocksSensitivePathBeforeAuthAndWake(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.ConsumerAuthMode = api.ConsumerAuthModeRequired
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 10, Burst: 10,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1}},
+	}
+	store, token := consumerAuthFixture()
+	counted := &countingConsumerAuthStore{fakeConsumerAuthStore: store}
+	h.WithConsumerAuth(counted)
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	request := func(method, path, source string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://jane-api.apps.dom"+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request("POST", "/login", "192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("first login = %d: %s", rec.Code, rec.Body.String())
+	}
+	b.mu.Lock()
+	b.running = false
+	b.targets = nil
+	b.mu.Unlock()
+	if rec := request("POST", "/login", "192.0.2.1"); rec.Code != http.StatusTooManyRequests || rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth-route" {
+		t.Fatalf("second login = %d headers=%v: %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if rec := request("POST", "/a/../login", "192.0.2.1"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("normalized path bypassed route limit: %d", rec.Code)
+	}
+	if got := counted.lookups.Load(); got != 1 {
+		t.Fatalf("route-limited requests reached auth lookup: %d", got)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Fatalf("route-limited requests woke VM: %d", got)
+	}
+	if rec := request("GET", "/login", "192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("other method = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("POST", "/other", "192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("other path = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("POST", "/login", "192.0.2.2"); rec.Code != http.StatusOK {
+		t.Fatalf("other source = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "route_blocked")); got != 2 {
+		t.Fatalf("route blocked metric = %v, want 2", got)
+	}
+}
+
+func TestPreAuthRouteLimitObserve(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 10, Burst: 10,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1}},
+	}
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("observe request %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "route_would_block")); got != 1 {
+		t.Fatalf("route observe metric = %v, want 1", got)
+	}
+}

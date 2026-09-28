@@ -90,13 +90,13 @@ replica has been upgraded, set
 `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
 nodes with subscribers. Each apid seeds its readiness from
 live connection snapshots; a node receives full-fleet fallback traffic until
-its snapshot succeeds. Directory read errors and endpoints over the 10,000
-route-row cap also fall back to full broadcast. The reconciler periodically
-rebuilds capped indexes from live connection snapshots and resumes targeted
-routing when the live route count is under the cap. Endpoints whose live fanout
-still exceeds the cap remain on full broadcast and are retried every five
-minutes. Stale route rows can add an unneeded node request, but cannot exclude
-a subscriber. The
+its snapshot succeeds. Directory read errors fall back to full broadcast. The
+route directory caps each endpoint at 10,000 rows by isolating the channels
+with the largest route sets; after node snapshots are ready, those channels use
+full broadcast while unrelated indexed channels remain targeted. The
+reconciler periodically rebuilds capped indexes from live connection snapshots
+and retries isolated channels every five minutes. Stale route rows can add an
+unneeded node request, but cannot exclude a subscriber. The
 daemon-socket example below remains useful for node-local bootstrap and
 recovery tooling.
 

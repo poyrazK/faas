@@ -58,11 +58,27 @@ request rate and burst.
 If the app moves to a lower plan, the gateway clamps an existing setting to
 the new plan ceiling.
 
+Up to 16 exact public method/path overrides can add stricter limits for
+sensitive endpoints. For example, a login endpoint can allow fewer requests
+from one source than the rest of the app:
+
+```json
+{"pre_auth_rate_limit":{"mode":"observe","requests_per_second":20,"burst":40,"routes":[{"method":"POST","path":"/login","requests_per_second":2,"burst":4}]}}
+```
+
+Each route has its own source bucket, while every request also consumes the
+app-wide source bucket. Paths are matched before edge rewriting, after
+normalizing the decoded URL path. Configure the path your public client sends;
+route matching does not understand application route parameters. Route limits
+return `x-faas-rate-limit-scope: pre-auth-route` when enforced. Shared NAT
+addresses still share a bucket, so start in `observe` mode.
+
 The source is the client IP verified by the public gateway, which replaces
 incoming `X-Forwarded-For` before passing the request to the internal gateway.
 An enforce-mode app returns `403` when this trusted address is missing or
-malformed. Source buckets are bounded to 1,024 per app and 65,536 per gateway;
-further addresses share an app overflow bucket until an inactive bucket can
+malformed. Source buckets are bounded to 1,024 per configured policy (the
+app-wide policy and each route override) and 65,536 per gateway;
+further addresses share that policy's overflow bucket until an inactive bucket can
 be safely evicted.
 The guard is local to each gateway replica, so its per-source threshold is an
 early abuse brake rather than a fleet-wide quota. Existing app and account
@@ -70,8 +86,8 @@ limits continue to cap aggregate request rates. Shared corporate/NAT IPs
 also share a source bucket; use `observe` to choose a suitable threshold.
 
 `gateway_pre_auth_rate_limit_total{app,outcome}` reports `would_block`,
-`blocked`, and `untrusted_source` decisions without putting IP addresses in
-metric labels.
+`blocked`, `route_would_block`, `route_blocked`, and `untrusted_source`
+decisions without putting IP addresses or paths in metric labels.
 
 ## Quarantine recovery
 

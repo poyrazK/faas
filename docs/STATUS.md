@@ -756,11 +756,11 @@ ADR-075 / issue #475 / migration 00138.
   closed set so old delivery rows remain readable across upgrades. App park
   records a durable transition with the status update and emits only after
   instance drain, with schedd recovery if apid exits before completion
-  (ADR-341). Usage statement finalization writes its event and matching
+  (ADR-342). Usage statement finalization writes its event and matching
   subscription snapshot in the same transaction, then relays to one durable
-  delivery row per subscription (ADR-340). Parked-to-active wake transitions
+  delivery row per subscription (ADR-341). Parked-to-active wake transitions
   are recorded with the app status change and schedd recovers `app.woken` after
-  readiness (ADR-342). The existing retry endpoint can replay every event.
+  readiness (ADR-343). The existing retry endpoint can replay every event.
   OpenAPI carries a payload schema for each B5 event and for the finalized usage
   statement payload.
 - **CLI** — `gregale webhooks <list|add|update|rm|deliveries|retry>`

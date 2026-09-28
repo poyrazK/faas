@@ -114,7 +114,10 @@ def sync_detailed(
         key (str):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
-            immediately, plaintext discarded after seal).
+            immediately, plaintext discarded after seal). secret_class is optional; omission preserves
+            an existing class and defaults new rows to persistent. Ephemeral values prevent future
+            init/warm captures for the app scope; older artifacts age out under normal snapshot
+            garbage collection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,7 +161,10 @@ def sync(
         key (str):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
-            immediately, plaintext discarded after seal).
+            immediately, plaintext discarded after seal). secret_class is optional; omission preserves
+            an existing class and defaults new rows to persistent. Ephemeral values prevent future
+            init/warm captures for the app scope; older artifacts age out under normal snapshot
+            garbage collection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -197,7 +203,10 @@ async def asyncio_detailed(
         key (str):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
-            immediately, plaintext discarded after seal).
+            immediately, plaintext discarded after seal). secret_class is optional; omission preserves
+            an existing class and defaults new rows to persistent. Ephemeral values prevent future
+            init/warm captures for the app scope; older artifacts age out under normal snapshot
+            garbage collection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -239,7 +248,10 @@ async def asyncio(
         key (str):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
-            immediately, plaintext discarded after seal).
+            immediately, plaintext discarded after seal). secret_class is optional; omission preserves
+            an existing class and defaults new rows to persistent. Ephemeral values prevent future
+            init/warm captures for the app scope; older artifacts age out under normal snapshot
+            garbage collection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

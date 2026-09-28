@@ -151,19 +151,30 @@ func platformTenantApplyResponse(result state.ApplyPlatformTenantResult, dryRun 
 		Surfaces:  make([]api.ApplyPlatformTenantSurfaceResponse, 0, len(result.Surfaces))}
 	for _, item := range result.Consumers {
 		c := item.Consumer
+		managed := c.PlatformTenantManaged
+		if dryRun && item.Action == "create" {
+			managed = false
+		}
 		out.Consumers = append(out.Consumers, api.ApplyPlatformTenantConsumerResponse{
 			ID: c.ID, AppID: c.AppID, ExternalRef: c.ExternalRef, Name: c.Name,
-			Status: string(c.Status), Action: item.Action})
+			Status: string(c.Status), Action: item.Action,
+			ManagedByPlatformTenant: managed})
 	}
 	for _, item := range result.Surfaces {
 		s := item.Surface
+		managed := s.PlatformTenantManaged
+		if dryRun && item.Action == "create" {
+			managed = false
+		}
 		row := api.ApplyPlatformTenantSurfaceResponse{
 			ID: s.ID, AppID: s.AppID, Name: s.Name, Status: string(s.Status),
-			CertState: string(s.CertState), Action: item.Action}
+			CertState: string(s.CertState), Action: item.Action,
+			ManagedByPlatformTenant: managed}
 		for _, host := range item.Hostnames {
 			response := hostnameResponse(host.Hostname)
 			if dryRun && host.Action == "create" {
 				response.ChallengeToken = ""
+				response.ManagedByPlatformTenant = false
 			}
 			row.Hostnames = append(row.Hostnames, api.ApplyPlatformTenantHostnameResponse{TenantHostnameResponse: response, Action: host.Action})
 		}

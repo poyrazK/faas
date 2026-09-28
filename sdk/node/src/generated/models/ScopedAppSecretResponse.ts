@@ -16,6 +16,10 @@ import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObserv
 export type ScopedAppSecretResponse = {
   scope: string;
   key: string;
+  /**
+   * Retention class applied to the named secret in this scope; ephemeral disables init and warm captures.
+   */
+  secret_class: 'persistent' | 'ephemeral';
   created_at: string;
   updated_at: string;
   /**

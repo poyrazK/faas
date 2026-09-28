@@ -20,6 +20,8 @@ Public surface:
   resumable streams for disposable agent executions.
 * `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
   request's project release to managed service calls.
+* `verify_webhook` - verify signed outbound deliveries against their raw body
+  and return the stable delivery ID for receiver-side deduplication.
 """
 
 from ._rfc7807 import (

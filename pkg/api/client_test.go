@@ -128,6 +128,31 @@ func TestUnsetSecretWithScopeAndStatusRequestsRevocationRepresentation(t *testin
 	}
 }
 
+func TestSetSecretWithScopeAndClassSendsRetentionPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/apps/my-app/secrets/SESSION_TOKEN" || r.URL.Query().Get("scope") != "prod" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		var body PutAppSecretRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if body.Value != "token" || body.SecretClass != SecretClassEphemeral {
+			t.Errorf("request body = %+v", body)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Error("missing Idempotency-Key")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"key":"SESSION_TOKEN"}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fp_test")
+	if err := client.SetSecretWithScopeAndClass(context.Background(), "my-app", "SESSION_TOKEN", "token", "prod", SecretClassEphemeral); err != nil {
+		t.Fatalf("SetSecretWithScopeAndClass: %v", err)
+	}
+}
+
 func TestParkWaitsForMultiRevisionDrain(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

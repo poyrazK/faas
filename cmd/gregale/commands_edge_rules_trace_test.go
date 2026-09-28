@@ -637,6 +637,55 @@ func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/account":
+			_ = json.NewEncoder(w).Encode(api.AccountResponse{Plan: string(api.PlanHobby)})
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{
+				AppRequestRateRPS: 8, AppRequestBurst: 32, AccountRequestRateRPM: 1200,
+			}})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "throttle", Enabled: true, Kind: "throttle", MatchHost: "example.com", MatchPath: "/api/*",
+				Action: json.RawMessage(`{"throttle":{"requests_per_second":2.5,"burst":12,"key_by":"country","max_keys_per_rule":300,"missing_key_policy":"shared"}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/api/orders", "--method", "POST"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Outcome != "needs_throttle_runtime_context" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("throttle trace = %#v", result.Simulation)
+	}
+	policy := result.Simulation.Steps[0].ThrottlePolicy
+	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 12 || policy.KeyBy != api.ThrottleKeyByCountry || policy.PlanMaxRPS != api.MustLimitsFor(api.PlanHobby).RateLimitRPS || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 8 || policy.AppRequestBurst != 32 || policy.AccountRequestRPM != 1200 {
+		t.Fatalf("throttle policy = %#v", policy)
+	}
+}
+
 func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

@@ -27,6 +27,10 @@ from ..models.scoped_app_secret_response_last_runtime_reload_signal import (
     ScopedAppSecretResponseLastRuntimeReloadSignal,
     check_scoped_app_secret_response_last_runtime_reload_signal,
 )
+from ..models.scoped_app_secret_response_secret_class import (
+    ScopedAppSecretResponseSecretClass,
+    check_scoped_app_secret_response_secret_class,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -50,6 +54,8 @@ class ScopedAppSecretResponse:
 
     scope: str
     key: str
+    secret_class: ScopedAppSecretResponseSecretClass
+    """Retention class applied to the named secret in this scope; ephemeral disables init and warm captures."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     delivery_version: int
@@ -89,6 +95,8 @@ class ScopedAppSecretResponse:
         scope = self.scope
 
         key = self.key
+
+        secret_class: str = self.secret_class
 
         created_at = self.created_at.isoformat()
 
@@ -155,6 +163,7 @@ class ScopedAppSecretResponse:
             {
                 "scope": scope,
                 "key": key,
+                "secret_class": secret_class,
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "delivery_version": delivery_version,
@@ -204,6 +213,8 @@ class ScopedAppSecretResponse:
         scope = d.pop("scope")
 
         key = d.pop("key")
+
+        secret_class = check_scoped_app_secret_response_secret_class(d.pop("secret_class"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -300,6 +311,7 @@ class ScopedAppSecretResponse:
         scoped_app_secret_response = cls(
             scope=scope,
             key=key,
+            secret_class=secret_class,
             created_at=created_at,
             updated_at=updated_at,
             delivery_version=delivery_version,

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 /**
- * A tenant surface: a multi-hostname SAN bundle attached to one app.
+ * A tenant surface: a multi-hostname SAN bundle attached to one app. managed_by_platform_tenant is true only when created by a platform-tenant bundle apply.
  */
 export type TenantSurfaceResponse = {
   id: string;
@@ -18,6 +18,10 @@ export type TenantSurfaceResponse = {
   cert_last_error?: string | null;
   created_at?: string;
   updated_at?: string;
+  /**
+   * True only when a platform-tenant bundle created this surface; omitted otherwise.
+   */
+  managed_by_platform_tenant?: boolean;
   hostnames: Array<TenantHostnameResponse>;
 };
 

@@ -2904,20 +2904,43 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	usesSnapshots := instanceModeUsesSnapshots(mode)
 
+	// Snapshot policy is derived from the current secret set, not only from
+	// the snapshot row's stale bit. The API normally marks snapshots stale
+	// when a secret changes, but this scheduler-side fence also covers missed
+	// invalidations and races: an ephemeral secret must never be restored from
+	// an older persistent capture. If the policy lookup fails, fail closed and
+	// cold-boot; restoring is the unsafe option.
+	ephemeralSecret, secretPolicyErr := e.hasEphemeralSecretForDeployment(ctx, app.AccountID, app.ID, dep.Scope)
+	secretPolicyBlocksSnapshots := ephemeralSecret || secretPolicyErr != nil
+	secretPolicyColdReason := ColdReasonEphemeralSecret
+	if secretPolicyErr != nil {
+		secretPolicyColdReason = ColdReasonSecretPolicyUnavailable
+		e.log.Warn("wake: secret retention policy lookup failed; bypassing snapshots",
+			"app_id", app.ID, "deployment_id", dep.ID, "err", secretPolicyErr)
+	} else if ephemeralSecret {
+		e.log.Info("wake: ephemeral secret disables snapshot restore",
+			"app_id", app.ID, "deployment_id", dep.ID)
+	}
+
 	// Consult the per-deployment snapshot-miss backoff before touching the
 	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
 	// silently forcing another cold boot defeats the backoff and can exhaust
 	// the node's RAM/capacity under a hot request loop.
-	backoff, backoffActive, backoffErr := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
-	if backoffErr != nil {
-		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
-	} else if backoffActive && !bypassGates && usesSnapshots {
-		if e.ops != nil {
-			e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
-			e.ops.SnapshotBackoffGateOutcome("gated").Inc()
+	var backoff state.Deployment
+	var backoffActive bool
+	if !secretPolicyBlocksSnapshots {
+		var backoffErr error
+		backoff, backoffActive, backoffErr = e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
+		if backoffErr != nil {
+			e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
+		} else if backoffActive && !bypassGates && usesSnapshots {
+			if e.ops != nil {
+				e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
+				e.ops.SnapshotBackoffGateOutcome("gated").Inc()
+			}
+			release()
+			return WakeResult{}, api.ErrSnapshotBackoff(snapshotBackoffRetryAfter(backoff.SnapshotMissBackoffUntil))
 		}
-		release()
-		return WakeResult{}, api.ErrSnapshotBackoff(snapshotBackoffRetryAfter(backoff.SnapshotMissBackoffUntil))
 	}
 
 	// Restore iff a fresh, version-matched snapshot exists; else cold boot
@@ -2932,7 +2955,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// wake-tier-mix counter so the dashboard shows the ratio of warm
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
-	choice := e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+	choice := wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonNoSnapshot}
+	if secretPolicyBlocksSnapshots {
+		choice.coldReason = secretPolicyColdReason
+	} else {
+		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
 		// Worker/job state belongs to the running process and must never be
@@ -2944,7 +2972,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		coldReason = ColdReasonInstanceMode
 		backoffActive = false
 	}
-	if !haveSnap && usesSnapshots {
+	if !haveSnap && usesSnapshots && !secretPolicyBlocksSnapshots {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
 		// brand-new cold deployment that never had a cache entry.
@@ -5679,7 +5707,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 			return err
 		}
-		return e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeJob, "")
+		return e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeJob, "", "")
 	}
 
 	// Multi-node placement (issue #97 / ADR-025 axis 3): pick the
@@ -5911,7 +5939,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 
 	ins.AppID, ins.DeploymentID = appID, deploymentID
 	if executionModeForApp(app) == api.ExecutionModeWorker {
-		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID); err != nil {
+		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID, ""); err != nil {
 			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
 			e.ledger.Release(ins.ID)
 			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_ready_notify_failed")
@@ -7059,6 +7087,27 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		}
 		return nil
 	}
+	ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app)
+	if err != nil {
+		return fmt.Errorf("sched: park: inspect secret snapshot policy: %w", err)
+	}
+	if ephemeral {
+		e.log.Info("sched: park: destroy instance with ephemeral secrets", "instance", ins.ID, "app", ins.AppID)
+		if destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID); destroyErr != nil {
+			return fmt.Errorf("sched: park: destroy ephemeral-secret instance %s: %w", ins.ID, destroyErr)
+		}
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_ephemeral_secret", "ephemeral_secret")
+		if !allowReuse {
+			// Prime normally activates request/service deployments through the
+			// init snapshot notification. An ephemeral secret forbids that first
+			// snapshot too, so hand the successful boot proof to imaged instead.
+			if err := e.emitDeploymentReady(ctx, ins.DeploymentID, executionModeForApp(app), ins.ID, "ephemeral_secret"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
@@ -7380,6 +7429,30 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		})
 	}
 	return b, nil
+}
+
+func (e *Engine) hasEphemeralSecretForInstance(ctx context.Context, ins state.Instance, app state.App) (bool, error) {
+	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
+	if err != nil {
+		return false, fmt.Errorf("load deployment %s: %w", ins.DeploymentID, err)
+	}
+	return e.hasEphemeralSecretForDeployment(ctx, app.AccountID, app.ID, dep.Scope)
+}
+
+func (e *Engine) hasEphemeralSecretForDeployment(ctx context.Context, accountID, appID, scope string) (bool, error) {
+	if scope == "" {
+		scope = api.DefaultEnvScope
+	}
+	secrets, err := e.store.ListAppSecretsInScope(ctx, accountID, appID, scope)
+	if err != nil {
+		return false, fmt.Errorf("list secrets for scope %s: %w", scope, err)
+	}
+	for _, secret := range secrets {
+		if secret.SecretClass == state.SecretClassEphemeral {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // resolveApp loads the app, account, plan limits, and current live deployment a
@@ -7710,6 +7783,11 @@ const (
 	ColdReasonStale = "snapshot_stale"
 	// ColdReasonInstanceMode: worker and job instances never restore.
 	ColdReasonInstanceMode = "instance_mode"
+	// ColdReasonEphemeralSecret: an ephemeral secret prohibits snapshot restore.
+	ColdReasonEphemeralSecret = "ephemeral_secret"
+	// ColdReasonSecretPolicyUnavailable: policy could not be read, so restore
+	// is refused rather than risk loading an image with stale secret state.
+	ColdReasonSecretPolicyUnavailable = "secret_policy_unavailable"
 )
 
 // ColdReasons is the closed set, in a stable order, for metric
@@ -7717,7 +7795,8 @@ const (
 var ColdReasons = []string{
 	ColdReasonNoSnapshot, ColdReasonSnapshotsStale, ColdReasonLookupFailed,
 	ColdReasonFCVersion, ColdReasonNoDrive, ColdReasonRAM, ColdReasonBaseImage,
-	ColdReasonStale, ColdReasonInstanceMode,
+	ColdReasonStale, ColdReasonInstanceMode, ColdReasonEphemeralSecret,
+	ColdReasonSecretPolicyUnavailable,
 }
 
 // snapshotRejection returns why snap cannot be restored for this wake, or ""
@@ -8956,15 +9035,16 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 // imaged. imaged owns the live transition; schedd only supplies readiness
 // evidence. Worker evidence is a RUNNING instance id, while job activation is
 // artifact-only and deliberately omits one.
-func (e *Engine) emitDeploymentReady(ctx context.Context, deploymentID, executionMode, instanceID string) error {
+func (e *Engine) emitDeploymentReady(ctx context.Context, deploymentID, executionMode, instanceID, noSnapshotReason string) error {
 	if e.notif == nil {
 		return errors.New("sched: deployment_ready notifier is not configured")
 	}
 	payload, err := json.Marshal(struct {
-		DeploymentID  string `json:"deployment_id"`
-		ExecutionMode string `json:"execution_mode"`
-		InstanceID    string `json:"instance_id,omitempty"`
-	}{DeploymentID: deploymentID, ExecutionMode: executionMode, InstanceID: instanceID})
+		DeploymentID     string `json:"deployment_id"`
+		ExecutionMode    string `json:"execution_mode"`
+		InstanceID       string `json:"instance_id,omitempty"`
+		NoSnapshotReason string `json:"no_snapshot_reason,omitempty"`
+	}{DeploymentID: deploymentID, ExecutionMode: executionMode, InstanceID: instanceID, NoSnapshotReason: noSnapshotReason})
 	if err != nil {
 		return fmt.Errorf("sched: encode deployment_ready: %w", err)
 	}

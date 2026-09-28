@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -54,7 +55,10 @@ func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 
 func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	config := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 2, Burst: 4}
+	config := &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 2, Burst: 4,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2}},
+	}
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -63,21 +67,24 @@ func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Manifest.PreAuthRateLimit == nil || *out.Manifest.PreAuthRateLimit != *config {
+	if !reflect.DeepEqual(out.Manifest.PreAuthRateLimit, config) {
 		t.Fatalf("create response config = %+v", out.Manifest.PreAuthRateLimit)
 	}
 	stored, err := e.store.AppBySlug(t.Context(), "protected-app")
-	if err != nil || stored.Manifest.PreAuthRateLimit == nil || *stored.Manifest.PreAuthRateLimit != *config {
+	if err != nil || !reflect.DeepEqual(stored.Manifest.PreAuthRateLimit, config) {
 		t.Fatalf("stored config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
 	}
 
-	enforced := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 2}
+	enforced := &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 2,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1}},
+	}
 	rec = e.do(t, "PATCH", "/v1/apps/protected-app", api.UpdateAppRequest{PreAuthRateLimit: enforced}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
 	}
 	stored, err = e.store.AppBySlug(t.Context(), "protected-app")
-	if err != nil || stored.Manifest.PreAuthRateLimit == nil || *stored.Manifest.PreAuthRateLimit != *enforced {
+	if err != nil || !reflect.DeepEqual(stored.Manifest.PreAuthRateLimit, enforced) {
 		t.Fatalf("patched config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
 	}
 
@@ -99,6 +106,8 @@ func TestAppPreAuthRateLimitRejectsInvalidConfig(t *testing.T) {
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 0, Burst: 1},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 6, Burst: 1},
 		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 1, Burst: 21},
+		{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 2, Burst: 4,
+			Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 3, Burst: 2}}},
 	} {
 		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "invalid-preauth", PreAuthRateLimit: config}, nil)
 		if rec.Code != 400 {

@@ -317,6 +317,7 @@ gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
 gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
+gregale postgres bindings rotate BINDING_ID
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```

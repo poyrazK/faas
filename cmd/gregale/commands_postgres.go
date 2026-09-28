@@ -316,7 +316,7 @@ func cmdPostgresRestore(args []string) int {
 
 func cmdPostgresBindings(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings <list|create|get|delete> ...", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings <list|create|get|rotate|delete> ...", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -326,6 +326,8 @@ func cmdPostgresBindings(args []string) int {
 		return cmdPostgresBindingsCreate(args[1:])
 	case subGet:
 		return cmdPostgresBindingsGet(args[1:])
+	case "rotate":
+		return cmdPostgresBindingsRotate(args[1:])
 	case "delete":
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
@@ -401,6 +403,26 @@ func cmdPostgresBindingsGet(args []string) int {
 	result, err := client.GetManagedPostgresBinding(context.Background(), id)
 	if err != nil {
 		return printErr("Could not load PostgreSQL binding", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	renderPostgresBinding(osStdout, result)
+	return 0
+}
+
+func cmdPostgresBindingsRotate(args []string) int {
+	id, ok := onePostgresID("postgres bindings rotate", args)
+	if !ok {
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	result, err := client.RotateManagedPostgresBinding(context.Background(), id)
+	if err != nil {
+		return printErr("Could not rotate PostgreSQL binding", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
@@ -501,6 +523,7 @@ func renderPostgresBinding(w io.Writer, binding api.ManagedPostgresBinding) {
 	_, _ = fmt.Fprintf(w, "  environment_key:   %s\n", binding.EnvironmentKey)
 	_, _ = fmt.Fprintf(w, "  access:            %s\n", binding.Access)
 	_, _ = fmt.Fprintf(w, "  credential_generation: %d\n", binding.CredentialGeneration)
+	_, _ = fmt.Fprintf(w, "  rotation_pending:  %t\n", binding.RotationPending)
 	_, _ = fmt.Fprintf(w, "  state:             %s\n", binding.State)
 	if binding.LastErrorCode != "" {
 		_, _ = fmt.Fprintf(w, "  last_error_code:   %s\n", binding.LastErrorCode)

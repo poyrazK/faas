@@ -31,6 +31,9 @@ class ApplyPlatformTenantConsumerResponse:
     action: ApplyPlatformTenantConsumerResponseAction
     id: UUID | Unset = UNSET
     """Absent when a dry run would create this consumer."""
+    managed_by_platform_tenant: bool | Unset = UNSET
+    """True only after the tenant bundle created this consumer; omitted for unmanaged resources and dry-run
+    creates. Linking an existing consumer does not adopt it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +51,8 @@ class ApplyPlatformTenantConsumerResponse:
         if not isinstance(self.id, Unset):
             id = str(self.id)
 
+        managed_by_platform_tenant = self.managed_by_platform_tenant
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,6 +66,8 @@ class ApplyPlatformTenantConsumerResponse:
         )
         if id is not UNSET:
             field_dict["id"] = id
+        if managed_by_platform_tenant is not UNSET:
+            field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
 
         return field_dict
 
@@ -84,6 +91,8 @@ class ApplyPlatformTenantConsumerResponse:
         else:
             id = UUID(_id)
 
+        managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
+
         apply_platform_tenant_consumer_response = cls(
             app_id=app_id,
             external_ref=external_ref,
@@ -91,6 +100,7 @@ class ApplyPlatformTenantConsumerResponse:
             status=status,
             action=action,
             id=id,
+            managed_by_platform_tenant=managed_by_platform_tenant,
         )
 
         apply_platform_tenant_consumer_response.additional_properties = d
