@@ -4,7 +4,7 @@
 -- the same transaction, regardless of which daemon produced it. The unique
 -- CloudEvents identity is (account, source, id); retries with the same type
 -- and data are harmless, while reuse with different content is rejected.
-CREATE TABLE event_fanout_outbox (
+CREATE TABLE IF NOT EXISTS event_fanout_outbox (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     source text NOT NULL,
@@ -23,14 +23,14 @@ CREATE TABLE event_fanout_outbox (
     delivered_at timestamptz,
     UNIQUE (account_id, source, event_id)
 );
-CREATE INDEX event_fanout_outbox_pending_idx ON event_fanout_outbox
+CREATE INDEX IF NOT EXISTS event_fanout_outbox_pending_idx ON event_fanout_outbox
     (available_at, id) WHERE state = 'pending';
-CREATE INDEX event_fanout_outbox_lease_idx ON event_fanout_outbox
+CREATE INDEX IF NOT EXISTS event_fanout_outbox_lease_idx ON event_fanout_outbox
     (lease_until, id) WHERE state = 'processing';
-CREATE INDEX event_fanout_outbox_retention_idx ON event_fanout_outbox
+CREATE INDEX IF NOT EXISTS event_fanout_outbox_retention_idx ON event_fanout_outbox
     (delivered_at, id) WHERE state = 'delivered';
 
-CREATE FUNCTION enqueue_event_fanout() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enqueue_event_fanout() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE existing_type text;
 DECLARE existing_data jsonb;
 DECLARE existing_schema_version text;
@@ -63,6 +63,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS events_enqueue_fanout ON events;
 CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON events
     FOR EACH ROW EXECUTE FUNCTION enqueue_event_fanout();
 -- +goose StatementEnd

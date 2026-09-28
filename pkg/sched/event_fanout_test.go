@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -247,7 +248,7 @@ func TestEventFanoutSweepDrainsOldBacklog(t *testing.T) {
 	if len(invocations) != 1001 {
 		t.Fatalf("invocations = %d, want 1001", len(invocations))
 	}
-	if _, err := store.ClaimDuePublishedEvent(ctx, time.Now()); err != state.ErrNotFound {
+	if _, err := store.ClaimDuePublishedEvent(ctx, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("remaining outbox claim: %v", err)
 	}
 }
