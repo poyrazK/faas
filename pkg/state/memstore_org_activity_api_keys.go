@@ -21,6 +21,9 @@ func (m *MemStore) CreateOrgAPIKeyWithActivity(_ context.Context, orgID, account
 	if _, exists := m.keyByHash[hashKey]; exists {
 		return APIKey{}, 0, errors.New("state: duplicate key hash")
 	}
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, 0, err
+	}
 	key := APIKey{
 		ID: newID(), AccountID: accountID, OrgID: orgID,
 		Hash: append([]byte(nil), hash...), Label: label, Scopes: append([]string(nil), scopes...),

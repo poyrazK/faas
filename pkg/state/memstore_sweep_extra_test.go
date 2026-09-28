@@ -188,10 +188,10 @@ func TestMemStore_CreateAPIKey_DuplicateHashRejected(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k1", nil); err != nil {
+	if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k1", []string{"admin"}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k2", nil); err == nil {
+	if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k2", []string{"admin"}); err == nil {
 		t.Error("duplicate hash: err = nil, want reject")
 	}
 }
@@ -201,7 +201,7 @@ func TestMemStore_ListAPIKeys_Filter(t *testing.T) {
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	for i := 0; i < 3; i++ {
-		if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"+string(rune('a'+i))), "k", nil); err != nil {
+		if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"+string(rune('a'+i))), "k", []string{"admin"}); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 	}
@@ -219,7 +219,7 @@ func TestMemStore_GetAPIKey_HitMissCrossAccount(t *testing.T) {
 	ctx := context.Background()
 	a1, _ := store.CreateAccount(ctx, "a1@x.com", api.PlanFree)
 	a2, _ := store.CreateAccount(ctx, "a2@x.com", api.PlanFree)
-	k1, err := store.CreateAPIKey(ctx, a1.ID, []byte("h1"), "k", nil)
+	k1, err := store.CreateAPIKey(ctx, a1.ID, []byte("h1"), "k", []string{"admin"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestMemStore_DeleteAPIKeyReturning_OwnerHit(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	k, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", nil)
+	k, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestMemStore_DeleteAPIKeyReturning_CrossAccountFails(t *testing.T) {
 	ctx := context.Background()
 	a1, _ := store.CreateAccount(ctx, "a1@x.com", api.PlanFree)
 	a2, _ := store.CreateAccount(ctx, "a2@x.com", api.PlanFree)
-	k, _ := store.CreateAPIKey(ctx, a1.ID, []byte("h"), "k", nil)
+	k, _ := store.CreateAPIKey(ctx, a1.ID, []byte("h"), "k", []string{"admin"})
 	if _, err := store.DeleteAPIKeyReturning(ctx, a2.ID, k.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("cross-account delete: err = %v, want ErrNotFound", err)
 	}
@@ -279,7 +279,7 @@ func TestMemStore_MarkAPIKeyRevoked_HitMiss(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", nil)
+	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
 	got, err := store.MarkAPIKeyRevoked(ctx, a.ID, k.ID)
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -309,7 +309,7 @@ func TestMemStore_TouchKeyLastUsed_HitMiss(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", nil)
+	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
 
 	before := time.Now().Add(-time.Hour)
 	if err := store.TouchKeyLastUsed(ctx, k.ID); err != nil {

@@ -84,7 +84,7 @@ func TestMemStoreOrgAPIKeyMutationsAreAtomicWithActivity(t *testing.T) {
 	if !kinds["api_key.created"] || !kinds["api_key.rotated"] || !kinds["api_key.revoked"] {
 		t.Fatalf("API key activity kinds = %v, want create/rotate/revoke", kinds)
 	}
-	if _, _, err := store.CreateOrgAPIKeyWithActivity(ctx, orgID.String(), accountID, []byte(plaintext), "unsafe-test-only", nil, nil, "", "", nil,
+	if _, _, err := store.CreateOrgAPIKeyWithActivity(ctx, orgID.String(), accountID, []byte(plaintext), "unsafe-test-only", []string{"admin"}, nil, "", "", nil,
 		newActivity("api_key.created", "secret-is-never-event-data", []byte(`{"scopes":[]}`))); err != nil {
 		t.Fatalf("create key for redaction assertion: %v", err)
 	}

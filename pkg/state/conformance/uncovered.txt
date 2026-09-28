@@ -40,7 +40,6 @@ ApplyProjectPlan
 ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
-AuthenticateKey
 AuthenticateOIDCBearer
 AutoRollbackDeploymentsTx
 BeginServiceRolloutCutover
@@ -69,8 +68,6 @@ CompleteGdprRequest
 ComputeNodeByID
 ComputeNodeByName
 ConsumeCliAuthCode
-ConsumeEmailVerificationToken
-ConsumeLoginToken
 ConsumeMFADisableRequest
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
@@ -107,9 +104,7 @@ CountTenantHostnamesForSurface
 CountTenantSurfacesForAccount
 CountWakeBootStarted24h
 CreateAPIConsumer
-CreateAPIKey
 CreateAPIKeyWithExpiry
-CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
 CreateAppLogDrain
@@ -131,7 +126,6 @@ CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateProjectEnvironmentApproval
 CreateQueueBinding
-CreateSession
 CreateSessionWithBinding
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
@@ -140,7 +134,6 @@ CurrentMonthOverageCents
 DailyCostCents
 DecrementAccountAsyncInflight
 DecrementInstanceTailCount
-DeleteAPIKey
 DeleteAPIKeyReturning
 DeleteAccount
 DeleteAccountPassword
@@ -261,8 +254,6 @@ InsertWorkflowEvent
 InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
-IssueEmailVerificationToken
-IssueLoginToken
 IssueMFADisableRequest
 JobConcurrentByAccount
 JobCountByAccount
@@ -412,7 +403,6 @@ ListRunningInstancesOnDeadNodes
 ListRuntimeConfigRevisions
 ListRuntimeConfigs
 ListServiceRolloutsInFlight
-ListSessions
 ListSnapshotDeploymentIDs
 ListSnapshotsForGC
 ListSnapshotsStaleOlderThan
@@ -550,11 +540,9 @@ RetryDeploymentFromStage
 RetryQueueDeadLetter
 RetryTriggerRecordByOperator
 RevokeAPIConsumer
-RevokeAllSessions
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation
-RevokeSession
 RotateAPIKey
 RotateOrgAPIKey
 RotateOrgAPIKeyWithProvenance

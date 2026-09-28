@@ -2213,6 +2213,9 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 	// pre-existing 5-arg path (the 17+ test/handler call sites
 	// that don't yet know about expiry). The pgstore path
 	// relies on the SQL DEFAULT 'active' for the same shape.
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, err
+	}
 	k := APIKey{
 		ID:        newID(),
 		AccountID: accountID,
@@ -2240,6 +2243,9 @@ func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accou
 	var orgIDField string
 	if orgID != "" {
 		orgIDField = orgID
+	}
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, err
 	}
 	k := APIKey{
 		ID:          newID(),
@@ -2405,6 +2411,9 @@ func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, h
 	if _, dup := m.keyByHash[h]; dup {
 		return APIKey{}, fmt.Errorf("state: duplicate key hash")
 	}
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, err
+	}
 	k := APIKey{
 		ID:        newID(),
 		AccountID: accountID,
@@ -2429,6 +2438,9 @@ func (m *MemStore) CreateAPIKeyWithExpiryAndProvenance(_ context.Context, accoun
 	h := hex.EncodeToString(hash)
 	if _, dup := m.keyByHash[h]; dup {
 		return APIKey{}, fmt.Errorf("state: duplicate key hash")
+	}
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, err
 	}
 	k := APIKey{
 		ID:          newID(),
@@ -2615,6 +2627,9 @@ func (m *MemStore) CreateOrgAPIKey(_ context.Context, orgID, accountID string, h
 	h := hex.EncodeToString(hash)
 	if _, dup := m.keyByHash[h]; dup {
 		return APIKey{}, fmt.Errorf("state: duplicate key hash")
+	}
+	if err := requireAPIKeyScopes(scopes); err != nil {
+		return APIKey{}, err
 	}
 	k := APIKey{
 		ID:        newID(),
@@ -25377,4 +25392,14 @@ func (m *MemStore) SumOpenUploadSessionBytesByAccount(_ context.Context, account
 		}
 	}
 	return total, nil
+}
+
+// requireAPIKeyScopes mirrors api_keys.scopes NOT NULL + cardinality CHECK:
+// Postgres refuses a key without scopes, so MemStore must too, or a caller
+// passing nil works in tests and 500s in production.
+func requireAPIKeyScopes(scopes []string) error {
+	if len(scopes) == 0 {
+		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
+	}
+	return nil
 }
