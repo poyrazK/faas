@@ -224,6 +224,7 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 		update app_webhooks set
 			target_url = $2,
 			receiver_cooldown_until = case when target_url is distinct from $2 then null else receiver_cooldown_until end,
+			receiver_recovery_probe_delivery_id = case when target_url is distinct from $2 then null else receiver_recovery_probe_delivery_id end,
 			event_filter = $3::text[],
 			retry_policy = $4,
 			delivery_format = $5,
@@ -325,7 +326,8 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //     dispatcher restart) → 'in_flight'.
 //  4. Returns the claimed rows.
 //
-// An active receiver cooldown excludes the subscription from new claims.
+// An active receiver cooldown excludes the subscription from new claims. Once
+// it expires, only one recovery probe may be live until its outcome is known.
 // Each claim batch interleaves accounts, then subscriptions within each
 // account. Both starting positions rotate every five-second tick. The lateral
 // delivery read is bounded per subscription, so one deep backlog cannot fill
@@ -357,7 +359,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			  left join live_claims live on live.webhook_id = d.webhook_id
 			 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
 			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-			   and coalesce(live.n, 0) < $4
+			   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $4 else 1 end
 		), numbered_accounts as (
 			select account_id,
 			       row_number() over (order by account_id) - 1 as account_pos,
@@ -375,7 +377,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			  join app_webhooks w on w.account_id = selected_accounts.account_id
 			  left join live_claims live on live.webhook_id = w.id
 			 where (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
-			   and coalesce(live.n, 0) < $4
+			   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $4 else 1 end
 			   and exists (
 			       select 1 from app_webhook_deliveries d
 			        where d.webhook_id = w.id
@@ -489,7 +491,8 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 		       r.next_attempt_at, r.delivered_at, r.created_at, r.updated_at
 		  from ranked r
 		  left join live_claims live on live.webhook_id = r.webhook_id
-		 where r.webhook_slot + coalesce(live.n, 0) <= $4
+		  join app_webhooks w on w.id = r.webhook_id
+		 where r.webhook_slot + coalesce(live.n, 0) <= case when w.receiver_cooldown_until is null then $4 else 1 end
 		 order by r.account_slot, r.account_turn, r.next_attempt_at, r.id
 		 limit $2
 	`, now, limit, webhookIDs, AppWebhookMaxInFlightPerSubscription)
@@ -537,6 +540,18 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	`, ids, claimUntil, now); err != nil {
 		return nil, fmt.Errorf("state: mark in_flight: %w", err)
 	}
+	// These subscription rows remain locked until commit. At most one row
+	// per cooling subscription survived the claim cap above.
+	if _, err := tx.Exec(ctx, `
+		update app_webhooks w
+		   set receiver_recovery_probe_delivery_id = d.id
+		  from app_webhook_deliveries d
+		 where d.id = any($1::uuid[]) and d.webhook_id = w.id
+		   and w.receiver_cooldown_until is not null
+		   and w.receiver_cooldown_until <= $2
+	`, ids, now); err != nil {
+		return nil, fmt.Errorf("state: mark recovery probe: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("state: commit claim: %w", err)
 	}
@@ -556,10 +571,9 @@ func (s *PgStore) MarkAppWebhookDeliveryDead(ctx context.Context, id string, cur
 	return s.completeAppWebhookDelivery(ctx, id, currentAttempt, claimUntil, "dead", responseCode, errMsg, time.Time{}, time.Time{}, meta)
 }
 
-// The delivery UPDATE, attempt INSERT, and optional receiver cooldown UPDATE
-// are one SQL statement. A stale claim produces no updated row and therefore
-// cannot append an attempt or pause its subscription. A failed write rolls
-// the whole statement back.
+// The subscription lock, delivery UPDATE, attempt INSERT, and receiver state
+// UPDATE are one SQL statement. Claims take locks in the same order. A stale
+// claim produces no updated row and cannot change the receiver state.
 func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, outcome string, responseCode int, errMsg string, nextAttemptAt, deliveredAt time.Time, meta []AppWebhookAttemptMetadata) error {
 	started, finished, _ := appWebhookAttemptTimes(meta)
 	var receiverCooldownUntil any
@@ -580,23 +594,47 @@ func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, cur
 	if outcome == "succeeded" {
 		delivered = deliveredAt
 	}
+	// A permanent client rejection shows the receiver is responding, so the
+	// next queued delivery can use normal capacity. Transient failures without
+	// Retry-After wait before another recovery probe is allowed.
+	reopen := outcome == "succeeded" || (outcome == "dead" && responseCode >= 400 && responseCode < 500 && responseCode != 429)
+	fallbackUntil := finished.Add(AppWebhookRecoveryRetryDelay)
 	tag, err := s.pool.Exec(ctx, `
-		with updated as (
-			update app_webhook_deliveries set
+		with locked_hook as materialized (
+			select w.id
+			  from app_webhooks w
+			  join app_webhook_deliveries d on d.webhook_id = w.id
+			 where d.id = $1
+			 for update of w
+		), updated as (
+			update app_webhook_deliveries d set
 				status = $4, last_response_code = $5, last_error = $6,
 				attempt = $3 + 1, next_attempt_at = $7,
 				delivered_at = coalesce($8::timestamptz, delivered_at),
 				updated_at = $9
-			where id = $1 and status = 'in_flight' and attempt = $3
-			  and next_attempt_at = $2
-			returning id, webhook_id, replay_generation
-		), receiver_cooldown as (
+			from locked_hook h
+			where d.id = $1 and d.webhook_id = h.id
+			  and d.status = 'in_flight' and d.attempt = $3
+			  and d.next_attempt_at = $2
+			returning d.id, d.webhook_id, d.replay_generation
+		), receiver_state as (
 			update app_webhooks w
-			   set receiver_cooldown_until = $13::timestamptz
+			   set receiver_cooldown_until = case
+			       when w.receiver_recovery_probe_delivery_id = u.id and $15::boolean
+			           then case when w.receiver_cooldown_until <= $9 then null else w.receiver_cooldown_until end
+			       when $13::timestamptz is not null and w.target_url = $14
+			           then greatest(w.receiver_cooldown_until, $13::timestamptz)
+			       when w.receiver_recovery_probe_delivery_id = u.id
+			           then greatest(w.receiver_cooldown_until, $16::timestamptz)
+			       else w.receiver_cooldown_until end,
+			       receiver_recovery_probe_delivery_id = case
+			           when w.receiver_recovery_probe_delivery_id = u.id then null
+			           else w.receiver_recovery_probe_delivery_id end
 			  from updated u
-			 where w.id = u.webhook_id and $13::timestamptz is not null
-			   and w.target_url = $14
-			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until < $13::timestamptz)
+			 where w.id = u.webhook_id
+			   and (w.receiver_recovery_probe_delivery_id = u.id or
+			       ($13::timestamptz is not null and w.target_url = $14 and
+			        (w.receiver_cooldown_until is null or w.receiver_cooldown_until < $13::timestamptz)))
 		)
 		insert into app_webhook_delivery_attempts
 			(delivery_id, replay_generation, attempt_number, outcome,
@@ -604,7 +642,7 @@ func (s *PgStore) completeAppWebhookDelivery(ctx context.Context, id string, cur
 		select id, replay_generation, $3 + 1, $10, $5, $6, $11, $9, $12
 		  from updated
 	`, id, claimUntil, currentAttempt, status, responseCode, errMsg,
-		deliveryNextAt, delivered, finished, outcome, started, attemptNextAt, receiverCooldownUntil, receiverCooldownTargetURL)
+		deliveryNextAt, delivered, finished, outcome, started, attemptNextAt, receiverCooldownUntil, receiverCooldownTargetURL, reopen, fallbackUntil)
 	if err != nil {
 		return fmt.Errorf("state: complete app webhook delivery: %w", err)
 	}

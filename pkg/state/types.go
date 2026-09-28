@@ -3590,6 +3590,10 @@ const AppWebhookClaimLease = 30 * time.Second
 // across all scheduler instances. Only unexpired in-flight leases count.
 const AppWebhookMaxInFlightPerSubscription = 4
 
+// AppWebhookRecoveryRetryDelay spaces probes after a transient failure that
+// did not include a usable receiver Retry-After deadline.
+const AppWebhookRecoveryRetryDelay = 30 * time.Second
+
 // appWebhookFairnessPeriodSeconds matches the dispatcher's default five-second
 // tick. Advancing the account rotation by one batch per tick spreads the extra
 // slots when the batch size is not divisible by the active account count.

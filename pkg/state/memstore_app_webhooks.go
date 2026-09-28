@@ -333,6 +333,7 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	m.appWebhooks[id] = w
 	if urlChanged {
 		delete(m.appWebhookReceiverCooldowns, id)
+		delete(m.appWebhookRecoveryProbes, id)
 	}
 	return w, nil
 }
@@ -345,6 +346,7 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 	}
 	delete(m.appWebhooks, id)
 	delete(m.appWebhookReceiverCooldowns, id)
+	delete(m.appWebhookRecoveryProbes, id)
 	return nil
 }
 
@@ -416,9 +418,13 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	}
 	byAccount := make(map[string]map[string][]AppWebhookDelivery)
 	for _, d := range m.appWebhookDeliveries {
+		capacity := AppWebhookMaxInFlightPerSubscription
+		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
+			capacity = 1
+		}
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
 			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
-			liveClaims[d.WebhookID] < AppWebhookMaxInFlightPerSubscription {
+			liveClaims[d.WebhookID] < capacity {
 			if byAccount[d.AccountID] == nil {
 				byAccount[d.AccountID] = make(map[string][]AppWebhookDelivery)
 			}
@@ -490,7 +496,11 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 			for checked := 0; checked < len(queue.hooks); checked++ {
 				hookID := queue.hooks[queue.cursor]
 				queue.cursor = (queue.cursor + 1) % len(queue.hooks)
-				if liveClaims[hookID] >= AppWebhookMaxInFlightPerSubscription ||
+				capacity := AppWebhookMaxInFlightPerSubscription
+				if _, recovering := m.appWebhookReceiverCooldowns[hookID]; recovering {
+					capacity = 1
+				}
+				if liveClaims[hookID] >= capacity ||
 					queue.positions[hookID] >= len(queue.rows[hookID]) {
 					continue
 				}
@@ -515,6 +525,9 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		d.NextAttemptAt = claimUntil
 		d.UpdatedAt = now
 		m.appWebhookDeliveries[d.ID] = d
+		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
+			m.appWebhookRecoveryProbes[d.WebhookID] = d.ID
+		}
 		out[i] = d
 	}
 	return out, nil
@@ -574,12 +587,27 @@ func (m *MemStore) completeAppWebhookDelivery(id string, currentAttempt int, cla
 		m.appWebhookDeliveryAttempts = make(map[string][]AppWebhookDeliveryAttempt)
 	}
 	m.appWebhookDeliveryAttempts[id] = append(m.appWebhookDeliveryAttempts[id], a)
-	if len(meta) > 0 && meta[0].ReceiverCooldownUntil != nil &&
-		m.appWebhooks[d.WebhookID].TargetURL == meta[0].ReceiverCooldownTargetURL {
+	validReceiverDelay := len(meta) > 0 && meta[0].ReceiverCooldownUntil != nil &&
+		m.appWebhooks[d.WebhookID].TargetURL == meta[0].ReceiverCooldownTargetURL
+	if validReceiverDelay {
 		until := *meta[0].ReceiverCooldownUntil
 		if until.After(m.appWebhookReceiverCooldowns[d.WebhookID]) {
 			m.appWebhookReceiverCooldowns[d.WebhookID] = until
 		}
+	}
+	if m.appWebhookRecoveryProbes[d.WebhookID] == id {
+		reopen := outcome == "succeeded" || (outcome == "dead" && responseCode >= 400 && responseCode < 500 && responseCode != 429)
+		if reopen {
+			if !m.appWebhookReceiverCooldowns[d.WebhookID].After(finished) {
+				delete(m.appWebhookReceiverCooldowns, d.WebhookID)
+			}
+		} else if !validReceiverDelay {
+			until := finished.Add(AppWebhookRecoveryRetryDelay)
+			if until.After(m.appWebhookReceiverCooldowns[d.WebhookID]) {
+				m.appWebhookReceiverCooldowns[d.WebhookID] = until
+			}
+		}
+		delete(m.appWebhookRecoveryProbes, d.WebhookID)
 	}
 	return nil
 }

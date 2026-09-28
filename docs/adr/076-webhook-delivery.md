@@ -88,11 +88,18 @@ subscription across schedd instances. A fenced attempt completion extends
 the subscription's persisted `receiver_cooldown_until` monotonically; an
 older or stale attempt cannot shorten it. Other subscriptions continue to
 drain, and attempts already claimed may finish. The deadline expires without
-a sweep. Health responses and the dashboard show an active cooldown while
-pending counts remain visible; intentionally paused rows do not count as
-overdue until the deadline passes.
-Changing a subscription's target URL clears its active cooldown; a late
-response from the old URL cannot pause the replacement target.
+a sweep. After expiry, one delivery probes the receiver while the rest stay
+queued. A successful probe restores the normal four-live-attempt limit; a
+retryable failure without a usable `Retry-After` waits 30 seconds before the
+next probe, and a new valid receiver deadline takes precedence. A terminal
+4xx other than 429 also restores normal capacity. The probe identity is
+persisted on the subscription and the delivery claim fences its outcome, so
+multiple schedd processes and an expired lease cannot release the queue from
+an older probe. Health responses and the dashboard show an active cooldown
+while pending counts remain visible; intentionally paused rows do not count
+as overdue until the deadline passes. Changing a subscription's target URL
+clears its cooldown and probe; a late response from the old URL cannot pause
+or reopen the replacement target.
 
 ### 3.4 Plan-tier gate: `WebhookPerApp` + `WebhookPerAccount`
 

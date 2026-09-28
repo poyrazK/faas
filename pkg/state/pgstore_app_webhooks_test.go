@@ -730,8 +730,21 @@ func TestPgStore_AppWebhookReceiverCooldownClaimAndHealth(t *testing.T) {
 		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
 	}
 	claims, err = s.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil)
-	if err != nil || len(claims) != 3 {
-		t.Fatalf("claims at cooldown expiry = %+v, %v; want all three", claims, err)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims at cooldown expiry = %+v, %v; want one recovery probe", claims, err)
+	}
+	blocked, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil.Add(time.Second))
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("claims while probe is live = %+v, %v; want none", blocked, err)
+	}
+	finished := longUntil.Add(2 * time.Second)
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, finished)
+	if err != nil || len(reopened) != 2 {
+		t.Fatalf("claims after probe succeeds = %+v, %v; want remaining two", reopened, err)
 	}
 }
 
@@ -775,6 +788,193 @@ func TestPgStore_AppWebhookReceiverCooldownRetarget(t *testing.T) {
 	claims, err = s.ClaimDueAppWebhookDeliveries(ctx, 10, now)
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claims for new receiver = %+v, %v; want remaining due row", claims, err)
+	}
+}
+
+func TestPgStore_AppWebhookRecoveryProbeAcrossSchedulers(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	otherScheduler := state.NewPgStore(pool)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "receiver-recovery")
+	hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 5; i++ {
+		d := pgSampleDelivery(hook.ID, app, acct)
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := s.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial claim = %+v, %v", initial, err)
+	}
+	until := now.Add(time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{FinishedAt: now, ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		rows []state.AppWebhookDelivery
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for _, scheduler := range []*state.PgStore{s, otherScheduler} {
+		go func(scheduler *state.PgStore) {
+			ready.Done()
+			<-start
+			rows, err := scheduler.ClaimDueAppWebhookDeliveries(ctx, 10, until)
+			results <- result{rows, err}
+		}(scheduler)
+	}
+	ready.Wait()
+	close(start)
+	var probes []state.AppWebhookDelivery
+	for i := 0; i < 2; i++ {
+		out := <-results
+		if out.err != nil {
+			t.Fatal(out.err)
+		}
+		probes = append(probes, out.rows...)
+	}
+	if len(probes) != 1 {
+		t.Fatalf("two schedulers claimed %+v; want one recovery probe", probes)
+	}
+	if rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, until.Add(time.Second)); err != nil || len(rows) != 0 {
+		t.Fatalf("while probe live = %+v, %v; want none", rows, err)
+	}
+	failedAt := until.Add(2 * time.Second)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, probes[0].ID, 503, probes[0].Attempt, probes[0].NextAttemptAt,
+		"unavailable", failedAt.Add(time.Minute), state.AppWebhookAttemptMetadata{FinishedAt: failedAt}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, failedAt.Add(state.AppWebhookRecoveryRetryDelay-time.Microsecond)); err != nil || len(rows) != 0 {
+		t.Fatalf("before recovery fallback = %+v, %v; want none", rows, err)
+	}
+	second, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, failedAt.Add(state.AppWebhookRecoveryRetryDelay))
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second probe = %+v, %v", second, err)
+	}
+	renewed := failedAt.Add(2 * time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, second[0].ID, 429, second[0].Attempt, second[0].NextAttemptAt,
+		"rate limited again", renewed, state.AppWebhookAttemptMetadata{FinishedAt: failedAt.Add(state.AppWebhookRecoveryRetryDelay), ReceiverCooldownUntil: &renewed, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, renewed.Add(-time.Microsecond)); err != nil || len(rows) != 0 {
+		t.Fatalf("before renewed deadline = %+v, %v; want none", rows, err)
+	}
+	third, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, renewed)
+	if err != nil || len(third) != 1 {
+		t.Fatalf("third probe = %+v, %v", third, err)
+	}
+	finished := renewed.Add(time.Second)
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, third[0].ID, 200, third[0].Attempt, third[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, finished)
+	if err != nil || len(remaining) != state.AppWebhookMaxInFlightPerSubscription {
+		t.Fatalf("after successful probe = %+v, %v; want normal capacity", remaining, err)
+	}
+}
+
+func TestPgStore_AppWebhookRecoveryProbeExpiredLease(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "receiver-probe-reclaim")
+	hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	d := pgSampleDelivery(hook.ID, app, acct)
+	d.NextAttemptAt = now.Add(-time.Minute)
+	if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := s.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial claim = %+v, %v", initial, err)
+	}
+	until := now.Add(time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := s.ClaimDueAppWebhookDeliveries(ctx, 1, until)
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("recovery claim = %+v, %v", probe, err)
+	}
+	reclaimed, err := state.NewPgStore(pool).ClaimDueAppWebhookDeliveries(ctx, 1, probe[0].NextAttemptAt.Add(time.Microsecond))
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].ID != probe[0].ID {
+		t.Fatalf("reclaimed probe = %+v, %v", reclaimed, err)
+	}
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+		until); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale probe outcome = %v; want conflict", err)
+	}
+	finished := reclaimed[0].NextAttemptAt.Add(-time.Second)
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, reclaimed[0].ID, 200, reclaimed[0].Attempt, reclaimed[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	var cooldown, marker any
+	if err := pool.QueryRow(ctx, `select receiver_cooldown_until, receiver_recovery_probe_delivery_id from app_webhooks where id = $1`, hook.ID).Scan(&cooldown, &marker); err != nil {
+		t.Fatal(err)
+	}
+	if cooldown != nil || marker != nil {
+		t.Fatalf("successful reclaimed probe left cooldown=%v marker=%v", cooldown, marker)
+	}
+}
+
+func TestPgStore_AppWebhookRecoveryProbePreservesNewerCooldown(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx, "receiver-probe-newer-cooldown")
+	hook, err := s.CreateAppWebhook(ctx, pgSampleWebhook(acct, app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 3; i++ {
+		d := pgSampleDelivery(hook.ID, app, acct)
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		if _, err := s.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := s.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(initial) != 2 {
+		t.Fatalf("initial claims = %+v, %v", initial, err)
+	}
+	until := now.Add(time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, until)
+	if err != nil || len(probe) != 1 || probe[0].ID == initial[1].ID {
+		t.Fatalf("recovery probe = %+v, %v; want the still-pending row", probe, err)
+	}
+	newer := until.Add(time.Minute)
+	if err := s.MarkAppWebhookDeliveryFailed(ctx, initial[1].ID, 429, initial[1].Attempt, initial[1].NextAttemptAt,
+		"late rate limit", newer, state.AppWebhookAttemptMetadata{FinishedAt: until, ReceiverCooldownUntil: &newer, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	finished := until.Add(time.Second)
+	if err := s.MarkAppWebhookDeliverySucceeded(ctx, probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	health, err := s.AppWebhookDeliveryHealth(ctx, hook.ID, acct, finished)
+	if err != nil || health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(newer) {
+		t.Fatalf("late cooldown lost after probe success: %+v, %v", health, err)
+	}
+	if rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 10, finished); err != nil || len(rows) != 0 {
+		t.Fatalf("claims during newer cooldown = %+v, %v; want none", rows, err)
 	}
 }
 

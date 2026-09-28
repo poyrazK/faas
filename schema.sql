@@ -1542,6 +1542,8 @@ CREATE TABLE public.app_webhooks (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     delivery_format text DEFAULT 'json'::text NOT NULL,
     scope text DEFAULT 'app'::text NOT NULL,
+    receiver_cooldown_until timestamp with time zone,
+    receiver_recovery_probe_delivery_id uuid,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
     CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])))),
