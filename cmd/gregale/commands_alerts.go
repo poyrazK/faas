@@ -430,6 +430,9 @@ func cmdAlertRm(args []string) int {
 	if err := client.DeleteAlertRule(context.Background(), *slug, id); err != nil {
 		return printErr("Delete failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"app": *slug, "id": id, "deleted": true}))
+	}
 	PrintOK(osStdout, "Alert rule %s deleted.", id)
 	return 0
 }

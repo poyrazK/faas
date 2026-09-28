@@ -55,10 +55,17 @@ var (
 	ErrWorkflowCallbackExpired   = errors.New("state: workflow callback has expired")
 )
 
-// WorkflowRunStaleAfter is longer than the largest plan's two-hour step
-// timeout. A schedd that disappears while owning a run therefore cannot cause
-// concurrent execution, while another schedd will eventually recover it.
+// WorkflowRunStaleAfter is the fallback for runs claimed before leases were
+// introduced. New claims get a five-minute lease, extended to the declared
+// step timeout plus five minutes before each executor call.
 const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
+
+// WorkflowRunLeaseStore is implemented by production stores. It lets a
+// dispatcher bound crash recovery to the actual step timeout instead of the
+// largest timeout supported by any plan.
+type WorkflowRunLeaseStore interface {
+	ExtendWorkflowRunLease(context.Context, string, time.Duration) error
+}
 
 func validateWorkflowRunStatus(status string) error {
 	switch status {

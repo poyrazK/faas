@@ -16,8 +16,7 @@ import (
 
 const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
-const eventFanoutRecoveryWindow = 10 * time.Minute
-const eventFanoutRecoveryBatch = 1000
+const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 
 // routePublishedEvent is the schedd-side fanout seam for the internal event
@@ -27,6 +26,10 @@ const eventFanoutSubscriptionBatch = 256
 // invocation ID is deterministic, so reconnects or duplicate LISTEN delivery
 // cannot enqueue a second invocation for the same event/subscription pair.
 func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
+	return l.routePublishedEventAt(ctx, payload, time.Time{})
+}
+
+func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, acceptedAt time.Time) error {
 	if l == nil || l.engine == nil || l.engine.store == nil {
 		return nil
 	}
@@ -57,6 +60,11 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 			return fmt.Errorf("sched: list matching event subscriptions: %w", listErr)
 		}
 		for _, row := range subscriptions {
+			if !acceptedAt.IsZero() && row.CreatedAt.After(acceptedAt) {
+				// Candidate pages are ordered by creation time; later rows
+				// cannot have subscribed before this event either.
+				return errors.Join(routeErrs...)
+			}
 			matched, matchErr := (events.Subscription{
 				ID:        row.ID,
 				AccountID: row.AccountID,
@@ -71,7 +79,8 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 			if !matched {
 				continue
 			}
-			invocationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event:"+envelope.ID+"\x00"+row.ID)).String()
+			identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
+			invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
 			producerHeaders := map[string]string{
 				"traceparent": envelope.Traceparent,
 				"tracestate":  envelope.Tracestate,
@@ -121,28 +130,59 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 	return errors.Join(routeErrs...)
 }
 
-// runEventFanoutSweep closes the LISTEN loss window. Published envelopes are
-// retained in the events ledger, so a schedd restart or a transient Postgres
-// reconnect can replay the recent window; deterministic invocation IDs make
-// this sweep idempotent with the notification fast path.
+// runEventFanoutSweep drains durable claims in bounded batches. The outbox is
+// populated in the same transaction as each event.published ledger row, so a
+// restart or an arbitrarily long LISTEN gap cannot strand accepted events.
 func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if l == nil || l.engine == nil || l.engine.store == nil {
+		return
+	}
+	store, ok := l.engine.store.(state.PublishedEventWorkStore)
+	if !ok {
+		return
+	}
+	// A mixed-version store may expose durable receipts before it exposes
+	// subscription matching. Leave those receipts pending for a compatible
+	// scheduler instead of acknowledging them without routing.
+	if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); !ok {
 		return
 	}
 	now := time.Now().UTC()
 	if l.now != nil {
 		now = l.now().UTC()
 	}
-	rows, err := l.engine.store.ListAllEventsPaged(ctx, "", "event.published", "", now.Add(-eventFanoutRecoveryWindow), eventFanoutRecoveryBatch)
-	if err != nil {
-		if l.log != nil {
-			l.log.Warn("sched: event fanout recovery sweep failed", "err", err)
+	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
+		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
+			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
+				if l.log != nil {
+					l.log.Warn("sched: prune delivered event identities failed", "err", err)
+				}
+			} else {
+				l.eventFanoutLastPrune = now
+			}
 		}
-		return
 	}
-	for _, row := range rows {
-		if err := l.routePublishedEvent(ctx, string(row.Data)); err != nil && l.log != nil {
-			l.log.Warn("sched: event fanout recovery failed", "event_id", row.ID, "err", err)
+	for i := 0; i < eventFanoutRecoveryBatch; i++ {
+		now := time.Now().UTC()
+		if l.now != nil {
+			now = l.now().UTC()
+		}
+		work, err := store.ClaimDuePublishedEvent(ctx, now)
+		if errors.Is(err, state.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			if l.log != nil {
+				l.log.Warn("sched: claim event fanout failed", "err", err)
+			}
+			return
+		}
+		routeErr := l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
+		if routeErr != nil && l.log != nil {
+			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+		}
+		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
+			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
 		}
 	}
 }

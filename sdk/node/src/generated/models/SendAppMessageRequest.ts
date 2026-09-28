@@ -17,6 +17,10 @@ export type SendAppMessageRequest = {
    * Server time when omitted.
    */
   time?: string;
+  datacontenttype?: 'application/json';
+  /**
+   * @deprecated
+   */
   data_content_type?: 'application/json';
   /**
    * Any valid JSON value delivered inside the CloudEvents envelope.

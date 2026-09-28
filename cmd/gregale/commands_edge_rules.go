@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -315,6 +316,18 @@ func cmdEdgeRulesCreate(args []string) int {
 	respondStatus := fs.Int("respond-status", 200, "kind=respond: response status code (200..599)")
 	respondBody := fs.String("respond-body", "", "kind=respond: JSON response body (max 64 KiB)")
 
+	// validate (issue #2768). The schema flag accepts inline JSON,
+	// @path for a file, or - for stdin. Mode lives at the top level
+	// of CreateEdgeRuleRequest per ADR-128; the other flags build the
+	// EdgeRuleValidateAction DTO.
+	validateSchema := fs.String("validate-schema", "", "kind=validate: JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB)")
+	validateMode := fs.String("validate-mode", api.ValidateModeBlock, "kind=validate: invalid-request behavior (block|observe|warn; default block)")
+	var validateContentTypes multiFlag
+	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=plan default)")
+	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
+	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
+
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -333,6 +346,24 @@ func cmdEdgeRulesCreate(args []string) int {
 	}
 	if !isEdgeRuleKind(*kind) {
 		return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
+	}
+	visited := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if *kind != "validate" && edgeRuleValidateFlagsVisited(visited) {
+		return printErr("Invalid flags", fmt.Errorf("--validate-* flags require --kind=validate"))
+	}
+	var validateSchemaJSON json.RawMessage
+	if visited["validate-schema"] {
+		var schemaErr error
+		validateSchemaJSON, schemaErr = resolveEdgeRuleValidateSchema(*validateSchema)
+		if schemaErr != nil {
+			return printErr("Invalid --validate-schema", schemaErr)
+		}
+	}
+	if *kind == "validate" {
+		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
+			return printErr("Invalid --validate-mode", err)
+		}
 	}
 	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
 	if err != nil {
@@ -403,8 +434,13 @@ func cmdEdgeRulesCreate(args []string) int {
 			MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
 			MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
 		},
-		AsyncRetryPolicySet: asyncRetryPolicySet,
-		AsyncMaxAgeSeconds:  *asyncMaxAgeSeconds,
+		AsyncRetryPolicySet:         asyncRetryPolicySet,
+		AsyncMaxAgeSeconds:          *asyncMaxAgeSeconds,
+		ValidateSchema:              validateSchemaJSON,
+		ValidateContentTypes:        validateContentTypes,
+		ValidateMaxBodyBytes:        *validateMaxBodyBytes,
+		ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
+		ValidateRejectUnknownFields: *validateRejectUnknownFields,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -418,6 +454,9 @@ func cmdEdgeRulesCreate(args []string) int {
 		Enabled:      enabled,
 		Kind:         *kind,
 		Action:       actionBytes,
+	}
+	if *kind == "validate" {
+		req.ValidateMode = *validateMode
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -482,7 +521,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -600,6 +639,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
 	respondStatus := fs.Int("respond-status", 0, "kind=respond: new response status code (200..599)")
 	respondBody := fs.String("respond-body", "", "kind=respond: new JSON response body (max 64 KiB)")
+	validateSchema := fs.String("validate-schema", "", "kind=validate: replacement JSON Schema (required when updating action fields; inline JSON, @file, or -; max 64 KiB)")
+	validateMode := fs.String("validate-mode", "", "kind=validate: invalid-request behavior (block|observe|warn)")
+	var validateContentTypes multiFlag
+	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=plan default)")
+	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
+	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -618,8 +664,26 @@ func cmdEdgeRulesUpdate(args []string) int {
 	id := fs.Arg(0)
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if edgeRuleValidateFlagsVisited(visited) && *kind != "validate" {
+		return printErr("Invalid flags", fmt.Errorf("--validate-* flags require --kind=validate"))
+	}
+	var validateSchemaJSON json.RawMessage
+	if visited["validate-schema"] {
+		var schemaErr error
+		validateSchemaJSON, schemaErr = resolveEdgeRuleValidateSchema(*validateSchema)
+		if schemaErr != nil {
+			return printErr("Invalid --validate-schema", schemaErr)
+		}
+	}
 
 	req := api.UpdateEdgeRuleRequest{}
+	if visited["validate-mode"] {
+		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
+			return printErr("Invalid --validate-mode", err)
+		}
+		mode := *validateMode
+		req.ValidateMode = &mode
+	}
 	if visited["match-host"] {
 		s := *matchHost
 		req.MatchHost = &s
@@ -738,8 +802,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 				MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
 				MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
 			},
-			AsyncRetryPolicySet: visited["async-max-attempts"] || visited["async-retry-base-seconds"] || visited["async-retry-max-seconds"] || visited["async-retry-jitter-seconds"],
-			AsyncMaxAgeSeconds:  *asyncMaxAgeSeconds,
+			AsyncRetryPolicySet:         visited["async-max-attempts"] || visited["async-retry-base-seconds"] || visited["async-retry-max-seconds"] || visited["async-retry-jitter-seconds"],
+			AsyncMaxAgeSeconds:          *asyncMaxAgeSeconds,
+			ValidateSchema:              validateSchemaJSON,
+			ValidateContentTypes:        validateContentTypes,
+			ValidateMaxBodyBytes:        *validateMaxBodyBytes,
+			ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
+			ValidateRejectUnknownFields: *validateRejectUnknownFields,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -905,6 +974,13 @@ type edgeRuleActionInputs struct {
 	CircuitWindowSeconds    int
 	CircuitOpenSeconds      int
 	CircuitMaxOpenSeconds   int
+	// validate (issue #2768). ValidateMode is intentionally not an
+	// action field: ADR-128 moved it to the top-level rule DTO.
+	ValidateSchema              json.RawMessage
+	ValidateContentTypes        []string
+	ValidateMaxBodyBytes        int
+	ValidateApplyWhileStreaming bool
+	ValidateRejectUnknownFields bool
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -1219,16 +1295,73 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "validate":
-		// kind=validate is a real server-side kind
-		// (pkg/api.EdgeRuleValidateAction) but has no CLI flag
-		// surface yet: its action carries a JSON Schema 2020-12
-		// document, which needs a file/stdin loading UX rather than
-		// a scalar flag. Say so explicitly — the previous
-		// fallthrough reported "unknown kind", which contradicted
-		// edgeRuleKindVocab accepting it two checks earlier.
-		return nil, fmt.Errorf("kind=validate is not yet constructible from the CLI (its action carries a JSON Schema document); create it via the API, or use `gregale edge-rules update <id>` to toggle an existing rule")
+		a := api.EdgeRuleValidateAction{
+			Schema:                in.ValidateSchema,
+			ContentTypes:          in.ValidateContentTypes,
+			ApplyWhileStreaming:   in.ValidateApplyWhileStreaming,
+			RejectOnUnknownFields: in.ValidateRejectUnknownFields,
+			MaxBodyBytes:          in.ValidateMaxBodyBytes,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
 	}
 	return nil, fmt.Errorf("unknown kind %q", kind)
+}
+
+// resolveEdgeRuleValidateSchema accepts the CLI's usual JSON input forms:
+// inline JSON, @path for a local file, and - for stdin. The read limit is
+// enforced before decoding so an oversized schema never reaches the API.
+func resolveEdgeRuleValidateSchema(value string) (json.RawMessage, error) {
+	limit := int64(api.MaxEdgeRuleValidateSchemaBytes) + 1
+	var raw []byte
+	var err error
+	switch {
+	case value == "-":
+		raw, err = io.ReadAll(io.LimitReader(osStdin, limit))
+	case strings.HasPrefix(value, "@"):
+		path := value[1:]
+		if path == "" {
+			return nil, fmt.Errorf("@file input requires a path")
+		}
+		var file *os.File
+		file, err = openCustomerFile(path)
+		if err == nil {
+			defer func() { _ = file.Close() }()
+			raw, err = io.ReadAll(io.LimitReader(file, limit))
+		}
+	default:
+		raw = []byte(value)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not read schema input: %w", err)
+	}
+	if len(raw) > api.MaxEdgeRuleValidateSchemaBytes {
+		return nil, fmt.Errorf("schema exceeds %d bytes", api.MaxEdgeRuleValidateSchemaBytes)
+	}
+	return json.RawMessage(raw), nil
+}
+
+func validateEdgeRuleValidateMode(mode string) error {
+	if mode != api.ValidateModeBlock && mode != api.ValidateModeObserve && mode != api.ValidateModeWarn {
+		return fmt.Errorf("must be one of %q, %q, %q; got %q",
+			api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn, mode)
+	}
+	return nil
+}
+
+func edgeRuleValidateFlagsVisited(visited map[string]bool) bool {
+	for _, name := range []string{
+		"validate-schema", "validate-mode", "validate-content-type",
+		"validate-max-body-bytes", "validate-apply-while-streaming",
+		"validate-reject-unknown-fields",
+	} {
+		if visited[name] {
+			return true
+		}
+	}
+	return false
 }
 
 // isCacheVaryOnVocab reports whether v is in the closed cache
@@ -1433,6 +1566,8 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"retry-budget-percent", "retry-budget-min-retries",
 		"maintenance-retry-after-seconds", "maintenance-message",
 		"respond-status", "respond-body",
+		"validate-schema", "validate-content-type", "validate-max-body-bytes",
+		"validate-apply-while-streaming", "validate-reject-unknown-fields",
 	}
 	for _, name := range kindFlagNames {
 		if visited[name] {

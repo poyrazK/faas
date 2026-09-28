@@ -554,13 +554,13 @@ func TestPreAuthRouteLimitValidation(t *testing.T) {
 		name  string
 		route PreAuthRouteLimit
 	}{
-		{"relative_path", PreAuthRouteLimit{"POST", "login", 2, 4}},
-		{"dot_segment", PreAuthRouteLimit{"POST", "/a/../login", 2, 4}},
-		{"encoded_path", PreAuthRouteLimit{"POST", "/%6cogin", 2, 4}},
-		{"query", PreAuthRouteLimit{"POST", "/login?next=x", 2, 4}},
-		{"unsupported_method", PreAuthRouteLimit{"TRACE", "/login", 2, 4}},
-		{"rate_above_base", PreAuthRouteLimit{"POST", "/login", 6, 4}},
-		{"burst_above_base", PreAuthRouteLimit{"POST", "/login", 2, 21}},
+		{"relative_path", PreAuthRouteLimit{Method: "POST", Path: "login", RequestsPerSecond: 2, Burst: 4}},
+		{"dot_segment", PreAuthRouteLimit{Method: "POST", Path: "/a/../login", RequestsPerSecond: 2, Burst: 4}},
+		{"encoded_path", PreAuthRouteLimit{Method: "POST", Path: "/%6cogin", RequestsPerSecond: 2, Burst: 4}},
+		{"query", PreAuthRouteLimit{Method: "POST", Path: "/login?next=x", RequestsPerSecond: 2, Burst: 4}},
+		{"unsupported_method", PreAuthRouteLimit{Method: "TRACE", Path: "/login", RequestsPerSecond: 2, Burst: 4}},
+		{"rate_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 6, Burst: 4}},
+		{"burst_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 21}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,5 +580,46 @@ func TestPreAuthRouteLimitValidation(t *testing.T) {
 	off.Mode = PreAuthRateLimitOff
 	if err := off.Validate(PlanFree); err != nil {
 		t.Fatalf("turning off a policy with saved overrides: %v", err)
+	}
+}
+
+func TestPreAuthFailedResponseLimitValidation(t *testing.T) {
+	base := PreAuthRateLimitConfig{
+		Mode: PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{
+			Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4,
+			FailedResponses: &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2},
+		}},
+	}
+	if err := base.Validate(PlanFree); err != nil {
+		t.Fatalf("default 401/403 statuses should be valid: %v", err)
+	}
+	valid := base
+	valid.Routes = append([]PreAuthRouteLimit(nil), base.Routes...)
+	valid.Routes[0].FailedResponses = &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{400, 422}}
+	if err := valid.Validate(PlanFree); err != nil {
+		t.Fatalf("explicit application failure statuses should be valid: %v", err)
+	}
+	cases := []struct {
+		name   string
+		failed PreAuthFailedResponseLimit
+	}{
+		{"zero_rate", PreAuthFailedResponseLimit{Burst: 2}},
+		{"rate_above_route", PreAuthFailedResponseLimit{FailuresPerMinute: 121, Burst: 2}},
+		{"burst_above_route", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 5}},
+		{"rate_limit_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{429}}},
+		{"server_error_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{500}}},
+		{"duplicate_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{401, 401}}},
+		{"too_many_statuses", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{400, 401, 403, 404, 422}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := base
+			config.Routes = append([]PreAuthRouteLimit(nil), base.Routes...)
+			config.Routes[0].FailedResponses = &tc.failed
+			if err := config.Validate(PlanFree); err == nil {
+				t.Fatal("invalid failure response budget accepted")
+			}
+		})
 	}
 }

@@ -353,6 +353,7 @@ export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js'
 export type { EventDeliveryListResponse } from './models/EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
 export type { EventPreviewSubscription } from './models/EventPreviewSubscription.js';
+export type { EventSchema } from './models/EventSchema.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './models/EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './models/ExecutionFailure.js';
@@ -606,6 +607,7 @@ export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantU
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
+export type { PreAuthFailedResponseLimit } from './models/PreAuthFailedResponseLimit.js';
 export type { PreAuthRateLimitConfig } from './models/PreAuthRateLimitConfig.js';
 export type { PreAuthRouteLimit } from './models/PreAuthRouteLimit.js';
 export type { PreflightFinding } from './models/PreflightFinding.js';
@@ -725,6 +727,8 @@ export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
 export type { RecordDevSyncRequest } from './models/RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
+export type { RegisterEventSchemaRequest } from './models/RegisterEventSchemaRequest.js';
+export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaResponse.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { RepoResponse } from './models/RepoResponse.js';

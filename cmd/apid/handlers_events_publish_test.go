@@ -84,3 +84,24 @@ func TestPublishEventRejectsCrossAccountAndInvalidEnvelope(t *testing.T) {
 		t.Fatalf("invalid envelope status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPublishEventIdentityRejectsChangedContent(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	request := api.PublishEventRequest{ID: "evt-identity", Source: "billing", Type: "paid", Data: json.RawMessage(`{"amount":1}`)}
+	for attempt := 0; attempt < 2; attempt++ {
+		rec := e.do(t, http.MethodPost, "/v1/events:publish", request, nil)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("identical retry %d: %d %s", attempt, rec.Code, rec.Body.String())
+		}
+	}
+	request.Data = json.RawMessage(`{"amount":2}`)
+	rec := e.do(t, http.MethodPost, "/v1/events:publish", request, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("changed content: %d %s", rec.Code, rec.Body.String())
+	}
+	request.Source = "other-billing"
+	rec = e.do(t, http.MethodPost, "/v1/events:publish", request, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("different source: %d %s", rec.Code, rec.Body.String())
+	}
+}

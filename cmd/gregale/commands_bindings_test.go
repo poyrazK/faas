@@ -225,11 +225,11 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
 			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"pg-binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","state":"ready"},{"id":"pg-binding-2","database_id":"db-1","app_id":"another-app","scope":"production","environment_key":"DATABASE_URL","access":"read_only","state":"ready"}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"pg-binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"},{"id":"pg-binding-2","database_id":"db-1","app_id":"another-app","scope":"production","environment_key":"DATABASE_URL","access":"read_only","credential_generation":9,"rotation_pending":true,"state":"ready"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/buckets":
 			_, _ = w.Write([]byte(`{"items":[{"id":"bucket-1","name":"assets","scope":"production","region":"eu","state":"ready"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/buckets/bucket-1/compute-bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"bucket-binding-1","bucket_id":"bucket-1","scope":"production","prefix":"GREGALE_S3_ASSETS","credential":{"id":"credential-1","access_key_id":"AKIA_PRIVATE_VALUE","label":"compute","permission":"read_write","status":"active"},"secret_keys":{"access_key_id":"GREGALE_S3_ASSETS_ACCESS_KEY_ID","secret_access_key":"GREGALE_S3_ASSETS_SECRET_ACCESS_KEY"}}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"bucket-binding-1","bucket_id":"bucket-1","scope":"production","prefix":"GREGALE_S3_ASSETS","credential":{"id":"credential-1","access_key_id":"AKIA_PRIVATE_VALUE","label":"compute","permission":"read_write","status":"active"},"secret_keys":{"access_key_id":"GREGALE_S3_ASSETS_ACCESS_KEY_ID","secret_access_key":"GREGALE_S3_ASSETS_SECRET_ACCESS_KEY"},"rotation_pending":false}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/queue-bindings":
 			_, _ = w.Write([]byte(`[{"id":"queue-binding-1","app_id":"app-1","name":"email-worker","queue_name":"email","mode":"push","workload_class":"worker","enabled":true}]`))
 		default:
@@ -252,11 +252,20 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
+	postgresGeneration := int64(2)
+	postgresRotationPending := true
+	objectStorageRotationPending := false
 	want := appBindingInventory{
 		App: "api",
 		Bindings: []appBindingInventoryItem{
-			{Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "active"},
-			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
+			{
+				Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "active",
+				RotationPending: &objectStorageRotationPending,
+			},
+			{
+				Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready",
+				CredentialGeneration: &postgresGeneration, RotationPending: &postgresRotationPending,
+			},
 			{Type: bindingTypeQueue, Name: "email", Binding: "email-worker", Scope: "app", Access: "push", State: "active"},
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
@@ -389,7 +398,14 @@ func TestRenderAppBindingInventory(t *testing.T) {
 	renderAppBindingInventory(appBindingInventory{
 		App: "api",
 		Bindings: []appBindingInventoryItem{
-			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
+			{
+				Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready",
+				CredentialGeneration: int64Pointer(2), RotationPending: boolPointer(true),
+			},
+			{
+				Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "ready",
+				RotationPending: boolPointer(false),
+			},
 			{Type: bindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
@@ -401,8 +417,8 @@ func TestRenderAppBindingInventory(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"TYPE", "NAME", "BINDING ENV", "TRANSPORT", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE",
-		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL",
+		"TYPE", "NAME", "BINDING ENV", "TRANSPORT", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE", "CREDENTIAL GENERATION", "ROTATION PENDING",
+		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL", "2", "true", "false",
 		"http", "http://billing.svc.gregale:10080", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
 		"Warning: " + managedPostgresBindingsWarning,
 	} {
@@ -411,3 +427,7 @@ func TestRenderAppBindingInventory(t *testing.T) {
 		}
 	}
 }
+
+func int64Pointer(value int64) *int64 { return &value }
+
+func boolPointer(value bool) *bool { return &value }

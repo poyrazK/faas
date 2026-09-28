@@ -104,13 +104,13 @@ func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, app
 	if len(eventPayload) == 0 || len(noticePayload) == 0 {
 		return fmt.Errorf("api discovery: invalid route event for %q", route)
 	}
-	// Keep the ledger's insertion time current for the bounded fanout recovery
-	// sweep; the CloudEvent's time still records when the route was first seen.
+	// The ledger insert also creates durable fanout work through the trigger;
+	// the CloudEvent's time still records when the route was first seen.
 	if _, err := tx.Exec(ctx, `insert into events (actor, kind, subject, data)
 		values ('apid', 'event.published', $1::uuid, $2::jsonb)`, accountID, eventPayload); err != nil {
 		return fmt.Errorf("api discovery: persist route event: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyEventPublished, string(eventPayload)); err != nil {
+	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyEventPublished, "1"); err != nil {
 		return fmt.Errorf("api discovery: notify event fanout: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyAPIRouteDiscovered, string(noticePayload)); err != nil {

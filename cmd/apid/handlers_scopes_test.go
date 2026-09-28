@@ -105,6 +105,24 @@ func setupWithSession(t *testing.T) (testEnv, *http.Cookie) {
 // The fine-grained vocabulary replaces the coarse admin|read|write
 // from rev1. See ADR-034 rev2 for the rationale.
 func TestScopeMatrix(t *testing.T) {
+	t.Run("events-publish-key/cannot-deploy", func(t *testing.T) {
+		e := setupWithScopes(t, []string{api.ScopeEventsPublish})
+		rec := e.do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{
+			ID: "scoped-event", Source: "test", Type: "created", Data: json.RawMessage(`{}`),
+		}, nil)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("publish: %d %s", rec.Code, rec.Body.String())
+		}
+		rec = e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "forbidden-deploy"}, nil)
+		assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+	})
+	t.Run("queues-send-key/cannot-publish-event", func(t *testing.T) {
+		e := setupWithScopes(t, []string{api.ScopeQueuesSend})
+		rec := e.do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{
+			ID: "forbidden-event", Source: "test", Type: "created", Data: json.RawMessage(`{}`),
+		}, nil)
+		assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+	})
 	t.Run("admin-key/GET-allowed", func(t *testing.T) {
 		e := setupWithScopes(t, api.ScopesAdminOnly)
 		rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)

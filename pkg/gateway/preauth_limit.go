@@ -2,10 +2,13 @@ package gateway
 
 import (
 	"container/list"
+	"context"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +16,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// preAuthSourcesPerApp caps traffic-controlled bucket cardinality. A source
-// beyond this cap shares the app's overflow bucket until a fully refilled
+// preAuthSourcesPerApp caps traffic-controlled bucket cardinality per policy.
+// A source beyond this cap shares that policy's overflow bucket until a fully refilled
 // source bucket can be safely evicted. In-flight rate debt is never reset by
 // an attacker rotating addresses.
 const preAuthSourcesPerApp = 1024
@@ -45,6 +48,30 @@ type preAuthBucket struct {
 	elem   *list.Element
 	global *list.Element
 	appID  string
+}
+
+type preAuthFailureContextKey struct{}
+
+type preAuthFailureContext struct {
+	appID    string
+	policyID string
+	source   string
+	rps      float64
+	burst    int
+	statuses [4]int
+	statusN  int
+}
+
+func (f preAuthFailureContext) tracks(status int) bool {
+	if f.statusN == 0 {
+		return status == http.StatusUnauthorized || status == http.StatusForbidden
+	}
+	for _, selected := range f.statuses[:f.statusN] {
+		if selected == status {
+			return true
+		}
+	}
+	return false
 }
 
 func newPreAuthSourceLimiter() *preAuthSourceLimiter {
@@ -80,8 +107,25 @@ func (l *preAuthSourceLimiter) evictRefilled(recent *list.List, now time.Time) b
 // remain the aggregate ceilings; this early bucket avoids authentication
 // work for an individual source that exceeds its configured rate.
 func (l *preAuthSourceLimiter) Allow(appID, source string, rps, burst int) bool {
+	allowed, _ := l.allowRate(appID, source, float64(rps), burst, true, false)
+	return allowed
+}
+
+// AvailableRate checks a response-driven budget without spending a token.
+// The later application response spends one token only for a selected status.
+func (l *preAuthSourceLimiter) AvailableRate(appID, source string, rps float64, burst int) (bool, int) {
+	return l.allowRate(appID, source, rps, burst, false, false)
+}
+
+// RecordRate spends a response token even when concurrent in-flight failures
+// have already exhausted the budget. The resulting debt delays the next admit.
+func (l *preAuthSourceLimiter) RecordRate(appID, source string, rps float64, burst int) {
+	l.allowRate(appID, source, rps, burst, true, true)
+}
+
+func (l *preAuthSourceLimiter) allowRate(appID, source string, rps float64, burst int, consume, allowDebt bool) (bool, int) {
 	if l == nil || appID == "" || source == "" || rps <= 0 || burst <= 0 {
-		return false
+		return false, 1
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -100,14 +144,14 @@ func (l *preAuthSourceLimiter) Allow(appID, source string, rps, burst int) bool 
 			l.evictRefilled(l.recent, now)
 		}
 		if len(app.sources) < preAuthSourcesPerApp && l.sourceCount < l.maxSources {
-			b = &preAuthBucket{tokens: float64(burst), last: now, rps: float64(rps), burst: float64(burst), source: source, appID: appID}
+			b = &preAuthBucket{tokens: float64(burst), last: now, rps: rps, burst: float64(burst), source: source, appID: appID}
 			b.elem = app.recent.PushFront(b)
 			b.global = l.recent.PushFront(b)
 			app.sources[source] = b
 			l.sourceCount++
 		} else {
 			if app.overflow == nil {
-				app.overflow = &preAuthBucket{tokens: float64(burst), last: now, rps: float64(rps), burst: float64(burst)}
+				app.overflow = &preAuthBucket{tokens: float64(burst), last: now, rps: rps, burst: float64(burst)}
 			}
 			b = app.overflow
 		}
@@ -115,12 +159,16 @@ func (l *preAuthSourceLimiter) Allow(appID, source string, rps, burst int) bool 
 		app.recent.MoveToFront(b.elem)
 		l.recent.MoveToFront(b.global)
 	}
-	b.refill(now, float64(rps), float64(burst))
-	if b.tokens < 1 {
-		return false
+	b.refill(now, rps, float64(burst))
+	// Float refill can land a few ulps below one token at the advertised
+	// Retry-After boundary (for example 5/60 tokens per second at 24s).
+	if b.tokens < 1-1e-9 && !allowDebt {
+		return false, max(1, int(math.Ceil((1-b.tokens)/rps)))
 	}
-	b.tokens--
-	return true
+	if consume {
+		b.tokens--
+	}
+	return true, 0
 }
 
 func (b *preAuthBucket) refill(now time.Time, rps, burst float64) {
@@ -185,22 +233,56 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		return true
 	}
 	source := preAuthSourceKey(ip)
-	allowed := h.preAuthLimiter.Allow(app.ID, source, rps, burst)
-	scope := "pre-auth"
-	if allowed && len(config.Routes) > 0 {
+	var matched *api.PreAuthRouteLimit
+	if len(config.Routes) > 0 {
 		// Match the decoded public path before edge rewrites. Cleaning covers
 		// common router normalization, so /login/../login cannot bypass an
 		// exact /login policy when the application normalizes that path.
 		publicPath := path.Clean(strings.ReplaceAll(r.URL.Path, "\\", "/"))
-		for _, route := range config.Routes {
-			if route.Method != r.Method || route.Path != publicPath {
-				continue
+		for i := range config.Routes {
+			route := &config.Routes[i]
+			if route.Method == r.Method && route.Path == publicPath {
+				matched = route
+				break
 			}
-			policyID := app.ID + "\x00" + route.Method + " " + route.Path
-			allowed = h.preAuthLimiter.Allow(policyID, source, min(route.RequestsPerSecond, rps), min(route.Burst, burst))
-			scope = "pre-auth-route"
-			break
 		}
+	}
+	if matched != nil && matched.FailedResponses != nil {
+		failed := matched.FailedResponses
+		failure := preAuthFailureContext{
+			appID: app.ID, policyID: app.ID + "\x00" + matched.Method + " " + matched.Path + "\x00failures",
+			source: source, rps: float64(min(failed.FailuresPerMinute, min(matched.RequestsPerSecond, rps)*60)) / 60,
+			burst: min(failed.Burst, min(matched.Burst, burst)), statusN: min(len(failed.Statuses), 4),
+		}
+		copy(failure.statuses[:], failed.Statuses)
+		// Preserve the verified source and public route through edge header
+		// mutation and path rewriting; only a proxied application response
+		// can spend this budget after the request completes.
+		*r = *r.WithContext(context.WithValue(r.Context(), preAuthFailureContextKey{}, failure))
+		if available, retryAfter := h.preAuthLimiter.AvailableRate(failure.policyID, source, failure.rps, failure.burst); !available {
+			if h.metrics != nil {
+				outcome := "failure_blocked"
+				if config.Mode == api.PreAuthRateLimitObserve {
+					outcome = "failure_would_block"
+				}
+				h.metrics.ObservePreAuthRateLimit(app.ID, outcome)
+			}
+			if config.Mode == api.PreAuthRateLimitEnforce {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				w.Header().Set("x-faas-rate-limit-scope", "pre-auth-failures")
+				api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
+					"Pre-auth rate limit exceeded", "this source has sent too many requests"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return true
+			}
+		}
+	}
+	allowed := h.preAuthLimiter.Allow(app.ID, source, rps, burst)
+	scope := "pre-auth"
+	if allowed && matched != nil {
+		policyID := app.ID + "\x00" + matched.Method + " " + matched.Path
+		allowed = h.preAuthLimiter.Allow(policyID, source, min(matched.RequestsPerSecond, rps), min(matched.Burst, burst))
+		scope = "pre-auth-route"
 	}
 	if allowed {
 		return false
@@ -228,6 +310,22 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return true
+}
+
+// recordPreAuthFailedResponse is called only after an application proxy leg.
+// Gateway auth denials, cache responses, and wake errors do not spend tokens.
+func (h *Handler) recordPreAuthFailedResponse(r *http.Request, status int) {
+	if h == nil || h.preAuthLimiter == nil || r == nil {
+		return
+	}
+	failure, ok := r.Context().Value(preAuthFailureContextKey{}).(preAuthFailureContext)
+	if !ok || !failure.tracks(status) {
+		return
+	}
+	h.preAuthLimiter.RecordRate(failure.policyID, failure.source, failure.rps, failure.burst)
+	if h.metrics != nil {
+		h.metrics.ObservePreAuthRateLimit(failure.appID, "failure_recorded")
+	}
 }
 
 // ForgetPreAuthRateLimits clears process-local source buckets on SIGHUP.

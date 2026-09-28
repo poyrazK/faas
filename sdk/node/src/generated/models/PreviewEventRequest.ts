@@ -16,10 +16,18 @@ export type PreviewEventRequest = {
    * Event occurrence time; omitted values use the current time.
    */
   time?: string;
+  datacontenttype?: 'application/json';
+  /**
+   * @deprecated
+   */
   data_content_type?: 'application/json';
   /**
    * JSON event payload evaluated by subscription filters.
    */
   data: any;
+  /**
+   * Validated against the registered JSON Schema when one exists.
+   */
+  schemaversion?: string;
 };
 

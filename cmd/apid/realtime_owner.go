@@ -314,6 +314,63 @@ func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, conne
 	})
 }
 
+func (o *leasedRealtimeOwner) publishTargetNodes(ctx context.Context, endpointID, channel string) ([]state.ComputeNode, bool, error) {
+	if o.channelRoutingEnabled && o.channelRoutes != nil {
+		if targetStore, ok := o.channelRoutes.(state.ManagedRealtimeChannelPublishTargetStore); ok {
+			view, err := targetStore.ListManagedRealtimeChannelPublishTargets(ctx, endpointID, channel)
+			if err != nil {
+				// Keep the directory as an optimization: a failed read falls back
+				// to the same full-fleet publish used before route indexing.
+				nodes, activeErr := o.nodes.ActiveComputeNodes(ctx)
+				if activeErr != nil {
+					return nil, false, activeErr
+				}
+				if len(nodes) > 0 {
+					o.channelRouteMetrics.publish("directory_error", len(nodes))
+				}
+				return nodes, false, nil
+			}
+			if !view.HasActiveNodes {
+				return nil, false, nil
+			}
+
+			nodes := make([]state.ComputeNode, 0, len(view.Targets))
+			hasUnreadyNode := false
+			for _, target := range view.Targets {
+				nodes = append(nodes, state.ComputeNode{
+					ID: target.NodeID, Name: target.NodeName, GatewayTargetURL: target.GatewayTargetURL,
+				})
+				if !target.SnapshotReady {
+					hasUnreadyNode = true
+				}
+			}
+			decision := "targeted"
+			switch {
+			case view.Disabled:
+				decision = "overflow"
+			case len(nodes) == 0:
+				decision = "no_subscribers"
+			case hasUnreadyNode:
+				decision = "unready_fallback"
+			}
+			o.channelRouteMetrics.publish(decision, len(nodes))
+			return nodes, len(nodes) == 0, nil
+		}
+	}
+
+	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(nodes) > 0 {
+		nodes = o.publishRecipients(ctx, endpointID, channel, nodes)
+		if len(nodes) == 0 {
+			return nil, true, nil
+		}
+	}
+	return nodes, false, nil
+}
+
 // Publish routes to known subscriber nodes when shared channel hints are
 // ready, while retaining fleet broadcast for unready nodes or degraded index
 // reads. A node that is down is tolerated when at least one recipient accepts
@@ -333,7 +390,7 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 		o.observePublish("unavailable", started)
 		return result, errManagedRealtimeOwnerUnavailable
 	}
-	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	nodes, noSubscribers, err := o.publishTargetNodes(ctx, endpointID, channel)
 	if err != nil {
 		outcome := "unavailable"
 		if ctx.Err() != nil {
@@ -342,12 +399,9 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 		o.observePublish(outcome, started)
 		return result, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
-	if len(nodes) > 0 {
-		nodes = o.publishRecipients(ctx, endpointID, channel, nodes)
-		if len(nodes) == 0 {
-			o.observePublish("no_subscribers", started)
-			return result, nil
-		}
+	if noSubscribers {
+		o.observePublish("no_subscribers", started)
+		return result, nil
 	}
 	// Keep one result per node so aggregation and error selection stay in
 	// fleet order even when node requests finish in a different order.

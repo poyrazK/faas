@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -172,6 +173,117 @@ func TestRoutePublishedEventIsIdempotentForRepeatedNotifications(t *testing.T) {
 	}
 	if invocations[0].ID == "" {
 		t.Fatal("deterministic invocation ID is empty")
+	}
+}
+
+func TestRoutePublishedEventIdentityIncludesSource(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "event-sources@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-sources"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "*", "created", nil); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: store}}
+	for _, source := range []string{"first", "second"} {
+		event := events.Envelope{SpecVersion: "1.0", ID: "same-id", Source: source, Type: "created", Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{}`), AccountID: accountID}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := loop.routePublishedEvent(ctx, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	invocations, err := store.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 2 {
+		t.Fatalf("invocations = %d, want 2", len(invocations))
+	}
+}
+
+func TestEventFanoutSweepDrainsOldBacklog(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "event-backlog@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-backlog"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC()
+	for i := 0; i < 1001; i++ {
+		event := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "orders", Type: "created", Time: old, DataContentType: "application/json", Data: json.RawMessage(`{}`), AccountID: accountID}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loop := &Loop{engine: &Engine{store: store}, now: func() time.Time { return old.Add(24 * time.Hour) }}
+	for i := 0; i < 11; i++ {
+		loop.runEventFanoutSweep(ctx)
+	}
+	invocations, err := store.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 1001 {
+		t.Fatalf("invocations = %d, want 1001", len(invocations))
+	}
+	if _, err := store.ClaimDuePublishedEvent(ctx, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("remaining outbox claim: %v", err)
+	}
+}
+
+func TestEventFanoutDoesNotBackfillNewSubscription(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "event-late-subscription@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-late-subscription"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "orders", Type: "created", Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{}`), AccountID: accountID}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: store}}
+	loop.runEventFanoutSweep(ctx)
+	invocations, err := store.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 0 {
+		t.Fatalf("late subscription received %d old events", len(invocations))
 	}
 }
 

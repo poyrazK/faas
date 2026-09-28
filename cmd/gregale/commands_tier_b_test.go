@@ -31,6 +31,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -180,6 +181,24 @@ func TestTierB_SecretsListAll_ClassFilterKeepsPagination(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no ephemeral secrets on this page") || !strings.Contains(stderr.String(), "next page: --before demo|FOO") {
 		t.Errorf("filtered empty page must remain distinguishable from end-of-list; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestTierB_SecretsListAll_AgeFilterKeepsPagination(t *testing.T) {
+	resetJSONOut(t)
+	oldUpdated := time.Now().UTC().Add(-120 * 24 * time.Hour).Format(time.RFC3339)
+	recentUpdated := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	body := `{"secrets":[{"app_id":"a-1","app_slug":"demo","key":"OLD","secret_class":"ephemeral","ciphertext":"cipher","created_at":"2026-01-01T00:00:00Z","updated_at":"` + oldUpdated + `"},{"app_id":"a-1","app_slug":"demo","key":"RECENT","secret_class":"ephemeral","ciphertext":"cipher","created_at":"2026-01-01T00:00:00Z","updated_at":"` + recentUpdated + `"}],"next_before":"demo|RECENT"}`
+	authedFakeAPI(t, body, http.StatusOK)
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	if code := secretsListAll([]string{"--older-than", "90d"}); code != 0 {
+		t.Fatalf("secretsListAll = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "OLD") || strings.Contains(stdout.String(), "RECENT") || !strings.Contains(stderr.String(), "next page: --before demo|RECENT") {
+		t.Errorf("age-filtered page should show only old rows and retain cursor; stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 

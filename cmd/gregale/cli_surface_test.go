@@ -92,6 +92,27 @@ func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
 	}
 }
 
+func TestEdgeRuleValidateFlagsAppearInCreateAndUpdateHelp(t *testing.T) {
+	oldOut := osStdout
+	t.Cleanup(func() { osStdout = oldOut })
+	for _, subcommand := range []string{"create", "update"} {
+		var out bytes.Buffer
+		osStdout = &out
+		if code := run([]string{"edge-rules", subcommand, "--help"}); code != 0 {
+			t.Fatalf("edge-rules %s --help = %d", subcommand, code)
+		}
+		for _, flag := range []string{
+			"--validate-schema", "--validate-mode", "--validate-content-type",
+			"--validate-max-body-bytes", "--validate-apply-while-streaming",
+			"--validate-reject-unknown-fields",
+		} {
+			if !strings.Contains(out.String(), flag) {
+				t.Errorf("edge-rules %s --help missing %s:\n%s", subcommand, flag, out.String())
+			}
+		}
+	}
+}
+
 func TestCommonCommandExamplesAgreeAcrossHelpAndReference(t *testing.T) {
 	for _, name := range []string{"apps", "deploy", "dev", "doctor", "init", "inspect", "login", "logs"} {
 		t.Run(name, func(t *testing.T) {

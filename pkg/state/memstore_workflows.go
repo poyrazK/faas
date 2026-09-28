@@ -192,6 +192,10 @@ func (m *MemStore) ClaimNextPendingRun(_ context.Context) (*WorkflowRun, error) 
 	chosen.StartedAt = &now
 	chosen.UpdatedAt = now
 	m.workflowRuns[chosen.ID] = chosen
+	if m.workflowRunLeases == nil {
+		m.workflowRunLeases = make(map[string]time.Time)
+	}
+	m.workflowRunLeases[chosen.ID] = now.Add(5 * time.Minute)
 
 	cp := chosen
 	return &cp, nil
@@ -208,7 +212,11 @@ func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, err
 	var candidates []WorkflowRun
 	for _, r := range m.workflowRuns {
 		due := (r.Status == WorkflowRunStatusPending || r.Status == WorkflowRunStatusAwaitingEvent) && !r.ScheduledFor.After(now)
-		stale := r.Status == WorkflowRunStatusRunning && !r.UpdatedAt.Add(WorkflowRunStaleAfter).After(now)
+		deadline, leased := m.workflowRunLeases[r.ID]
+		if !leased {
+			deadline = r.UpdatedAt.Add(WorkflowRunStaleAfter)
+		}
+		stale := r.Status == WorkflowRunStatusRunning && !deadline.After(now)
 		if due || stale {
 			candidates = append(candidates, r)
 		}
@@ -228,6 +236,10 @@ func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, err
 	chosen.StartedAt = firstWorkflowTime(chosen.StartedAt, now)
 	chosen.UpdatedAt = now
 	m.workflowRuns[chosen.ID] = chosen
+	if m.workflowRunLeases == nil {
+		m.workflowRunLeases = make(map[string]time.Time)
+	}
+	m.workflowRunLeases[chosen.ID] = now.Add(5 * time.Minute)
 	if priorStatus == WorkflowRunStatusRunning {
 		for name, step := range m.workflowSteps[chosen.ID] {
 			if step.Status == WorkflowStepStatusRunning {
@@ -246,6 +258,23 @@ func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, err
 	cp.Output = cloneWorkflowJSON(chosen.Output)
 	cp.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
 	return &cp, nil
+}
+
+func (m *MemStore) ExtendWorkflowRunLease(_ context.Context, runID string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return ErrWorkflowInvalidInput
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok || run.Status != WorkflowRunStatusRunning {
+		return ErrWorkflowNotRunning
+	}
+	if m.workflowRunLeases == nil {
+		m.workflowRunLeases = make(map[string]time.Time)
+	}
+	m.workflowRunLeases[runID] = time.Now().UTC().Add(timeout + 5*time.Minute)
+	return nil
 }
 
 // ScheduleWorkflowRun changes a run's scheduler-visible state and deadline.

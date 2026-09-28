@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | Inspect app bindings, manage storage credentials, or verify private services |
+| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify private services |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -171,7 +171,7 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-Inspect app bindings, manage storage credentials, or verify private services
+Inspect app bindings and rotation status, manage storage credentials, or verify private services
 
 `gregale bindings [<subcommand>] <app>`
 
@@ -448,12 +448,14 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--public-auth <MODE>] [--basic-user <USER>] [--basic-pass <PASS>] [--ip-allowlist <CIDR>] [--only-declared-routes] [--no-only-declared-routes] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]...`
+`gregale app <slug> [<subcommand>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--visibility <public|internal>` | set public edge exposure | one of `public` · `internal` |
 | `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
 | `--ram <MB>` | set RAM in MB |  |
+| `--cpu-millicores <250|500|1000>` | set sustained CPU allowance |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum warm-saturation waiters |  |
@@ -461,17 +463,51 @@ Get/update one app or run a deployment-attached command
 | `--max-queue-wait-ms <N>` | set maximum queued concurrency wait |  |
 | `--wake-max-queue-depth <N>` | set per-app cold-wake waiter cap |  |
 | `--wake-max-queue-wait-seconds <N>` | set per-app cold-wake wait budget |  |
+| `--idle <SEC>` | set idle timeout in seconds |  |
 | `--request-timeout <SEC>` | set per-app request timeout in seconds |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 | `--security-policy <value>` | deploy posture policy | one of `off` · `warn` · `enforce` |
-| `--public-auth <MODE>` | public URL auth mode (basic and ip_allowlist are Pro+) | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
 | `--basic-user <USER>` | basic-auth username (required with --public-auth=basic) |  |
 | `--basic-pass <PASS>` | basic-auth password (required with --public-auth=basic) |  |
-| `--ip-allowlist <CIDR>` | repeatable CIDR allowed through the public URL; requires --public-auth=ip_allowlist |  |
+| `--min <N>` | set minimum warm instances (Pro/Scale only) |  |
+| `--autoscale-target-rps <N>` | set per-instance RPS scale-up target; 0 disables |  |
+| `--autoscale-target-cpu-pct <1..100>` | set per-instance CPU scale-up target; 0 disables |  |
+| `--warm-snapshot` | enable the warm-snapshot tier |  |
+| `--no-warm-snapshot` | disable the warm-snapshot tier |  |
+| `--warm-snapshot-min-requests <N>` | set the warm-snapshot request threshold |  |
+| `--warm-snapshot-min-ms <MS>` | set the warm-snapshot ready-time threshold |  |
+| `--warm-pool-size <N>` | set the paused warm-pool size |  |
+| `--eviction-priority <best_effort|reserved>` | set the app eviction tier | one of `best_effort` · `reserved` |
+| `--require-authn` | require a Gregale bearer token on every request (Pro/Scale only) |  |
+| `--no-require-authn` | disable the per-deployment token requirement |  |
+| `--maintenance` | put every request into 503 maintenance mode |  |
+| `--no-maintenance` | resume normal request handling |  |
+| `--streaming-enabled` | enable streamed responses (plan eligibility is checked by the API) |  |
+| `--no-streaming-enabled` | use buffered responses |  |
+| `--websocket-enabled` | allow WebSocket upgrade forwarding (plan eligibility is checked by the API) |  |
+| `--no-websocket` | disable WebSocket upgrade forwarding |  |
+| `--route-metrics` | enable per-route gateway metrics (plan eligibility is checked by the API) |  |
+| `--no-route-metrics` | disable per-route gateway metrics |  |
+| `--consumer-auth-mode <optional|required>` | end-customer API-key policy: optional\|required | one of `optional` · `required` |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
+| `--head-wakes` | wake a parked app for HEAD / |  |
+| `--crawler-policy <wake|cached|block>` | monitor/crawler wake policy | one of `wake` · `cached` · `block` |
+| `--health-path <PATH>` | set the monitor-facing health path |  |
+| `--health-path-wakes` | allow health probes to wake the app |  |
+| `--no-health-path-wakes` | answer health probes without waking the app |  |
+| `--app-protocol <http1|http2|grpc>` | set the wire-protocol selector | one of `http1` · `http2` · `grpc` |
 | `--public-auth <open|bearer|basic|ip_allowlist|internal_only>` | set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+ | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
 | `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
+| `--overflow-node <NAME>` | set or clear the preferred overflow compute node |  |
+
+Examples:
+
+```sh
+gregale app my-api --maintenance
+gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --route-metrics
+gregale app my-api --consumer-auth-mode required --json
+```
 
 ### app scale
 
@@ -501,6 +537,12 @@ Run a one-off command against the live deployment
 ### app security
 
 Show posture or configure deploy enforcement
+
+| Flag | Meaning | |
+|---|---|---|
+| `--posture` | show the read-only security posture |  |
+| `--require-signed <true|false>` | require signed images on deploy | one of `true` · `false` |
+| `--security-policy <off|warn|enforce>` | deploy posture policy | one of `off` · `warn` · `enforce` |
 
 ### app egress-allowlist
 
@@ -1745,6 +1787,19 @@ Add an edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+| `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
+| `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
+| `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
+| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
+| `--validate-apply-while-streaming` | also validate streaming requests |  |
+| `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+
+Examples:
+
+```sh
+gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
+cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -
+```
 
 ### edge-rules get
 
@@ -1763,6 +1818,19 @@ Update one edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+| `--validate-schema <JSON|@FILE|->` | replacement schema; required when updating action fields (inline JSON, @file, or -; max 64 KiB) |  |
+| `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
+| `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
+| `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
+| `--validate-apply-while-streaming` | also validate streaming requests |  |
+| `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+
+Examples:
+
+```sh
+gregale edge-rules update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block
+gregale edge-rules update RULE_ID --kind validate --validate-mode observe
+```
 
 ### edge-rules rm
 
@@ -2809,6 +2877,7 @@ List sealed secrets
 | `--app <slug>` | app slug | required |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
 | `--class <CLASS>` | filter by snapshot-retention class | one of `persistent` · `ephemeral` |
+| `--older-than <DURATION>` | filter to secrets not updated within a duration (for example 90d or 2160h); unknown timestamps are excluded |  |
 
 Examples:
 
@@ -2816,6 +2885,7 @@ Examples:
 gregale secrets list --app my-api
 gregale secrets list --app my-api --scope __all__
 gregale secrets list --app my-api --class ephemeral
+gregale secrets list --app my-api --older-than 90d
 ```
 
 ### secrets set
@@ -2871,11 +2941,13 @@ List every secret across apps
 | `--before <slug|key>` | pagination cursor from a previous call&#39;s next_before |  |
 | `--limit <N>` | page size (1..200; server caps at 200) |  |
 | `--class <CLASS>` | filter this page by snapshot-retention class | one of `persistent` · `ephemeral` |
+| `--older-than <DURATION>` | filter this page to secrets not updated within a duration; unknown timestamps are excluded |  |
 
 Examples:
 
 ```sh
 gregale secrets list-all --class ephemeral
+gregale secrets list-all --older-than 90d
 ```
 
 ### secrets rotate

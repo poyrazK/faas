@@ -121,7 +121,8 @@ def sync_detailed(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -168,7 +169,8 @@ def sync(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -210,7 +212,8 @@ async def asyncio_detailed(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
@@ -255,7 +258,8 @@ async def asyncio(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):

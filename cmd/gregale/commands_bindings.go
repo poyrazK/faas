@@ -40,16 +40,18 @@ func managedPostgresUnavailable(err error) bool {
 }
 
 type appBindingInventoryItem struct {
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	Binding   string `json:"binding"`
-	HTTPURL   string `json:"http_url,omitempty"`
-	HTTPSEnv  string `json:"https_env,omitempty"`
-	HTTPSURL  string `json:"https_url,omitempty"`
-	Transport string `json:"transport,omitempty"`
-	Scope     string `json:"scope"`
-	Access    string `json:"access"`
-	State     string `json:"state"`
+	Type                 string `json:"type"`
+	Name                 string `json:"name"`
+	Binding              string `json:"binding"`
+	HTTPURL              string `json:"http_url,omitempty"`
+	HTTPSEnv             string `json:"https_env,omitempty"`
+	HTTPSURL             string `json:"https_url,omitempty"`
+	Transport            string `json:"transport,omitempty"`
+	Scope                string `json:"scope"`
+	Access               string `json:"access"`
+	State                string `json:"state"`
+	CredentialGeneration *int64 `json:"credential_generation,omitempty"`
+	RotationPending      *bool  `json:"rotation_pending,omitempty"`
 }
 
 type appBindingInventoryClient interface {
@@ -365,13 +367,17 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 			if binding.AppID != app.ID {
 				continue
 			}
+			generation := binding.CredentialGeneration
+			rotationPending := binding.RotationPending
 			inventory.Bindings = append(inventory.Bindings, appBindingInventoryItem{
-				Type:    bindingTypePostgres,
-				Name:    database.Name,
-				Binding: binding.EnvironmentKey,
-				Scope:   binding.Scope,
-				Access:  binding.Access,
-				State:   binding.State,
+				Type:                 bindingTypePostgres,
+				Name:                 database.Name,
+				Binding:              binding.EnvironmentKey,
+				Scope:                binding.Scope,
+				Access:               binding.Access,
+				State:                binding.State,
+				CredentialGeneration: &generation,
+				RotationPending:      &rotationPending,
 			})
 		}
 	}
@@ -390,13 +396,15 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 			if state == "" {
 				state = bucket.State
 			}
+			rotationPending := binding.RotationPending
 			inventory.Bindings = append(inventory.Bindings, appBindingInventoryItem{
-				Type:    bindingTypeObjectStorage,
-				Name:    bucket.Name,
-				Binding: binding.Prefix,
-				Scope:   binding.Scope,
-				Access:  binding.Credential.Permission,
-				State:   state,
+				Type:            bindingTypeObjectStorage,
+				Name:            bucket.Name,
+				Binding:         binding.Prefix,
+				Scope:           binding.Scope,
+				Access:          binding.Credential.Permission,
+				State:           state,
+				RotationPending: &rotationPending,
 			})
 		}
 	}
@@ -445,9 +453,9 @@ func renderAppBindingInventory(inventory appBindingInventory) {
 		return
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "TYPE\tNAME\tBINDING ENV\tTRANSPORT\tHTTP URL\tHTTPS ENV\tHTTPS URL\tSCOPE\tACCESS\tSTATE")
+	_, _ = fmt.Fprintln(tw, "TYPE\tNAME\tBINDING ENV\tTRANSPORT\tHTTP URL\tHTTPS ENV\tHTTPS URL\tSCOPE\tACCESS\tSTATE\tCREDENTIAL GENERATION\tROTATION PENDING")
 	for _, binding := range inventory.Bindings {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			binding.Type,
 			humanBindingValue(binding.Name),
 			humanBindingValue(binding.Binding),
@@ -458,6 +466,8 @@ func renderAppBindingInventory(inventory appBindingInventory) {
 			humanBindingValue(binding.Scope),
 			humanBindingValue(binding.Access),
 			humanBindingValue(binding.State),
+			humanBindingGeneration(binding.CredentialGeneration),
+			humanBindingRotationPending(binding.RotationPending),
 		)
 	}
 	_ = tw.Flush()
@@ -471,4 +481,21 @@ func humanBindingValue(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func humanBindingGeneration(value *int64) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%d", *value)
+}
+
+func humanBindingRotationPending(value *bool) string {
+	if value == nil {
+		return "-"
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
 }

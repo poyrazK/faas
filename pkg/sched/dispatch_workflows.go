@@ -765,6 +765,11 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	if leaseStore, ok := o.store.(state.WorkflowRunLeaseStore); ok {
+		if err := leaseStore.ExtendWorkflowRunLease(ctx, run.ID, timeout); err != nil {
+			return false, err
+		}
+	}
 
 	statusCode, body, err := o.executor.ExecuteStep(ctx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
 	duration := time.Since(start)

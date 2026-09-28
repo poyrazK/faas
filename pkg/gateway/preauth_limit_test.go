@@ -302,3 +302,152 @@ func TestPreAuthRateLimitBucketsIPv6By64(t *testing.T) {
 		}
 	}
 }
+
+func TestPreAuthFailedResponsesBlockOnlyAfterApplicationFailures(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	var originStatus atomic.Int32
+	var originCalls atomic.Int32
+	originStatus.Store(http.StatusOK)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		originCalls.Add(1)
+		w.WriteHeader(int(originStatus.Load()))
+	}))
+	t.Cleanup(upstream.Close)
+	b.upstream = upstream.Listener.Addr().String()
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 100, Burst: 100,
+		Routes: []api.PreAuthRouteLimit{{
+			Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2},
+		}},
+	}
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	request := func(source string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", source)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for i := 0; i < 3; i++ {
+		if rec := request("192.0.2.1"); rec.Code != http.StatusOK {
+			t.Fatalf("successful request %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	originStatus.Store(http.StatusUnauthorized)
+	for i := 0; i < 2; i++ {
+		if rec := request("192.0.2.1"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failed response %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	b.mu.Lock()
+	b.running = false
+	b.targets = nil
+	b.mu.Unlock()
+	if rec := request("192.0.2.1"); rec.Code != http.StatusTooManyRequests ||
+		rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth-failures" || rec.Header().Get("Retry-After") != "12" {
+		t.Fatalf("failed-response limit = %d headers=%v: %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if got := originCalls.Load(); got != 5 {
+		t.Fatalf("blocked request reached origin: %d calls", got)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 0 {
+		t.Fatalf("blocked request woke app: %d admits", got)
+	}
+	if rec := request("192.0.2.2"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("independent source = %d: %s", rec.Code, rec.Body.String())
+	}
+	originStatus.Store(http.StatusOK)
+	fixed = fixed.Add(12 * time.Second)
+	if rec := request("192.0.2.1"); rec.Code != http.StatusOK {
+		t.Fatalf("refilled failure budget = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "failure_recorded")); got != 3 {
+		t.Fatalf("recorded failures = %v, want 3", got)
+	}
+}
+
+func TestPreAuthFailedResponsesChargeConcurrentFailures(t *testing.T) {
+	l := newPreAuthSourceLimiter()
+	fixed := time.Unix(100, 0)
+	l.now = func() time.Time { return fixed }
+	const rate = 5.0 / 60
+	for i := 0; i < 2; i++ {
+		if available, _ := l.AvailableRate("app-1\x00POST /login\x00failures", "192.0.2.1", rate, 1); !available {
+			t.Fatalf("concurrent request %d should have entered before failures completed", i)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		l.RecordRate("app-1\x00POST /login\x00failures", "192.0.2.1", rate, 1)
+	}
+	if available, retryAfter := l.AvailableRate("app-1\x00POST /login\x00failures", "192.0.2.1", rate, 1); available || retryAfter != 24 {
+		t.Fatalf("two failures should require 24 seconds of refill: available=%t retry_after=%d", available, retryAfter)
+	}
+	fixed = fixed.Add(24 * time.Second)
+	if available, _ := l.AvailableRate("app-1\x00POST /login\x00failures", "192.0.2.1", rate, 1); !available {
+		t.Fatal("failure debt did not refill")
+	}
+}
+
+func TestPreAuthFailedResponsesObserveConfiguredStatus(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}))
+	t.Cleanup(upstream.Close)
+	b.upstream = upstream.Listener.Addr().String()
+	b.setLegacyHot()
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 100, Burst: 100,
+		Routes: []api.PreAuthRouteLimit{{
+			Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1, Statuses: []int{422}},
+		}},
+	}
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("observe response %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "failure_would_block")); got != 1 {
+		t.Fatalf("would-block metric = %v, want 1", got)
+	}
+}
+
+func TestPreAuthFailedResponsesIgnoreGatewayAuthDenials(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.ConsumerAuthMode = api.ConsumerAuthModeRequired
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 100, Burst: 100,
+		Routes: []api.PreAuthRouteLimit{{
+			Method: "POST", Path: "/login", RequestsPerSecond: 100, Burst: 100,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1},
+		}},
+	}
+	fixed := time.Now()
+	h.preAuthLimiter.now = func() time.Time { return fixed }
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("gateway auth denial %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	policyID := "app-1\x00POST /login\x00failures"
+	if available, _ := h.preAuthLimiter.AvailableRate(policyID, "192.0.2.1", 5.0/60, 1); !available {
+		t.Fatal("gateway-generated 401 spent the application failure budget")
+	}
+	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "failure_recorded")); got != 0 {
+		t.Fatalf("gateway auth denials recorded as application failures: %v", got)
+	}
+}

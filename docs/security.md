@@ -73,11 +73,29 @@ route matching does not understand application route parameters. Route limits
 return `x-faas-rate-limit-scope: pre-auth-route` when enforced. Shared NAT
 addresses still share a bucket, so start in `observe` mode.
 
+For login or verification routes, a `failed_responses` budget can count only
+application failures. Successful responses do not spend this budget:
+
+```json
+{"pre_auth_rate_limit":{"mode":"observe","requests_per_second":20,"burst":40,"routes":[{"method":"POST","path":"/login","requests_per_second":20,"burst":40,"failed_responses":{"failures_per_minute":5,"burst":3,"statuses":[401,403]}}]}}
+```
+
+The default counted statuses are `401` and `403`. Apps can select up to four
+4xx codes except `429` to match their login response contract. Only proxied
+application responses count: a gateway authentication denial, cached response,
+or wake error does not. After the budget is spent, enforce mode returns a
+`429` before authentication or VM wake, with
+`x-faas-rate-limit-scope: pre-auth-failures` and a calculated `Retry-After`.
+The budget is local to each gateway replica, and a source shared by many
+legitimate users still shares it. Observe mode records would-block decisions
+while continuing to serve the route.
+
 The source is the client IP verified by the public gateway, which replaces
 incoming `X-Forwarded-For` before passing the request to the internal gateway.
 An enforce-mode app returns `403` when this trusted address is missing or
 malformed. Source buckets are bounded to 1,024 per configured policy (the
-app-wide policy and each route override) and 65,536 per gateway;
+app-wide policy, each route override, and each failure budget) and 65,536 per
+gateway;
 further addresses share that policy's overflow bucket until an inactive bucket can
 be safely evicted.
 The guard is local to each gateway replica, so its per-source threshold is an
@@ -86,7 +104,8 @@ limits continue to cap aggregate request rates. Shared corporate/NAT IPs
 also share a source bucket; use `observe` to choose a suitable threshold.
 
 `gateway_pre_auth_rate_limit_total{app,outcome}` reports `would_block`,
-`blocked`, `route_would_block`, `route_blocked`, and `untrusted_source`
+`blocked`, `route_would_block`, `route_blocked`, `failure_recorded`,
+`failure_would_block`, `failure_blocked`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
 ## Quarantine recovery

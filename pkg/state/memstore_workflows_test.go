@@ -321,6 +321,33 @@ func TestMemStore_DueWorkflowRunScheduling(t *testing.T) {
 	}
 }
 
+func TestMemStore_WorkflowRunLeaseRequiresActiveRun(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	run := &state.WorkflowRun{AppID: "app-lease", WorkflowName: "lease", DefinitionSnapshot: json.RawMessage(`{"steps":[]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ExtendWorkflowRunLease(ctx, run.ID, time.Minute); !errors.Is(err, state.ErrWorkflowNotRunning) {
+		t.Fatalf("extend pending run = %v", err)
+	}
+	if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ExtendWorkflowRunLease(ctx, run.ID, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimNextDueWorkflowRun(ctx); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("reclaim active lease = %v", err)
+	}
+	if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ExtendWorkflowRunLease(ctx, run.ID, time.Minute); !errors.Is(err, state.ErrWorkflowNotRunning) {
+		t.Fatalf("extend completed run = %v", err)
+	}
+}
+
 func TestMemStore_WorkflowStepsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()

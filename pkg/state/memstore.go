@@ -560,8 +560,12 @@ type MemStore struct {
 	snapshotReplicas map[snapshotReplicaKey]snapshotReplicaRow
 	// snapshotOrigins records the producer node/locality for region-scoped
 	// fan-out. Legacy snapshots without an entry remain globally eligible.
-	snapshotOrigins map[string]snapshotOriginRow
-	events          []Event
+	snapshotOrigins   map[string]snapshotOriginRow
+	events            []Event
+	eventFanout       map[string]*PublishedEventWork
+	eventFanoutNextID int64
+	eventSchemas      map[string]EventSchema
+	workflowRunLeases map[string]time.Time
 	// auditOutbox mirrors audit_event_outbox. It is separate from the
 	// events slice because delivery claims need leases and retry state,
 	// while the resulting audit event remains append-only.
@@ -15682,6 +15686,11 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Subject: subj,
 		TraceID: traceID,
 		Data:    append([]byte(nil), data...),
+	}
+	if kind == "event.published" {
+		if err := m.enqueuePublishedEventLocked(subj, data, at); err != nil {
+			return err
+		}
 	}
 	m.events = append(m.events, e)
 	return nil

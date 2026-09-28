@@ -24,7 +24,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Ingress/auth policy, target-app rules after routing, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Retry-rule traces report effective attempts, backoff, request-budget floor, aggregate replay budget, and the deterministic method/idempotency-key guard; they do not predict a replay because the operator gate, transport failure, body replayability, remaining budget, healthy sibling, and live aggregate budget are runtime state. Ingress/auth policy, target-app rules after routing, circuit-breaker state, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const redactedHeaderValue = "[REDACTED]"
@@ -159,6 +159,7 @@ type SimulationStep struct {
 	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
 	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
 	ThrottlePolicy    *ThrottlePolicyPreview `json:"throttle_policy,omitempty"`
+	RetryPolicy       *RetryPolicyPreview    `json:"retry_policy,omitempty"`
 	Reason            string                 `json:"reason"`
 }
 
@@ -195,6 +196,7 @@ type ActionPreview struct {
 	CachePolicy       *CachePolicyPreview    `json:"cache_policy,omitempty"`
 	BudgetPolicy      *BudgetPolicyPreview   `json:"budget_policy,omitempty"`
 	ThrottlePolicy    *ThrottlePolicyPreview `json:"throttle_policy,omitempty"`
+	RetryPolicy       *RetryPolicyPreview    `json:"retry_policy,omitempty"`
 }
 
 // CachePolicyPreview contains the deterministic request-side cache policy
@@ -242,6 +244,23 @@ type ThrottlePolicyPreview struct {
 	AppRequestRPS     int     `json:"app_request_rps,omitempty"`
 	AppRequestBurst   int     `json:"app_request_burst,omitempty"`
 	AccountRequestRPM int     `json:"account_request_rpm,omitempty"`
+}
+
+// RetryPolicyPreview reports a matching rule's effective replay policy and
+// the deterministic HTTP-method/idempotency-key guard. It never predicts a
+// replay: only transport failures can arm one, and the operator gate, live
+// budget, body replayability, and healthy-target state are outside the trace.
+type RetryPolicyPreview struct {
+	MaxAttempts           int    `json:"max_attempts"`
+	MaxReplays            int    `json:"max_replays"`
+	MaxAttemptsSource     string `json:"max_attempts_source"`
+	AllowNonIdempotent    bool   `json:"allow_non_idempotent"`
+	MethodEligibility     string `json:"method_eligibility"`
+	IdempotencyKeyPresent bool   `json:"idempotency_key_present"`
+	MinRemainingMS        int    `json:"min_remaining_ms"`
+	BackoffMS             int    `json:"backoff_ms"`
+	BudgetPercent         int    `json:"budget_percent"`
+	BudgetMinRetries      int    `json:"budget_min_retries"`
 }
 
 // NormalizeInput validates user-supplied request context and canonicalizes
@@ -549,7 +568,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "cache", "budget"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "cache", "budget", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -679,6 +698,10 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			if preview.ThrottlePolicy != nil {
 				throttlePolicy := *preview.ThrottlePolicy
 				step.ThrottlePolicy = &throttlePolicy
+			}
+			if preview.RetryPolicy != nil {
+				retryPolicy := *preview.RetryPolicy
+				step.RetryPolicy = &retryPolicy
 			}
 		}
 
@@ -834,6 +857,17 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			step.Reason = budgetPolicyReason(policy)
 			simulation.Steps = append(simulation.Steps, step)
 			simulation.Reason = "deterministic policy checks did not terminate the request; the reported budget applies only if the request reaches guest forwarding, and no elapsed-time or deadline outcome is predicted"
+		case "retry":
+			if outcome != "retry_policy_candidate" || step.RetryPolicy == nil {
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "incomplete", "needs_retry_runtime_context"
+			simulation.StoppedAt = phase
+			simulation.Reason = retryPolicyRuntimeReason(*step.RetryPolicy)
+			step.Reason = simulation.Reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+			return simulation
 		case "validate":
 			switch outcome {
 			case "validated", "validation_failed_observe", "validation_failed_warn":
@@ -1151,6 +1185,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewThrottleRule(rule, input)
 	case "budget":
 		return previewBudgetRule(rule, input)
+	case "retry":
+		return previewRetryRule(rule, input)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
@@ -1284,6 +1320,93 @@ func throttlePolicyReason(policy ThrottlePolicyPreview) string {
 		reason += fmt.Sprintf(" and account-wide cap is %d requests/min", policy.AccountRequestRPM)
 	}
 	return reason + "; identity resolution and current bucket balance are runtime-only, so no admission or HTTP 429 is inferred"
+}
+
+func previewRetryRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleRetryAction](rule.Action, "retry")
+	if !ok {
+		return "unavailable", "retry action is missing or invalid; gateway compilation would drop it", nil
+	}
+	if action.MaxAttempts < 2 {
+		return "unavailable", "retry action max_attempts is below 2, so gateway compilation would drop this rule; the operator default may apply if retry is enabled", nil
+	}
+
+	policy := &RetryPolicyPreview{
+		MaxAttempts:           action.MaxAttempts,
+		MaxAttemptsSource:     "rule",
+		AllowNonIdempotent:    action.AllowNonIdempotent,
+		IdempotencyKeyPresent: strings.TrimSpace(input.Headers.Get("Idempotency-Key")) != "",
+		MethodEligibility:     retryMethodEligibility(input.Method, action.AllowNonIdempotent, input.Headers),
+	}
+	if policy.MaxAttempts > api.EdgeRuleRetryMaxAttempts {
+		policy.MaxAttempts = api.EdgeRuleRetryMaxAttempts
+		policy.MaxAttemptsSource = "platform_ceiling"
+	}
+	policy.MaxReplays = policy.MaxAttempts - 1
+
+	minRemaining := action.MinRemainingMs
+	if minRemaining <= 0 || minRemaining > api.MaxEdgeRuleRetryMinRemainingMs {
+		minRemaining = api.EdgeRuleRetryDefaultMinRemainingMs
+	}
+	policy.MinRemainingMS = minRemaining
+
+	backoff := action.BackoffMs
+	if backoff < 0 || backoff > api.MaxEdgeRuleRetryBackoffMs {
+		backoff = 0
+	}
+	policy.BackoffMS = backoff
+
+	budgetPercent := action.BudgetPercent
+	if budgetPercent < 1 || budgetPercent > api.MaxEdgeRuleRetryBudgetPercent {
+		budgetPercent = api.EdgeRuleRetryDefaultBudgetPercent
+	}
+	policy.BudgetPercent = budgetPercent
+
+	budgetMinRetries := action.BudgetMinRetries
+	if budgetMinRetries <= 0 || budgetMinRetries > api.MaxEdgeRuleRetryBudgetMin {
+		budgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
+	}
+	policy.BudgetMinRetries = budgetMinRetries
+
+	return "retry_policy_candidate", retryPolicyConfiguredReason(*policy), &ActionPreview{Type: "retry", RetryPolicy: policy}
+}
+
+func retryMethodEligibility(method string, allowNonIdempotent bool, headers http.Header) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete:
+		return "idempotent_method"
+	case http.MethodPost, http.MethodPatch:
+		if !allowNonIdempotent {
+			return "non_idempotent_disabled"
+		}
+		if strings.TrimSpace(headers.Get("Idempotency-Key")) == "" {
+			return "idempotency_key_required"
+		}
+		return "non_idempotent_allowed_with_key"
+	default:
+		return "unsupported_method"
+	}
+}
+
+func retryPolicyConfiguredReason(policy RetryPolicyPreview) string {
+	attempts := fmt.Sprintf("up to %d total attempts (%d replay(s))", policy.MaxAttempts, policy.MaxReplays)
+	if policy.MaxAttemptsSource == "platform_ceiling" {
+		attempts += " (clamped to the platform ceiling)"
+	}
+	reason := fmt.Sprintf("matched retry rule allows %s, with a %d ms minimum remaining request budget, %d ms backoff, and aggregate budget of %d%% or at least %d replay(s); method eligibility is %s", attempts, policy.MinRemainingMS, policy.BackoffMS, policy.BudgetPercent, policy.BudgetMinRetries, policy.MethodEligibility)
+	if policy.AllowNonIdempotent {
+		reason += "; POST/PATCH replay is opted in and requires an Idempotency-Key"
+	} else {
+		reason += "; POST/PATCH replay is disabled"
+	}
+	return reason
+}
+
+func retryPolicyRuntimeReason(policy RetryPolicyPreview) string {
+	if policy.MethodEligibility == "non_idempotent_disabled" || policy.MethodEligibility == "idempotency_key_required" || policy.MethodEligibility == "unsupported_method" {
+		return fmt.Sprintf("the configured retry method guard prevents replay for this request (%s); the overall result is still incomplete because the operator gate and downstream behavior are not simulated", policy.MethodEligibility)
+	}
+	return "the matching retry policy is shown, but a replay requires an enabled operator gate and a stale transport failure; body replayability, committed-response state, remaining request budget, healthy sibling availability, and live aggregate budget are unknown, so no replay or response outcome is predicted"
 }
 
 func hasAppRequestBudget(input Input) bool {
@@ -1866,7 +1989,7 @@ func isSensitiveTraceHeader(name string) bool {
 	}
 	compact := strings.NewReplacer("-", "", "_", "", ".", "").Replace(name)
 	for _, marker := range []string{
-		"auth", "cookie", "token", "apikey", "accesskey", "secret", "password", "passwd",
+		"auth", "cookie", "token", "apikey", "accesskey", "idempotencykey", "secret", "password", "passwd",
 		"credential", "session", "signature", "privatekey", "clientkey", "refresh",
 	} {
 		if strings.Contains(compact, marker) {

@@ -3,11 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
+import type { EventSchema } from '../models/EventSchema.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
+import type { RegisterEventSchemaRequest } from '../models/RegisterEventSchemaRequest.js';
+import type { RegisterEventSchemaResponse } from '../models/RegisterEventSchemaResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -37,6 +40,7 @@ export class EventsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -49,7 +53,11 @@ export class EventsService {
    * Publish one tenant-scoped internal event.
    * Persists a canonical CloudEvents-shaped envelope for later content
    * matching and delivery. The authenticated account owns the event;
-   * account_id is server-stamped and a supplied value must match it.
+   * accountid is server-stamped and a supplied value must match it.
+   * Event identity is unique per account and source; reusing an id with
+   * different type, schema version, or data returns 409. Older snake_case input attribute
+   * names remain accepted during migration. API keys require
+   * `events:publish`, `deploy:write`, or `admin`.
    * Matching and delivery are asynchronous follow-up work.
    *
    * @returns PublishEventResponse Event accepted for durable processing.
@@ -79,11 +87,76 @@ export class EventsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Register an immutable event JSON Schema version.
+   * Requires deploy:write or admin. The first schema registered for a
+   * source/type pair makes schemaversion mandatory on future publishes.
+   * Repeating an identical version is safe; changing a version returns 409.
+   *
+   * @returns RegisterEventSchemaResponse Identical schema version already registered.
+   * @throws ApiError
+   */
+  public static registerEventSchema({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: RegisterEventSchemaRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<RegisterEventSchemaResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-schemas',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List registered versions for one event source and type.
+   * Requires apps:read or admin.
+   * @returns EventSchema Immutable schema versions ordered by version.
+   * @throws ApiError
+   */
+  public static listEventSchemas({
+    source,
+    type,
+  }: {
+    /**
+     * Event producer source.
+     */
+    source: string,
+    /**
+     * Event type within the source.
+     */
+    type: string,
+  }): CancelablePromise<Array<EventSchema>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-schemas',
+      query: {
+        'source': source,
+        'type': type,
       },
     });
   }

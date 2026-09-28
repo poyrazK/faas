@@ -28,9 +28,38 @@ type PublishEventRequest struct {
 	Source          string          `json:"source"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	AccountID       string          `json:"account_id,omitempty"`
+	AccountID       string          `json:"accountid,omitempty"`
+	SchemaVersion   string          `json:"schemaversion,omitempty"`
+}
+
+func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
+	type wire PublishEventRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+		LegacyAccountID   string `json:"account_id"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	if decoded.LegacyAccountID != "" {
+		if value.AccountID != "" && value.AccountID != decoded.LegacyAccountID {
+			return fmt.Errorf("conflicting accountid spellings")
+		}
+		value.AccountID = decoded.LegacyAccountID
+	}
+	*r = PublishEventRequest(value)
+	return nil
 }
 
 // PublishEventResponse confirms durable acceptance of one event envelope.
@@ -38,6 +67,33 @@ type PublishEventResponse struct {
 	ID         string    `json:"id"`
 	AcceptedAt time.Time `json:"accepted_at"`
 	AccountID  string    `json:"account_id"`
+}
+
+// RegisterEventSchemaRequest installs an immutable JSON Schema version for
+// one account-scoped event source/type pair.
+type RegisterEventSchemaRequest struct {
+	Source  string          `json:"source"`
+	Type    string          `json:"type"`
+	Version string          `json:"version"`
+	Schema  json.RawMessage `json:"schema"`
+}
+
+type RegisterEventSchemaResponse struct {
+	Source  string `json:"source"`
+	Type    string `json:"type"`
+	Version string `json:"version"`
+	Created bool   `json:"created"`
+}
+
+// EventSchema is one registered, account-scoped event contract returned by
+// GET /v1/event-schemas.
+type EventSchema struct {
+	AccountID string          `json:"account_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Version   string          `json:"version"`
+	Schema    json.RawMessage `json:"schema"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // PreviewEventRequest asks the router to evaluate an event without persisting
@@ -48,8 +104,30 @@ type PreviewEventRequest struct {
 	Source          string          `json:"source"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
+	SchemaVersion   string          `json:"schemaversion,omitempty"`
+}
+
+func (r *PreviewEventRequest) UnmarshalJSON(data []byte) error {
+	type wire PreviewEventRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	*r = PreviewEventRequest(value)
+	return nil
 }
 
 // EventPreviewSubscription describes an enabled subscription considered by a
@@ -88,10 +166,31 @@ type SendAppMessageRequest struct {
 	Source          string          `json:"source,omitempty"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
 	QueueName       string          `json:"queue_name,omitempty"`
 	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+}
+
+func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
+	type wire SendAppMessageRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	*r = SendAppMessageRequest(value)
+	return nil
 }
 
 // SendAppMessageResponse confirms that the message is durably queued. ID is

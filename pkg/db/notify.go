@@ -683,9 +683,8 @@ const (
 	// NotifyEventSubscriptionChanged wakes event-routing workers after a
 	// manifest deploy creates or compensates a durable subscription row.
 	NotifyEventSubscriptionChanged = "event_subscription_changed"
-	// NotifyEventPublished carries the normalized CloudEvents envelope to the
-	// scheduler's fanout worker. The event ledger remains authoritative; this
-	// channel is a low-latency wakeup for matching and enqueueing deliveries.
+	// NotifyEventPublished carries a small wake marker for the scheduler's
+	// durable fanout outbox. The payload is not the event envelope.
 	NotifyEventPublished = "event_published"
 	// NotifyAPIRouteDiscovered carries a first-seen, normalized API route
 	// candidate to the account-scoped dashboard stream. The event.published

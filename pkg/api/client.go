@@ -6540,6 +6540,21 @@ func (c *Client) PreviewEvent(ctx context.Context, req PreviewEventRequest) (Pre
 	return resp, err
 }
 
+// RegisterEventSchema stores an immutable version of an event contract.
+func (c *Client) RegisterEventSchema(ctx context.Context, req RegisterEventSchemaRequest) (RegisterEventSchemaResponse, error) {
+	var resp RegisterEventSchemaResponse
+	err := c.do(ctx, "POST", "/v1/event-schemas", req, &resp)
+	return resp, err
+}
+
+// ListEventSchemas returns the registered versions for a source and type.
+func (c *Client) ListEventSchemas(ctx context.Context, source, typ string) ([]EventSchema, error) {
+	var resp []EventSchema
+	query := url.Values{"source": {source}, "type": {typ}}
+	err := c.do(ctx, "GET", "/v1/event-schemas?"+query.Encode(), nil, &resp)
+	return resp, err
+}
+
 // ListEventSubscriptions returns the manifest declarations currently
 // reconciled for one app, in stable creation order.
 func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
