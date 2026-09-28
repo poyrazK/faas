@@ -152,3 +152,70 @@ func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T)
 		t.Fatalf("live owner lookup = %v, want present", err)
 	}
 }
+
+// ADR-156 dispatches /__gregale/realtime/ before hostname lookup, so the
+// gateway never applies app or account lifecycle to managed sockets. The
+// reconciler must withdraw endpoints whose app is deleted or whose account
+// is suspended, and keep past_due accounts (their apps keep running).
+func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	endpointFor := func(name string, status state.AccountStatus, deleteApp bool) string {
+		t.Helper()
+		account, err := store.CreateAccount(ctx, name+"-"+uuid.NewString()+"@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != state.AccountActive {
+			if err := store.UpdateAccountStatus(ctx, account.ID, status); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: name + "-" + uuid.NewString()[:8], Status: state.AppActive, RAMMB: 512})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := store.CreateManagedRealtimeEndpointIfUnderQuota(ctx, state.ManagedRealtimeEndpoint{
+			ID: name + "-endpoint", AccountID: account.ID, AppID: app.ID,
+			CallbackURL: "https://example.com/callback", Enabled: true,
+		}, 10, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deleteApp {
+			if _, err := store.ScheduleAppDeletion(ctx, app.ID, time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return row.ID
+	}
+	active := endpointFor("active", state.AccountActive, false)
+	pastDue := endpointFor("pastdue", state.AccountPastDue, false)
+	suspended := endpointFor("suspended", state.AccountSuspended, false)
+	deletedApp := endpointFor("deletedapp", state.AccountActive, true)
+
+	registrar := &reconcileRealtimeRegistrar{}
+	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
+	srv.realtimeRegistrar = registrar
+	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+		t.Fatal(err)
+	}
+	registered := map[string]bool{}
+	for _, endpoint := range registrar.registered {
+		registered[endpoint.ID] = true
+	}
+	removed := map[string]bool{}
+	for _, id := range registrar.removed {
+		removed[id] = true
+	}
+	for _, id := range []string{active, pastDue} {
+		if !registered[id] || removed[id] {
+			t.Errorf("endpoint %s: registered=%v removed=%v, want served", id, registered[id], removed[id])
+		}
+	}
+	for _, id := range []string{suspended, deletedApp} {
+		if registered[id] || !removed[id] {
+			t.Errorf("endpoint %s: registered=%v removed=%v, want withdrawn", id, registered[id], removed[id])
+		}
+	}
+}

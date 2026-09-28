@@ -192,8 +192,22 @@ func (s *server) reconcileManagedRealtimeEndpoints(ctx context.Context) error {
 	}
 
 	desired := make(map[string]struct{}, len(rows))
+	accountServing := make(map[string]bool)
 	for _, row := range rows {
 		desired[row.ID] = struct{}{}
+		serving, err := s.realtimeEndpointOwnerServing(ctx, row, accountServing)
+		if err != nil {
+			// Keep the current registration; a transient lookup failure
+			// must not disconnect a healthy customer's sockets.
+			errs = append(errs, fmt.Errorf("endpoint %s owner: %w", row.ID, err))
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		if !serving {
+			row.Enabled = false
+		}
 		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, fmt.Errorf("endpoint %s: %w", row.ID, err))
 			if ctx.Err() != nil {
@@ -210,6 +224,41 @@ func (s *server) reconcileManagedRealtimeEndpoints(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// realtimeEndpointOwnerServing reports whether an endpoint's app and account
+// may still accept managed connections. The gateway dispatches
+// /__gregale/realtime/ before hostname lookup (ADR-156), so it never sees the
+// app's lifecycle: without this gate a deleted app, or a suspended account
+// whose apps are parked, kept serving WebSockets and relaying callbacks.
+// past_due keeps serving because its apps keep running (spec §4.7).
+// accountServing memoizes account lookups across one pass.
+func (s *server) realtimeEndpointOwnerServing(ctx context.Context, row state.ManagedRealtimeEndpoint, accountServing map[string]bool) (bool, error) {
+	app, err := s.store.AppByID(ctx, row.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if app.Status == state.AppDeleted {
+		return false, nil
+	}
+	if serving, ok := accountServing[row.AccountID]; ok {
+		return serving, nil
+	}
+	acct, err := s.store.AccountByID(ctx, row.AccountID)
+	var serving bool
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		serving = false
+	case err != nil:
+		return false, err
+	default:
+		serving = acct.Active()
+	}
+	accountServing[row.AccountID] = serving
+	return serving, nil
 }
 
 // runManagedRealtimeEndpointReconciler keeps endpoint configuration repaired
