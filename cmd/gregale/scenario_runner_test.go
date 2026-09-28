@@ -82,6 +82,34 @@ type testConsumerFakeClient struct {
 	failKey bool
 }
 
+type testAccessFakeClient struct {
+	slug string
+	req  api.UpdateAppRequest
+}
+
+func (f *testAccessFakeClient) UpdateApp(_ context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error) {
+	f.slug, f.req = slug, req
+	return api.AppResponse{}, nil
+}
+
+func TestConfigureTestWorkloadAccessClearsDefaultGatesAndKeepsConsumerPolicy(t *testing.T) {
+	client := &testAccessFakeClient{}
+	if err := configureTestWorkloadAccess(context.Background(), client, "isolated-api", api.ConsumerAuthModeRequired); err != nil {
+		t.Fatal(err)
+	}
+	if client.slug != "isolated-api" || client.req.RequireAuthn == nil || *client.req.RequireAuthn ||
+		client.req.PublicAuth == nil || client.req.PublicAuth.Mode != api.AppPublicAuthModeOpen ||
+		client.req.ConsumerAuthMode == nil || *client.req.ConsumerAuthMode != api.ConsumerAuthModeRequired {
+		t.Fatalf("test access update = (%q, %+v)", client.slug, client.req)
+	}
+	if err := configureTestWorkloadAccess(context.Background(), client, "isolated-worker", ""); err != nil {
+		t.Fatal(err)
+	}
+	if client.req.ConsumerAuthMode != nil {
+		t.Fatalf("worker unexpectedly inherited consumer auth: %+v", client.req)
+	}
+}
+
 func (f *testConsumerFakeClient) CreateAPIConsumer(_ context.Context, _ string, req api.CreateAPIConsumerRequest) (api.APIConsumerResponse, error) {
 	f.created = append(f.created, req)
 	return api.APIConsumerResponse{ID: fmt.Sprintf("consumer-%d", len(f.created))}, nil

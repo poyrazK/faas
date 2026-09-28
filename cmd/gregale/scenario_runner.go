@@ -388,6 +388,27 @@ type testConsumerClient interface {
 	CreateConsumerKey(context.Context, string, string, api.CreateConsumerKeyRequest) (api.ConsumerKeyResponse, error)
 }
 
+type testAccessClient interface {
+	UpdateApp(context.Context, string, api.UpdateAppRequest) (api.AppResponse, error)
+}
+
+func configureTestWorkloadAccess(ctx context.Context, client testAccessClient, slug, consumerMode string) error {
+	// Paid plans may create developer sessions with an operator API-key gate
+	// and a second public-auth gate. Those defaults reject application
+	// customer credentials before the request reaches the app. Test sessions
+	// are isolated and expiring, so start with those platform gates open.
+	closed := false
+	req := api.UpdateAppRequest{
+		RequireAuthn: &closed,
+		PublicAuth:   &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen},
+	}
+	if consumerMode != "" {
+		req.ConsumerAuthMode = &consumerMode
+	}
+	_, err := client.UpdateApp(ctx, slug, req)
+	return err
+}
+
 func provisionTestConsumers(ctx context.Context, client testConsumerClient, appSlug string, specs []testConsumer, runID string, timeout time.Duration) ([]string, []string, error) {
 	if len(specs) == 0 {
 		return nil, nil, nil
@@ -514,9 +535,13 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	registered = true
-	if scenario.ConsumerAuthMode != "" {
-		if _, err := client.UpdateApp(ctx, session.App.Slug, api.UpdateAppRequest{ConsumerAuthMode: &scenario.ConsumerAuthMode}); err != nil {
-			receipt.Error = fmt.Sprintf("set test consumer authentication mode: %v", err)
+	for _, workload := range workloads {
+		mode := ""
+		if workload.name == scenario.Project {
+			mode = scenario.ConsumerAuthMode
+		}
+		if err := configureTestWorkloadAccess(ctx, client, workload.session.App.Slug, mode); err != nil {
+			receipt.Error = fmt.Sprintf("configure test workload %s access: %v", workload.name, err)
 			return
 		}
 	}

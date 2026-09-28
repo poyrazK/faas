@@ -8,6 +8,11 @@ assertion failure. The server lease is a backstop if the CLI process disappears.
 Each run registers a private service namespace. A service call from a test app
 can only resolve a workload in that run; a missing name cannot reach a
 production app.
+The runner opens the platform's account-key and public-URL auth gates on each
+expiring workload before deployment. This prevents plan defaults from rejecting
+customer test requests at the edge. The primary app can instead require
+Gregale consumer keys with `consumer_auth_mode: required`; application-owned
+authentication remains the application's responsibility.
 
 Create `gregale-test.yaml` at the repository root:
 
