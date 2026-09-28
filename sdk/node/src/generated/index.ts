@@ -626,6 +626,8 @@ export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironment
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentDiffResponse } from './models/ProjectEnvironmentDiffResponse.js';
+export type { ProjectEnvironmentDomainDiffResponse } from './models/ProjectEnvironmentDomainDiffResponse.js';
+export type { ProjectEnvironmentDomainResponse } from './models/ProjectEnvironmentDomainResponse.js';
 export type { ProjectEnvironmentEdgePolicyDiffResponse } from './models/ProjectEnvironmentEdgePolicyDiffResponse.js';
 export type { ProjectEnvironmentEdgePolicyResponse } from './models/ProjectEnvironmentEdgePolicyResponse.js';
 export type { ProjectEnvironmentEdgeRuleResponse } from './models/ProjectEnvironmentEdgeRuleResponse.js';
@@ -706,6 +708,7 @@ export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { RepoResponse } from './models/RepoResponse.js';
 export type { RequestAnalyticsComputeCost } from './models/RequestAnalyticsComputeCost.js';
 export type { RequestAnalyticsDependency } from './models/RequestAnalyticsDependency.js';
+export type { RequestAnalyticsDependencyDeploymentObservation } from './models/RequestAnalyticsDependencyDeploymentObservation.js';
 export type { RequestAnalyticsDeploymentCost } from './models/RequestAnalyticsDeploymentCost.js';
 export type { RequestAnalyticsDeploymentCostBreakdown } from './models/RequestAnalyticsDeploymentCostBreakdown.js';
 export type { RequestAnalyticsGroup } from './models/RequestAnalyticsGroup.js';

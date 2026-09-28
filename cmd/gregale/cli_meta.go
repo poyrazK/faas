@@ -58,6 +58,9 @@ type cliCommand struct {
 	// per-shell completion script's description list. Should fit on
 	// one terminal line (~80 chars).
 	Short string
+	// Examples are runnable command lines shown by local help, man pages,
+	// and the generated Markdown reference for common customer tasks.
+	Examples []string
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
@@ -182,6 +185,9 @@ func (c cliCommand) completionSlugWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Examples are runnable command lines shown with this subcommand's help
+	// and in the generated man and Markdown references.
+	Examples []string
 	// Positionals are documented in the leaf synopsis for verbs whose
 	// argument contract is narrower than the parent command's.
 	Positionals []string
@@ -450,15 +456,16 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    dispatchApps,
-		DocSlug: "apps",
-		Short:   "List your apps",
+		Name:     dispatchApps,
+		DocSlug:  "apps",
+		Short:    "List your apps",
+		Examples: []string{"gregale apps", "gregale apps --json"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "restore", Short: "Restore an app during its deletion grace window"},
-			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
-			{Name: "streaming-cap", Short: "Per-app streaming classification probe (ADR-102 D6)"},
+			{Name: "streaming-cap", Short: "Show app streaming classification"},
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
 			{Name: "--quiet", Short: "Delete one app (positional: <slug>)"},
 		},
@@ -484,7 +491,7 @@ var cliCommands = []cliCommand{
 			{Name: "security", Short: "Show posture or configure deploy enforcement"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
-			{Name: "routes", Short: "List admitted per-route labels for one app (ADR-093)"},
+			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},
 		Positionals: []string{"<slug>"},
@@ -554,13 +561,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "connect",
 		Short:   "Connect a third-party service (github | repo OWNER/NAME)",
 		Subcommands: []cliSub{
-			{Name: "github", Short: "Connect a GitHub account for repo deploys"},
+			{Name: "github", Short: "Connect a GitHub account for repo deploys", Examples: []string{"gregale connect github"}},
 			// Issue #961 / Mega-B PR-1: `connect repo <owner>/<name>`
 			// opens the dashboard's /dashboard/apps/new?repo=... wizard
 			// (PR-3 wires the server side). The CLI stays out of the
 			// OAuth dance — the cookie-session dashboard is the
 			// install-token trust root.
-			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app"},
+			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app", Examples: []string{"gregale connect repo acme/my-api"}, Positionals: []string{"<owner>/<name>"}},
 		},
 	},
 	{
@@ -568,16 +575,16 @@ var cliCommands = []cliCommand{
 		DocSlug: "github",
 		Short:   "Manage an app's GitHub installation and repository binding",
 		Subcommands: []cliSub{
-			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
-			{Name: "sync", Short: "Reconcile repository access with GitHub"},
-			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>"},
-			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
+			{Name: "status", Short: "Show the GitHub connection health for <slug>", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Examples: []string{"gregale github bind my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "comma-separated branch=scope mappings", Value: "MAPPINGS"},
@@ -592,7 +599,7 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
-			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Flags: []cliFlag{
+			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "yes", Short: "confirm removing the repository binding"},
 			}},
 		},
@@ -781,9 +788,10 @@ var cliCommands = []cliCommand{
 		// customer preflight that scans the cwd for the 8 source-side
 		// failure modes the cluster's runtime detectors catch
 		// post-deploy. Auth not required (local source only).
-		Name:    dispatchDoctor,
-		DocSlug: "doctor",
-		Short:   "Preflight local source or OCI image metadata; runtime checks are skipped",
+		Name:     dispatchDoctor,
+		DocSlug:  "doctor",
+		Short:    "Preflight local source or OCI image metadata; runtime checks are skipped",
+		Examples: []string{"gregale doctor", "gregale doctor --strict"},
 		Flags: []cliFlag{
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
@@ -828,6 +836,10 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
 		Short:   "List deployments or manage stable named URLs for immutable revisions",
+		Examples: []string{
+			"gregale deployments --app my-api --limit 10",
+			"gregale deployments --app my-api --wide",
+		},
 		Subcommands: []cliSub{{
 			Name:  "alias",
 			Short: "Manage stable named URLs for immutable deployments",
@@ -858,11 +870,16 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
 		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
+		Examples: []string{
+			"gregale deployment summary v42 --app my-api",
+			"gregale deployment wait v42 --app my-api",
+		},
 		Subcommands: []cliSub{
-			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
@@ -880,11 +897,21 @@ var cliCommands = []cliCommand{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
 		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
+		Examples: []string{
+			"gregale deploys status 00000000000000000000000000000001",
+			"gregale deploys show v42 --app my-api --status",
+		},
 		Subcommands: []cliSub{
 			// ADR-117 companion read surface and ADR-124 deployment
 			// operations. Keep this list in lock-step with cmdDeploys.
-			{Name: "show", Short: "Print the closed 6-stage post-stream summary"},
-			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance"},
+			{Name: "show", Short: "Print the closed 6-stage post-stream summary", Examples: []string{"gregale deploys show 00000000000000000000000000000001", "gregale deploys show v42 --app my-api --status"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+				{Name: "status", Short: "include terminal status and timing"},
+				{Name: "url", Short: "print only the deployment preview URL"},
+			}},
+			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance", Examples: []string{"gregale deploys status 00000000000000000000000000000001", "gregale deploys status v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+			}},
 			{Name: "cancel", Short: "Cancel one pending deployment"},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority"},
 			{Name: "clear", Short: "Hide one deployment from the list"},
@@ -905,13 +932,15 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "deploy",
-		DocSlug: "deploy",
-		Short:   "Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Name:     "deploy",
+		DocSlug:  "deploy",
+		Short:    "Deploy an app, function, or project",
+		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
+			{Name: "source", Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
 			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
 			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
 			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},
@@ -932,6 +961,10 @@ var cliCommands = []cliCommand{
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
 			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "vcpu", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
+			{Name: "execution-mode", Short: "app lifecycle mode", Value: "request|service|worker|job"},
+			{Name: "restart-policy", Short: "app restart policy", Value: "no|on-failure|always|unless-stopped"},
+			{Name: "startup-deadline-s", Short: "maximum startup seconds (0 uses plan default)", Value: "SECONDS"},
+			{Name: "max-retries", Short: "maximum restart attempts (0 uses plan default)", Value: "N"},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
@@ -971,13 +1004,13 @@ var cliCommands = []cliCommand{
 			// contract headline (slug, mutex with --only) without
 			// re-litigating the ADR-124 partition semantic — that's
 			// public docs site territory.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
-			{Name: "show-affected", Short: "render the WillDeploy + Skipped + Unaffected + Removed partition (ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
+			{Name: "show-affected", Short: "show workloads that deploy, stay unchanged, or are removed"},
 			// ADR-124 follow-up #3 (PR-B commit 5): write-side
 			// complement to --exclude. Records excluded slugs into
 			// deployment_scope_exclusions on a successful apply so
 			// subsequent deploys honor the persisted set automatically.
-			{Name: "persist-exclude", Short: "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)"},
+			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
@@ -987,6 +1020,8 @@ var cliCommands = []cliCommand{
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
 			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
+			{Name: "rollback-on-5xx", Short: "roll back after repeated first-wake 5xx responses"},
+			{Name: "disable-startup-cpu-boost", Short: "disable temporary CPU boost during VM startup"},
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger and async-route changes"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
@@ -1011,7 +1046,11 @@ var cliCommands = []cliCommand{
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List custom domain bindings"},
-			{Name: subAdd, Short: "Bind a custom domain to an app"},
+			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Flags: []cliFlag{
+				{Name: "domain", Short: "domain to attach (required)", Req: true, Value: "DOMAIN"},
+				{Name: "app", Short: "app slug to attach to (required)", Req: true, Value: "SLUG"},
+				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
+			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default"},
 			{Name: subDomainsVerify, Short: "Re-verify DNS + cert for a domain"},
@@ -1021,9 +1060,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "dev",
-		DocSlug: "dev",
-		Short:   "Sync the dirty working tree to a stable remote developer environment (name defaults to linked context)",
+		Name:     "dev",
+		DocSlug:  "dev",
+		Short:    "Sync local changes to a developer environment",
+		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once"},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -1067,9 +1107,9 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "preview",
 		DocSlug: "preview",
-		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
+		Short:   "Manage preview environments for pull requests",
 		Subcommands: []cliSub{
-			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Flags: []cliFlag{
+			{Name: "create", Short: "Create and deploy a pull-request preview from a GitHub ref", Examples: []string{"gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --open", "gregale preview create --app my-api --repo acme/my-api --ref feature/cache --pr-number 42 --no-wait"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Req: true, Value: "OWNER/NAME"},
 				{Name: "ref", Short: "branch, tag, or commit SHA", Req: true, Value: "REF"},
@@ -1081,16 +1121,16 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable retry key", Value: "KEY"},
 				{Name: "open", Short: "open the preview URL after a successful create"},
 			}},
-			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Flags: []cliFlag{
+			{Name: "list", Short: "List pull-request and developer previews (defaults to the linked app)", Examples: []string{"gregale preview list --app my-api", "gregale preview list"}, Flags: []cliFlag{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
-			{Name: "show", Short: "Inspect a preview and its latest deployment"},
-			{Name: "wait", Short: "Wait for a preview deployment to become ready", Flags: []cliFlag{
+			{Name: "show", Short: "Inspect a preview and its latest deployment", Examples: []string{"gregale preview show pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
+			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
-			{Name: "destroy", Short: "Tear down a preview app (POST /v1/preview/{slug}/destroy)"},
+			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
 		},
 	},
 	{
@@ -1232,20 +1272,26 @@ var cliCommands = []cliCommand{
 				{Name: "protected", Short: "protect the new environment"},
 				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
 			}},
-			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
+			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --scope staging"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 			}},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 			}},
-			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
+			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)", Examples: []string{"gregale env diff --app my-api", "gregale env diff --app my-api --json"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
+			}},
 		},
 	},
 	{
-		Name:    "init",
-		DocSlug: "init",
-		Short:   "Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy])",
+		Name:     "init",
+		DocSlug:  "init",
+		Short:    "Scaffold a project from a built-in template",
+		Examples: []string{"gregale init --list", "gregale init --template hello-node --path ./my-api"},
 		Flags: []cliFlag{
 			{Name: "template", Short: "template name", Req: true, Value: "NAME", ClosedSet: templateNames13},
 			{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
@@ -1259,6 +1305,7 @@ var cliCommands = []cliCommand{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
 		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)",
+		Examples:    []string{"gregale inspect my-api", "gregale inspect my-api --upstreams"},
 		Positionals: []string{"[<slug>]"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
@@ -1268,7 +1315,7 @@ var cliCommands = []cliCommand{
 		// completion backend and man-page renderer read this
 		// Flags block to surface the right verb shape.
 		Flags: []cliFlag{
-			{Name: "upstreams", Short: "List data upstreams captured for this app (ADR-098 §9.A)"},
+			{Name: "upstreams", Short: "List data upstreams captured for this app"},
 			{Name: "scope", Short: "filter by scope (defaults to linked project environment; used with --upstreams)", Value: "scope"},
 			{Name: "errors", Short: "show the latest failed deployment's persisted error explanation"},
 		},
@@ -1338,7 +1385,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "debug",
 		DocSlug: "debug",
-		Short:   "Production debugger (ADR-127)",
+		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
 			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/inspect/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
@@ -1381,17 +1428,21 @@ var cliCommands = []cliCommand{
 		Short:   "Manage API keys (keys list|add|rm|rotate|grace-window)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List API keys"},
-			{Name: "add", Short: "Mint a new API key"},
+			{Name: "add", Short: "Mint a new API key", Positionals: []string{"<label>"}},
 			{Name: "rm", Short: "Revoke an API key"},
 			{Name: subRotate, Short: "Rotate an API key"},
 			{Name: "grace-window", Short: "Set the rotation grace window"},
 		},
 	},
 	{
-		Name:    "login",
-		DocSlug: "auth",
-		Short:   "Authenticate this machine (--token for CI)",
-		Flags:   []cliFlag{{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"}},
+		Name:     "login",
+		DocSlug:  "auth",
+		Short:    "Authenticate this machine",
+		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
+		Flags: []cliFlag{
+			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
+			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
+		},
 	},
 	{
 		Name:        "link",
@@ -1431,7 +1482,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "logs",
 		DocSlug:     "logs",
-		Short:       "Query runtime logs and HTTP request events (slug defaults to linked context)",
+		Short:       "Query runtime logs and HTTP request events",
+		Examples:    []string{"gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "follow", Short: "stream logs until interrupted"},
@@ -1688,6 +1740,7 @@ var cliCommands = []cliCommand{
 		Name:        "rollback",
 		DocSlug:     "rollback",
 		Short:       "Re-promote the previous deployment",
+		Examples:    []string{"gregale rollback my-api", "gregale rollback my-api --to v41"},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
@@ -1721,7 +1774,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --sync-config and --wait [--progress] [--timeout SECONDS]", Subcommands: []cliSub{
 				{Name: "list", Short: "List environments"},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
@@ -1734,8 +1787,21 @@ var cliCommands = []cliCommand{
 				{Name: "routes", Short: "Manage environment routes"},
 				{Name: "policies", Short: "Manage environment policies"},
 				{Name: "diff", Short: "Compare environments"},
-				{Name: "preview", Short: "Plan a promotion"},
-				{Name: "promote", Short: "Promote workloads"},
+				{Name: "preview", Short: "Plan a promotion", Flags: []cliFlag{
+					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
+					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
+				}},
+				{Name: "promote", Short: "Promote workloads", Flags: []cliFlag{
+					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
+					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
+					{Name: "yes", Short: "confirm the promotion"},
+					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
+					{Name: "wait", Short: "wait for the promotion to reach a terminal status"},
+					{Name: "progress", Short: "print promotion transitions while waiting (human output only)"},
+					{Name: "timeout", Short: "maximum seconds to wait for promotion completion", Value: "SECONDS"},
+				}},
 				{Name: "status", Short: "Inspect a promotion"},
 				{Name: "rollback", Short: "Roll back a promotion"},
 			}},
@@ -1770,14 +1836,14 @@ var cliCommands = []cliCommand{
 			// added to cmdScan in PR-#1065 but missing from the
 			// manifest that drives `gregale man scan` and the shell
 			// completion tables.
-			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
-			{Name: "show-affected", Short: "render the WillDeploy + Unaffected tables (ADR-124)"},
+			{Name: "exclude", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
+			{Name: "show-affected", Short: "show workloads that deploy or stay unchanged"},
 			{Name: "explain", Short: "show detector provenance and skipped/merged decisions"},
 			// ADR-124 follow-up #3 (PR-B commit 5): symmetric flag
 			// set on scan (no-op on the scan path; the scan handler
 			// ignores persist_exclude). Accepted so a single flag set
 			// is reusable across the scan + apply pair.
-			{Name: "persist-exclude", Short: "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)"},
+			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 		},
 	},
 	{
@@ -1785,11 +1851,31 @@ var cliCommands = []cliCommand{
 		DocSlug: "secrets",
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List sealed secrets", Flags: []cliFlag{{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"}}},
-			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
-			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"}, {Name: "timeout", Short: "maximum time to wait for runtime acknowledgements", Value: "DURATION"}}},
+			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"},
+			}},
+			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart"}, Positionals: []string{"[<KEY=VALUE>...]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
+				{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "restart", Short: "restart the app and apply updated secrets now"},
+			}},
+			{Name: "unset", Short: "Remove a sealed secret", Examples: []string{"gregale secrets unset --app my-api OLD_API_KEY", "gregale secrets unset --app my-api OLD_API_KEY --scope staging", "gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack"}, Positionals: []string{"<KEY>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
+				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements", Value: "DURATION"},
+			}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "from-stdin", Short: "read one KEY=VALUE pair from stdin"},
+				{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "restart", Short: "restart the app and apply the rotated secret now"},
+				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"},
+				{Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"},
+			}},
 		},
 	},
 	{

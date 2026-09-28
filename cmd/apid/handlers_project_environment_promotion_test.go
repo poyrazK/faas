@@ -725,15 +725,173 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	}
 }
 
+func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "staging",
+		ConfigHash: sourceConfigHash, Values: sourceConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	previousConfigValues, previousConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us","replicas":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousConfig, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: acct.ID, ProjectID: project.ID, EnvironmentSlug: "production",
+		ConfigHash: previousConfigHash, Values: previousConfigValues,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := app.Manifest
+	manifest.RevisionPinTTLSeconds = 3600
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	createLive := func(environment, image, rootfs string) state.Deployment {
+		t.Helper()
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Scope: environment, ImageDigest: image, Status: state.DeployPending,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/"+rootfs, "apps/"+rootfs+".ext4", 42); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	sourceGraphDeployment := createLive("staging", "sha256:source-graph", "source-graph")
+	previousTarget := createLive("production", "sha256:production-old", "production-old")
+	sourceGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: sourceGraphDeployment.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Newer direct releases must not replace the exact source/target members
+	// selected by active graph pointers during preview.
+	createLive("staging", "sha256:source-newer", "source-newer")
+	previousTargetGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "production", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: previousTarget.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLive("production", "sha256:production-newer", "production-newer")
+
+	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging&sync_config=true", "shop", nil)
+	previewReq.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
+	}
+	var preview api.ProjectEnvironmentPromotionPreviewResponse
+	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !preview.CanPromote || !preview.SyncConfig || preview.FromReleaseSet == nil || preview.FromReleaseSet.ID != sourceGraph.ID ||
+		preview.ToReleaseSet == nil || preview.ToReleaseSet.ID != previousTargetGraph.ID || len(preview.Changes) != 1 ||
+		preview.Changes[0].SourceDeploymentID != sourceGraphDeployment.ID || preview.Changes[0].TargetDeploymentID != previousTarget.ID {
+		t.Fatalf("preview did not preserve graph members: %+v", preview)
+	}
+	wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+	if err != nil || !wire.SyncConfig {
+		t.Fatalf("promotion token sync_config=%t err=%v", wire.SyncConfig, err)
+	}
+	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	if problem != nil {
+		t.Fatalf("issue promotion approval: %v", problem)
+	}
+	body, err := json.Marshal(api.PromoteProjectEnvironmentRequest{
+		FromEnvironment: "staging", PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req.SetPathValue("environment", "production")
+	req.Header.Set("Idempotency-Key", "promotion-graph-atomic")
+	srv.promoteProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("promotion status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.ProjectEnvironmentPromotionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	promotion, workloads, err := store.ProjectEnvironmentPromotionByID(ctx, acct.ID, project.Slug, "production", response.PromotionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promotion.SourceReleaseSetID != sourceGraph.ID || promotion.PreviousTargetReleaseSetID != previousTargetGraph.ID ||
+		promotion.TargetReleaseSetID == "" || promotion.TargetReleaseSetID == previousTargetGraph.ID || len(workloads) != 1 ||
+		!promotion.SyncConfig || promotion.SourceConfigHash != sourceConfigHash ||
+		promotion.PreviousTargetConfigHash != previousConfigHash || promotion.TargetConfigVersion <= previousConfig.Version {
+		t.Fatalf("promotion graph checkpoints=%+v workloads=%+v", promotion, workloads)
+	}
+	activeConfig, err := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, "production")
+	if err != nil || activeConfig.ConfigHash != sourceConfigHash || string(activeConfig.Values) != string(sourceConfigValues) {
+		t.Fatalf("synced target config=%+v err=%v; want source hash %s", activeConfig, err, sourceConfigHash)
+	}
+	active, err := store.ActiveProjectReleaseSet(ctx, acct.ID, project.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ID != promotion.TargetReleaseSetID || len(active.Members) != 1 || active.Members[0].DeploymentID != workloads[0].TargetDeploymentID {
+		t.Fatalf("atomic target graph=%+v promotion=%+v workload=%+v", active, promotion, workloads[0])
+	}
+
+	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	rollbackReq.SetPathValue("environment", "production")
+	rollbackReq.SetPathValue("promotion", response.PromotionID)
+	rollbackReq.Header.Set("Idempotency-Key", "rollback-graph-atomic")
+	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	if rollbackRec.Code != http.StatusOK {
+		t.Fatalf("graph rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
+	}
+	rolledBack, _, err := store.ProjectEnvironmentPromotionByID(ctx, acct.ID, project.Slug, "production", response.PromotionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err = store.ActiveProjectReleaseSet(ctx, acct.ID, project.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rolledBack.RollbackReleaseSetID == "" || active.ID != rolledBack.RollbackReleaseSetID || active.ID == previousTargetGraph.ID ||
+		len(active.Members) != 1 || active.Members[0].DeploymentID != previousTarget.ID ||
+		rolledBack.RollbackConfigVersion <= promotion.TargetConfigVersion {
+		t.Fatalf("rollback did not publish the previous graph as a new atomic release: promotion=%+v graph=%+v", rolledBack, active)
+	}
+	rolledBackConfig, err := store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, "production")
+	if err != nil || rolledBackConfig.ConfigHash != previousConfigHash || string(rolledBackConfig.Values) != string(previousConfigValues) {
+		t.Fatalf("rollback config=%+v err=%v; want previous hash %s", rolledBackConfig, err, previousConfigHash)
+	}
+	releaseID, deploymentID, err := store.ResolveProjectRelease(ctx, app.ID, "production", "")
+	if err != nil || releaseID != active.ID || deploymentID != previousTarget.ID {
+		t.Fatalf("default production release after rollback=%q/%q err=%v", releaseID, deploymentID, err)
+	}
+}
+
 func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T) {
 	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
 	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		"release-source-a", "release-target", nil)
+		false, "release-source-a", "release-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
-		"release-source-b", "release-target", nil)
+		false, "release-source-b", "release-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2931,6 +2931,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	}
 	for environmentID, env := range m.projectEnvironments {
 		if env.ProjectID == projectID {
+			for domain, customDomain := range m.domains {
+				if customDomain.EnvironmentID == environmentID {
+					delete(m.domains, domain)
+				}
+			}
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3118,6 +3123,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
 			delete(m.secrets, key)
+		}
+	}
+	for domain, customDomain := range m.domains {
+		if customDomain.EnvironmentID == environmentID {
+			delete(m.domains, domain)
 		}
 	}
 	delete(m.projectEnvironments, environmentID)
@@ -10513,7 +10523,7 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.AppID != appID || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
 	if m.defaultDomains == nil {
@@ -10526,7 +10536,8 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.defaultDomains[appID] == domain && !IsWildcardCustomDomain(domain), nil
+	d, ok := m.domains[domain]
+	return m.defaultDomains[appID] == domain && ok && d.AppID == appID && d.EnvironmentID == "" && d.Verified() && !IsWildcardCustomDomain(domain), nil
 }
 
 // DefaultCustomDomain returns the selected verified custom domain for an app.
@@ -10540,7 +10551,7 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 		return "", ErrNotFound
 	}
 	d, ok := m.domains[domain]
-	if !ok || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return "", ErrNotFound
 	}
 	return domain, nil

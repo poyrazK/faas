@@ -117,6 +117,8 @@ type Metrics struct {
 	requestTelemetryDropped     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
+	requestIDJournalWrites      *prometheus.CounterVec
+	requestIDJournalWriteTime   prometheus.Histogram
 	usageOutboxPending          prometheus.Gauge
 	usageOutboxBytes            prometheus.Gauge
 	usageOutboxFailures         prometheus.Counter
@@ -906,6 +908,15 @@ func NewMetrics() *Metrics {
 		requestTelemetryOverwritten: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_overwritten_total",
 			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
+		}),
+		requestIDJournalWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_request_id_journal_write_total",
+			Help: "Synchronous exact public request-ID journal write outcomes; result is recorded or failed.",
+		}, []string{"result"}),
+		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "gateway_request_id_journal_write_duration_seconds",
+			Help:    "Time spent synchronously recording exact public request-ID mappings before guest work.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
 		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
 		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
@@ -1823,7 +1834,11 @@ func NewMetrics() *Metrics {
 			m.versionAffinityKeys.WithLabelValues(surface, outcome)
 		}
 	}
+	for _, result := range []string{"recorded", "failed"} {
+		m.requestIDJournalWrites.WithLabelValues(result)
+	}
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
@@ -3473,6 +3488,20 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 		return
 	}
 	m.requestTelemetryShipped.Add(float64(n))
+}
+
+// ObserveRequestIDJournalWrite records the mandatory pre-proxy journal RPC.
+// Labels are a closed outcome set and intentionally omit tenant/request IDs.
+func (m *Metrics) ObserveRequestIDJournalWrite(duration time.Duration, err error) {
+	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil {
+		return
+	}
+	result := "recorded"
+	if err != nil {
+		result = "failed"
+	}
+	m.requestIDJournalWrites.WithLabelValues(result).Inc()
+	m.requestIDJournalWriteTime.Observe(duration.Seconds())
 }
 
 func (m *Metrics) IncUsageOutboxFailure() {

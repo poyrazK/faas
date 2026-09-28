@@ -124,15 +124,16 @@ func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 
 func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	var got http.Request
-	publicRequestID := "0123456789abcdef0123456789abcdef"
+	publicRequestID := "customer-request-42"
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = *r.Clone(r.Context())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(api.DebugTelemetryListResponse{
 			Since: "6h", WindowStart: "2026-09-12T00:00:00Z", WindowEnd: "2026-09-12T06:00:00Z", Complete: false, NextCursor: "next-page",
 			Requests: []api.DebugTelemetryRequestItem{{
-				ID: "request-1", Route: "GET /checkout", Method: "GET", Status: 200,
-				LatencyMS: 42, Count: 7, TraceID: &publicRequestID, ReceivedAt: "2026-09-06T10:00:00Z",
+				ID: "request-1", RequestID: publicRequestID, Route: "GET /checkout", Method: "GET", Status: 200,
+				LatencyMS: 42, Count: 7, TraceID: &traceID, ReceivedAt: "2026-09-06T10:00:00Z",
 			}},
 		})
 	}))
@@ -172,11 +173,29 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	if !strings.Contains(stdout.String(), "COUNT") || !strings.Contains(stdout.String(), "7") {
 		t.Errorf("human output does not show collapsed request count:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "ROW_ID") || !strings.Contains(stdout.String(), "PUBLIC_REQUEST_ID") || !strings.Contains(stdout.String(), publicRequestID) {
+	if !strings.Contains(stdout.String(), "ROW_ID") || !strings.Contains(stdout.String(), "REQUEST_ID") ||
+		!strings.Contains(stdout.String(), publicRequestID) || !strings.Contains(stdout.String(), traceID) {
 		t.Errorf("human output does not distinguish the public request id from the telemetry row id:\n%s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "next_cursor=next-page") {
 		t.Errorf("human output does not expose next cursor:\n%s", stdout.String())
+	}
+}
+
+func TestRenderDebugRequestMetadataExplainsJournalOnlyResult(t *testing.T) {
+	var out strings.Builder
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	request := api.DebugTelemetryRequestItem{
+		RequestID: "customer-request-42", EvidenceStatus: "request_id_only",
+		TraceID: &traceID, ReceivedAt: "2026-09-27T12:00:00Z",
+	}
+	renderDebugRequestMetadata(&out, request)
+	got := out.String()
+	if !strings.Contains(got, "Public ID:  customer-request-42") ||
+		!strings.Contains(got, "detailed request telemetry is unavailable") ||
+		!strings.Contains(got, "Trace ID:   4bf92f3577b34da6a3ce929d0e0e4736") ||
+		strings.Contains(got, "Status:     0") {
+		t.Fatalf("journal-only request output is misleading:\n%s", got)
 	}
 }
 

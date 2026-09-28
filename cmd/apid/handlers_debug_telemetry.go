@@ -1290,19 +1290,16 @@ func debugCoverageTimestamp(value interface{}) string {
 
 const debugRequestIdentifierMaxBytes = 128
 
-// normalizeDebugRequestIdentifier accepts the public x-faas-request-id kept
-// in request_telemetry.trace_id and the internal telemetry-row UUID returned
-// by older list clients. Keeping the value opaque is intentional because the
-// generated public ID is a 32-character trace identifier rather than a UUID.
+// normalizeDebugRequestIdentifier accepts the opaque public x-faas-request-id
+// or the internal telemetry-row UUID returned by older list clients.
 func normalizeDebugRequestIdentifier(raw string) (string, error) {
-	identifier := strings.TrimSpace(raw)
-	if identifier == "" {
+	if raw == "" || strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("req_id must be a public request id or telemetry row id")
 	}
-	if len(identifier) > debugRequestIdentifierMaxBytes {
+	if len(raw) > debugRequestIdentifierMaxBytes {
 		return "", fmt.Errorf("req_id must be at most %d bytes", debugRequestIdentifierMaxBytes)
 	}
-	return identifier, nil
+	return raw, nil
 }
 
 // debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}
@@ -1329,11 +1326,54 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	receivedFrom := now.Add(-retention)
+	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
+	// accepts up to one minute of future skew, so its matching window must too.
+	receivedUntil := now.Add(time.Minute)
+	if journalStore, ok := s.store.(state.RequestIDJournalReader); ok {
+		journal, journalErr := journalStore.FindRequestIDJournalByAppAndIdentifier(
+			r.Context(), acct.ID, app.ID, identifier, receivedFrom, receivedUntil, now,
+		)
+		if journalErr == nil {
+			if journal.TraceID != "" {
+				row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+					AppID:         stringToPgUUID(app.ID),
+					Identifier:    journal.TraceID,
+					ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+					ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
+				})
+				if telemetryErr == nil {
+					item := debugTelemetryGetRowToItem(row)
+					item.RequestID = identifier
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				if !errors.Is(telemetryErr, pgx.ErrNoRows) {
+					api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+					return
+				}
+			}
+			item := api.DebugTelemetryRequestItem{
+				RequestID: identifier, EvidenceStatus: "request_id_only",
+				ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+			}
+			if journal.TraceID != "" {
+				traceID := journal.TraceID
+				item.TraceID = &traceID
+			}
+			writeJSON(w, http.StatusOK, item)
+			return
+		}
+		if !errors.Is(journalErr, pgx.ErrNoRows) {
+			api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
+			return
+		}
+	}
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
 		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
+		ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))

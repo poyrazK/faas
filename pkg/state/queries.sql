@@ -467,18 +467,18 @@ update deployments set status = 'live' where id = $1;
 -- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)
 values ($1, $2, $3)
-returning domain, app_id, challenge_token, verified_at;
+returning domain, app_id, challenge_token, verified_at, environment_id;
 
 -- name: DomainByName :one
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1;
 
 -- name: ListDomainsForApp :many
-select domain, app_id, challenge_token, verified_at
+select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain;
 
 -- name: ListDomainsForAccount :many
-select d.domain, d.app_id, d.challenge_token, d.verified_at
+select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id
 where a.account_id = $1 order by d.domain;
 
@@ -2088,19 +2088,30 @@ ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryDependencySpans :many
--- Bounded read path for the historical debugger dependency view. The
+-- Bounded read path for route-scoped dependency analytics. The
 -- account_id predicate is defense in depth for callers that accidentally
 -- pass an app id from another tenant; the app lookup remains the primary
--- IDOR boundary. The newest rows are preferred because spans_summary is
--- sampled evidence, not a complete request trace archive.
-SELECT id, route, method, count, status, trace_id, received_at, spans_summary
-FROM request_telemetry
-WHERE app_id = $1
-  AND account_id = $2
-  AND received_at >= $3
-  AND received_at <  $4
-  AND spans_summary IS NOT NULL
-ORDER BY received_at DESC, id DESC
+-- IDOR boundary. Evidence is newest-first within each route/deployment
+-- partition, then interleaved so one high-volume revision cannot crowd all
+-- prior deployments out of the bounded comparison window.
+WITH ranked AS (
+    SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+           deployment_id, commit_sha, deployment_tag, deployment_created_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY route, method, deployment_id
+               ORDER BY received_at DESC, id DESC
+           ) AS evidence_rank
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+      AND spans_summary IS NOT NULL
+)
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
+       deployment_id::text, commit_sha, deployment_tag, deployment_created_at
+FROM ranked
+ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5;
 
 -- name: RequestTelemetryCoverage :one
@@ -3861,7 +3872,38 @@ WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
 
 -- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active';
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL;
+
+-- name: ObjectS3BindingLockApp :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+  AND b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
+FOR UPDATE OF a;
+
+-- name: ObjectS3BindingSecretCount :one
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2;
+
+-- name: ObjectS3BindingSecretInsert :one
+INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (app_id,scope,key) DO NOTHING RETURNING key;
+
+-- name: ObjectS3BindingStampRuntime :exec
+INSERT INTO app_runtime_config_changes (app_id,changed_at) VALUES ($1,now())
+ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at;
+
+-- name: ObjectS3BindingStaleSnapshots :exec
+UPDATE snapshots SET stale=true
+WHERE deployment_id IN (SELECT id FROM deployments WHERE app_id=$1) AND stale=false;
+
+-- name: ObjectS3BindingRevokeLock :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE;
+
+-- name: ObjectS3BindingDeleteSecrets :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1;
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
@@ -3870,22 +3912,69 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active'
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
 ORDER BY created_at,id;
 
 -- name: ObjectS3CredentialRevoke :execrows
 UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active';
+WHERE (id=$1 OR rotation_parent_id=$1) AND account_id=$2 AND bucket_id=$3 AND status='active';
 
 -- name: ObjectS3CredentialGet :one
 SELECT * FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3;
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL;
 
--- name: ObjectS3CredentialRotate :one
+-- name: ObjectS3CredentialRotationParentForUpdate :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
+FOR UPDATE;
+
+-- name: ObjectS3CredentialRotationPending :one
+SELECT rotation_wake_id::text FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id=$3 AND status='active';
+
+-- name: ObjectS3CredentialRotationStage :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
+RETURNING *;
+
+-- name: ObjectS3CredentialRotationReplace :one
 UPDATE object_storage_s3_credentials
 SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+  AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 RETURNING *;
+
+-- name: ObjectS3CredentialRotationFinalizeForApp :execrows
+UPDATE object_storage_s3_credentials AS previous
+SET status='revoked', revoked_at=now()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active';
+
+-- name: ObjectS3CredentialRotationStampStage :one
+UPDATE object_storage_s3_credentials AS previous
+SET rotation_stamped_at=clock_timestamp()
+FROM object_storage_s3_credentials AS binding
+WHERE previous.rotation_parent_id=binding.id
+  AND binding.managed_app_id=$1 AND previous.rotation_wake_id=$2
+  AND previous.status='active' AND binding.status='active'
+  AND previous.rotation_stamped_at IS NULL
+RETURNING previous.rotation_stamped_at;
+
+-- name: ObjectS3CredentialRotationStampApp :exec
+INSERT INTO app_runtime_config_changes (app_id, changed_at) VALUES ($1, $2)
+ON CONFLICT (app_id) DO UPDATE
+SET changed_at=GREATEST(app_runtime_config_changes.changed_at, excluded.changed_at);
+
+-- name: ObjectStorageManagedSecretRotate :execrows
+UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
+  delivery_version=delivery_version+1, delivery_status='pending',
+  last_delivery_attempt_at=NULL, last_delivery_error_code=NULL, updated_at=now()
+WHERE account_id=$1 AND app_id=$2 AND scope=$3
+  AND managed_object_storage_credential_id=$4 AND key=$5;
 
 -- name: ObjectS3CredentialResolve :one
 SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
@@ -4440,3 +4529,45 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
   AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
 ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;
+
+-- name: RecordRequestIDJournal :one
+-- The request-ID journal is independent from sampled request telemetry. Only
+-- insert when the app is still owned by the authenticated account. The
+-- caller-generated record UUID makes an RPC retry idempotent without
+-- collapsing two customer requests that happen to reuse a public ID.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT sqlc.arg(id)::uuid,
+       a.account_id,
+       a.id,
+       sqlc.arg(request_id)::text,
+       NULLIF(sqlc.arg(trace_id)::text, ''),
+       sqlc.arg(received_at)::timestamptz,
+       sqlc.arg(expires_at)::timestamptz
+  FROM apps a
+ WHERE a.id = sqlc.arg(app_id)::uuid
+   AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
+-- name: GetRequestIDJournalByAppAndIdentifier :one
+-- Exact app/account-scoped lookup, latest first when callers reuse an ID.
+-- expires_at is checked as well as received_at so plan downgrades do not
+-- extend the original request-time retention window.
+SELECT id, request_id, trace_id, received_at, expires_at
+  FROM request_id_journal
+ WHERE account_id = sqlc.arg(account_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND request_id = sqlc.arg(request_id)::text
+   AND received_at >= sqlc.arg(received_from)::timestamptz
+   AND received_at < sqlc.arg(received_until)::timestamptz
+   AND expires_at > sqlc.arg(now_at)::timestamptz
+ ORDER BY received_at DESC, id DESC
+ LIMIT 1;

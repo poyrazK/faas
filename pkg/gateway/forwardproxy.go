@@ -51,6 +51,8 @@ import (
 
 type syntheticInvocationContextKey struct{}
 
+type trustedServiceCallerAssertionContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
@@ -61,6 +63,19 @@ func WithSyntheticInvocation(ctx context.Context) context.Context {
 func isSyntheticInvocation(ctx context.Context) bool {
 	v, _ := ctx.Value(syntheticInvocationContextKey{}).(bool)
 	return v
+}
+
+// withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
+// minted after resolving and authorizing a service caller. Customer-supplied
+// x-faas-* headers remain stripped at the guest boundary; only this
+// platform-authored assertion may cross it.
+func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerAssertionContextKey{}).(bool)
+	return trusted && strings.EqualFold(header, ServiceCallerAssertionHeader)
 }
 
 // NodeClientLookup resolves a compute_node.id to a cached
@@ -389,6 +404,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) {
@@ -1032,6 +1048,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	headers := r.Header.Clone()
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) &&

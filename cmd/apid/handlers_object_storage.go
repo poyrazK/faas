@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -474,7 +475,7 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if !ok {
 		return
 	}
-	var bindingIDs []string
+	var bindingsToRevoke []state.ObjectS3Credential
 	if bindings, ok := s.store.(state.ObjectS3CredentialBindingStore); ok {
 		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
 		if err != nil {
@@ -483,24 +484,24 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 		}
 		for _, credential := range credentials {
 			if credential.ManagedAppID == b.AppID {
-				bindingIDs = append(bindingIDs, credential.ID)
+				bindingsToRevoke = append(bindingsToRevoke, credential)
 			}
 		}
 	}
-	if b.EnvironmentCloneSourceBucketID != "" && len(bindingIDs) > 0 {
+	if len(bindingsToRevoke) > 0 {
 		bindings, ok := s.store.(state.ObjectS3CredentialBindingStore)
 		if !ok {
 			bucketProblem(w, objectstorage.ErrUnavailable)
 			return
 		}
-		for _, bindingID := range bindingIDs {
-			if err := bindings.RevokeObjectS3Credential(r.Context(), acct.ID, b.ID, bindingID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		for _, credential := range bindingsToRevoke {
+			changed, err := bindings.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, b.ID, credential.ID)
+			if err != nil {
 				bucketProblem(w, err)
 				return
 			}
-			if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), bindingID); err != nil {
-				bucketProblem(w, err)
-				return
+			if changed {
+				s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
 			}
 		}
 	}
@@ -514,12 +515,6 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if err != nil {
 		bucketProblem(w, err)
 		return
-	}
-	for _, bindingID := range bindingIDs {
-		if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), bindingID); err != nil {
-			bucketProblem(w, err)
-			return
-		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

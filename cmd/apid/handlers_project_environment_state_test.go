@@ -16,9 +16,19 @@ import (
 func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
-	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+	stagingEnvironment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
-	}); err != nil {
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingDomain, err := store.CreateCustomDomainInEnvironmentIfUnderQuota(
+		ctx, "staging.shop.example", app.ID, stagingEnvironment.ID, "challenge", 100, 500,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, stagingDomain.Domain); err != nil {
 		t.Fatal(err)
 	}
 	createProjectEnvironmentConfigFixture(t, store, acct.ID, project.ID, "production", `{"region":"us"}`)
@@ -91,6 +101,9 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	if len(workload.Variables) != 2 || len(workload.Secrets) != 2 || len(workload.Bindings) != 1 || workload.Bindings[0].CredentialGeneration != 7 {
 		t.Fatalf("workload state=%+v", workload)
 	}
+	if len(workload.Domains) != 1 || workload.Domains[0].Domain != stagingDomain.Domain || !workload.Domains[0].Verified {
+		t.Fatalf("environment domains = %+v, want verified staging domain", workload.Domains)
+	}
 	if workload.Secrets[1].Key != "STRIPE_KEY" || workload.Secrets[1].Version != 2 {
 		t.Fatalf("customer secret version=%+v, want 2", workload.Secrets[1])
 	}
@@ -119,6 +132,9 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	}
 	if len(diff.Workloads[0].Variables) != 2 || len(diff.Workloads[0].Secrets) != 2 || len(diff.Workloads[0].Bindings) != 1 {
 		t.Fatalf("workload diff=%+v", diff.Workloads[0])
+	}
+	if diff.Workloads[0].Domains.Kind != "changed" || len(diff.Workloads[0].Domains.Before) != 0 || len(diff.Workloads[0].Domains.After) != 1 || diff.Workloads[0].Domains.After[0].Domain != stagingDomain.Domain {
+		t.Fatalf("domain diff=%+v", diff.Workloads[0].Domains)
 	}
 	if diff.Workloads[0].Secrets[0].Before.ValueHash != "" && diff.Workloads[0].Secrets[0].Key == "DATABASE_URL" {
 		t.Fatalf("missing secret unexpectedly has a fingerprint: %+v", diff.Workloads[0].Secrets[0])

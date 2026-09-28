@@ -35,6 +35,7 @@
 
 ## Verification
 
+- [ ] (If customer-facing) the CLI path, help/completion, generated reference, and a CLI journey check are included or linked
 - [ ] `make test` — unit tests pass under `-race`
 - [ ] `make lint` — golangci-lint clean
 - [ ] `make proto-check` — checked-in *.pb.go matches codegen

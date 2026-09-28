@@ -231,16 +231,28 @@ deployment manifests. The request accepts the same `permission` values as a
 standalone credential and an optional uppercase `prefix`. Gregale creates one
 bucket-scoped credential and writes six sealed app secrets under that prefix:
 `ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
-`ADDRESSING_STYLE`. The workload receives them through the existing secret
-staging path on its next deploy/wake; values are never returned by the binding
-API or stored in plaintext.
+`ADDRESSING_STYLE`. Credential and secret creation commit together, so a
+conflicting secret key leaves no active credential or partial binding. The
+same commit marks existing app snapshots stale and records a runtime-config
+change. The workload receives the values through the existing secret staging
+path on its next deploy/wake; values are never returned by the binding API or
+stored in plaintext.
 
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
-`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
-and immediately invalidates the previous access key. Revocation invalidates
-the credential first, then removes the managed app secrets. Ordinary secret
-PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
+secret names stable. It updates the new key and its two sealed app secrets
+atomically. For a live app, the response sets `rotation_pending: true` while
+the previous key remains valid through a rolling runtime refresh. Gregale
+retires that key after old instances drain; `GET .../compute-bindings` shows
+`rotation_pending` until retirement. Retrying the rotate request while
+pending requeues the same refresh without creating another key. For an app
+with no live deployment or resident instances, rotation retires the previous
+key immediately. Revocation commits both-key invalidation, managed-secret
+removal, a runtime-config change stamp, and snapshot invalidation together.
+The next wake therefore cannot restore a snapshot containing the revoked
+binding. Ordinary secret PUT/DELETE calls cannot overwrite or remove a managed
+binding secret.
 
 ### Declare storage bindings in `gregale.yaml`
 

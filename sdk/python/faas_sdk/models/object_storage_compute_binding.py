@@ -7,6 +7,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.object_s3_credential import ObjectS3Credential
     from ..models.object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
@@ -17,7 +19,10 @@ T = TypeVar("T", bound="ObjectStorageComputeBinding")
 
 @_attrs_define
 class ObjectStorageComputeBinding:
-    """Provider-neutral app-to-bucket compute binding."""
+    """Provider-neutral app-to-bucket compute binding. Rotation responses and binding lists set rotation_pending while the
+    previous key remains valid during a rolling runtime refresh.
+
+    """
 
     id: UUID
     bucket_id: UUID
@@ -27,6 +32,8 @@ class ObjectStorageComputeBinding:
     """Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape."""
     secret_keys: ObjectStorageComputeBindingSecretKeys
     """Names of sealed app secrets written for a compute binding; values are never returned."""
+    rotation_pending: bool | Unset = UNSET
+    """Previous key is still valid until the rolling refresh has drained old instances."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +49,8 @@ class ObjectStorageComputeBinding:
 
         secret_keys = self.secret_keys.to_dict()
 
+        rotation_pending = self.rotation_pending
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -54,6 +63,8 @@ class ObjectStorageComputeBinding:
                 "secret_keys": secret_keys,
             }
         )
+        if rotation_pending is not UNSET:
+            field_dict["rotation_pending"] = rotation_pending
 
         return field_dict
 
@@ -75,6 +86,8 @@ class ObjectStorageComputeBinding:
 
         secret_keys = ObjectStorageComputeBindingSecretKeys.from_dict(d.pop("secret_keys"))
 
+        rotation_pending = d.pop("rotation_pending", UNSET)
+
         object_storage_compute_binding = cls(
             id=id,
             bucket_id=bucket_id,
@@ -82,6 +95,7 @@ class ObjectStorageComputeBinding:
             prefix=prefix,
             credential=credential,
             secret_keys=secret_keys,
+            rotation_pending=rotation_pending,
         )
 
         object_storage_compute_binding.additional_properties = d

@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
     from ..models.project_environment_binding_change_response import ProjectEnvironmentBindingChangeResponse
+    from ..models.project_environment_domain_diff_response import ProjectEnvironmentDomainDiffResponse
     from ..models.project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
     from ..models.project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
     from ..models.project_environment_route_policy_diff_response import ProjectEnvironmentRoutePolicyDiffResponse
@@ -20,7 +21,7 @@ T = TypeVar("T", bound="ProjectEnvironmentWorkloadDiffResponse")
 
 @_attrs_define
 class ProjectEnvironmentWorkloadDiffResponse:
-    """Release, variable, secret, and binding changes for one workload."""
+    """Release, variable, secret, binding, and domain changes for one workload."""
 
     workload_slug: str
     workload_name: str
@@ -29,6 +30,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
     variables: list[ProjectEnvironmentVariableChangeResponse]
     secrets: list[ProjectEnvironmentSecretChangeResponse]
     bindings: list[ProjectEnvironmentBindingChangeResponse]
+    domains: ProjectEnvironmentDomainDiffResponse
+    """Environment-owned hostname changes for one workload."""
     routes: ProjectEnvironmentRoutePolicyDiffResponse
     """Difference in the effective declared-route contract or its ownership."""
     policies: ProjectEnvironmentEdgePolicyDiffResponse
@@ -57,6 +60,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
             bindings_item = bindings_item_data.to_dict()
             bindings.append(bindings_item)
 
+        domains = self.domains.to_dict()
+
         routes = self.routes.to_dict()
 
         policies = self.policies.to_dict()
@@ -71,6 +76,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
                 "variables": variables,
                 "secrets": secrets,
                 "bindings": bindings,
+                "domains": domains,
                 "routes": routes,
                 "policies": policies,
             }
@@ -81,6 +87,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_binding_change_response import ProjectEnvironmentBindingChangeResponse
+        from ..models.project_environment_domain_diff_response import ProjectEnvironmentDomainDiffResponse
         from ..models.project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
         from ..models.project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
         from ..models.project_environment_route_policy_diff_response import ProjectEnvironmentRoutePolicyDiffResponse
@@ -115,6 +122,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
 
             bindings.append(bindings_item)
 
+        domains = ProjectEnvironmentDomainDiffResponse.from_dict(d.pop("domains"))
+
         routes = ProjectEnvironmentRoutePolicyDiffResponse.from_dict(d.pop("routes"))
 
         policies = ProjectEnvironmentEdgePolicyDiffResponse.from_dict(d.pop("policies"))
@@ -126,6 +135,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
             variables=variables,
             secrets=secrets,
             bindings=bindings,
+            domains=domains,
             routes=routes,
             policies=policies,
         )

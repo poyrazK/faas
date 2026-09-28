@@ -1044,6 +1044,7 @@ func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash
 	}
 	if expected := r.Header.Get("Content-MD5"); expected != "" {
 		decoded, decodeErr := base64.StdEncoding.DecodeString(expected)
+		// codeql[go/weak-sensitive-data-hashing] -- Content-MD5 is required S3 upload-integrity metadata, not a secret hash.
 		sum := md5.Sum(body) // #nosec G401 -- S3 Content-MD5 compatibility.
 		if decodeErr != nil || len(decoded) != md5.Size || subtle.ConstantTimeCompare(decoded, sum[:]) != 1 {
 			return nil, badAWSChunkDigest()

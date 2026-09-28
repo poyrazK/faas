@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
 | 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
 | 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
 | 283 | [Sidecar runtime secret reload](283-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
@@ -303,6 +304,13 @@ Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
 concurrently). The log above already contains several such pairs (157, 158, 167,
 168). A renumber plus a CI uniqueness gate is worth its own PR.
+
+## Object-storage binding decisions
+
+- [ADR-284: safe object-storage binding rotation](284-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+- [ADR-285: atomic object-storage binding creation](285-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
+- [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
+- [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
 ## Snapshot restore optimization decisions
 

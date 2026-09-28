@@ -38,7 +38,7 @@ This is the spine. Each step has a time budget and a defined success/failure sur
 
 ```
 curl -fsSL https://get.gregale.dev | sh          # single static Go binary, no deps
-# or: npm install -g gregale
+# after npm publication: npm install -g gregale@rc (prerelease)
 ```
 
 Post-install prints exactly one next step: `Run 'gregale login' to get started.` No telemetry prompt walls, no account required to install.
