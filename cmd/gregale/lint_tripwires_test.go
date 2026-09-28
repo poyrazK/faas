@@ -908,6 +908,7 @@ func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
 		"queue_backlog_growing",
 		"slo_burn_rate",
 		"login_target_pressure",
+		"login_target_signal_health",
 	}
 
 	// Forward direction: every seed preset name must have a

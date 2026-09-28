@@ -605,7 +605,7 @@ func buildTestAlertEvent(acct state.Account, app state.App, rule state.AlertRule
 		"preset": preset.Name, "metric": preset.Metric, "observed": observed,
 		"threshold": preset.Threshold, "window": preset.WindowSpec, "test": true,
 	}
-	if preset.Metric == string(state.AlertMetricPreAuthTargetThreshold) {
+	if preset.Metric == string(state.AlertMetricPreAuthTargetThreshold) || preset.Metric == string(state.AlertMetricPreAuthTargetSignalGapPct) {
 		slug, rng := url.PathEscape(app.Slug), url.QueryEscape(preset.WindowSpec)
 		payload["observations_path"] = "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng
 		payload["dashboard_path"] = "/dashboard/apps/" + slug + "/pre-auth?range=" + rng

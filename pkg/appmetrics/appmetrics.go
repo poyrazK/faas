@@ -46,6 +46,20 @@ const SourceDegradedPrefix = "degraded: "
 // hot path. Pair with IsDegradedSource for the idiomatic check.
 const SourceDegraded = "degraded:"
 
+// SourceInsufficientPrefix marks a valid query with too few selected login
+// failures to judge target-signal coverage. It is distinct from an outage.
+const SourceInsufficientPrefix = "insufficient: "
+
+// IsInsufficientSource reports whether a valid metric query lacks enough
+// selected failures for an alert verdict.
+func IsInsufficientSource(source string) bool {
+	return strings.HasPrefix(source, SourceInsufficientPrefix)
+}
+
+// PreAuthTargetSignalMinFailures keeps sparse login traffic from turning a
+// newly enabled coverage alert red.
+const PreAuthTargetSignalMinFailures = 20
+
 // IsDegradedSource returns true iff source has the "degraded: "
 // prefix. The dashboard's empty-state branch, the public
 // /status/slo.json renderer, and the alert evaluator (issue #396 /
@@ -141,6 +155,14 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	case "pre_auth_target_threshold":
 		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome="target_threshold"}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "pre_auth_target_signal_gap_pct":
+		// Evaluate the worst eligible route so a healthy, high-volume route
+		// cannot hide a broken integration on another route. The -1 sentinel
+		// means every route had fewer than 20 selected failures in this window.
+		bad := fmt.Sprintf(`sum by (policy) (increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome=~"target_missing|target_invalid"}[%s]))`, appID, rng)
+		total := fmt.Sprintf(`sum by (policy) (increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome=~"target_failure|target_missing|target_invalid"}[%s]))`, appID, rng)
+		query = fmt.Sprintf(`max((((%s) or on(policy) (0 * (%s))) / (%s) * 100) and on(policy) ((%s) >= %d)) or vector(-1)`, bad, total, total, total, PreAuthTargetSignalMinFailures)
+		normalize = SafePercent
 	default:
 		return 0, SourceDegradedPrefix + "unsupported alert metric"
 	}
@@ -151,6 +173,9 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		msg = strings.ReplaceAll(msg, "\n", "")
 		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
 		return 0, SourceDegradedPrefix + msg
+	}
+	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
+		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
 	}
 	return normalize(value), SourcePrometheus
 }

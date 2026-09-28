@@ -315,14 +315,16 @@ func TestClosedSetPredicates(t *testing.T) {
 }
 
 func TestPreAuthTargetAlertActionIsNotificationOnly(t *testing.T) {
-	for _, action := range []string{"", "webhook"} {
-		if !api.AlertRuleActionAllowedForMetric("pre_auth_target_threshold", action) {
-			t.Fatalf("pre-auth target alert rejected action %q", action)
+	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct"} {
+		for _, action := range []string{"", "webhook"} {
+			if !api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("pre-auth target metric %q rejected action %q", metric, action)
+			}
 		}
-	}
-	for _, action := range []string{"rollback", "demote", "promote"} {
-		if api.AlertRuleActionAllowedForMetric("pre_auth_target_threshold", action) {
-			t.Fatalf("pre-auth target alert accepted deployment action %q", action)
+		for _, action := range []string{"rollback", "demote", "promote"} {
+			if api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("pre-auth target metric %q accepted deployment action %q", metric, action)
+			}
 		}
 	}
 	if !api.AlertRuleActionAllowedForMetric("error_rate_pct", "rollback") {
@@ -342,7 +344,7 @@ func TestAllowedClosedSets_OrderedAndNonEmpty(t *testing.T) {
 		{"Comparison", api.AllowedAlertRuleComparisons, 2},
 		{"WindowSpec", api.AllowedAlertRuleWindowSpecs, 5},
 		{"FailureSource", api.AllowedAlertRuleFailureSources, 2},
-		{"State", api.AllowedAlertRuleStates, 2},
+		{"State", api.AllowedAlertRuleStates, 4},
 	}
 	for _, tc := range cases {
 		if len(tc.slice) < tc.min {

@@ -3053,23 +3053,24 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate              AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50             AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95             AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99             AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct           AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount           AlertMetric = "request_count"
-	AlertMetricFailedInvocs           AlertMetric = "failed_invocations"
-	AlertMetricAPIUp                  AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR        AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments      AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds      AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed     AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth             AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold AlertMetric = "pre_auth_target_threshold"
-	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"
+	AlertMetricErrorRate                 AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount              AlertMetric = "request_count"
+	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                     AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds         AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed        AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3153,6 +3154,7 @@ const (
 	AlertStateOk       AlertState = "ok"
 	AlertStateFiring   AlertState = "firing"
 	AlertStateDegraded AlertState = "degraded"
+	AlertStateUnknown  AlertState = "unknown"
 )
 
 // AlertDeliveryStatus is the terminal state of one alert_deliveries row.

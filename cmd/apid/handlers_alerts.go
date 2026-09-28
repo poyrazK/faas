@@ -784,7 +784,7 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("action must be one of %v (or omitted for webhook)", api.AllowedAlertRuleActions))
 	}
 	if req.Action != nil && !api.AlertRuleActionAllowedForMetric(req.Metric, *req.Action) {
-		return api.ErrAlertRuleInvalid("pre_auth_target_threshold supports webhook action only")
+		return api.ErrAlertRuleInvalid("pre-auth target metrics support webhook action only")
 	}
 	if !api.IsFiniteFloat(req.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
@@ -842,7 +842,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("action must be one of %v (or empty for webhook)", api.AllowedAlertRuleActions))
 	}
 	if !api.AlertRuleActionAllowedForMetric(string(merged.Metric), string(merged.Action)) {
-		return api.ErrAlertRuleInvalid("pre_auth_target_threshold supports webhook action only")
+		return api.ErrAlertRuleInvalid("pre-auth target metrics support webhook action only")
 	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")

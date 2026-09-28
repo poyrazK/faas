@@ -277,12 +277,13 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 // per-tick contract RunOnce returns so tests can pin per-tick
 // behaviour without scraping the registry.
 type Stats struct {
-	Evaluated         int // rules walked this tick (enabled list)
-	Fired             int // rules that crossed the threshold
-	Delivered         int // rules whose dispatch returned 2xx/3xx
-	Failed            int // rules whose dispatch hit a terminal/retry-exhausted state
-	SkippedDegraded   int // rules skipped because Prometheus returned a degraded source
-	SkippedNoIdentity int // rules skipped because FAAS_HOST_AGE_IDENTITY_PATH was unset
+	Evaluated           int // rules walked this tick (enabled list)
+	Fired               int // rules that crossed the threshold
+	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
+	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
+	SkippedInsufficient int // target-signal rules without enough selected failures
+	SkippedNoIdentity   int // rules skipped because FAAS_HOST_AGE_IDENTITY_PATH was unset
 	// ActionExecuted (issue #976 / ADR-122 / SAFE-RELEASES-B) is
 	// the count of in-process actions (rollback / demote / promote)
 	// that landed on the rule's target deployment. Distinct from
@@ -353,6 +354,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				"rule", rule.ID, "metric", string(rule.Metric))
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
 				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+			}
+		case skipInsufficient:
+			stats.SkippedInsufficient++
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
+				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
 			}
 		case skipNoIdentity:
 			stats.SkippedNoIdentity++
@@ -605,7 +611,7 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 	if action == "" || action == state.AlertActionWebhook {
 		return
 	}
-	if rule.Metric == state.AlertMetricPreAuthTargetThreshold {
+	if rule.Metric == state.AlertMetricPreAuthTargetThreshold || rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct {
 		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
 		stats.ActionSkipped++
 		return
@@ -668,8 +674,9 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 // skip reason codes. Used as sentinels inside evalRule to keep the
 // observe() return shape small.
 const (
-	skipDegraded   = "degraded"
-	skipNoIdentity = "no_identity"
+	skipDegraded     = "degraded"
+	skipInsufficient = "insufficient"
+	skipNoIdentity   = "no_identity"
 )
 
 // AlertOutcomeDelivered / AlertOutcomeFailed are the closed-vocab
@@ -833,6 +840,9 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		// PromQL-driven metrics. Fetch only the series required by this rule;
 		// unrelated optional or empty series must not suppress evaluation.
 		observed, source := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), string(rule.Metric))
+		if rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct && appmetrics.IsInsufficientSource(source) {
+			return 0, false, skipInsufficient
+		}
 		if !appmetrics.IsDegradedSource(source) && source != appmetrics.SourcePrometheus {
 			// Defensive: any unexpected Source value is treated
 			// as degraded so a future appmetrics source type
@@ -961,7 +971,7 @@ type preAuthPaths struct {
 }
 
 func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.AlertRule) preAuthPaths {
-	if rule.Metric != state.AlertMetricPreAuthTargetThreshold || rule.AppID == "" {
+	if (rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
 		return preAuthPaths{}
 	}
 	app, err := e.store.AppByID(ctx, rule.AppID)

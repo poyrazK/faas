@@ -117,6 +117,7 @@ var AllowedAlertRuleMetrics = []string{
 	"cert_issuance_failed",
 	"queue_depth",
 	"pre_auth_target_threshold",
+	"pre_auth_target_signal_gap_pct",
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
@@ -153,7 +154,7 @@ var AllowedAlertRuleFailureSources = []string{
 
 // AllowedAlertRuleStates is the closed set for the read-only `state`
 // field on the response.
-var AllowedAlertRuleStates = []string{"ok", "firing"}
+var AllowedAlertRuleStates = []string{"ok", "firing", "degraded", "unknown"}
 
 // AllowedAlertRuleActions is the closed set for the `action` field on
 // alert_rules. Mirrors the alert_rules_action_chk DB constraint
@@ -170,10 +171,13 @@ func AllowedAlertRuleAction(v string) bool {
 	return containsString(AllowedAlertRuleActions, v)
 }
 
-// Pre-auth target observations can be triggered by attackers against someone
-// else's login. Their alert must never initiate a deployment action.
+// Pre-auth target observations and signal health can be influenced by
+// external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	return metric != "pre_auth_target_threshold" || action == "" || action == "webhook"
+	if metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" {
+		return action == "" || action == "webhook"
+	}
+	return true
 }
 
 // CreateAlertRuleRequest is the POST /v1/apps/{slug}/alerts body.

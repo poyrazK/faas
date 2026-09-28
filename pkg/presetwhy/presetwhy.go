@@ -201,6 +201,15 @@ var catalog = map[string]row{
 			DocsURL: "/docs/security#optional-pre-auth-source-limit",
 		},
 	},
+	"login_target_signal_health": {
+		Explanation: Explanation{
+			Title:   "Login target signal coverage is low",
+			Hint:    "selected login failures are missing a usable target digest",
+			Why:     "on at least one observed login route with 20 or more selected failures in the alert window, the missing-or-invalid target digest percentage crossed the configured threshold. The alert reports only an aggregate percentage",
+			Fix:     "• inspect the missing and invalid digest counts in pre-auth protection\n• ensure every selected failed response sets the reserved header exactly once, including for unknown accounts\n• use the same normalization and HMAC key across application replicas",
+			DocsURL: "/docs/security#optional-pre-auth-source-limit",
+		},
+	},
 }
 
 // Decorate copies the catalog row for name into a fresh *Explanation.

@@ -42,13 +42,14 @@ class AlertRuleResponse:
     """Literal "***" — the plaintext is never returned."""
     cooldown_minutes: int
     state: AlertRuleResponseState
-    """Evaluation state. degraded means the rule's own metric source is unavailable."""
+    """Evaluation state. degraded means the rule's own metric source is unavailable; unknown means the login-target
+    signal has fewer than 20 selected failures on every observed route in this window."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"
     """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
-    promote = short-circuit the canary ladder to 100%. pre_auth_target_threshold supports webhook only."""
+    promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     last_fired_at: datetime.datetime | Unset = UNSET

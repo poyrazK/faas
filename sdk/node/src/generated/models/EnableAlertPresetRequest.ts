@@ -16,7 +16,7 @@ export type EnableAlertPresetRequest = {
   /**
    * Action to run when the instantiated alert fires. Omit to
    * use the default webhook-only behavior. The login_target_pressure
-   * preset supports webhook only.
+   * and login_target_signal_health presets support webhook only.
    *
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';

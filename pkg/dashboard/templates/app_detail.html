@@ -984,6 +984,8 @@
                   <td><code>{{.Rule.WindowSpec}}</code></td>
                   <td>
                     {{if eq .Rule.State "firing"}}<strong style="color:#c62828">firing</strong>
+                    {{else if eq .Rule.State "degraded"}}<strong>degraded</strong>
+                    {{else if eq .Rule.State "unknown"}}<strong>unknown</strong>
                     {{else}}ok
                     {{end}}
                   </td>

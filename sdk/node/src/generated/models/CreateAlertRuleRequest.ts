@@ -8,7 +8,7 @@
 export type CreateAlertRuleRequest = {
   name: string;
   enabled?: boolean;
-  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'cert_issuance_failed' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate' | 'pre_auth_target_threshold';
+  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'cert_issuance_failed' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate' | 'pre_auth_target_threshold' | 'pre_auth_target_signal_gap_pct';
   comparison: 'gt' | 'gte' | 'lt' | 'lte';
   threshold: number;
   window_spec: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
@@ -23,7 +23,7 @@ export type CreateAlertRuleRequest = {
   webhook_secret: string;
   cooldown_minutes?: number;
   /**
-   * What to do when the rule fires. Omit to default to webhook. pre_auth_target_threshold supports webhook only.
+   * What to do when the rule fires. Omit to default to webhook. Pre-auth target metrics support webhook only.
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
 };

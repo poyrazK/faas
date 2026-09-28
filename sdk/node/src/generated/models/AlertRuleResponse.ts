@@ -15,7 +15,7 @@ export type AlertRuleResponse = {
   app_id: string;
   name: string;
   enabled: boolean;
-  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'cert_issuance_failed' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate' | 'pre_auth_target_threshold';
+  metric: 'error_rate_pct' | 'latency_p50_ms' | 'latency_p95_ms' | 'latency_p99_ms' | 'cold_start_pct' | 'request_count' | 'failed_invocations' | 'api_up' | 'account_spend_eur' | 'deployment_failed' | 'cert_expiry_seconds' | 'cert_issuance_failed' | 'queue_depth' | 'new_error_fingerprint' | 'cold_wake_rate_pct' | 'daily_cost_cents' | 'slo_burn_rate' | 'pre_auth_target_threshold' | 'pre_auth_target_signal_gap_pct';
   comparison: 'gt' | 'gte' | 'lt' | 'lte';
   threshold: number;
   window_spec: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
@@ -30,13 +30,13 @@ export type AlertRuleResponse = {
   webhook_secret_sealed_masked: string;
   cooldown_minutes: number;
   /**
-   * What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. pre_auth_target_threshold supports webhook only.
+   * What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only.
    */
   action: 'webhook' | 'rollback' | 'demote' | 'promote';
   /**
-   * Evaluation state. degraded means the rule's own metric source is unavailable.
+   * Evaluation state. degraded means the rule's own metric source is unavailable; unknown means the login-target signal has fewer than 20 selected failures on every observed route in this window.
    */
-  state: 'ok' | 'firing' | 'degraded';
+  state: 'ok' | 'firing' | 'degraded' | 'unknown';
   last_fired_at?: string;
   last_evaluated_at?: string;
   created_at: string;

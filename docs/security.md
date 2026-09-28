@@ -182,6 +182,14 @@ This preset and metric support webhook notifications only; neither can run a
 deployment action or lock an account. If Prometheus is unavailable, the alert
 rule reports a degraded source and does not fire.
 
+The optional `login_target_signal_health` alert watches for a missing or
+invalid target digest after application changes. It evaluates the worst
+observed route with at least 20 selected failures in 15 minutes and sends a
+webhook when the gap exceeds 10%. Fewer failures leave the rule in `unknown`;
+unavailable Prometheus data leaves it `degraded`. Neither case sends an alert
+or establishes that the signal is healthy. It links to the same pre-auth
+dashboard and cannot run a deployment action.
+
 Before switching to `enforce`, read
 `GET /v1/apps/{slug}/pre-auth-observations?range=1h` (available on every
 plan). It returns one app policy, each configured route policy, each
