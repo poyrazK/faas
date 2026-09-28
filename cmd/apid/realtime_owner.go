@@ -129,6 +129,7 @@ type leasedRealtimeOwner struct {
 	local                     realtimeNodeOperator
 	log                       *slog.Logger
 	ops                       *wire.OpsMetrics
+	channelRouteMetrics       *managedRealtimeChannelRouteMetrics
 	channelRoutingEnabled     bool
 	channelRoutes             state.ManagedRealtimeChannelRouteStore
 	clientFor                 func(state.ComputeNode) (realtimeNodeOperator, error)
@@ -452,11 +453,21 @@ dispatch:
 // snapshot is current. An unready node is always sent the message, while
 // stale positive route rows merely cause extra publishes.
 func (o *leasedRealtimeOwner) publishRecipients(ctx context.Context, endpointID, channel string, active []state.ComputeNode) []state.ComputeNode {
-	if !o.channelRoutingEnabled || o.channelRoutes == nil {
+	if !o.channelRoutingEnabled {
+		o.channelRouteMetrics.publish("routing_disabled", len(active))
+		return active
+	}
+	if o.channelRoutes == nil {
+		o.channelRouteMetrics.publish("route_store_unavailable", len(active))
 		return active
 	}
 	view, err := o.channelRoutes.ListManagedRealtimeChannelRouteView(ctx, endpointID, channel)
-	if err != nil || view.Disabled {
+	if err != nil {
+		o.channelRouteMetrics.publish("directory_error", len(active))
+		return active
+	}
+	if view.Disabled {
+		o.channelRouteMetrics.publish("overflow", len(active))
 		return active
 	}
 	targets := make(map[string]struct{}, len(view.NodeIDs))
@@ -468,13 +479,24 @@ func (o *leasedRealtimeOwner) publishRecipients(ctx context.Context, endpointID,
 		ready[nodeID] = struct{}{}
 	}
 	recipients := make([]state.ComputeNode, 0, len(active))
+	hasUnreadyNode := false
 	for _, node := range active {
 		_, hasSubscriber := targets[node.ID]
 		_, snapshotReady := ready[node.ID]
 		if hasSubscriber || !snapshotReady {
 			recipients = append(recipients, node)
 		}
+		if !snapshotReady {
+			hasUnreadyNode = true
+		}
 	}
+	decision := "targeted"
+	if len(recipients) == 0 {
+		decision = "no_subscribers"
+	} else if hasUnreadyNode {
+		decision = "unready_fallback"
+	}
+	o.channelRouteMetrics.publish(decision, len(recipients))
 	return recipients
 }
 

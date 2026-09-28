@@ -31,8 +31,14 @@ func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owne
 	if owner == nil || !owner.channelRoutingEnabled || owner.channelRoutes == nil || owner.nodes == nil {
 		return nil
 	}
+	started := time.Now()
+	outcome := "complete"
+	defer func() {
+		owner.channelRouteMetrics.reconcilePass(outcome, time.Since(started).Seconds())
+	}()
 	nodes, err := owner.nodes.ActiveComputeNodes(ctx)
 	if err != nil {
+		outcome = realtimeRouteErrorOutcome(ctx, err)
 		return fmt.Errorf("list active nodes for realtime channel routing: %w", err)
 	}
 	var errs []error
@@ -76,17 +82,34 @@ func (s *server) reconcileManagedRealtimeChannelRoutes(ctx context.Context, owne
 			}
 			return nil
 		}()
+		snapshotOutcome := "success"
 		if err != nil {
+			snapshotOutcome = realtimeRouteErrorOutcome(ctx, err)
 			errs = append(errs, err)
-			if ctx.Err() != nil {
-				break
-			}
+		}
+		owner.channelRouteMetrics.nodeSnapshot(snapshotOutcome)
+		if err != nil && ctx.Err() != nil {
+			break
 		}
 	}
-	if _, err := owner.channelRoutes.FinalizeManagedRealtimeChannelRouteRebuild(ctx); err != nil {
+	finalized, err := owner.channelRoutes.FinalizeManagedRealtimeChannelRouteRebuild(ctx)
+	if err != nil {
 		errs = append(errs, fmt.Errorf("finalize realtime channel route rebuild: %w", err))
 	}
-	return errors.Join(errs...)
+	joined := errors.Join(errs...)
+	if joined != nil {
+		outcome = realtimeRouteErrorOutcome(ctx, joined)
+	} else if !finalized {
+		outcome = "incomplete"
+	}
+	return joined
+}
+
+func realtimeRouteErrorOutcome(ctx context.Context, err error) string {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "canceled"
+	}
+	return "error"
 }
 
 // runManagedRealtimeChannelRouteReconciler warms and periodically refreshes
@@ -101,12 +124,19 @@ func (s *server) runManagedRealtimeChannelRouteReconciler(ctx context.Context) {
 		log = slog.Default()
 	}
 	runPass := func() {
-		if _, err := owner.channelRoutes.BeginManagedRealtimeChannelRouteRebuild(ctx); err != nil {
+		started, err := owner.channelRoutes.BeginManagedRealtimeChannelRouteRebuild(ctx)
+		if err != nil {
+			owner.channelRouteMetrics.rebuildCheck(realtimeRouteErrorOutcome(ctx, err))
 			if !errors.Is(err, context.Canceled) {
 				log.Warn("managed realtime channel route rebuild could not start", "err", err)
 			}
 			return
 		}
+		if !started {
+			owner.channelRouteMetrics.rebuildCheck("idle")
+			return
+		}
+		owner.channelRouteMetrics.rebuildCheck("started")
 		if err := s.reconcileManagedRealtimeChannelRoutes(ctx, owner); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("managed realtime channel route reconciliation pass failed", "err", err)
 		}

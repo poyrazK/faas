@@ -1634,6 +1634,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
 		resolver.ops = ops
+		resolver.channelRouteMetrics = newManagedRealtimeChannelRouteMetrics(ops.Registry(), ops.MetricPrefix())
 		resolver.channelRoutingEnabled = realtimeChannelRoutingEnabledFromEnv(deps.getenv)
 		resolver.channelRoutes, _ = store.(state.ManagedRealtimeChannelRouteStore)
 		if resolver.channelRoutingEnabled && resolver.channelRoutes == nil {
