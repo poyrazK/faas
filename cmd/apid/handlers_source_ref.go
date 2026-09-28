@@ -114,6 +114,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	branchRef, branchProblem := s.resolveSourceRefBranch(r.Context(), acct.ID, installID, req.Repo, req.Ref)
+	if branchProblem != nil {
+		api.WriteProblem(w, branchProblem)
+		return
+	}
 
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
 	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
@@ -246,19 +251,25 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
+	var sourceInstallationID int64
+	if branchRef != "" {
+		sourceInstallationID = installID
+	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:        s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
-		AppID:           app.ID,
-		Kind:            state.DeploymentKindGitHub,
-		SourcePath:      spoolPath,
-		SourceBytes:     spoolBytes,
-		SourceRoot:      app.RootDir,
-		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
-		CommitSHA:       resolvedSHA,
-		Scope:           rollout.Scope,
-		FunctionRuntime: functionRuntimeForApp(app),
-		LogSpool:        spoolRoot(),
-		Log:             s.log,
+		Activity:             s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
+		AppID:                app.ID,
+		Kind:                 state.DeploymentKindGitHub,
+		SourcePath:           spoolPath,
+		SourceBytes:          spoolBytes,
+		SourceRoot:           app.RootDir,
+		SourceURL:            fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:            resolvedSHA,
+		GitHubSourceRef:      branchRef,
+		GitHubInstallationID: sourceInstallationID,
+		Scope:                rollout.Scope,
+		FunctionRuntime:      functionRuntimeForApp(app),
+		LogSpool:             spoolRoot(),
+		Log:                  s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution. The source-ref path is the dashboard +
 		// CLI flow that streams a GH repo through the apid
@@ -311,6 +322,49 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+// resolveSourceRefBranch records mutable intent only when GitHub confirms the
+// requested ref currently names a branch. Tags and commit IDs keep their
+// existing pinned-to-SHA behavior. A lookup failure is surfaced instead of
+// silently accepting an unverifiable mutable ref.
+func (s *server) resolveSourceRefBranch(ctx context.Context, accountID string, installationID int64, repo, ref string) (string, *api.Problem) {
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if strings.HasPrefix(ref, "refs/tags/") || isSourceRefSHA(ref) {
+		return "", nil
+	}
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return "", api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return "", api.ErrSourceRefUnavailable("could not verify whether the requested GitHub ref is a branch")
+	}
+	if !found {
+		return "", nil
+	}
+	if !isCanonicalCommitSHA(head) {
+		return "", api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	return branch, nil
+}
+
+func isSourceRefSHA(ref string) bool {
+	if len(ref) < 7 || len(ref) > 40 {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *server) auditSourceRefManifestScaling(ctx context.Context, acct state.Account, app state.App, staged sourceRefManifestStaged) {

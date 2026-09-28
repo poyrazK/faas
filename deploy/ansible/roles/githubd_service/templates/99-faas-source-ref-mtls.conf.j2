@@ -1,0 +1,7 @@
+[Service]
+# Private control-plane gRPC listener used by compute-only imaged nodes to
+# verify that a GitHub source branch still points at the staged commit.
+Environment=FAAS_GITHUBD_LISTEN_ADDR={{ faas_githubd_listen_addr }}
+Environment=FAAS_GITHUBD_TLS_CERT_PATH=/etc/faas/tls/githubd/server.crt
+Environment=FAAS_GITHUBD_TLS_KEY_PATH=/etc/faas/tls/githubd/server.key
+Environment=FAAS_GITHUBD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

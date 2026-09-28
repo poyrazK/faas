@@ -44,7 +44,7 @@ func githubDashboardFlash(r *http.Request) string {
 }
 
 func (s *server) dashboardGitHubConnection(ctx context.Context, log *slog.Logger, w http.ResponseWriter, acct state.Account, app state.App, flash string) *dashboard.GitHubConnectionView {
-	status, err := s.githubInstallStatus(ctx, acct.ID, app.ID)
+	status, err := s.githubInstallStatus(ctx, acct.ID, app.ID, app.ProjectID)
 	if err != nil {
 		log.Warn("dashboard GitHub connection: read status", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return &dashboard.GitHubConnectionView{Available: false, Flash: flash}

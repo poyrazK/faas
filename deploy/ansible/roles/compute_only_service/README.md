@@ -28,6 +28,9 @@ the local database's boot time to scheduler readiness.
   server leaf retains `vmmd.faas` as its role identity and carries the
   endpoint as an additional SAN, so adding another compute box cannot route
   imaged to the wrong node.
+- The same imaged drop-in configures source-ref freshness checks to reach
+  `githubd.faas:50053` with the `imaged/githubd-client` leaf. The manifest
+  resolver maps that private service alias to the control plane.
 - `zz-faas-api-hosting-smoke.conf.j2` — enables the public post-readiness
   smoke verifier and makes it fail closed on compute-only production nodes.
   The origin is derived from `gatewayd_apps_domain`; the verifier sends the

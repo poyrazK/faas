@@ -206,9 +206,20 @@ workflow with the balanced health-gated rollout (Pro/Scale only); the default
 `standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
 to inspect the workflow without network or file changes; an existing different
 workflow is never overwritten unless `--force` is supplied. Production pushes
-and manual dispatches use the workflow. Existing projects that do not run setup
-retain webhook-owned production deploys. To opt into production service calls
-from previews, pass `--preview-service-policy allow_marked` explicitly.
+and manual dispatches use the workflow. Add `--deploy-branches staging=staging`
+to route pushes to the registered `staging` project environment; mappings
+already saved through `github bind` are reused when the flag is omitted. Passing
+the flag replaces the saved mapping. The workflow listens only to the configured
+production branch and mapped branches, and manual dispatch is limited to those
+branches. A `default` mapping uses the app's default scope and keeps the
+workflow's `production` GitHub Actions environment protections. Existing
+projects that do not run setup retain webhook-owned
+production deploys. To opt into production service calls from previews, pass
+`--preview-service-policy allow_marked` explicitly.
+
+Generated workflows serialize deployments by app and Gregale target scope.
+Pushes to separate mapped environments can proceed independently, while
+branches and tags targeting the same scope share a deployment queue.
 
 ## Related
 

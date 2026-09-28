@@ -175,6 +175,16 @@
       do not configure a wildcard bind address or a shared vmmd.faas alias.
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+- name: compute_only_service — require canonical githubd target
+  ansible.builtin.assert:
+    that:
+      - faas_githubd_target_url is defined
+      - faas_githubd_target_url is match('^tcp://githubd\\.faas:50053$')
+    fail_msg: >-
+      compute-only imaged requires faas_githubd_target_url=tcp://githubd.faas:50053
+      so source-ref freshness checks use the private mTLS githubd listener.
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
 # Split-box database credentials are deliberately not rendered into daemon
 # TOML or generated host vars. The operator provisions this root-only file
 # from the secret store before enabling compute daemons; systemd loads it for
@@ -774,6 +784,7 @@
   loop:
     - server
     - vmmd-client
+    - githubd-client
   register: faas_pki_imaged_leaf_stat
   failed_when: not faas_pki_imaged_leaf_stat.stat.exists
 
@@ -789,6 +800,20 @@
 - name: compute_only_service — grant faas group read access to imaged vmmd client key
   ansible.builtin.file:
     path: /etc/faas/tls/imaged/vmmd-client.key
+    state: file
+    owner: root
+    group: faas
+    mode: "0440"
+
+- name: compute_only_service — assert imaged githubd client key exists
+  ansible.builtin.stat:
+    path: /etc/faas/tls/imaged/githubd-client.key
+  register: faas_pki_imaged_githubd_client_key_stat
+  failed_when: not faas_pki_imaged_githubd_client_key_stat.stat.exists
+
+- name: compute_only_service — grant faas group read access to imaged githubd client key
+  ansible.builtin.file:
+    path: /etc/faas/tls/imaged/githubd-client.key
     state: file
     owner: root
     group: faas

@@ -368,6 +368,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				auditFn := newGithubdAuditFn(log)
 				realSvc = githubd.NewRealService(auth, tokens, checks, storeAdapter, installsAdapter, recipient, identity, auditFn).
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
+				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				if identities != nil {
 					realSvc.Identities = identities
 				}
