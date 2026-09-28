@@ -242,7 +242,7 @@ func TestManagedVersionAffinityCookieCacheIsolation(t *testing.T) {
 	h.WithResponseCache(cache)
 	rule := EdgeRuleCacheResolved{ID: "rule-cache", PathGlob: "/catalog", MaxAgeSeconds: 60}
 	seedCacheRule(t, h, backend.host, rule)
-	cache.Put(CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")},
+	cache.Put(CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hostVaryHash("jane-api.apps.dom")},
 		200, http.Header{"Content-Type": []string{"text/plain"}}, []byte("public cached body"), now.Add(time.Minute), now.Add(time.Minute), rule.toStateEdgeRuleCacheAction())
 
 	first := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
@@ -298,7 +298,7 @@ func TestManagedVersionAffinityCookieFirstMissFillsCacheWithoutReplayingCookie(t
 	if len(firstCookies) != 1 || firstCookies[0].Name != api.ManagedVersionAffinityCookieName {
 		t.Fatalf("first response cookies = %+v", firstCookies)
 	}
-	key := CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+	key := CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hostVaryHash("jane-api.apps.dom")}
 	state, entry := cache.Get(key)
 	if state != "fresh" || entry == nil || len(entry.header["Set-Cookie"]) != 0 {
 		t.Fatalf("cached response = %q/%+v", state, entry)

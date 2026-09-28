@@ -121,7 +121,7 @@ func TestApplyEdgeRuleCache_HitReplaysBody(t *testing.T) {
 		RuleID:         rule.ID,
 		Method:         "GET",
 		NormalizedPath: "/catalog",
-		VaryHash:       hashStable(""),
+		VaryHash:       hostVaryHash("jane-api.apps.dom"),
 	}
 	cache.Put(key, 200,
 		http.Header{"Content-Type": []string{"application/json"}},
@@ -171,7 +171,7 @@ func TestApplyEdgeRuleCache_StaleNotServedOnMiss(t *testing.T) {
 		RuleID:         rule.ID,
 		Method:         "GET",
 		NormalizedPath: "/catalog",
-		VaryHash:       hashStable(""),
+		VaryHash:       hostVaryHash("jane-api.apps.dom"),
 	}
 	cache.Put(key, 200,
 		http.Header{"Content-Type": []string{"application/json"}},
@@ -211,7 +211,7 @@ func TestApplyEdgeRuleCache_StaleWhileRevalidate(t *testing.T) {
 		RuleID:         rule.ID,
 		Method:         "GET",
 		NormalizedPath: "/products/42",
-		VaryHash:       hashStable(""),
+		VaryHash:       hostVaryHash("shop.apps.dom"),
 	}
 	cache.PutWithWindows(
 		key,

@@ -44,7 +44,7 @@ func TestResponseCachePartitionsVersionAffinityByDeployment(t *testing.T) {
 	rule := EdgeRuleCacheResolved{ID: "rule-cache-1", PathGlob: "/catalog", MaxAgeSeconds: 60}
 	seedCacheRule(t, h, "jane-api.apps.dom", rule)
 	app := App{ID: "app-1", Plan: api.PlanPro}
-	base := CacheKey{AppID: app.ID, RuleID: rule.ID, Method: http.MethodGet, NormalizedPath: "/catalog", VaryHash: hashStable("")}
+	base := CacheKey{AppID: app.ID, RuleID: rule.ID, Method: http.MethodGet, NormalizedPath: "/catalog", VaryHash: hostVaryHash("jane-api.apps.dom")}
 	unkeyed := base
 	candidate := base
 	candidate.DeploymentID = "dep-candidate"
