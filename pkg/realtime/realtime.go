@@ -48,13 +48,14 @@ const (
 )
 
 var (
-	ErrEndpointNotFound   = errors.New("realtime: endpoint not found")
-	ErrConnectionNotFound = errors.New("realtime: connection not found")
-	ErrTooManyConnections = errors.New("realtime: connection limit reached")
-	ErrOutboundQueueFull  = errors.New("realtime: outbound queue full")
-	ErrConnectionClosed   = errors.New("realtime: connection closed")
-	ErrUnauthorized       = errors.New("realtime: connection unauthorized")
-	ErrInvalidChannel     = errors.New("realtime: invalid channel")
+	ErrEndpointNotFound     = errors.New("realtime: endpoint not found")
+	ErrConnectionNotFound   = errors.New("realtime: connection not found")
+	ErrTooManyConnections   = errors.New("realtime: connection limit reached")
+	ErrOutboundQueueFull    = errors.New("realtime: outbound queue full")
+	ErrConnectionClosed     = errors.New("realtime: connection closed")
+	ErrUnauthorized         = errors.New("realtime: connection unauthorized")
+	ErrInvalidChannel       = errors.New("realtime: invalid channel")
+	ErrCallbackNotPersisted = errors.New("realtime: callback was not persisted")
 )
 
 // EventType is the callback event discriminator delivered to an application.
@@ -241,31 +242,41 @@ type EndpointInventory struct {
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
-	CurrentConnections                 uint64 `json:"current_connections"`
-	AcceptedConnections                uint64 `json:"accepted_connections"`
-	RejectedConnections                uint64 `json:"rejected_connections"`
-	ReceivedMessages                   uint64 `json:"received_messages"`
-	ReceivedBytes                      uint64 `json:"received_bytes"`
-	SentMessages                       uint64 `json:"sent_messages"`
-	SentBytes                          uint64 `json:"sent_bytes"`
-	DroppedMessages                    uint64 `json:"dropped_messages"`
-	CallbackErrors                     uint64 `json:"callback_errors"`
-	CallbackPending                    uint64 `json:"callback_pending"`
-	CallbackPendingBytes               uint64 `json:"callback_pending_bytes"`
-	CallbackDeadLetters                uint64 `json:"callback_dead_letters"`
-	CallbackDeadLetterBytes            uint64 `json:"callback_dead_letter_bytes"`
-	CallbackDeadLetterCapacityBytes    uint64 `json:"callback_dead_letter_capacity_bytes"`
-	CallbackDeadLetterEvictions        uint64 `json:"callback_dead_letter_evictions"`
-	CallbackDeadLetterLastEvictionUnix int64  `json:"callback_dead_letter_last_eviction_unix"`
+	CurrentConnections                 uint64  `json:"current_connections"`
+	AcceptedConnections                uint64  `json:"accepted_connections"`
+	RejectedConnections                uint64  `json:"rejected_connections"`
+	ReceivedMessages                   uint64  `json:"received_messages"`
+	ReceivedBytes                      uint64  `json:"received_bytes"`
+	SentMessages                       uint64  `json:"sent_messages"`
+	SentBytes                          uint64  `json:"sent_bytes"`
+	DroppedMessages                    uint64  `json:"dropped_messages"`
+	CallbackErrors                     uint64  `json:"callback_errors"`
+	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
+	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
+	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
+	CallbackPending                    uint64  `json:"callback_pending"`
+	CallbackPendingBytes               uint64  `json:"callback_pending_bytes"`
+	CallbackPendingCapacityBytes       uint64  `json:"callback_pending_capacity_bytes"`
+	CallbackReplayReady                uint64  `json:"callback_replay_ready"`
+	CallbackReplayDelayed              uint64  `json:"callback_replay_delayed"`
+	CallbackReplayAttempts             uint64  `json:"callback_replay_attempts"`
+	CallbackReplayDeliveries           uint64  `json:"callback_replay_deliveries"`
+	CallbackOldestPendingAgeSeconds    float64 `json:"callback_oldest_pending_age_seconds"`
+	CallbackDeadLetters                uint64  `json:"callback_dead_letters"`
+	CallbackDeadLetterBytes            uint64  `json:"callback_dead_letter_bytes"`
+	CallbackDeadLetterCapacityBytes    uint64  `json:"callback_dead_letter_capacity_bytes"`
+	CallbackDeadLetterEvictions        uint64  `json:"callback_dead_letter_evictions"`
+	CallbackDeadLetterLastEvictionUnix int64   `json:"callback_dead_letter_last_eviction_unix"`
 }
 
 type connection struct {
 	info ConnectionInfo
 	// endpoint is retained so lifecycle callbacks can finish after revocation.
-	endpoint Endpoint
-	state    *endpointState
-	ws       *websocket.Conn
-	m        *Manager
+	endpoint     Endpoint
+	state        *endpointState
+	callbackAuth atomic.Pointer[callbackAuthSnapshot]
+	ws           *websocket.Conn
+	m            *Manager
 
 	outbound chan Message
 	done     chan struct{}
@@ -276,6 +287,10 @@ type connection struct {
 	channels    map[string]struct{}
 	closeCode   int
 	closeReason string
+}
+
+type callbackAuthSnapshot struct {
+	token string
 }
 
 type endpointState struct {
@@ -307,15 +322,18 @@ type Manager struct {
 
 	upgrader websocket.Upgrader
 
-	acceptedConnections atomic.Uint64
-	rejectedConnections atomic.Uint64
-	receivedMessages    atomic.Uint64
-	receivedBytes       atomic.Uint64
-	sentMessages        atomic.Uint64
-	sentBytes           atomic.Uint64
-	droppedMessages     atomic.Uint64
-	callbackErrors      atomic.Uint64
-	authOutcomes        authOutcomeCounters
+	acceptedConnections           atomic.Uint64
+	rejectedConnections           atomic.Uint64
+	receivedMessages              atomic.Uint64
+	receivedBytes                 atomic.Uint64
+	sentMessages                  atomic.Uint64
+	sentBytes                     atomic.Uint64
+	droppedMessages               atomic.Uint64
+	callbackErrors                atomic.Uint64
+	callbackOutboxFull            atomic.Uint64
+	callbackOutboxAdmissionErrors atomic.Uint64
+	callbackUnpersistedFailures   atomic.Uint64
+	authOutcomes                  authOutcomeCounters
 }
 
 // NewManager creates a managed realtime owner. Call Close during daemon
@@ -421,11 +439,37 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	}
 	m.endpointsMu.Lock()
 	defer m.endpointsMu.Unlock()
+	updater, canUpdateCallbacks := m.hooks.(interface {
+		updateCallbackAuthToken(string, string) error
+	})
 	if existing, ok := m.endpoints.Load(e.ID); ok {
 		// Reconciliation updates the immutable policy snapshot without
 		// resetting the count held by connections admitted under an older one.
-		existing.(*endpointState).config.Store(&e)
+		state := existing.(*endpointState)
+		state.gate.Lock()
+		defer state.gate.Unlock()
+		if canUpdateCallbacks {
+			if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+				return err
+			}
+		}
+		previous := state.config.Load()
+		state.config.Store(&e)
+		if previous == nil || previous.CallbackAuthToken != e.CallbackAuthToken {
+			m.mu.RLock()
+			for _, conn := range m.conns {
+				if conn.state == state {
+					conn.callbackAuth.Store(&callbackAuthSnapshot{token: e.CallbackAuthToken})
+				}
+			}
+			m.mu.RUnlock()
+		}
 		return nil
+	}
+	if canUpdateCallbacks {
+		if err := updater.updateCallbackAuthToken(e.ID, e.CallbackAuthToken); err != nil {
+			return err
+		}
 	}
 	state := &endpointState{reserved: new(atomic.Int64)}
 	state.config.Store(&e)
@@ -449,6 +493,9 @@ func (m *Manager) RemoveEndpoint(id string) {
 		state.gate.Unlock()
 	}
 	m.endpointsMu.Unlock()
+	if updater, ok := m.hooks.(interface{ removeCallbackAuthToken(string) }); ok {
+		updater.removeCallbackAuthToken(id)
+	}
 	m.mu.RLock()
 	connections := make([]*connection, 0)
 	for _, c := range m.conns {
@@ -669,6 +716,9 @@ func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, princip
 		done:     make(chan struct{}),
 		channels: make(map[string]struct{}),
 	}
+	if current := state.config.Load(); current != nil {
+		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
+	}
 	m.mu.Lock()
 	m.conns[id] = conn
 	m.mu.Unlock()
@@ -693,7 +743,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	}
 	connect.CallbackURL = c.endpoint.CallbackURL
 	connect.CallbackPath = c.endpoint.ConnectPath
-	connect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	connect.CallbackAuthToken = c.currentCallbackAuthToken()
 	accepted, err := m.callConnect(ctx, connect)
 	if err != nil {
 		m.callbackErrors.Add(1)
@@ -744,14 +794,28 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		}
 		event.CallbackURL = c.endpoint.CallbackURL
 		event.CallbackPath = c.endpoint.MessagePath
-		event.CallbackAuthToken = c.endpoint.CallbackAuthToken
+		event.CallbackAuthToken = c.currentCallbackAuthToken()
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
-		if err := m.hooks.Message(callbackCtx, event); err != nil {
-			m.callbackErrors.Add(1)
-		}
+		callbackErr := m.hooks.Message(callbackCtx, event)
 		cancel()
+		if callbackErr != nil {
+			m.callbackErrors.Add(1)
+			if errors.Is(callbackErr, ErrCallbackNotPersisted) {
+				if errors.Is(callbackErr, ErrCallbackOutboxFull) {
+					m.callbackOutboxFull.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback capacity reached")
+				} else if errors.Is(callbackErr, ErrCallbackOutboxAdmission) {
+					m.callbackOutboxAdmissionErrors.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback could not be persisted")
+				} else {
+					m.callbackUnpersistedFailures.Add(1)
+					_ = c.close(websocket.CloseTryAgainLater, "callback delivery unavailable")
+				}
+				return
+			}
+		}
 	}
 }
 
@@ -802,11 +866,14 @@ func (c *connection) write(msg Message) error {
 }
 
 func (m *Manager) removeConnection(ctx context.Context, c *connection) {
+	c.state.gate.Lock()
 	m.mu.Lock()
 	if current, ok := m.conns[c.info.ID]; ok && current == c {
 		delete(m.conns, c.info.ID)
 	}
+	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
+	c.state.gate.Unlock()
 	c.closeOne.Do(func() {
 		close(c.done)
 		_ = c.ws.Close()
@@ -829,12 +896,28 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	}
 	disconnect.CallbackURL = c.endpoint.CallbackURL
 	disconnect.CallbackPath = c.endpoint.DisconnectPath
-	disconnect.CallbackAuthToken = c.endpoint.CallbackAuthToken
+	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
+		if errors.Is(err, ErrCallbackNotPersisted) {
+			if errors.Is(err, ErrCallbackOutboxFull) {
+				m.callbackOutboxFull.Add(1)
+			} else if errors.Is(err, ErrCallbackOutboxAdmission) {
+				m.callbackOutboxAdmissionErrors.Add(1)
+			} else {
+				m.callbackUnpersistedFailures.Add(1)
+			}
+		}
 	}
+}
+
+func (c *connection) currentCallbackAuthToken() string {
+	if current := c.callbackAuth.Load(); current != nil {
+		return current.token
+	}
+	return ""
 }
 
 func (c *connection) close(code int, reason string) error {
@@ -1039,20 +1122,29 @@ func (m *Manager) Stats() Stats {
 		current = 0
 	}
 	stats := Stats{
-		CurrentConnections:  uint64(current),
-		AcceptedConnections: m.acceptedConnections.Load(),
-		RejectedConnections: m.rejectedConnections.Load(),
-		ReceivedMessages:    m.receivedMessages.Load(),
-		ReceivedBytes:       m.receivedBytes.Load(),
-		SentMessages:        m.sentMessages.Load(),
-		SentBytes:           m.sentBytes.Load(),
-		DroppedMessages:     m.droppedMessages.Load(),
-		CallbackErrors:      m.callbackErrors.Load(),
+		CurrentConnections:            uint64(current),
+		AcceptedConnections:           m.acceptedConnections.Load(),
+		RejectedConnections:           m.rejectedConnections.Load(),
+		ReceivedMessages:              m.receivedMessages.Load(),
+		ReceivedBytes:                 m.receivedBytes.Load(),
+		SentMessages:                  m.sentMessages.Load(),
+		SentBytes:                     m.sentBytes.Load(),
+		DroppedMessages:               m.droppedMessages.Load(),
+		CallbackErrors:                m.callbackErrors.Load(),
+		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
+		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
+		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()
 		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
 		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
+		stats.CallbackPendingCapacityBytes = uint64(maxInt64(outbox.CapacityBytes, 0))
+		stats.CallbackReplayReady = uint64(maxInt(outbox.ReplayReady, 0))
+		stats.CallbackReplayDelayed = uint64(maxInt(outbox.ReplayDelayed, 0))
+		stats.CallbackReplayAttempts = outbox.ReplayAttempts
+		stats.CallbackReplayDeliveries = outbox.ReplayDeliveries
+		stats.CallbackOldestPendingAgeSeconds = outbox.OldestPendingAgeSeconds
 		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))
 		stats.CallbackDeadLetterBytes = uint64(maxInt64(outbox.DeadLetterBytes, 0))
 		stats.CallbackDeadLetterCapacityBytes = uint64(maxInt64(outbox.DeadLetterCapacityBytes, 0))

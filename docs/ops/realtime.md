@@ -149,6 +149,13 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
+Updating `callback_auth_token` with the endpoint PATCH applies the new bearer
+to future callbacks from existing connections without closing their sockets.
+Callbacks already persisted in the durable outbox keep the token captured when
+they were queued. During rotation, configure the handler to accept both tokens,
+update Gregale's endpoint, and keep accepting the old token until pending
+callbacks have drained. Review dead letters before revoking the old token if
+you may need to replay them manually.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;
@@ -170,7 +177,16 @@ Inspect health and counters from the `faas` group:
 curl --unix-socket /run/faas/realtimed.sock http://localhost/healthz
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
+curl --unix-socket /run/faas/realtimed.sock 'http://localhost/internal/callbacks/dead-letters?limit=100'
 ```
+
+The dead-letter endpoint returns metadata only. Use the `next_cursor` value as
+`after` to list another page. After correcting a callback receiver, POST to
+`/internal/callbacks/dead-letters/<event-id>:replay` on this Unix socket to
+return one event to the pending outbox. Replay preserves the event ID and
+resets its retry budget; HTTP 409 means pending capacity or an active
+same-connection delivery must clear first. See the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
 The customer CLI exposes the authenticated connection operations as well:
 
@@ -230,6 +246,11 @@ node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
 (default 64 MiB). The oldest dead letters are evicted first when the cap is
 exceeded, including on startup if an existing spool is over the limit. Copy
 records needed for investigation or manual replay before lowering the cap.
+Failed durable callbacks retry with jittered exponential backoff from one
+second, capped at one minute by default. `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL`
+can raise that cap up to one hour. HTTP 429 and 503 `Retry-After` hints set a
+minimum delay, subject to the configured cap; the scheduled time is persisted
+with the callback so restarts do not reset the backoff.
 The default directory is provisioned as `faas:faas` with mode `0700` and is writable
 through the realtimed systemd unit. On the first start after upgrading, realtimed
 moves pending events and dead letters from the former `/run/faas/realtime-callbacks`
@@ -238,7 +259,9 @@ event ID stops startup for operator inspection rather than discarding either
 copy. Message and disconnect events are fsynced before delivery and replayed
 after a daemon restart or host reboot; delivery is at-least-once, and poison
 events are retained under the outbox's `dead/` directory after the bounded
-retry budget. Keep the callback URL
+retry budget. Unexpected outbox or filesystem errors stop a replay pass, which
+realtime retries in process with an exponential delay capped at 30 seconds.
+Process shutdown cancels the retry wait. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
 application to process an event. Pending callbacks for one connection replay in
 WebSocket sequence order, with disconnect after the final message. Existing
@@ -249,12 +272,28 @@ readable backups. Callback handlers should deduplicate by event ID because
 delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
 and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
 the pending count and bytes, retained dead-letter count and bytes, retention
-capacity, eviction count, and last eviction time. The
-`FaasRealtimeCallbackDeadLettersPresent`,
+capacity, eviction count, and last eviction time. It also exposes ready and
+delayed replay heads, replay attempts, and successful deliveries. The
+`realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
+loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
+restarts. `FaasRealtimeCallbackReplayStalled` fires when ready replay work
+receives no attempts; delayed retries do not trigger it. See the
+[callback delivery runbook](../runbooks/FaasRealtimeCallbacks.md). The pending
+outbox capacity gauge and
+`FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
+the enqueue limit. `realtimed_callback_outbox_full_total` counts events that
+could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
+`realtimed_callback_outbox_admission_errors_total` counts failures to persist
+callbacks caused by local admission or storage errors, and
+`FaasRealtimeCallbackOutboxAdmissionFailed` pages on any occurrence.
+`realtimed_callback_unpersisted_failures_total` counts failed direct HTTP
+callbacks without a durable outbox; `FaasRealtimeCallbackUnpersisted`
+pages on any occurrence.
+The `FaasRealtimeCallbackDeadLettersPresent`,
 `FaasRealtimeCallbackDeadLettersNearCapacity`, and
 `FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
 [callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
-`/internal/stats` includes callback-pending, callback-pending-bytes, and
-callback-dead-letter retention counters alongside the connection and delivery
-counters.
+`/internal/stats` includes callback-pending, callback replay ready/delayed and
+attempt/delivery counters, and callback-dead-letter retention counters
+alongside the connection and delivery counters.

@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const defaultSocket = "/run/faas/realtimed.sock"
@@ -68,6 +69,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
 		Root:               outboxRoot,
 		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
+		ReplayWorkers:      envInt("FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", realtime.DefaultCallbackOutboxReplayWorkers),
+		MaxRetryInterval:   envDuration("FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", realtime.DefaultCallbackOutboxMaxRetryInterval),
 	})
 	if err != nil {
 		return err
@@ -88,7 +91,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
 	}, hooks)
 	defer func() { _ = manager.Close() }()
-	ops.Registry().MustRegister(realtime.NewStatsCollector(manager))
+	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "realtimed_callback_replay_supervisor_restarts_total",
+		Help: "Callback replay loop restarts after unexpected exits since process start.",
+	})
+	ops.Registry().MustRegister(realtime.NewStatsCollector(manager), callbackReplayRestarts)
 	readyProbe := &wire.ReadyzProbe{}
 	readySignal := readyProbe.Register()
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
@@ -126,14 +133,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	go func() {
-		err := outbox.Run(ctx, func(deliveryCtx context.Context, event realtime.Event) error {
-			callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
-			defer cancel()
-			return hooks.Deliver(callbackCtx, event)
-		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn("realtimed callback outbox stopped", "err", err)
-		}
+		superviseCallbackReplay(ctx, log, callbackReplayRetryInitial, callbackReplayRetryMax, func(replayCtx context.Context) error {
+			return outbox.Run(replayCtx, func(deliveryCtx context.Context, event realtime.Event) error {
+				callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
+				defer cancel()
+				return hooks.Deliver(callbackCtx, event)
+			})
+		}, callbackReplayRestarts.Inc)
 	}()
 	serverErr := make(chan error, 2)
 	go func() {

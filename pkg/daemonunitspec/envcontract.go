@@ -391,6 +391,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_OUTBOX", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "bounded parallel callback recovery; values above 32 are capped"},
+	{Name: "FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "maximum persistent callback retry delay; defaults to one minute and is capped at one hour"},
 	{Name: "FAAS_REALTIME_CALLBACK_TIMEOUT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEALTH_LISTEN", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEARTBEAT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
