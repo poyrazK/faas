@@ -2,11 +2,11 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.10.0
+  version: 1.11.0
   description: |
     Gregale delivers selected app lifecycle and billing events to app-owned
     subscriptions, and cross-app statement, hostname-verification,
-    certificate-lifecycle, and deployment-outcome events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
+    certificate-lifecycle, deployment-outcome, and customer-lifecycle events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
     the internal content-based router, accepts external events for durable
     workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
     messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
@@ -122,6 +122,22 @@ channels:
     messages:
       platformTenantSurfaceDeploymentChanged:
         $ref: '#/components/messages/PlatformTenantSurfaceDeploymentChanged'
+  platformTenantCustomerLinked:
+    address: platform_tenant.customer.linked
+    description: Emitted when an active app-local customer identity is created for or linked to this platform tenant.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantCustomerLinked:
+        $ref: '#/components/messages/PlatformTenantCustomerLinked'
+  platformTenantCustomerOffboarded:
+    address: platform_tenant.customer.offboarded
+    description: Emitted when a linked customer identity transitions from active to revoked.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantCustomerOffboarded:
+        $ref: '#/components/messages/PlatformTenantCustomerOffboarded'
   internalEventPublish:
     address: /v1/events:publish
     description: Publish one tenant-scoped event for asynchronous content-based fanout.
@@ -330,6 +346,28 @@ operations:
     summary: Deliver a platform_tenant.surface.deployment.changed event to a tenant webhook.
     messages:
       - $ref: '#/channels/platformTenantSurfaceDeploymentChanged/messages/platformTenantSurfaceDeploymentChanged'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantCustomerLinked:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantCustomerLinked'
+    summary: Deliver a platform_tenant.customer.linked event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantCustomerLinked/messages/platformTenantCustomerLinked'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantCustomerOffboarded:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantCustomerOffboarded'
+    summary: Deliver a platform_tenant.customer.offboarded event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantCustomerOffboarded/messages/platformTenantCustomerOffboarded'
     bindings:
       http:
         method: POST
@@ -577,6 +615,30 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantCustomerLinked:
+      name: platform_tenant.customer.linked
+      title: Platform tenant customer linked
+      summary: An active app-local customer identity is now linked to this tenant; identity metadata only, never credentials.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantCustomerLinkedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantCustomerOffboarded:
+      name: platform_tenant.customer.offboarded
+      title: Platform tenant customer offboarded
+      summary: A linked customer identity transitioned from active to revoked; identity metadata only, never credentials.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantCustomerOffboardedEvent'
       bindings:
         http:
           headers:
@@ -960,6 +1022,38 @@ components:
               enum: ['platform_tenant.surface.deployment.changed']
             data:
               $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedData'
+    PlatformTenantCustomerLinkedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.customer.linked']
+            data:
+              $ref: '#/components/schemas/PlatformTenantCustomerLifecycleData'
+    PlatformTenantCustomerOffboardedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.customer.offboarded']
+            data:
+              $ref: '#/components/schemas/PlatformTenantCustomerLifecycleData'
+    PlatformTenantCustomerLifecycleData:
+      type: object
+      description: App-local identity transition for one customer. Use customer_external_ref to join the customer's identities across apps. Credentials and secret hashes are never included.
+      required: [platform_tenant_id, external_ref, consumer_id, app_id, customer_external_ref, customer_name, customer_status, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable tenant reference. }
+        consumer_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        customer_external_ref: { type: string, description: Stable customer reference shared across the tenant's app-local identities. }
+        customer_name: { type: string }
+        customer_status: { type: string, enum: [active, revoked] }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
     PlatformTenantHostnameVerifiedData:
       type: object
       description: DNS TXT ownership proof only. This event does not mean a certificate has been issued or that the hostname is routable; the challenge token is never included.

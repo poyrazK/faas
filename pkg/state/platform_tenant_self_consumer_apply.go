@@ -159,6 +159,7 @@ func (m *MemStore) ApplyPlatformTenantSelfConsumers(_ context.Context, in ApplyP
 		consumer.ID, consumer.CreatedAt, consumer.UpdatedAt = uuid.NewString(), now, now
 		m.apiConsumers[consumer.ID] = consumer
 		m.platformTenantByConsumer[consumer.ID] = in.TenantID
+		m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(consumer, PlatformTenantCustomerLinkedEvent, now)
 		result.Consumers[index].Consumer = consumer
 	}
 	result.Changed = true

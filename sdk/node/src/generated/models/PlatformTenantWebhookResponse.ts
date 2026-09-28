@@ -12,7 +12,7 @@ export type PlatformTenantWebhookResponse = {
   account_id: string;
   target_url: string;
   webhook_secret_sealed_masked: '***';
-  event_filter: Array<'platform_tenant.statement.finalized' | 'platform_tenant.hostname.verified' | 'platform_tenant.surface.certificate.changed' | 'platform_tenant.surface.deployment.changed'>;
+  event_filter: Array<'platform_tenant.statement.finalized' | 'platform_tenant.hostname.verified' | 'platform_tenant.surface.certificate.changed' | 'platform_tenant.surface.deployment.changed' | 'platform_tenant.customer.linked' | 'platform_tenant.customer.offboarded'>;
   retry_policy: 'default' | 'aggressive' | 'none';
   delivery_format: 'json' | 'cloudevents';
   enabled: boolean;

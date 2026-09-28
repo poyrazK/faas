@@ -258,6 +258,21 @@ type PlatformTenantSurfaceDeploymentChangedWebhookPayload struct {
 	ChangedAt        time.Time `json:"changed_at"`
 }
 
+// PlatformTenantCustomerLifecycleWebhookPayload records a linked or
+// offboarded app-local customer identity for a platform tenant. The stable
+// customer_external_ref joins identities across apps; consumer_id and app_id
+// identify the specific app-local row.
+type PlatformTenantCustomerLifecycleWebhookPayload struct {
+	PlatformTenantID    string    `json:"platform_tenant_id"`
+	ExternalRef         string    `json:"external_ref"`
+	ConsumerID          string    `json:"consumer_id"`
+	AppID               string    `json:"app_id"`
+	CustomerExternalRef string    `json:"customer_external_ref"`
+	CustomerName        string    `json:"customer_name"`
+	CustomerStatus      string    `json:"customer_status"`
+	ChangedAt           time.Time `json:"changed_at"`
+}
+
 type CreatePlatformTenantWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`
 	WebhookSecret  string   `json:"webhook_secret"`

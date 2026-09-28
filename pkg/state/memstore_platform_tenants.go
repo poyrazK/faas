@@ -122,9 +122,13 @@ func (m *MemStore) LinkPlatformTenantConsumer(_ context.Context, accountID, tena
 	if attached := m.platformTenantByConsumer[consumerID]; attached != "" && attached != tenantID {
 		return APIConsumer{}, ErrConflict
 	}
+	newlyLinked := consumer.PlatformTenantID == ""
 	m.platformTenantByConsumer[consumerID] = tenantID
 	consumer.PlatformTenantID = tenantID
 	m.apiConsumers[consumerID] = consumer
+	if newlyLinked && consumer.Active() {
+		m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(consumer, PlatformTenantCustomerLinkedEvent, time.Now().UTC())
+	}
 	return consumer, nil
 }
 
