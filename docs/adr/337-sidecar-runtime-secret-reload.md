@@ -1,4 +1,4 @@
-# ADR-289 · Sidecar runtime secret reload
+# ADR-337 · Sidecar runtime secret reload
 
 - **Status:** accepted
 - **Date:** 2026-09-27
