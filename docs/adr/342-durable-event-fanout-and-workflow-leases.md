@@ -1,4 +1,4 @@
-# ADR-284: Durable event fanout and bounded scheduler dispatch
+# ADR-342: Durable event fanout and bounded scheduler dispatch
 
 - Status: Accepted
 - Date: 2026-09-27
