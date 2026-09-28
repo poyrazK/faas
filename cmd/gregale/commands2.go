@@ -570,6 +570,10 @@ func cmdApp(args []string) int {
 			return printErr("Invalid --public-auth",
 				fmt.Errorf("must be 'open', 'bearer', 'basic', 'ip_allowlist', or 'internal_only'; got %q", v))
 		}
+		if explicit["ip-allowlist"] && v != api.AppPublicAuthModeIPAllowlist {
+			return printErr("Invalid --ip-allowlist",
+				fmt.Errorf("--ip-allowlist requires --public-auth=ip_allowlist"))
+		}
 		block := &api.PublicAuthBlock{Mode: v}
 		if v == api.AppPublicAuthModeBasic {
 			bu := strings.TrimSpace(*basicUser)
