@@ -2416,7 +2416,7 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	}
 	if ack[0] != 0 {
 		if ack[0] == resumeHookAckAfterRestore {
-			return fmt.Errorf("vmm: application after_restore failed (ack=%d)", ack[0])
+			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}

@@ -315,7 +315,8 @@ type OpsMetrics struct {
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
 	// {snapshot_stale, disk_full, jailer_fail, netns_fail,
-	// cgroup_fail, vsock_fail, snapshot_restore_err, mem_backend_err}
+	// cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err,
+	// mem_backend_err}
 	// — every wake-failure site maps to exactly one of these (see
 	// pkg/fcvm/wake_classify.go). The box label is bounded by the
 	// boxLabelSet admission (maxBoxLabelValues = 64); overflow
@@ -2412,13 +2413,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// vmmd-side closed vocab (issue #1059 / ADR-127). The
 		// classifier at pkg/fcvm/wake_classify.go maps every
 		// vmmd wake-failure hook site to exactly one of these
-		// eight reasons.
+		// nine reasons.
 		"snapshot_stale",
 		"disk_full",
 		"jailer_fail",
 		"netns_fail",
 		"cgroup_fail",
 		"vsock_fail",
+		"after_restore_failed",
 		"snapshot_restore_err",
 		"mem_backend_err",
 		// schedd-side audit-reason strings (issue #1059 / ADR-127
@@ -2450,7 +2452,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeFailureApps := []string{labelAppUnknown, otherAppLabel}
 	wakeFailure := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_failure_total",
-		Help: "Count of wake failures (issue #1059 / ADR-127), labelled by box (admission-bounded, overflow collapses to __other__), app (admission-bounded, overflow collapses to __other__), and reason ∈ {snapshot_stale, disk_full, jailer_fail, netns_fail, cgroup_fail, vsock_fail, snapshot_restore_err, mem_backend_err, vmm_boot_failed, record_runtime_failed}. The first 8 reasons are the vmmd-side closed vocabulary enforced by pkg/fcvm/wake_classify.go — every vmmd wake-failure hook site maps to exactly one of these. The last 2 reasons (vmm_boot_failed, record_runtime_failed) are schedd-side audit-reason strings emitted from the schedd's Engine wake-error branches at pkg/sched/engine.go:2123 / :2194 — cluster A commit 3 of the platform-observability mega-PR added schedd parity (ADR-127 §3.6). vmmd emits only the first 8; schedd emits only the last 2; the union is pre-instantiated in the constructor so /metrics surfaces zero rows from idle fleet regardless of which daemon hosts the registry. The box label is bounded by maxBoxLabelValues (64) and resolves to \"local\" until the Tier A multi-host rollout lands (ADR-062 / ADR-066 chain). The app label is bounded by maxAppLabelValues (256) and resolves to the call site's app identifier — empty input collapses to labelAppUnknown (\"\") to distinguish missing-app-slug calls from real app slugs that hit the admission cap (which collapse to otherAppLabel).",
+		Help: "Count of wake failures (issue #1059 / ADR-127), labelled by box (admission-bounded, overflow collapses to __other__), app (admission-bounded, overflow collapses to __other__), and reason ∈ {snapshot_stale, disk_full, jailer_fail, netns_fail, cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err, mem_backend_err, vmm_boot_failed, record_runtime_failed}. The first 9 reasons are the vmmd-side closed vocabulary enforced by pkg/fcvm/wake_classify.go — every vmmd wake-failure hook site maps to exactly one of these. The last 2 reasons (vmm_boot_failed, record_runtime_failed) are schedd-side audit-reason strings emitted from the schedd's Engine wake-error branches at pkg/sched/engine.go:2123 / :2194 — cluster A commit 3 of the platform-observability mega-PR added schedd parity (ADR-127 §3.6). vmmd emits only the first 9; schedd emits only the last 2; the union is pre-instantiated in the constructor so /metrics surfaces zero rows from idle fleet regardless of which daemon hosts the registry. The box label is bounded by maxBoxLabelValues (64) and resolves to \"local\" until the Tier A multi-host rollout lands (ADR-062 / ADR-066 chain). The app label is bounded by maxAppLabelValues (256) and resolves to the call site's app identifier — empty input collapses to labelAppUnknown (\"\") to distinguish missing-app-slug calls from real app slugs that hit the admission cap (which collapse to otherAppLabel).",
 	}, []string{"box", "app", "reason"})
 	for _, box := range wakeFailureBoxes {
 		for _, app := range wakeFailureApps {
@@ -6140,7 +6142,7 @@ func (m *OpsMetrics) SetExecutionWorkers(workers int) {
 // wake-failure hook sites increment on every wake failure
 // (issue #1059 / ADR-127, §3.5 per-app split). reason MUST be
 // one of {snapshot_stale, disk_full, jailer_fail, netns_fail,
-// cgroup_fail, vsock_fail, snapshot_restore_err,
+// cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err,
 // mem_backend_err} — the closed vocabulary is enforced by
 // pkg/fcvm/wake_classify.go and the wake-failure call sites
 // hardcode the literal reason string. box is resolved through
@@ -6157,7 +6159,7 @@ func (m *OpsMetrics) SetExecutionWorkers(workers int) {
 // (box, app, reason) cartesian is pre-instantiated in the
 // constructor for every pair in the closed set (the reserved
 // {labelLocal, otherBoxLabel} × {labelAppUnknown, otherAppLabel}
-// × 10 reasons matrix — 40 series from idle fleet) so the §12
+// × 11 reasons matrix — 44 series from idle fleet) so the §12
 // "Wake failures by reason (24h)" dashboard panel surfaces
 // zero rows from an idle fleet. nil-safe — returns nil if m
 // is nil so unit tests without metrics keep building (same

@@ -5,7 +5,7 @@
 // The vocabulary is:
 //
 //   snapshot_stale, disk_full, jailer_fail, netns_fail, cgroup_fail,
-//   vsock_fail, snapshot_restore_err, mem_backend_err
+//   vsock_fail, after_restore_failed, snapshot_restore_err, mem_backend_err
 //
 // Every wake-failure hook site calls ClassifyWakeError ONCE at the
 // error boundary (pkg/fcvm/manager.go::Wake — bringUp restore-fallback,
@@ -19,7 +19,7 @@
 //
 // The closed-set rule is enforced by ADR-127 §3.1: the reason string
 // is hardcoded at every call site (no bare-string passthrough from
-// the wrapped error), and ClassifyWakeError returns one of the 8
+// the wrapped error), and ClassifyWakeError returns one of the 9
 // closed values — never an empty string or an arbitrary error
 // fragment. The "call site hardcodes the literal" rule is the same
 // posture ADR-074 takes for the warmSnapshotErrors{reason} counter
@@ -54,6 +54,7 @@ const (
 	WakeReasonNetnsFail          = "netns_fail"
 	WakeReasonCgroupFail         = "cgroup_fail"
 	WakeReasonVSockFail          = "vsock_fail"
+	WakeReasonAfterRestoreFailed = "after_restore_failed"
 	WakeReasonSnapshotRestoreErr = "snapshot_restore_err"
 	WakeReasonMemBackendErr      = "mem_backend_err"
 )
@@ -120,6 +121,11 @@ var (
 	// security rule "Post-restore resume hook must re-seed entropy
 	// + step clock before readiness").
 	ErrVSockFail = errors.New("fcvm: vsock fail")
+
+	// ErrAfterRestoreHook is returned only when guest-init ACKs that the
+	// configured application callback failed. Other resume NACKs remain
+	// transport/platform failures or generic snapshot restore errors.
+	ErrAfterRestoreHook = errors.New("application after_restore failed")
 )
 
 // WakeContext bundles the inputs ClassifyWakeError needs from the
@@ -143,7 +149,7 @@ type WakeContext struct {
 }
 
 // ClassifyWakeError maps a wake-failure error + the surrounding
-// context to one of the 8 closed reason values. The function is the
+// context to one of the 9 closed reason values. The function is the
 // single source of truth for the reason vocabulary — every wake-
 // failure hook site calls it. The classifier prefers typed sentinel
 // matching (errors.Is) over substring matching; substring matching
@@ -151,7 +157,7 @@ type WakeContext struct {
 // sentinel.
 //
 // Contract (issue #1059 / ADR-127 §3):
-//   - returns exactly one of the 8 WakeReason* constants,
+//   - returns exactly one of the 9 WakeReason* constants,
 //   - never returns an empty string,
 //   - never returns the wrapped error's message verbatim (the
 //     Prometheus label is a closed enum, not a free-form string),
@@ -181,6 +187,8 @@ func ClassifyWakeError(err error, ctx WakeContext) string {
 		return WakeReasonNetnsFail
 	case errors.Is(err, ErrCgroupFail):
 		return WakeReasonCgroupFail
+	case errors.Is(err, ErrAfterRestoreHook):
+		return WakeReasonAfterRestoreFailed
 	case errors.Is(err, ErrVSockFail):
 		return WakeReasonVSockFail
 	}

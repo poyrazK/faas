@@ -1362,7 +1362,7 @@ func TestOpsMetrics_WarmSnapshotErrorsNilSafe(t *testing.T) {
 // constructor pre-instantiates every (box, app, reason) tuple for
 // the reserved boxes (labelLocal, otherBoxLabel) × the reserved
 // apps (labelAppUnknown == "", otherAppLabel == "__other__") × every
-// closed reason = 2 × 2 × 10 = 40 series, so the §12 "Wake failures
+// closed reason = 2 × 2 × 11 = 44 series, so the §12 "Wake failures
 // by reason (24h)" dashboard panel surfaces a non-zero baseline
 // from t=0 — the regression that drops the pre-instantiation loop
 // trips here, not in a downstream "missing series" alert.
@@ -1376,6 +1376,7 @@ func TestOpsMetrics_WakeFailurePreinstantiated(t *testing.T) {
 		"netns_fail",
 		"cgroup_fail",
 		"vsock_fail",
+		"after_restore_failed",
 		"snapshot_restore_err",
 		"mem_backend_err",
 		"vmm_boot_failed",
@@ -1395,7 +1396,7 @@ func TestOpsMetrics_WakeFailurePreinstantiated(t *testing.T) {
 // TestOpsMetrics_WakeFailureIncrement (issue #1059 / ADR-127) pins
 // the per-(box, app, reason) counter flow. Three increments on the
 // same (box, app, reason) tuple must surface as `3` in the scrape
-// body; two increments on a different tuple must surface as `2`;
+// body; separate reasons must retain their own counts;
 // the reserved (__other__) buckets must remain at `0` until a real
 // box / app crosses the admission cap. The Prometheus Exposer
 // reports the current value per series, not the running total —
@@ -1408,11 +1409,13 @@ func TestOpsMetrics_WakeFailureIncrement(t *testing.T) {
 	m.WakeFailure("local", "my-app", "snapshot_restore_err").Inc()
 	m.WakeFailure("local", "my-app", "netns_fail").Inc()
 	m.WakeFailure("local", "my-app", "netns_fail").Inc()
+	m.WakeFailure("local", "my-app", "after_restore_failed").Inc()
 
 	body := render(t, m)
 	for _, want := range []string{
 		`vmmd_wake_failure_total{app="my-app",box="local",reason="snapshot_restore_err"} 3`,
 		`vmmd_wake_failure_total{app="my-app",box="local",reason="netns_fail"} 2`,
+		`vmmd_wake_failure_total{app="my-app",box="local",reason="after_restore_failed"} 1`,
 		// Reserved overflow buckets stay at 0 until a real box / app
 		// crosses the cap.
 		`vmmd_wake_failure_total{app="__other__",box="__other__",reason="snapshot_restore_err"} 0`,
@@ -1462,7 +1465,7 @@ func TestOpsMetrics_WakeFailureNilSafe(t *testing.T) {
 // mega-PR) pins the (box, app, reason) cartesian at boot. After
 // the per-app wake-failure split and the schedd-side audit-reason
 // addition (cluster A commit 3), the metric ships 2 reserved boxes
-// × {labelAppUnknown, otherAppLabel} × 10 reasons = 40 series on an
+// × {labelAppUnknown, otherAppLabel} × 11 reasons = 44 series on an
 // idle daemon. The §12 "Wake failures by reason (24h)" dashboard
 // panel depends on the cartesian being complete at t=0 — a
 // regression that drops the inner for-loop trips here before it
@@ -1476,7 +1479,7 @@ func TestWakeFailure_ClosedCartesian_PreInstantiated(t *testing.T) {
 	apps := []string{``, `__other__`}
 	reasons := []string{
 		`snapshot_stale`, `disk_full`, `jailer_fail`, `netns_fail`,
-		`cgroup_fail`, `vsock_fail`, `snapshot_restore_err`, `mem_backend_err`,
+		`cgroup_fail`, `vsock_fail`, `after_restore_failed`, `snapshot_restore_err`, `mem_backend_err`,
 		`vmm_boot_failed`, `record_runtime_failed`,
 	}
 	wantCount := len(boxes) * len(apps) * len(reasons)

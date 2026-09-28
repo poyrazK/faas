@@ -1759,6 +1759,12 @@ func TestTriggerResumeHookAfterRestoreFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "application after_restore failed (ack=13)") {
 		t.Fatalf("resume error = %v", err)
 	}
+	if !errors.Is(err, ErrAfterRestoreHook) {
+		t.Fatalf("resume error %v does not retain after_restore identity", err)
+	}
+	if reason := ClassifyWakeError(err, WakeContext{}); reason != WakeReasonAfterRestoreFailed {
+		t.Fatalf("wake reason = %q, want %q", reason, WakeReasonAfterRestoreFailed)
+	}
 }
 
 // TestTriggerResumeHookContextCancel: a cancelled ctx surfaces immediately

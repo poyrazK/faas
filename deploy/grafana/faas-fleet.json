@@ -1338,7 +1338,7 @@
         "x": 0,
         "y": 128
       },
-      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `mem_backend_err` is pre-instantiated today even though unreachable in production — the row should read 0.",
+      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `after_restore_failed` identifies an opted-in application callback that rejected a restore; `mem_backend_err` is pre-instantiated today even though unreachable in production — the row should read 0.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

@@ -106,6 +106,7 @@ journalctl -u schedd --since '-30m' --no-pager | grep 'wake: no usable snapshot'
 | `netns_fail` | nft / ip-link / ip-route failure | Check host iptables / nft state |
 | `cgroup_fail` | cgroup v2 mount misconfigured | Sustained ⇒ §11 invariant violation |
 | `vsock_fail` | Guest-init post-restore resume hook (per ADR-022) | `journalctl -u vmmd` for the vsock log |
+| `after_restore_failed` | Opted-in app callback returned a non-2xx response or timed out after platform resume repair | Inspect the app's restore-handler logs and timeout; the failed restore cold-boots automatically |
 | `snapshot_restore_err` | Catch-all bucket — check daemon slog | Read the wrapped error in slog |
 | `mem_backend_err` | Should be 0 today (only backend_type=File) | Investigate if non-zero |
 
