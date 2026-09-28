@@ -55,6 +55,44 @@ func TestPgStoreManagedRealtimeChannelRouteSnapshot(t *testing.T) {
 	}
 }
 
+func TestPgStoreManagedRealtimeChannelRouteSnapshotRevisionRoundTrips(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	generation, err := s.CurrentManagedRealtimeChannelRouteGeneration(ctx)
+	if err != nil {
+		t.Fatalf("CurrentManagedRealtimeChannelRouteGeneration: %v", err)
+	}
+	want := state.ManagedRealtimeChannelRouteSnapshotRevision{InstanceID: "realtimed-instance", Revision: 42}
+	if err := s.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, nodeID, generation, nil, &want); err != nil {
+		t.Fatalf("ReplaceManagedRealtimeChannelRoutesWithRevision: %v", err)
+	}
+
+	revisions, err := s.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, []string{nodeID, uuid.NewString()})
+	if err != nil {
+		t.Fatalf("ListManagedRealtimeChannelRouteSnapshotRevisions: %v", err)
+	}
+	if len(revisions) != 1 || revisions[nodeID] != want {
+		t.Fatalf("snapshot revisions = %+v, want %s: %+v", revisions, nodeID, want)
+	}
+
+	updated := state.ManagedRealtimeChannelRouteSnapshotRevision{InstanceID: "realtimed-instance", Revision: 43}
+	if err := s.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, nodeID, generation, nil, &updated); err != nil {
+		t.Fatalf("update route snapshot revision: %v", err)
+	}
+	revisions, err = s.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, []string{nodeID})
+	if err != nil || len(revisions) != 1 || revisions[nodeID] != updated {
+		t.Fatalf("updated snapshot revisions = (%+v, %v), want %s: %+v", revisions, err, nodeID, updated)
+	}
+
+	if err := s.ReplaceManagedRealtimeChannelRoutes(ctx, nodeID, generation, nil); err != nil {
+		t.Fatalf("replace route snapshot without revision: %v", err)
+	}
+	revisions, err = s.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, []string{nodeID})
+	if err != nil || len(revisions) != 0 {
+		t.Fatalf("snapshot revisions after legacy replacement = (%+v, %v), want empty", revisions, err)
+	}
+}
+
 func TestPgStoreManagedRealtimeChannelRouteLockReleaseAfterCancellation(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)
 	nodeID := uuid.NewString()
