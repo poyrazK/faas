@@ -1432,6 +1432,9 @@ from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
+from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
+from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailureResponseState
 from .repo_response import RepoResponse
 from .request_analytics_compute_cost import RequestAnalyticsComputeCost
 from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
@@ -3177,6 +3180,9 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplayEventFanoutFailureRequest",
+    "ReplayEventFanoutFailureResponse",
+    "ReplayEventFanoutFailureResponseState",
     "RepoResponse",
     "RequestAnalyticsComputeCost",
     "RequestAnalyticsComputeCostAllocationMethod",

@@ -619,6 +619,22 @@ subscription, routing attempt count, failure time, and error. Use
 `--fanout-before` with `next_fanout_before` from `--json` to page through that
 failure history independently of invocation deliveries.
 
+To retry one terminal pre-invocation failure, pass its event ID, source, and
+subscription ID from the failure row:
+
+```bash
+gregale events replay APP \
+  --event-id evt-123 \
+  --event-source billing.stripe \
+  --subscription-id 5ef2a270-2c12-4ddd-a2a7-a0873995f7c8
+```
+
+Replay becomes available after the event's fanout receipt settles. It queues
+only that recipient and keeps the event payload and recipient configuration
+captured when the event was accepted. A replay therefore uses the same filter
+and target app; fix persistent routing or app problems before retrying. Other
+recipients that already succeeded or failed are not rerun.
+
 The machine-readable event contract is published in
 [`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated
 `POST /v1/events:publish` ingress.

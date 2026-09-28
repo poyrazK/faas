@@ -100,6 +100,12 @@ type EventFanoutFailureStore interface {
 	ListEventFanoutFailuresForApp(context.Context, string, int, EventFanoutFailureCursor, string) ([]EventFanoutFailure, error)
 }
 
+// EventFanoutReplayStore retries one terminal recipient using the exact
+// acceptance-time candidate captured on the published event receipt.
+type EventFanoutReplayStore interface {
+	ReplayFailedPublishedEventRecipientForApp(context.Context, string, string, string, string, string) error
+}
+
 const PublishedEventLease = 5 * time.Minute
 const PublishedEventIdentityRetention = 30 * 24 * time.Hour
 
@@ -270,6 +276,51 @@ func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID strin
 		return nil, err
 	}
 	return out, nil
+}
+
+// ReplayFailedPublishedEventRecipientForApp resets only the selected terminal
+// candidate. It requires the receipt to be delivered so an active fanout claim
+// cannot race the operator action. The original recipient snapshot is kept.
+func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+	result, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox AS o
+		SET state = 'pending', available_at = now(), delivered_at = NULL,
+		    claim_token = NULL, lease_until = NULL,
+		    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$5::text],
+		        jsonb_build_object('state', 'pending',
+		            'attempts', COALESCE(NULLIF((o.recipient_progress -> $5)->>'attempts', '')::int, 0),
+		            'updated_at', now()), false),
+		    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
+		        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
+		        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
+		        WHERE progress.key <> $5 AND progress.outcome->>'state' = 'failed'
+		        ORDER BY progress.key LIMIT 1)
+		WHERE o.account_id = $1::uuid AND o.source = $3 AND o.event_id = $4
+		  AND o.state = 'delivered'
+		  AND (o.recipient_progress -> $5)->>'state' = 'failed'
+		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
+		              WHERE r.recipient->>'app_id' = $2::text AND r.recipient->>'id' = $5)`,
+		accountID, appID, eventSource, eventID, subscriptionID)
+	if err != nil {
+		return fmt.Errorf("replay published event recipient: %w", err)
+	}
+	if result.RowsAffected() > 0 {
+		return nil
+	}
+	var failed bool
+	err = s.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM event_fanout_outbox AS o
+		WHERE o.account_id = $1::uuid AND o.source = $3 AND o.event_id = $4
+		  AND (o.recipient_progress -> $5)->>'state' = 'failed'
+		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
+		              WHERE r.recipient->>'app_id' = $2::text AND r.recipient->>'id' = $5)
+	)`, accountID, appID, eventSource, eventID, subscriptionID).Scan(&failed)
+	if err != nil {
+		return fmt.Errorf("inspect published event recipient replay: %w", err)
+	}
+	if failed {
+		return ErrConflict
+	}
+	return ErrNotFound
 }
 
 type publishedEventIdentity struct {
@@ -495,4 +546,45 @@ func (m *MemStore) ListEventFanoutFailuresForApp(_ context.Context, appID string
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// ReplayFailedPublishedEventRecipientForApp mirrors the PostgreSQL state
+// transition and preserves all other recipient outcomes and the snapshot.
+func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, work := range m.eventFanout {
+		var event publishedEventIdentity
+		if json.Unmarshal(work.Payload, &event) != nil || event.ID != eventID || event.Source != eventSource {
+			continue
+		}
+		var recipientFound bool
+		for _, recipient := range work.RecipientSnapshot {
+			if recipient.ID == subscriptionID && recipient.AppID == appID && recipient.AccountID == accountID {
+				recipientFound = true
+				break
+			}
+		}
+		if !recipientFound {
+			continue
+		}
+		progress, failed := work.RecipientProgress[subscriptionID]
+		if !failed || progress.State != PublishedEventRecipientFailed {
+			return ErrNotFound
+		}
+		if !work.Delivered {
+			return ErrConflict
+		}
+		progress.State = PublishedEventRecipientPending
+		progress.LastError = ""
+		progress.UpdatedAt = time.Now().UTC()
+		work.RecipientProgress[subscriptionID] = progress
+		work.Delivered = false
+		work.DeliveredAt = time.Time{}
+		work.AvailableAt = time.Now().UTC()
+		work.ClaimToken = ""
+		work.LeaseUntil = time.Time{}
+		return nil
+	}
+	return ErrNotFound
 }

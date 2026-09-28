@@ -736,6 +736,8 @@ export type { RegisterEventSchemaRequest } from './RegisterEventSchemaRequest.js
 export type { RegisterEventSchemaResponse } from './RegisterEventSchemaResponse.js';
 export type { RekeyProgress } from './RekeyProgress.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
+export type { ReplayEventFanoutFailureRequest } from './ReplayEventFanoutFailureRequest.js';
+export type { ReplayEventFanoutFailureResponse } from './ReplayEventFanoutFailureResponse.js';
 export type { RepoResponse } from './RepoResponse.js';
 export type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';
 export type { RequestAnalyticsDependency } from './RequestAnalyticsDependency.js';

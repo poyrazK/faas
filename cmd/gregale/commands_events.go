@@ -19,7 +19,7 @@ import (
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|replay>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -31,10 +31,45 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptions(args[1:])
 	case "deliveries":
 		return cmdEventsDeliveries(args[1:])
+	case "replay":
+		return cmdEventsReplayFanoutFailure(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown events subcommand: %s", args[0]), "events")
 		return 1
 	}
+}
+
+// cmdEventsReplayFanoutFailure retries one terminal pre-invocation recipient.
+func cmdEventsReplayFanoutFailure(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("events replay", flag.ContinueOnError)
+	eventID := fs.String("event-id", "", "published event id from events deliveries")
+	eventSource := fs.String("event-source", "", "published event source from events deliveries")
+	subscriptionID := fs.String("subscription-id", "", "failed subscription id from events deliveries")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*eventID) == "" ||
+		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*subscriptionID) == "" {
+		PrintUsage(os.Stderr, "usage: gregale events replay <app> --event-id ID --event-source SOURCE --subscription-id ID", "events")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ReplayEventFanoutFailure(context.Background(), positional[0], api.ReplayEventFanoutFailureRequest{
+		EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
+		SubscriptionID: strings.TrimSpace(*subscriptionID),
+	})
+	if err != nil {
+		return printErr("Event fanout replay failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	PrintOK(osStdout, "Event %s from %s queued for recipient %s.", resp.EventID, resp.EventSource, resp.SubscriptionID)
+	return 0
 }
 
 // cmdEventsPreview evaluates an event against enabled account subscriptions

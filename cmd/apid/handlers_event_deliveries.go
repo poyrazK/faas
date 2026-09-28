@@ -149,3 +149,42 @@ func (s *server) listEventDeliveries(w http.ResponseWriter, r *http.Request, acc
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// replayEventFanoutFailure requeues exactly one terminal recipient from the
+// event's immutable acceptance-time snapshot.
+func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req api.ReplayEventFanoutFailureRequest
+	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.EventID) == "" ||
+		strings.TrimSpace(req.EventSource) == "" || strings.TrimSpace(req.SubscriptionID) == "" {
+		api.WriteProblem(w, api.ErrValidation("event_id, event_source and subscription_id are required"))
+		return
+	}
+	store, ok := s.store.(state.EventFanoutReplayStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+		return
+	}
+	err := store.ReplayFailedPublishedEventRecipientForApp(r.Context(), acct.ID, app.ID,
+		req.EventSource, req.EventID, req.SubscriptionID)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
+		return
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return
+	case err != nil:
+		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.ReplayEventFanoutFailureResponse{
+		EventID: req.EventID, EventSource: req.EventSource, SubscriptionID: req.SubscriptionID,
+		State: state.PublishedEventRecipientPending,
+	})
+}

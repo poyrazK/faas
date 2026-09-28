@@ -111,6 +111,47 @@ func TestListEventDeliveries_CrossAccountIsNotVisible(t *testing.T) {
 	}
 }
 
+func TestReplayEventFanoutFailure_RequeuesOneRecipient(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "replay-event-app")
+	subscription, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID, appID, "orders", "order.created", nil)
+	if err != nil {
+		t.Fatalf("seed event subscription: %v", err)
+	}
+	if err := e.store.AppendEvent(context.Background(), "apid", "event.published", &e.acct.ID,
+		json.RawMessage(`{"id":"evt-replay-api","source":"orders","type":"order.created","data":{"amount":1}}`)); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	workStore := e.store.(state.PublishedEventWorkStore)
+	progressStore := e.store.(state.PublishedEventRecipientProgressStore)
+	work, err := workStore.ClaimDuePublishedEvent(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim event: %v", err)
+	}
+	if err := progressStore.RecordPublishedEventRecipientProgress(context.Background(), work.ID, work.ClaimToken, subscription.ID,
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1, LastError: "target unavailable", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("record failed recipient: %v", err)
+	}
+	if err := workStore.FinishPublishedEvent(context.Background(), work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatalf("finish event: %v", err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/replay-event-app/event-deliveries:replay-fanout-failure", api.ReplayEventFanoutFailureRequest{
+		EventID: "evt-replay-api", EventSource: "orders", SubscriptionID: subscription.ID,
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("replay status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.ReplayEventFanoutFailureResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if response.EventID != "evt-replay-api" || response.EventSource != "orders" ||
+		response.SubscriptionID != subscription.ID || response.State != state.PublishedEventRecipientPending {
+		t.Fatalf("replay response = %+v", response)
+	}
+}
+
 func TestListEventSubscriptions_ReturnsReconciledManifestRows(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "events-app")

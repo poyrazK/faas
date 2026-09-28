@@ -267,6 +267,23 @@ type EventDeliveryListResponse struct {
 	NextFanoutBefore string                       `json:"next_fanout_before,omitempty"`
 }
 
+// ReplayEventFanoutFailureRequest identifies one failed recipient by the
+// published event's scoped identity and its acceptance-time subscription.
+type ReplayEventFanoutFailureRequest struct {
+	EventID        string `json:"event_id"`
+	EventSource    string `json:"event_source"`
+	SubscriptionID string `json:"subscription_id"`
+}
+
+// ReplayEventFanoutFailureResponse confirms that one recipient was returned
+// to the durable fanout queue.
+type ReplayEventFanoutFailureResponse struct {
+	EventID        string `json:"event_id"`
+	EventSource    string `json:"event_source"`
+	SubscriptionID string `json:"subscription_id"`
+	State          string `json:"state"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.

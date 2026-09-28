@@ -416,7 +416,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "events",
 		DocSlug: "events",
-		Short:   "Preview routing, publish events and inspect subscriptions and delivery failures",
+		Short:   "Preview routing, publish events, inspect delivery failures and replay one failed recipient",
 		Subcommands: []cliSub{
 			{Name: "preview", Short: "Preview account-wide event routing without publishing", Flags: []cliFlag{
 				{Name: "id", Short: "event id to use when filters inspect the CloudEvents id", Value: "ID"},
@@ -439,6 +439,11 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
 				{Name: "fanout-before", Short: "pre-invocation failure pagination cursor", Value: "CURSOR"},
 				{Name: "limit", Short: "max deliveries (1..200)", Value: "N"},
+			}},
+			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{
+				{Name: "event-id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "event-source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "subscription-id", Short: "failed subscription id", Req: true, Value: "ID"},
 			}},
 		},
 	},

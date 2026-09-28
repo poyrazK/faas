@@ -6669,6 +6669,15 @@ func (c *Client) ListAppsSlugEventDeliveries(ctx context.Context, slug, eventID,
 	return c.ListEventDeliveries(ctx, slug, eventID, deliveryState, before, limit)
 }
 
+// ReplayEventFanoutFailure requeues one terminal pre-invocation recipient
+// using its acceptance-time subscription snapshot. The mutation carries the
+// SDK's standard Idempotency-Key.
+func (c *Client) ReplayEventFanoutFailure(ctx context.Context, slug string, req ReplayEventFanoutFailureRequest) (ReplayEventFanoutFailureResponse, error) {
+	var out ReplayEventFanoutFailureResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries:replay-fanout-failure"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.
 func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse

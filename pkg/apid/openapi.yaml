@@ -17885,6 +17885,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries:replay-fanout-failure:
+    post:
+      tags: [events]
+      operationId: replayEventFanoutFailure
+      summary: Retry one terminal event recipient routing failure.
+      description: |
+        Requeues only the named failed recipient from the immutable recipient
+        snapshot captured when the event was accepted. Other recipients and
+        their outcomes are left untouched. The event must have settled before
+        a failed recipient can be replayed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplayEventFanoutFailureRequest' }
+      responses:
+        '202':
+          description: One recipient accepted for replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplayEventFanoutFailureResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -28561,6 +28592,27 @@ components:
           items: { $ref: '#/components/schemas/EventFanoutFailureResponse' }
           description: Terminal recipient routing failures; empty when none exist.
         next_fanout_before: { type: string, description: Opaque cursor for the next older page of pre-invocation failures. }
+
+    ReplayEventFanoutFailureRequest:
+      description: Identity of one terminal fanout failure to replay.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, subscription_id]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        subscription_id: { type: string, format: uuid }
+
+    ReplayEventFanoutFailureResponse:
+      description: One recipient requeued from its acceptance-time event snapshot.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, subscription_id, state]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        subscription_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending] }
 
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."
