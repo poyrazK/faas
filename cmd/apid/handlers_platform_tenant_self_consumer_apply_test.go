@@ -26,7 +26,18 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 	}
 	makeSurface := func(slug, name, linkedTenant string) (string, state.TenantSurface) {
 		t.Helper()
-		appID := mustSeedApp(t, e, slug)
+		app, err := e.store.CreateApp(ctx, state.App{
+			AccountID:      e.acct.ID,
+			Slug:           slug,
+			Type:           state.AppTypeApp,
+			Status:         state.AppActive,
+			RequireAuthn:   e.acct.Plan.RequireAuthnDefault(),
+			PublicAuthMode: e.acct.Plan.PublicAuthModeDefault(),
+		})
+		if err != nil {
+			t.Fatalf("seed app %s: %v", slug, err)
+		}
+		appID := app.ID
 		limits, ok := api.LimitsFor(e.acct.Plan)
 		if !ok {
 			t.Fatal("missing account plan limits")
