@@ -81,6 +81,54 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 
 ## Supported surface
 
+### Resumable managed realtime preview
+
+`consumeRealtimeChannel` processes one v2 channel and reconnects with the last
+saved cursor. Supply a durable cursor store and a WebSocket factory that adds
+the endpoint's OIDC bearer token. For example, with the separate `ws` package
+(`npm install ws` and `npm install -D @types/ws` for TypeScript):
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannel, RealtimeResyncRequiredError } from '@gregale/sdk-node';
+
+try {
+  await consumeRealtimeChannel({
+    url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+    channel: 'notifications',
+    cursorStore: {
+      load: async () => Number(await cursorDB.get('notifications') ?? 0),
+      save: async (sequence) => { await cursorDB.set('notifications', sequence); },
+    },
+    onMessage: async ({ sequence, data }) => {
+      await processNotification(sequence, data); // make this idempotent by sequence
+    },
+    webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+      headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+    }),
+  });
+} catch (error) {
+  if (error instanceof RealtimeResyncRequiredError) {
+    // Rebuild application state, then save a new cursor before consuming again.
+    console.log(error.oldestSequence, error.latestSequence);
+  } else {
+    throw error;
+  }
+}
+```
+
+The helper calls `onMessage`, saves its cursor, then sends the ack. If
+processing or saving fails it stops without advancing. A crash between the
+application side effect and cursor save can cause redelivery, so deduplicate
+using the channel and sequence. When possible, store that deduplication key
+with the application side effect in one transaction.
+An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
+missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
+requires both server preview flags and the endpoint's channel authorization
+callback described in [managed realtime operations](../../docs/ops/realtime.md).
+Browser WebSocket constructors cannot attach the required bearer header, so
+this helper currently targets server-side clients.
+
 Server-side Node services can also use the hand-written
 `createServiceCallerVerifier` helper to verify Gregale's incoming internal
 service-call assertions. It uses the platform public JWKS endpoint and Node's

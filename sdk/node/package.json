@@ -46,7 +46,7 @@
     "test:build": "tsc -p tsconfig.test.json",
     "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js' && node --test --test-concurrency=1 test/post-process.test.mjs",
     "test:smoke": "npm run test:build && node --test --test-concurrency=1 dist-test/test/smoke.test.js",
-    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js && node --test --test-concurrency=1 test/post-process.test.mjs",
+    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js dist-test/test/realtime-resume.test.js && node --test --test-concurrency=1 test/post-process.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {},

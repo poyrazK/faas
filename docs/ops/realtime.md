@@ -295,6 +295,10 @@ durable log every five seconds; retained writes may therefore arrive with
 that delay. The preview caps a node at 256 v2 subscriptions and a connection
 at eight. If history becomes unavailable, the v2 connection closes with a
 retryable reason rather than silently switching to live-only delivery.
+The [Node SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
+persists a processed cursor, acknowledges in order, and reconnects from that
+cursor. Its socket factory must add an OIDC bearer header; native browser
+WebSockets cannot set that header.
 
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
