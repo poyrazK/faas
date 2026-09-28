@@ -1536,3 +1536,7 @@ func prefix8(s string) string {
 	}
 	return s[:8]
 }
+
+// IsMFAAllowlisted reports whether an mfa_pending session may reach path.
+// Exported for route-table tests in cmd/apid.
+func IsMFAAllowlisted(path string) bool { return isMFAAllowlisted(path) }

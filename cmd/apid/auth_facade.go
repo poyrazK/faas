@@ -41,8 +41,15 @@ import (
 // accountHandler ↔ pkg/middleware.AccountHandler bridge is the only
 // conversion; behaviour matches cmd/apid/server.go:1341-1455 exactly
 // because pkg/auth lifts that body verbatim.
+//
+// Both facades enforce MFA completion themselves. requireMFA used to be
+// opt-in per route, and routes that forgot it (app env, upstreams, custom
+// metrics, builds, analytics, ...) accepted an mfa_pending cookie: a
+// password alone could rewrite an app's DATABASE_URL. Routes an
+// mfa_pending session legitimately needs are in the middleware's MFA
+// allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(next))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(next)))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -53,7 +60,7 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(next))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(next)))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
