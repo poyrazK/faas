@@ -46,6 +46,26 @@ case "$1" in
       printf '{"id":"deployment-%s","status":"live","rollout_state":"complete","app_url":"https://test.invalid","hosting_receipt":{"smoke":{"status":"verified","status_code":200,"path":"/healthz"}}}\n' "$slug"
     fi
     exit 0 ;;
+  app)
+    slug="$2"; shift 2
+    maintenance=false; streaming=true; websocket=true; route_metrics=true; consumer_auth=optional
+    while (($#)); do
+      case "$1" in
+        --maintenance) maintenance=true ;;
+        --no-maintenance) maintenance=false ;;
+        --streaming-enabled) streaming=true ;;
+        --no-streaming-enabled) streaming=false ;;
+        --websocket-enabled) websocket=true ;;
+        --no-websocket) websocket=false ;;
+        --route-metrics) route_metrics=true ;;
+        --no-route-metrics) route_metrics=false ;;
+        --consumer-auth-mode) consumer_auth="$2"; shift ;;
+      esac
+      shift
+    done
+    printf '{"slug":"%s","maintenance_mode":%s,"streaming_enabled":%s,"websocket_enabled":%s,"route_metrics_enabled":%s,"consumer_auth_mode":"%s"}\n' \
+      "$slug" "$maintenance" "$streaming" "$websocket" "$route_metrics" "$consumer_auth"
+    exit 0 ;;
 esac
 exit 2
 `)
@@ -67,7 +87,7 @@ exit 2
 	writeExecutable("curl", `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_CURL_LOG"
-if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* ]]; then
+if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]; then
   headers=""; body=""
   while (($#)); do
     case "$1" in
@@ -79,6 +99,33 @@ if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* ]]; then
   printf 'HTTP/2 503\r\nx-faas-request-id: failed-probe-1\r\n\r\n' >"$headers"
   printf '{"code":"capacity","detail":"previous revision unavailable"}' >"$body"
   exit 22
+fi
+if [[ "$*" == *"--write-out"* ]]; then
+  headers=""; body=""
+  while (($#)); do
+    case "$1" in
+      --dump-header) headers="$2"; shift 2 ;;
+      --output) body="$2"; shift 2 ;;
+      --write-out) shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  count_file="${headers}.count"
+  count=0
+  if [[ -f "$count_file" ]]; then read -r count <"$count_file"; fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$count_file"
+  case "$count" in
+    1) status=503; response='{"code":"app_maintenance_mode"}'; extra='Retry-After: 60' ;;
+    2|4) status=200; response='{}'; extra='' ;;
+    3) status=401; response='{"code":"consumer_key_required"}'; extra='' ;;
+    5) status=501; response='{"code":"websocket_not_on_plan"}'; extra='x-faas-error-reason: websocket_not_on_plan' ;;
+    *) echo "unexpected policy status request $count" >&2; exit 2 ;;
+  esac
+  printf 'HTTP/2 %s\r\n%s\r\n\r\n' "$status" "$extra" >"$headers"
+  printf '%s' "$response" >"$body"
+  printf '%s' "$status"
+  exit 0
 fi
 `)
 	deployLog := filepath.Join(dir, "deploys")
