@@ -123,6 +123,10 @@ sum by (outcome) (rate(apid_realtime_channel_route_reconcile_passes_total[15m]))
 histogram_quantile(0.95, sum by (le) (rate(apid_realtime_channel_route_reconcile_duration_seconds_bucket[15m])))
 ```
 
+Warnings for sustained publish fallbacks and unsuccessful overflow rebuilds,
+with recovery steps, are documented in the
+[managed realtime channel routing runbook](../runbooks/FaasManagedRealtimeChannelRouting.md).
+
 ## Zero-downtime static bearer rotation
 
 Static bearer credentials are rotated without disconnecting clients. The
