@@ -782,3 +782,91 @@ func TestServeHTTP_LegacyPermissivePolicyIsPinned(t *testing.T) {
 		t.Fatalf("stored policy = %+v, %v; want it pinned", stored, err)
 	}
 }
+
+type bindingAwareLookup struct {
+	stubAccountLookup
+	bound map[string]state.Account
+}
+
+func (l *bindingAwareLookup) AccountByOIDCRepositoryBinding(_ context.Context, _, subject string) (state.Account, error) {
+	if a, ok := l.bound[subject]; ok {
+		return a, nil
+	}
+	return state.Account{}, state.ErrNotFound
+}
+
+// patternVerifier enforces the policy's subject pattern like the real
+// edgejwks verifier, so a wrongly chosen policy fails.
+type patternVerifier struct{ *fakeVerifier }
+
+func (p patternVerifier) Verify(ctx context.Context, rawToken string, policy *OIDCTrustPolicy) (*Claims, error) {
+	claims, err := p.fakeVerifier.Verify(ctx, rawToken, policy)
+	if err != nil {
+		return nil, err
+	}
+	if policy.SubjectPattern == "" || !regexp.MustCompile(policy.SubjectPattern).MatchString(claims.Subject) {
+		return nil, errors.New("fake: subject does not satisfy the policy")
+	}
+	return claims, nil
+}
+
+// The trust policy is pinned to the first subject that exchanged (one
+// repository + ref). Another branch, a pull_request run or a second
+// repository of the same account must still exchange when the account's
+// OAuth-proven GitHub binding covers that repository, without rewriting
+// the stored policy; a repository the account does not bind must not.
+func TestServeHTTP_BoundRepositoryAdmitsOtherSubjects(t *testing.T) {
+	account := state.Account{ID: testAcctID, Email: "octo@example.com", Plan: "free", Status: "active"}
+	for _, tc := range []struct {
+		name    string
+		subject string
+		bound   bool
+		want    int
+	}{
+		{"other branch", "repo:octocat/hello:ref:refs/heads/feature-7", true, http.StatusOK},
+		{"pull_request run", "repo:octocat/hello:pull_request", true, http.StatusOK},
+		{"second repository", "repo:octocat/other:ref:refs/heads/main", true, http.StatusOK},
+		{"unbound repository", "repo:mallory/evil:ref:refs/heads/main", false, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policies := newMemTrustPolicyStore()
+			pinned := "^" + regexp.QuoteMeta(testSub) + "$"
+			if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+				AccountID: testAcctID, IssuerURL: testIssuer, JWKSURL: testIssuer + ".well-known/jwks",
+				Audience: []string{"faas.example.com"}, SubjectPattern: pinned,
+				Algorithms: []string{"RS256"}, AuditLogin: "auto",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lookup := &bindingAwareLookup{
+				stubAccountLookup: stubAccountLookup{bySubject: map[string]state.Account{testSub: account, tc.subject: account}},
+				bound:             map[string]state.Account{},
+			}
+			if tc.bound {
+				lookup.bound[tc.subject] = account
+			}
+			fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute)}}
+			h := NewHandler(HandlerDeps{
+				Verifier: patternVerifier{fake}, Policies: policies, Tokens: newMemTokenStore(),
+				Lookups: lookup, Audit: &memAuditor{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			body := mustJSON(t, ExchangeRequest{
+				Provider: "github",
+				Token:    makeEnvelopeWithSub(t, testIssuer, tc.subject, time.Now().Add(5*time.Minute)),
+				Audience: "faas.example.com",
+			})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+			if rr.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.want, rr.Body.String())
+			}
+			stored, err := policies.Get(context.Background(), testAcctID, testIssuer)
+			if err != nil || stored.SubjectPattern != pinned {
+				t.Fatalf("stored policy = %+v, %v; want the original pin untouched", stored, err)
+			}
+			if tc.bound && (fake.lastPolicy == nil || fake.lastPolicy.SubjectPattern != "^"+regexp.QuoteMeta(tc.subject)+"$") {
+				t.Fatalf("verified against %+v, want this exact subject", fake.lastPolicy)
+			}
+		})
+	}
+}

@@ -23,6 +23,9 @@
 //     OAuth-proven GitHub repository binding.
 //  4. Verify against that account's policy. On first GitHub use,
 //     verify with and then persist an exact subject/audience policy.
+//     Other subjects of a repository the account binds (another
+//     branch, pull_request runs, a second repository) are verified
+//     against their exact subject without rewriting the row (ADR-360).
 //  5. Mint the short-lived bearer, persist the ExchangedToken row,
 //     emit auth.token.exchanged, return the bearer in the response.
 //
@@ -74,6 +77,13 @@ type HandlerDeps struct {
 // can tell "wrong CI job" from "wrong customer").
 type AccountLookup interface {
 	AccountByOIDCSubject(ctx context.Context, issuerURL, subject string) (state.Account, error)
+}
+
+// RepositoryBindingLookup is the optional AccountLookup extension that
+// resolves a GitHub Actions subject through the account's OAuth-proven
+// repository binding (state.OIDCRepositoryBindingResolver).
+type RepositoryBindingLookup interface {
+	AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (state.Account, error)
 }
 
 // AuditEmitter is the narrow pkg/oidc-side projection of the cmd/apid
@@ -255,6 +265,20 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		// and replace the row with that pinned policy.
 		policy = defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
 		createPolicy = true
+	} else if !subjectPatternMatches(policy.SubjectPattern, subject) && h.repositoryBound(r.Context(), acct.ID, issuerURL, subject) {
+		// The stored policy is pinned to the first subject that exchanged
+		// (one repository + ref). Another branch, a pull_request run, or a
+		// second repository of the same account used to fail here. The
+		// account's OAuth-proven binding of this subject's repository is
+		// the same proof that created the first policy, so verify against
+		// this exact subject under the policy's audiences — without
+		// overwriting the stored row (ADR-360).
+		transient := defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
+		transient.Audience = append([]string(nil), policy.Audience...)
+		transient.JWKSURL = policy.JWKSURL
+		transient.Algorithms = append([]string(nil), policy.Algorithms...)
+		transient.RequiredClaims = policy.RequiredClaims
+		policy = transient
 	}
 	claims, err := deps.Verifier.Verify(r.Context(), req.Token, policy)
 	if err != nil || claims.Subject != subject || !containsAudience(claims.Aud, req.Audience) {
@@ -384,6 +408,22 @@ func peekOIDCIdentity(rawToken string) (string, string, error) {
 		return "", "", errors.New("sub claim missing")
 	}
 	return std.Issuer, std.Subject, nil
+}
+
+// repositoryBound reports whether subject's repository resolves, through
+// the account's OAuth-proven GitHub binding, to exactly accountID.
+func (h *Handler) repositoryBound(ctx context.Context, accountID, issuerURL, subject string) bool {
+	lookup, ok := h.deps.Lookups.(RepositoryBindingLookup)
+	if !ok {
+		return false
+	}
+	bound, err := lookup.AccountByOIDCRepositoryBinding(ctx, issuerURL, subject)
+	return err == nil && bound.ID == accountID
+}
+
+func subjectPatternMatches(pattern, subject string) bool {
+	re, err := regexp.Compile(pattern)
+	return err == nil && re.MatchString(subject)
 }
 
 func defaultPolicyFor(accountID, issuerURL, audience, subject string) *OIDCTrustPolicy {

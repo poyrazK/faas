@@ -27,6 +27,20 @@ func nullableTriggerSource(source string) pgtype.Text {
 // githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
 // `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
 // from an already OAuth-verified repository binding to an OIDC trust policy.
+// OIDCRepositoryBindingResolver resolves a GitHub Actions OIDC subject to the
+// single account whose app binds the subject's repository through an
+// installation proven by that account's user OAuth. The exchange uses it to
+// admit every workflow of a bound repository (other branches, pull_request
+// runs, a second repository) without a pre-existing pinned policy.
+type OIDCRepositoryBindingResolver interface {
+	AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (Account, error)
+}
+
+var (
+	_ OIDCRepositoryBindingResolver = (*PgStore)(nil)
+	_ OIDCRepositoryBindingResolver = (*MemStore)(nil)
+)
+
 func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
 	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
 		return "", false

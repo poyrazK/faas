@@ -634,8 +634,6 @@ UpsertDeploymentOpenAPIDoc
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation
-UpsertGitHubInstall
-UpsertGithubInstallBinding
 UpsertGithubWebhookSecret
 UpsertNodeKey
 UpsertOAuthLink

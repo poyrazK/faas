@@ -355,3 +355,51 @@ func testOIDCEmptySubjectPatternBindsNothing(t *testing.T, fx *Fixture) {
 		t.Fatal("a pinned policy bound a foreign subject")
 	}
 }
+
+// testOIDCRepositoryBindingResolution pins the GitHub-binding path the OIDC
+// exchange uses to admit every workflow (any branch, pull_request runs, a
+// second repository) of a repository the account bound through an
+// installation it proved.
+func testOIDCRepositoryBindingResolution(t *testing.T, fx *Fixture) {
+	resolver, ok := fx.Store.(state.OIDCRepositoryBindingResolver)
+	if !ok {
+		t.Skip("store has no repository-binding resolver")
+	}
+	const issuer = "https://token.actions.githubusercontent.com"
+	if err := fx.Store.UpsertGitHubInstall(fx.Ctx, state.GitHubInstall{
+		AccountID: fx.Account.ID, InstallationID: 4242, AuditGithubLogin: "octo",
+		SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertGitHubInstall: %v", err)
+	}
+	if err := fx.Store.UpsertGithubInstallBinding(fx.Ctx, state.GitHubBinding{
+		AppID: fx.App.ID, AccountID: fx.Account.ID, BindingID: "bind-" + fx.App.ID,
+		InstallID: 4242, RepoFullName: "Acme/App", ProductionBranch: "main", LinkedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertGithubInstallBinding: %v", err)
+	}
+	for _, subject := range []string{
+		"repo:acme/app:ref:refs/heads/main",
+		"repo:acme/app:ref:refs/heads/feature-7",
+		"repo:acme/app:pull_request",
+	} {
+		acct, err := resolver.AccountByOIDCRepositoryBinding(fx.Ctx, issuer, subject)
+		if err != nil || acct.ID != fx.Account.ID {
+			t.Fatalf("AccountByOIDCRepositoryBinding(%s) = %q, %v; want the binding account", subject, acct.ID, err)
+		}
+	}
+	for _, tc := range []struct{ issuer, subject string }{
+		{issuer, "repo:acme/other:ref:refs/heads/main"},
+		{"https://gitlab.example", "repo:acme/app:ref:refs/heads/main"},
+	} {
+		if acct, err := resolver.AccountByOIDCRepositoryBinding(fx.Ctx, tc.issuer, tc.subject); err == nil {
+			t.Fatalf("AccountByOIDCRepositoryBinding(%s, %s) resolved %q, want ErrNotFound", tc.issuer, tc.subject, acct.ID)
+		}
+	}
+	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, fx.App.ID, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatalf("ScheduleAppDeletion: %v", err)
+	}
+	if acct, err := resolver.AccountByOIDCRepositoryBinding(fx.Ctx, issuer, "repo:acme/app:ref:refs/heads/main"); err == nil {
+		t.Fatalf("a deleted app's binding still resolved %q", acct.ID)
+	}
+}

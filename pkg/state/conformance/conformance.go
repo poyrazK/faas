@@ -104,6 +104,7 @@ func Run(t *testing.T, open Open) {
 		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
 		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
+		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

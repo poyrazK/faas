@@ -1542,27 +1542,7 @@ func (m *MemStore) AccountByOIDCSubject(_ context.Context, issuerURL, subject st
 		matches = append(matches, policy)
 	}
 	if len(matches) == 0 {
-		repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
-		if !ok {
-			return Account{}, ErrNotFound
-		}
-		accountIDs := map[string]struct{}{}
-		for appID, binding := range m.githubBindings {
-			app, appOK := m.apps[appID]
-			_, accountOK := m.accounts[binding.AccountID]
-			installKey := binding.AccountID + "\x00" + strconv.FormatInt(binding.InstallID, 10)
-			_, installOK := m.githubInstalls[installKey]
-			if strings.EqualFold(binding.RepoFullName, repo) && appOK && accountOK && installOK &&
-				app.AccountID == binding.AccountID {
-				accountIDs[binding.AccountID] = struct{}{}
-			}
-		}
-		if len(accountIDs) != 1 {
-			return Account{}, ErrNotFound
-		}
-		for accountID := range accountIDs {
-			return m.accounts[accountID], nil
-		}
+		return m.accountByOIDCRepositoryBindingLocked(issuerURL, subject)
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		iSpecific := matches[i].SubjectPattern != ""
@@ -1576,6 +1556,40 @@ func (m *MemStore) AccountByOIDCSubject(_ context.Context, issuerURL, subject st
 		return matches[i].AccountID < matches[j].AccountID
 	})
 	return m.accounts[matches[0].AccountID], nil
+}
+
+// AccountByOIDCRepositoryBinding mirrors the PgStore repository-binding
+// resolution: the one account whose app binds the GitHub Actions subject's
+// repository through an installation that account proved.
+func (m *MemStore) AccountByOIDCRepositoryBinding(_ context.Context, issuerURL, subject string) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.accountByOIDCRepositoryBindingLocked(issuerURL, subject)
+}
+
+func (m *MemStore) accountByOIDCRepositoryBindingLocked(issuerURL, subject string) (Account, error) {
+	repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	accountIDs := map[string]struct{}{}
+	for appID, binding := range m.githubBindings {
+		app, appOK := m.apps[appID]
+		_, accountOK := m.accounts[binding.AccountID]
+		installKey := binding.AccountID + "\x00" + strconv.FormatInt(binding.InstallID, 10)
+		_, installOK := m.githubInstalls[installKey]
+		if strings.EqualFold(binding.RepoFullName, repo) && appOK && accountOK && installOK &&
+			app.AccountID == binding.AccountID && app.Status != AppDeleted {
+			accountIDs[binding.AccountID] = struct{}{}
+		}
+	}
+	if len(accountIDs) != 1 {
+		return Account{}, ErrNotFound
+	}
+	for accountID := range accountIDs {
+		return m.accounts[accountID], nil
+	}
+	return Account{}, ErrNotFound
 }
 
 // regexpMatch is a tiny inlined wrapper to keep the import surface

@@ -457,34 +457,42 @@ func (s *PgStore) AccountByOIDCSubject(ctx context.Context, issuerURL, subject s
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
-			if !ok {
-				return Account{}, ErrNotFound
-			}
-			// First secretless deploy: resolve exactly one account through an
-			// existing repo binding whose installation was proven by user OAuth.
-			var accountID string
-			bootstrapErr := s.pool.QueryRow(ctx, `
-				select min(a.github_install_account_id::text)
-				from apps a
-				join github_installations gi
-				  on gi.account_id = a.github_install_account_id
-				 and gi.installation_id = a.github_install_id
-				where lower(a.github_repo_full_name) = lower($1)
-				  and a.github_install_account_id = a.account_id
-				  and a.deleted_at is null
-				having count(distinct a.github_install_account_id) = 1`, repo).Scan(&accountID)
-			if errors.Is(bootstrapErr, pgx.ErrNoRows) {
-				return Account{}, ErrNotFound
-			}
-			if bootstrapErr != nil {
-				return Account{}, bootstrapErr
-			}
-			return s.AccountByID(ctx, accountID)
+			// Secretless deploy from a subject no policy pins yet.
+			return s.AccountByOIDCRepositoryBinding(ctx, issuerURL, subject)
 		}
 		return Account{}, err
 	}
 	return s.AccountByID(ctx, uuidFromPgtype(row.ID).String())
+}
+
+// AccountByOIDCRepositoryBinding resolves a GitHub Actions subject to the one
+// account whose app is bound to the subject's repository through an
+// installation proven by that account's user OAuth. ErrNotFound when the
+// issuer is not GitHub Actions, the repository is unbound, or more than one
+// account binds it.
+func (s *PgStore) AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (Account, error) {
+	repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	var accountID string
+	err := s.pool.QueryRow(ctx, `
+		select min(a.github_install_account_id::text)
+		from apps a
+		join github_installations gi
+		  on gi.account_id = a.github_install_account_id
+		 and gi.installation_id = a.github_install_id
+		where lower(a.github_repo_full_name) = lower($1)
+		  and a.github_install_account_id = a.account_id
+		  and a.deleted_at is null
+		having count(distinct a.github_install_account_id) = 1`, repo).Scan(&accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, ErrNotFound
+	}
+	if err != nil {
+		return Account{}, err
+	}
+	return s.AccountByID(ctx, accountID)
 }
 
 // UpsertOIDCTrustPolicy is the per-(account, issuer) insert-or-update
