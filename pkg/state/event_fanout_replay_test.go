@@ -88,6 +88,39 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	if len(failures) != 0 {
 		t.Fatalf("failures after successful replay = %+v, want none", failures)
 	}
+
+	history, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, EventFanoutAttemptCursor{},
+		"orders", "evt-retry", failedRecipient.ID)
+	if err != nil {
+		t.Fatalf("list replay history: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("replay history = %+v, want failed attempt, replay request, and successful attempt", history)
+	}
+	if got := history[0]; got.Action != EventFanoutAttemptActionAttempt || got.State != PublishedEventRecipientEnqueued ||
+		got.Attempts != 4 || got.FailureCode != "" || got.LastError != "" {
+		t.Fatalf("latest history row = %+v, want successful fanout outcome", got)
+	}
+	if got := history[1]; got.Action != EventFanoutAttemptActionReplay || got.State != PublishedEventRecipientPending ||
+		got.Attempts != 3 || got.FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed ||
+		!got.Retryable || got.LastError != "temporary outage" {
+		t.Fatalf("replay history row = %+v, want preserved failure snapshot", got)
+	}
+	if got := history[2]; got.Action != EventFanoutAttemptActionAttempt || got.State != PublishedEventRecipientFailed ||
+		got.Attempts != 3 || got.FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed ||
+		!got.Retryable || got.LastError != "temporary outage" {
+		t.Fatalf("initial history row = %+v, want original failure", got)
+	}
+	page, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 1,
+		EventFanoutAttemptCursor{ID: history[0].ID}, "orders", "evt-retry", failedRecipient.ID)
+	if err != nil || len(page) != 1 || page[0].ID != history[1].ID {
+		t.Fatalf("history continuation page = %+v, %v; want replay row", page, err)
+	}
+	wrongIdentity, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10,
+		EventFanoutAttemptCursor{}, "shipping", "evt-retry", failedRecipient.ID)
+	if err != nil || len(wrongIdentity) != 0 {
+		t.Fatalf("history for another event identity = %+v, %v; want no rows", wrongIdentity, err)
+	}
 }
 
 func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
@@ -233,6 +266,12 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatal(err)
+	}
+	firstHistory, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, EventFanoutAttemptCursor{},
+		"orders.us", "evt-replay-batch", first.ID)
+	if err != nil || len(firstHistory) != 2 || firstHistory[0].Action != EventFanoutAttemptActionReplay ||
+		firstHistory[0].FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed || firstHistory[0].LastError != "route failed" {
+		t.Fatalf("bulk replay history = %+v, %v; want replay snapshot and original failure", firstHistory, err)
 	}
 
 	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "orders.us", "evt-replay-batch", 100)

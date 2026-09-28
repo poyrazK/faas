@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Preview routing, publish events, inspect delivery failures and replay failed recipients |
+| [`events`](#events) | Preview routing, publish events, inspect deliveries and routing history, and replay failures |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -324,7 +324,7 @@ Show one audit event
 
 ## events
 
-Preview routing, publish events, inspect delivery failures and replay failed recipients
+Preview routing, publish events, inspect deliveries and routing history, and replay failures
 
 `gregale events [<subcommand>]`
 
@@ -368,6 +368,20 @@ Inspect event deliveries, replays, and pre-invocation fanout failures
 | `--before <CURSOR>` | pagination cursor |  |
 | `--fanout-before <CURSOR>` | pre-invocation failure pagination cursor |  |
 | `--limit <N>` | max deliveries (1..200) |  |
+
+### events fanout-history
+
+Inspect immutable routing outcomes and replay history for one event
+
+`gregale events fanout-history <app> --event-source <SOURCE> --event-id <ID> [--subscription-id <ID>] [--before <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--event-source <SOURCE>` | published event source | required |
+| `--event-id <ID>` | published event id | required |
+| `--subscription-id <ID>` | narrow history to one recipient |  |
+| `--before <CURSOR>` | pagination cursor |  |
+| `--limit <N>` | max history rows (1..200) |  |
 
 ### events replay
 

@@ -15,10 +15,12 @@ import (
 const eventDeliveriesMaxLimit = 200
 
 const eventDeliveryCursorPrefix = "edc1."
+const eventFanoutAttemptCursorPrefix = "efac1."
 
 var (
 	errInvalidEventDeliveryCursor      = errors.New("invalid event delivery cursor")
 	errInvalidEventFanoutFailureCursor = errors.New("invalid event fanout failure cursor")
+	errInvalidEventFanoutAttemptCursor = errors.New("invalid event fanout attempt cursor")
 )
 
 type eventDeliveryCursor struct {
@@ -116,6 +118,49 @@ func decodeEventFanoutFailureCursor(raw, appID, eventSource, eventID string) (st
 	return state.EventFanoutFailureCursor{
 		CreatedAt: cursor.CreatedAt, OutboxID: cursor.OutboxID, SubscriptionID: cursor.SubscriptionID,
 	}, nil
+}
+
+type eventFanoutAttemptCursor struct {
+	Version        int    `json:"v"`
+	AppID          string `json:"app_id"`
+	EventSource    string `json:"event_source"`
+	EventID        string `json:"event_id"`
+	SubscriptionID string `json:"subscription_id"`
+	AttemptID      int64  `json:"attempt_id"`
+}
+
+func encodeEventFanoutAttemptCursor(appID, eventSource, eventID, subscriptionID string, attempt state.EventFanoutAttempt) string {
+	payload, err := json.Marshal(eventFanoutAttemptCursor{
+		Version: 1, AppID: appID, EventSource: eventSource, EventID: eventID,
+		SubscriptionID: subscriptionID, AttemptID: attempt.ID,
+	})
+	if err != nil {
+		return ""
+	}
+	return eventFanoutAttemptCursorPrefix + base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeEventFanoutAttemptCursor(raw, appID, eventSource, eventID, subscriptionID string) (state.EventFanoutAttemptCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return state.EventFanoutAttemptCursor{}, nil
+	}
+	if len(raw) > 1024 || !strings.HasPrefix(raw, eventFanoutAttemptCursorPrefix) {
+		return state.EventFanoutAttemptCursor{}, errInvalidEventFanoutAttemptCursor
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(raw, eventFanoutAttemptCursorPrefix))
+	if err != nil {
+		return state.EventFanoutAttemptCursor{}, errInvalidEventFanoutAttemptCursor
+	}
+	var cursor eventFanoutAttemptCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return state.EventFanoutAttemptCursor{}, errInvalidEventFanoutAttemptCursor
+	}
+	if cursor.Version != 1 || cursor.AppID != appID || cursor.EventSource != eventSource ||
+		cursor.EventID != eventID || cursor.SubscriptionID != subscriptionID || cursor.AttemptID <= 0 {
+		return state.EventFanoutAttemptCursor{}, errInvalidEventFanoutAttemptCursor
+	}
+	return state.EventFanoutAttemptCursor{ID: cursor.AttemptID}, nil
 }
 
 func eventDeliveryResponse(inv state.Invocation) (api.EventDeliveryResponse, bool) {
@@ -219,6 +264,61 @@ func (s *server) listEventDeliveries(w http.ResponseWriter, r *http.Request, acc
 			SubscriptionID: failure.SubscriptionID, State: state.PublishedEventRecipientFailed,
 			Attempts: failure.Attempts, FailureCode: failureCode, Retryable: failure.Retryable, LastError: failure.LastError,
 			CreatedAt: failure.CreatedAt, FailedAt: failure.FailedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listEventFanoutAttemptHistory returns the bounded immutable routing
+// timeline for one event identity. Requiring both source and ID keeps the
+// query specific even when producers reuse IDs across sources.
+func (s *server) listEventFanoutAttemptHistory(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	eventSource := strings.TrimSpace(r.URL.Query().Get("event_source"))
+	eventID := strings.TrimSpace(r.URL.Query().Get("event_id"))
+	subscriptionID := strings.TrimSpace(r.URL.Query().Get("subscription_id"))
+	if eventSource == "" || eventID == "" {
+		api.WriteProblem(w, api.ErrValidation("event_source and event_id are required"))
+		return
+	}
+	before, err := decodeEventFanoutAttemptCursor(r.URL.Query().Get("before"), app.ID, eventSource, eventID, subscriptionID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid before cursor", "before must be a cursor returned for this app, event identity and subscription filter"))
+		return
+	}
+	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), 20, eventDeliveriesMaxLimit, "event fanout attempt history")
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	store, ok := s.store.(state.EventFanoutAttemptHistoryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
+		return
+	}
+	rows, err := store.ListEventFanoutAttemptsForApp(r.Context(), app.ID, limit+1, before,
+		eventSource, eventID, subscriptionID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
+		return
+	}
+	out := api.EventFanoutAttemptHistoryResponse{
+		AppSlug: app.Slug, EventSource: eventSource, EventID: eventID,
+		SubscriptionID: subscriptionID, History: make([]api.EventFanoutAttemptResponse, 0, len(rows)),
+	}
+	if len(rows) > limit {
+		out.NextBefore = encodeEventFanoutAttemptCursor(app.ID, eventSource, eventID, subscriptionID, rows[limit-1])
+		rows = rows[:limit]
+	}
+	for _, row := range rows {
+		out.History = append(out.History, api.EventFanoutAttemptResponse{
+			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State,
+			AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
+			Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

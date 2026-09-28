@@ -350,6 +350,8 @@ export type { EnvScope } from './EnvScope.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
+export type { EventFanoutAttemptHistoryResponse } from './EventFanoutAttemptHistoryResponse.js';
+export type { EventFanoutAttemptResponse } from './EventFanoutAttemptResponse.js';
 export type { EventFanoutFailureResponse } from './EventFanoutFailureResponse.js';
 export type { EventPreviewSubscription } from './EventPreviewSubscription.js';
 export type { EventSchema } from './EventSchema.js';

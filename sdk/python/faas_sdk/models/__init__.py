@@ -699,6 +699,11 @@ from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
+from .event_fanout_attempt_response import EventFanoutAttemptResponse
+from .event_fanout_attempt_response_action import EventFanoutAttemptResponseAction
+from .event_fanout_attempt_response_failure_code import EventFanoutAttemptResponseFailureCode
+from .event_fanout_attempt_response_state import EventFanoutAttemptResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
 from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
 from .event_fanout_failure_response_state import EventFanoutFailureResponseState
@@ -2507,6 +2512,11 @@ __all__ = (
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
+    "EventFanoutAttemptHistoryResponse",
+    "EventFanoutAttemptResponse",
+    "EventFanoutAttemptResponseAction",
+    "EventFanoutAttemptResponseFailureCode",
+    "EventFanoutAttemptResponseState",
     "EventFanoutFailureResponse",
     "EventFanoutFailureResponseFailureCode",
     "EventFanoutFailureResponseState",

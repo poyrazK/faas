@@ -627,6 +627,23 @@ available use `unknown`. Use `--fanout-before` with `next_fanout_before` from
 `--json` to page through that failure history independently of invocation
 deliveries.
 
+The latest routing checkpoint is useful for finding current failures, but an
+operator replay changes that checkpoint. To inspect the immutable sequence of
+routing outcomes and replay requests for one published event, use
+`events fanout-history`:
+
+```bash
+gregale events fanout-history APP \
+  --event-source billing.stripe \
+  --event-id evt-123
+```
+
+History is ordered newest first and retained for the same period as the event
+fanout receipt. Use `--subscription-id` to narrow it to one captured recipient;
+use `--before` with `next_before` from JSON output to page through older rows.
+Replay rows include the failure details that led to the replay, even after the
+recipient later succeeds.
+
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:
 

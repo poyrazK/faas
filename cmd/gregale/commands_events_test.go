@@ -303,3 +303,21 @@ func TestCmdEventsReplayRetryable_RequiresConfirmation(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
 	}
 }
+
+func TestCmdEventsFanoutHistoryDisplaysRecipientTimeline(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","event_source":"billing","event_id":"evt-42","history":[{"subscription_id":"sub-1","action":"operator_replay","state":"pending","attempt_number":3,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","occurred_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsFanoutHistory([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-42", "--subscription-id", "sub-1", "--limit", "1"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-deliveries/attempts" {
+		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	}
+	for _, want := range []string{"evt-42", "billing", "sub-1", "operator_replay", "pending", "invocation_enqueue_failed", "temporary outage"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q: %s", want, stdout.String())
+		}
+	}
+}

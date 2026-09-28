@@ -772,6 +772,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/dlq":                                                "GetAppsSlugDlq",
 	"GET /v1/apps/{slug}/event-subscriptions":                                "ListAppsSlugEventSubscriptions",
 	"GET /v1/apps/{slug}/event-deliveries":                                   "ListAppsSlugEventDeliveries",
+	"GET /v1/apps/{slug}/event-deliveries/attempts":                          "ListEventFanoutAttemptHistory",
 	"POST /v1/apps/{slug}/event-deliveries:replay-fanout-failure":            "ReplayEventFanoutFailure",
 	"POST /v1/apps/{slug}/event-deliveries:replay-retryable-fanout-failures": "ReplayRetryableEventFanoutFailures",
 	"DELETE /v1/apps/{slug}/dlq":                                             "DeleteAppsSlugDlq",

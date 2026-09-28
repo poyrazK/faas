@@ -104,6 +104,12 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("settle first replay: %v", err)
 	}
+	firstHistory, err := s.ListEventFanoutAttemptsForApp(ctx, appID, 10, state.EventFanoutAttemptCursor{},
+		"orders.us", "evt-pg-replay-batch", first.ID)
+	if err != nil || len(firstHistory) != 2 || firstHistory[0].Action != state.EventFanoutAttemptActionReplay ||
+		firstHistory[0].FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || firstHistory[0].LastError != "route failed" {
+		t.Fatalf("bulk replay history = %+v, %v; want replay snapshot and original failure", firstHistory, err)
+	}
 
 	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "orders.us", "evt-pg-replay-batch", 100)
 	if err != nil || batch.Replayed != 1 || batch.HasMore {
@@ -157,5 +163,73 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "orders.eu", "evt-pg-replay-batch", 100)
 	if err != nil || batch.Replayed != 1 || batch.HasMore {
 		t.Fatalf("source-qualified second event batch = %+v, %v; want one matching failure", batch, err)
+	}
+}
+
+func TestPgStoreFanoutAttemptHistorySurvivesReplay(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "fanout-history")
+	subscription, _, err := s.UpsertEventSubscription(ctx, accountID, appID, "orders", "order.created", nil)
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+	eventID := "evt-history-" + uuid.NewString()
+	if err := s.AppendEvent(ctx, "apid", "event.published", &accountID,
+		json.RawMessage(`{"id":"`+eventID+`","source":"orders","type":"order.created","data":{}}`)); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	work, err := s.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim event: %v", err)
+	}
+	if err := s.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, subscription.ID,
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 2,
+			FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
+			LastError: "temporary queue outage", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatalf("finish failed event: %v", err)
+	}
+	if err := s.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, appID, "orders", eventID, subscription.ID); err != nil {
+		t.Fatalf("replay recipient: %v", err)
+	}
+	work, err = s.ClaimDuePublishedEvent(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim replay: %v", err)
+	}
+	if err := s.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, subscription.ID,
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientEnqueued, Attempts: 3, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("record replay success: %v", err)
+	}
+	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatalf("finish replay: %v", err)
+	}
+
+	history, err := s.ListEventFanoutAttemptsForApp(ctx, appID, 10, state.EventFanoutAttemptCursor{},
+		"orders", eventID, subscription.ID)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("history = %+v, want success, replay, and original failure", history)
+	}
+	if got := history[0]; got.Action != state.EventFanoutAttemptActionAttempt || got.State != state.PublishedEventRecipientEnqueued || got.Attempts != 3 {
+		t.Fatalf("latest history row = %+v, want successful fanout outcome", got)
+	}
+	if got := history[1]; got.Action != state.EventFanoutAttemptActionReplay || got.State != state.PublishedEventRecipientPending ||
+		got.Attempts != 2 || got.FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || !got.Retryable ||
+		got.LastError != "temporary queue outage" {
+		t.Fatalf("replay history row = %+v, want preserved failure snapshot", got)
+	}
+	if got := history[2]; got.Action != state.EventFanoutAttemptActionAttempt || got.State != state.PublishedEventRecipientFailed ||
+		got.Attempts != 2 || got.FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || !got.Retryable ||
+		got.LastError != "temporary queue outage" {
+		t.Fatalf("initial history row = %+v, want original failure", got)
+	}
+	page, err := s.ListEventFanoutAttemptsForApp(ctx, appID, 1,
+		state.EventFanoutAttemptCursor{ID: history[0].ID}, "orders", eventID, subscription.ID)
+	if err != nil || len(page) != 1 || page[0].ID != history[1].ID {
+		t.Fatalf("history continuation page = %+v, %v; want replay row", page, err)
 	}
 }

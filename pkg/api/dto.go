@@ -260,6 +260,30 @@ type EventFanoutFailureResponse struct {
 	FailedAt       time.Time `json:"failed_at"`
 }
 
+// EventFanoutAttemptResponse is one immutable routing outcome or explicit
+// operator replay request for an event recipient.
+type EventFanoutAttemptResponse struct {
+	SubscriptionID string    `json:"subscription_id"`
+	Action         string    `json:"action"`
+	State          string    `json:"state"`
+	AttemptNumber  int       `json:"attempt_number"`
+	FailureCode    string    `json:"failure_code,omitempty"`
+	Retryable      bool      `json:"retryable"`
+	LastError      string    `json:"last_error,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
+}
+
+// EventFanoutAttemptHistoryResponse contains the bounded attempt timeline for
+// one event identity and app.
+type EventFanoutAttemptHistoryResponse struct {
+	AppSlug        string                       `json:"app_slug"`
+	EventSource    string                       `json:"event_source"`
+	EventID        string                       `json:"event_id"`
+	SubscriptionID string                       `json:"subscription_id,omitempty"`
+	History        []EventFanoutAttemptResponse `json:"history"`
+	NextBefore     string                       `json:"next_before,omitempty"`
+}
+
 // EventDeliveryListResponse contains invocation lifecycle rows and terminal
 // recipient routing failures, each ordered newest first with its own cursor.
 type EventDeliveryListResponse struct {

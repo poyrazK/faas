@@ -6687,6 +6687,25 @@ func (c *Client) ListAppsSlugEventDeliveries(ctx context.Context, slug, eventID,
 	return c.ListEventDeliveries(ctx, slug, eventID, deliveryState, before, limit)
 }
 
+// ListEventFanoutAttemptHistory returns the bounded recipient routing timeline
+// for one exact event identity. Event source and ID are required; recipient
+// and cursor filters are optional.
+func (c *Client) ListEventFanoutAttemptHistory(ctx context.Context, slug, eventSource, eventID, subscriptionID, before string, limit int) (EventFanoutAttemptHistoryResponse, error) {
+	var out EventFanoutAttemptHistoryResponse
+	q := url.Values{"event_source": {eventSource}, "event_id": {eventID}}
+	if subscriptionID != "" {
+		q.Set("subscription_id", subscriptionID)
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries/attempts?" + q.Encode()
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ReplayEventFanoutFailure requeues one terminal pre-invocation recipient
 // using its acceptance-time subscription snapshot. The mutation carries the
 // SDK's standard Idempotency-Key.

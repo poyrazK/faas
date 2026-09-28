@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
+import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
@@ -261,6 +262,73 @@ export class EventsService {
         'before': before,
         'limit': limit,
         'fanout_before': fanoutBefore,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect one event recipient's fanout attempt history.
+   * Returns the routing outcomes and explicit operator replay requests
+   * retained for one app-scoped event identity. This immutable history is
+   * separate from the current recipient checkpoint and survives replay.
+   * Event source and ID are required so reused IDs cannot mix histories.
+   *
+   * @returns EventFanoutAttemptHistoryResponse Recipient routing attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listEventFanoutAttemptHistory({
+    slug,
+    eventSource,
+    eventId,
+    subscriptionId,
+    before,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact published event source.
+     */
+    eventSource: string,
+    /**
+     * Exact published event ID.
+     */
+    eventId: string,
+    /**
+     * Optional filter for one captured recipient.
+     */
+    subscriptionId?: string,
+    /**
+     * Opaque cursor from next_before, bound to this app, event identity, and recipient filter.
+     */
+    before?: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+  }): CancelablePromise<EventFanoutAttemptHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries/attempts',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'event_source': eventSource,
+        'event_id': eventId,
+        'subscription_id': subscriptionId,
+        'before': before,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

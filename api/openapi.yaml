@@ -17943,6 +17943,49 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries/attempts:
+    get:
+      tags: [events]
+      operationId: listEventFanoutAttemptHistory
+      summary: Inspect one event recipient's fanout attempt history.
+      description: |
+        Returns the routing outcomes and explicit operator replay requests
+        retained for one app-scoped event identity. This immutable history is
+        separate from the current recipient checkpoint and survives replay.
+        Event source and ID are required so reused IDs cannot mix histories.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: event_source
+          in: query
+          required: true
+          description: Exact published event source.
+          schema: { type: string }
+        - name: event_id
+          in: query
+          required: true
+          description: Exact published event ID.
+          schema: { type: string }
+        - name: subscription_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Optional filter for one captured recipient.
+        - name: before
+          in: query
+          schema: { type: string }
+          description: Opaque cursor from next_before, bound to this app, event identity, and recipient filter.
+        - $ref: '#/components/parameters/QueueCursorLimit'
+      responses:
+        '200':
+          description: Recipient routing attempt history, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventFanoutAttemptHistoryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/event-deliveries:replay-fanout-failure:
     post:
       tags: [events]
@@ -28682,6 +28725,42 @@ components:
         last_error: { type: string }
         created_at: { type: string, format: date-time, description: When the event was accepted. }
         failed_at: { type: string, format: date-time, description: When recipient routing became terminal. }
+
+    EventFanoutAttemptResponse:
+      description: Immutable routing outcome or explicit operator replay request for one event recipient.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, action, state, attempt_number, retryable, occurred_at]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        action:
+          type: string
+          enum: [fanout_attempt, operator_replay]
+        state:
+          type: string
+          enum: [pending, filtered, enqueued, failed]
+        attempt_number: { type: integer, minimum: 0 }
+        failure_code:
+          type: string
+          enum: [unknown, invalid_subscription, target_unavailable, target_lookup_failed, invocation_enqueue_failed, internal_error]
+        retryable: { type: boolean }
+        last_error: { type: string }
+        occurred_at: { type: string, format: date-time }
+
+    EventFanoutAttemptHistoryResponse:
+      description: Bounded immutable routing history for one app-scoped event identity.
+      type: object
+      additionalProperties: false
+      required: [app_slug, event_source, event_id, history]
+      properties:
+        app_slug: { type: string }
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string, format: uuid }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
+        next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
 
     EventDeliveryListResponse:
       description: App-scoped event invocation and fanout failure history, each ordered newest first.
