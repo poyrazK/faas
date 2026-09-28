@@ -136,6 +136,36 @@ validates that the caller deployment belongs to the selected release; these
 helpers preserve request context and do not grant deployment-selection
 authority to the guest.
 
+For a long-lived native client, use the client transport to capture a release
+from its first managed API response and pin later calls from that transport
+instance:
+
+```go
+releaseTransport, err := faas.NewGregaleClientReleaseTransport(
+    http.DefaultTransport,
+    faas.GregaleClientReleaseOptions{
+        ManagedOrigins: []string{"https://api.example.com"},
+        // Prefer a release supplied by SSR or application bootstrap when the
+        // API must match the exact release that served the client.
+        InitialRelease: releaseFromBootstrap,
+    },
+)
+if err != nil {
+    return err
+}
+apiHTTP := &http.Client{Transport: releaseTransport}
+```
+
+The first unseeded request is unpinned so Gregale can select the active set;
+concurrent startup requests wait for its response before proceeding. Seed
+`InitialRelease` when the client already knows the release that served it.
+Only exact configured HTTP(S) origins receive or teach the pin. The transport
+keeps the pin in memory per instance; use `Release` to inspect it and
+`ClearRelease` only when intentionally starting a new client release context.
+A 410 expired-release response is returned unchanged, without a retry or
+fallback to the active release. Configure CORS to allow
+`X-Gregale-Release` and expose it when the native client is cross-origin.
+
 ## Errors
 
 Every 4xx/5xx with a Problem-shaped body returns `*faas.APIError`:
