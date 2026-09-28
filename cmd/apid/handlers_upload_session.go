@@ -714,6 +714,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, releaseProblem)
 		return
 	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)

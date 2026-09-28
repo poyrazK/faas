@@ -134,12 +134,13 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	requestAuditEvents        map[string]RequestAuditRecord
-	discoveredAPIRoutes       map[string]DiscoveredAPIRoute
-	discoveryReceipts         map[string]struct{}
-	revisionPins              map[string]time.Time
-	deploymentActivationMu    sync.Mutex
-	deploymentActivationLocks map[string]*deploymentActivationLock
+	safeReleaseWorkerLeaseUntil time.Time
+	requestAuditEvents          map[string]RequestAuditRecord
+	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
+	discoveryReceipts           map[string]struct{}
+	revisionPins                map[string]time.Time
+	deploymentActivationMu      sync.Mutex
+	deploymentActivationLocks   map[string]*deploymentActivationLock
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published
@@ -197,6 +198,7 @@ type MemStore struct {
 	platformTenantAccessTokens      map[string]PlatformTenantAccessToken
 	platformTenantAccessTokenByHash map[string]string
 	platformTenantBudgets           map[string]platformTenantBudgetRow
+	platformTenantHostnamePolicies  map[string]PlatformTenantHostnamePolicy
 	platformTenantByConsumer        map[string]string
 	platformTenantBySurface         map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
@@ -1083,6 +1085,7 @@ func NewMemStore() *MemStore {
 		platformTenantAccessTokens:      map[string]PlatformTenantAccessToken{},
 		platformTenantAccessTokenByHash: map[string]string{},
 		platformTenantBudgets:           map[string]platformTenantBudgetRow{},
+		platformTenantHostnamePolicies:  map[string]PlatformTenantHostnamePolicy{},
 		platformTenantByConsumer:        map[string]string{},
 		platformTenantBySurface:         map[string]string{},
 		openAPISnapshots:                map[string]OpenAPISnapshot{},
@@ -4461,7 +4464,7 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 	return d, nil
 }
 
-// AdvanceCanary applies one automatic canary transition under the same
+// AdvanceCanary applies one canary transition under the same
 // critical section as its traffic rebalance and audit insert. The expected
 // step is a compare-and-swap: concurrent meterd workers cannot both advance
 // the same row.
@@ -4469,8 +4472,19 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
+	if params.RequireCanaryStageElapsed && params.CanaryStageDuration <= 0 {
+		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if params.RequireSafeReleaseLease {
+		if m.safeReleaseWorkerLeaseUntil.IsZero() {
+			return Deployment{}, 0, fmt.Errorf("%w: %w", ErrSafeReleaseLeaseUnavailable, ErrSafeReleaseLeaseMissing)
+		}
+		if !time.Now().Before(m.safeReleaseWorkerLeaseUntil) {
+			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+		}
+	}
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
@@ -4484,6 +4498,10 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	d.RolloutState = rolloutState
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
+	}
+	if params.RequireCanaryStageElapsed && (d.CanaryStepStartedAt == nil ||
+		time.Since(*d.CanaryStepStartedAt) < params.CanaryStageDuration) {
+		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 	depUUID, err := uuid.Parse(d.ID)
 	if err != nil {
@@ -4592,6 +4610,12 @@ func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPerc
 	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
+	}
+	for _, other := range m.deployments {
+		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
+			(other.RolloutState == "pending" || other.RolloutState == "rolling_out") {
+			return Deployment{}, ErrTrafficChangeDuringCanary
+		}
 	}
 	if len(expectedServingID) > 0 {
 		servingID := ""
@@ -19675,6 +19699,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if tenant.AccountID == id {
 			delete(m.platformTenants, tid)
 			delete(m.platformTenantBudgets, tid)
+			delete(m.platformTenantHostnamePolicies, tid)
 		}
 	}
 	for surfaceID, tenantID := range m.platformTenantBySurface {

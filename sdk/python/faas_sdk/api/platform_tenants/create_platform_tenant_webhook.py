@@ -93,8 +93,8 @@ def sync_detailed(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's finalized
-            cross-app billing statements. Example: {'target_url':
+        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -134,8 +134,8 @@ def sync(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's finalized
-            cross-app billing statements. Example: {'target_url':
+        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -170,8 +170,8 @@ async def asyncio_detailed(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's finalized
-            cross-app billing statements. Example: {'target_url':
+        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 
@@ -209,8 +209,8 @@ async def asyncio(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's finalized
-            cross-app billing statements. Example: {'target_url':
+        body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
+            hostname, certificate, deployment, and finalized billing events. Example: {'target_url':
             'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
             submitting'}.
 

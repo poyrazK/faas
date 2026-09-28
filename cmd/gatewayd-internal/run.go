@@ -2400,6 +2400,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	retryBudget := gateway.NewRetryBudget(0, nil)
+	budgetURL, budgetConfigErr := retryBudgetRedisURL(osGetenv)
+	if budgetConfigErr != nil {
+		return fmt.Errorf("gatewayd-internal: %w", budgetConfigErr)
+	}
+	if budgetURL != "" {
+		sharedBudget, budgetErr := gateway.NewRedisRetryBudget(ctx, budgetURL, 0)
+		if budgetErr != nil {
+			return fmt.Errorf("gatewayd-internal: connect shared retry budget: %w", budgetErr)
+		}
+		retryBudget = sharedBudget
+		deps.metrics.SetRetryBudgetShared(true)
+		deps.metrics.SetRetryBudgetBackendID(sharedBudget.BackendID())
+		log.Info("gatewayd-internal: shared retry budget enabled")
+	}
+	retryBudget.WithObserver(deps.metrics)
+	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
@@ -2758,6 +2774,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// publisher goroutine. Single-box deployments use the dedicated
 	// Unix socket; split-box deployments reuse the private mTLS AppErrors
 	// endpoint, which is served by the same apid gRPC server.
+	// The exact request-ID journal is independent of this optional,
+	// sampled telemetry stream. It is written synchronously before guest
+	// work so a debugger-enabled request can always be looked up by its
+	// public x-faas-request-id.
+	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
+	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
+	if journalTLSErr != nil {
+		return fmt.Errorf("gatewayd: load request ID journal TLS: %w", journalTLSErr)
+	}
+	journalClient, journalDialErr := apidgrpc.DialRequestTelemetry(ctx, journalTarget, journalTLS)
+	if journalDialErr != nil {
+		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
+	}
+	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+		if journalClient == nil {
+			return errors.New("request ID journal apid client unavailable")
+		}
+		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		response, err := journalClient.RecordRequestIDJournal(rpcCtx, &apidpb.RecordRequestIDJournalRequest{
+			RecordId: record.ID, AccountId: record.AccountID, AppId: record.AppID,
+			RequestId: record.RequestID, TraceId: record.TraceID,
+			ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(),
+		})
+		if err != nil {
+			return fmt.Errorf("persist request ID journal: %w", err)
+		}
+		if response == nil || !response.GetRecorded() {
+			return errors.New("apid did not record the request ID journal entry")
+		}
+		return nil
+	})
+	if journalClient != nil {
+		defer func() {
+			if err := journalClient.Close(); err != nil {
+				log.Warn("request ID journal: close apid client", "err", err)
+			}
+		}()
+	}
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
 	if requestTelemetryEnabled {
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{

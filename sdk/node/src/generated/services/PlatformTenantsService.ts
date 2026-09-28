@@ -24,11 +24,13 @@ import type { PlatformTenantActivationResponse } from '../models/PlatformTenantA
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
+import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
+import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
 import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
@@ -39,6 +41,7 @@ import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenant
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
 import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
@@ -252,6 +255,61 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the downstream customer's hostname delegation policy.
+   * Empty suffixes and a zero limit mean self-service hostname creation is disabled. Tenant-surface feature and plan gates still apply.
+   * @returns PlatformTenantHostnamePolicyResponse Current hostname delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantHostnamePolicy({
+    id,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a downstream customer's hostname delegation policy.
+   * Requires deploy:write and recent MFA. Suffixes are canonical DNS names; delegation is disabled with an empty array and a zero limit. Tenant-bound access tokens do not gain these account-owner permissions.
+   * @returns PlatformTenantHostnamePolicyResponse Updated hostname delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantHostnamePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantHostnamePolicyRequest,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid suffixes or hostname limit.`,
       },
     });
   }
@@ -1122,6 +1180,24 @@ export class PlatformTenantsService {
         'token_id': tokenId,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's own redacted activation snapshot.
+   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
+   * @returns PlatformTenantSelfActivationResponse Current activation state for the caller's linked surfaces.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfActivation(): CancelablePromise<PlatformTenantSelfActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/activation',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
       },
     });

@@ -3150,7 +3150,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// candidate restore or failed smoke cannot remove the serving revision.
 	var hostingApp state.App
 	verificationStarted := time.Now()
-	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || h.hostingSmokeRequired)
+	smokeRequired := h.hostingSmokeRequired || (ready == nil && dep.CanaryTotalSteps > 0)
+	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || smokeRequired)
 	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ready == nil && ok {
 		hostingReceiptEnabled = true
 	}
@@ -3202,7 +3203,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath
 		}
-		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+		if h.hostingSmoke == nil && smokeRequired {
 			smoke.Status = apihostingreceipt.SmokeFailed
 			smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
 			smoke.Error = "public hosting smoke verifier is required but not configured"
@@ -3210,7 +3211,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if h.hostingSmoke != nil {
 			var smokeErr error
 			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
-			if smokeErr == nil && h.hostingSmokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
+			if smokeErr == nil && smokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
 				if smoke.ErrorCode == "" {
 					smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
 				}
@@ -3232,7 +3233,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
 			}
 		}
-		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+		if h.hostingSmoke == nil && smokeRequired {
 			if h.ops != nil {
 				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 			}

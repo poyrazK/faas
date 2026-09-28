@@ -1975,11 +1975,31 @@ type RequestAnalyticsRouteView struct {
 	DependencySamples           int64
 	DependencyRequests          int64
 	Dependencies                []api.RequestAnalyticsDependency
+	DeploymentObservations      []RequestAnalyticsRouteDeploymentView
+	OtherDeploymentRequests     int64
+	OtherDeploymentComputeEUR   string
 	EstimatedComputeCostEUR     string
 	RequestSharePct             float64
 	TrendURL                    string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
+}
+
+type RequestAnalyticsRouteDeploymentView struct {
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedComputeEUR      string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
 }
 
 // DiscoveredRoutesView is the customer-facing projection of the durable API

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
- * Replace all admission policy values for a customer-owned integration.
+ * Replace admission policy values for a customer-owned integration.
  */
 export type PutOutboundRequestPolicyRequest = {
   request_policy: OutboundRequestPolicy;

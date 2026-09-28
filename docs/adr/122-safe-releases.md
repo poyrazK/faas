@@ -86,6 +86,13 @@
     release orchestrator would couple them at the wrong boundary
     (ADR-018). apid is excluded because the orchestrator must
     consume per-app metrics meterd samples, which apid does not.
+  - **APID emergency stop on worker loss.** APID may abort an active
+    canary after the database worker lease has expired for a two-minute
+    restart grace period. This is a recovery exception, not a second
+    rollout orchestrator: APID does not sample health or advance steps.
+    It locks and rechecks the lease in the same transaction that restores
+    the exact same-scope predecessor and writes the deployment audit.
+    A missing lease row or unavailable database cannot authorize an abort.
   - **`deployments` is the unit of revision.** No
     `deployment_revisions` table. Every `INSERT INTO deployments`
     is a new revision; the `traffic_split_percent` column on

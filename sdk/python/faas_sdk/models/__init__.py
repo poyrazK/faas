@@ -403,6 +403,7 @@ from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCa
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
+from .create_platform_tenant_webhook_request_event_filter_item import CreatePlatformTenantWebhookRequestEventFilterItem
 from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformTenantWebhookRequestRetryPolicy
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
@@ -1086,6 +1087,8 @@ from .platform_tenant_credential_result_action import PlatformTenantCredentialRe
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
+from .platform_tenant_hostname_policy_response import PlatformTenantHostnamePolicyResponse
+from .platform_tenant_hostname_verified_webhook_payload import PlatformTenantHostnameVerifiedWebhookPayload
 from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
@@ -1093,6 +1096,16 @@ from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardRespo
 from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_self_activation_hostname_response import PlatformTenantSelfActivationHostnameResponse
+from .platform_tenant_self_activation_response import PlatformTenantSelfActivationResponse
+from .platform_tenant_self_activation_response_status import PlatformTenantSelfActivationResponseStatus
+from .platform_tenant_self_activation_surface_response import PlatformTenantSelfActivationSurfaceResponse
+from .platform_tenant_self_activation_surface_response_cert_state import (
+    PlatformTenantSelfActivationSurfaceResponseCertState,
+)
+from .platform_tenant_self_activation_surface_response_status import PlatformTenantSelfActivationSurfaceResponseStatus
+from .platform_tenant_self_deployment_response import PlatformTenantSelfDeploymentResponse
+from .platform_tenant_self_deployment_response_status import PlatformTenantSelfDeploymentResponseStatus
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
@@ -1105,6 +1118,18 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_surface_certificate_changed_webhook_payload import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayload,
+)
+from .platform_tenant_surface_certificate_changed_webhook_payload_cert_state import (
+    PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState,
+)
+from .platform_tenant_surface_deployment_changed_webhook_payload import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayload,
+)
+from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_status import (
+    PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
+)
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
@@ -1361,6 +1386,7 @@ from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
+from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
@@ -1463,6 +1489,8 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_reliability_policies import ServiceReliabilityPolicies
+from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -1477,6 +1505,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostnamePolicyRequest
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
@@ -2093,6 +2122,7 @@ __all__ = (
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
+    "CreatePlatformTenantWebhookRequestEventFilterItem",
     "CreatePlatformTenantWebhookRequestRetryPolicy",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
@@ -2768,6 +2798,8 @@ __all__ = (
     "PlatformTenantCredentialsResponse",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
+    "PlatformTenantHostnamePolicyResponse",
+    "PlatformTenantHostnameVerifiedWebhookPayload",
     "PlatformTenantListResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
@@ -2775,6 +2807,14 @@ __all__ = (
     "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantSelfActivationHostnameResponse",
+    "PlatformTenantSelfActivationResponse",
+    "PlatformTenantSelfActivationResponseStatus",
+    "PlatformTenantSelfActivationSurfaceResponse",
+    "PlatformTenantSelfActivationSurfaceResponseCertState",
+    "PlatformTenantSelfActivationSurfaceResponseStatus",
+    "PlatformTenantSelfDeploymentResponse",
+    "PlatformTenantSelfDeploymentResponseStatus",
     "PlatformTenantSelfStatementListResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",
@@ -2785,6 +2825,10 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayload",
+    "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
+    "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
@@ -3019,6 +3063,7 @@ __all__ = (
     "RequestAnalyticsResponse",
     "RequestAnalyticsResponseGroupBy",
     "RequestAnalyticsRoute",
+    "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
@@ -3115,6 +3160,8 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceReliabilityPolicies",
+    "ServiceReliabilityPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
@@ -3129,6 +3176,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantHostnamePolicyRequest",
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",

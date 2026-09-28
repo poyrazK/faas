@@ -1998,6 +1998,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
+	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
@@ -2204,7 +2205,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2222,6 +2223,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
+		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
+	if sourceModeErr != nil {
+		return printErr("Invalid source selection", sourceModeErr)
+	}
+	if selectedSourceMode == deploySourceWorktree {
+		*worktree = true
+	}
 	if *noTraffic {
 		if explicit["traffic-percent"] {
 			return printErr("Invalid rollout policy", fmt.Errorf("--no-traffic and --traffic-percent are mutually exclusive"))
@@ -2856,10 +2865,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	var explicitHeadProv *zeroConfigProvenance
+	if selectedSourceMode == deploySourceHEAD {
+		resolved, resolveErr := resolveExplicitHeadProvenance(sourceDir)
+		if resolveErr != nil {
+			return printErr("Could not select committed HEAD", fmt.Errorf("--source=head requires a Git repository with a commit: %w", resolveErr))
+		}
+		explicitHeadProv = &resolved
+	}
 	// Authenticate before any deploy-time zero-config source scan or archive
 	// extraction. The local --plan path is the deliberate exception: it resolves
 	// the same source selection below but never needs account state or remote
-	// access.
+	// access. Explicit HEAD validation above only reads local Git metadata.
 	//
 	// zero-config path can inspect the working tree, run doctor checks, and
 	// materialise a potentially large archive; doing that for an unauthenticated
@@ -2910,7 +2927,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if localZeroConfig {
 		selectedSourceDir := sourceDir
-		if provVal, ok, perr := resolveZeroConfigProvenance(selectedSourceDir); ok {
+		provVal, ok, perr := zeroConfigProvenance{}, false, error(nil)
+		if explicitHeadProv != nil {
+			provVal, ok = *explicitHeadProv, true
+		} else {
+			provVal, ok, perr = resolveZeroConfigProvenance(selectedSourceDir)
+		}
+		if ok {
 			prov = &provVal
 			if provVal.Dirty {
 				if dirtyOut, dirtyErr := runGitCmd(provVal.Root, "status", "--porcelain"); dirtyErr == nil {
@@ -2920,6 +2943,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 						}
 					}
 				}
+			}
+			if dirtyFileCount > 0 && !*worktree {
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy

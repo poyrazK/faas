@@ -686,6 +686,43 @@ func TestHandleSnapshotWritten_RequiredSmokeWithoutVerifierFailsClosed(t *testin
 	}
 }
 
+func TestHandleSnapshotWritten_CanaryRequiresVerifiedSmoke(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "canary-smoke-required", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, CanaryPreset: "balanced", CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+	failed, err := store.DeploymentByID(context.Background(), candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != state.DeployFailed {
+		t.Fatalf("canary status = %s, want failed", failed.Status)
+	}
+	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
+	if err != nil || live.ID != previous.ID {
+		t.Fatalf("live deployment = %s, %v; want predecessor %s", live.ID, err, previous.ID)
+	}
+}
+
 func TestHandleSnapshotWritten_RequiredSmokeRejectsSkippedVerifier(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")

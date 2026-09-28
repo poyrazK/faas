@@ -93,6 +93,60 @@ func TestStandaloneOutboundBindingsCreateAndPatch(t *testing.T) {
 	assert(account, nil)
 }
 
+func TestStandaloneServiceReliabilityCreateReplaceAndPrune(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	targets := []string{"billing", "identity"}
+	initial := map[string]api.ServiceReliabilityPolicy{"billing": {TimeoutMS: 1500, MaxAttempts: 1}}
+	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: "frontend", ServiceBindingTargets: &targets, ServiceReliability: initial,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy := func(want map[string]api.ServiceReliabilityPolicy) {
+		t.Helper()
+		app, err := e.store.AppBySlug(t.Context(), "frontend")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(app.Manifest.ServiceReliability, want) {
+			t.Fatalf("stored policy = %#v, want %#v", app.Manifest.ServiceReliability, want)
+		}
+		read := e.do(t, http.MethodGet, "/v1/apps/frontend", nil, nil)
+		var response api.AppResponse
+		if read.Code != http.StatusOK || json.Unmarshal(read.Body.Bytes(), &response) != nil || !reflect.DeepEqual(response.ServiceReliability, want) {
+			t.Fatalf("readback policy = %#v, status=%d, want %#v", response.ServiceReliability, read.Code, want)
+		}
+	}
+	readPolicy(initial)
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("omitted patch: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy(initial)
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceReliability: json.RawMessage(`{"unknown":{"timeout_ms":1000}}`)}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("undeclared target: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy(initial)
+	replacementTargets := []string{"identity"}
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceBindingTargets: &replacementTargets}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove billing binding: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy(nil)
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceReliability: json.RawMessage(`{"identity":{"max_attempts":2}}`)}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replace policy: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy(map[string]api.ServiceReliabilityPolicy{"identity": {MaxAttempts: 2}})
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceReliability: json.RawMessage(`null`)}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear policy: %d %s", rec.Code, rec.Body)
+	}
+	readPolicy(nil)
+}
+
 func TestStandaloneServiceBindingHTTPSFirstTransportCanBeChanged(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	targets := []string{"billing"}

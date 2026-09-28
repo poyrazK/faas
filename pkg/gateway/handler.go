@@ -1073,6 +1073,7 @@ type Handler struct {
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
 	requestTelemetry    *requestTelemetryRecorder
+	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
 	apiDiscoveryEnabled bool
@@ -5369,6 +5370,13 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// WithRequestIDJournalWriter installs the synchronous durable index writer.
+// For debugger-enabled plans, ServeHTTP calls it after app resolution and
+// fails closed before guest work if the write cannot be confirmed.
+func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
+	h.requestIDJournal = writer
+}
+
 // WithUsageOutbox enables the durable financial fact independently of debug
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
@@ -5623,6 +5631,15 @@ haveApp:
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
+	}
+	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Request correlation is temporarily unavailable",
+				"the platform could not durably record this request ID; retry shortly"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
 	}
 	if app.SecurityQuarantined {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,

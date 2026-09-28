@@ -929,9 +929,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service caller scopes are source-managed", "edit x-gregale-allow-call-scopes in the project source; preview policies inherit from their source app"))
 		return
 	}
-	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Service bindings are source-managed", "edit depends_on, x-gregale-service-policy, or x-gregale-service-transport in the project source; preview bindings inherit from their source app"))
+			"Service bindings are source-managed", "edit depends_on or an x-gregale-service-* extension in the project source; preview bindings inherit from their source app"))
 		return
 	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
@@ -947,6 +947,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
 	if serviceTransportProblem != nil {
 		api.WriteProblem(w, serviceTransportProblem)
+		return
+	}
+	selectedBindings := app.Manifest.ServiceBindings
+	if req.ServiceBindingTargets != nil {
+		selectedBindings = bindings
+	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForUpdate(req.ServiceReliability, app.Manifest.ServiceReliability, selectedBindings, req.ServiceBindingTargets != nil)
+	if reliabilityProblem != nil {
+		api.WriteProblem(w, reliabilityProblem)
 		return
 	}
 	if prob := resolveUpdateResourceProfile(&req); prob != nil {
@@ -1146,7 +1155,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
 		lifecycleChanged = true
 	}
-	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil {
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0 {
 		if lifecycleManifest == nil {
 			copyOfManifest := app.Manifest
 			lifecycleManifest = &copyOfManifest
@@ -1159,6 +1168,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		if req.ServiceBindingTransport != nil {
 			lifecycleManifest.ServiceBindingTransport = serviceTransport
+		}
+		if req.ServiceBindingTargets != nil || len(req.ServiceReliability) > 0 {
+			lifecycleManifest.ServiceReliability = serviceReliability
 		}
 		if req.ServiceBindingTargets != nil || req.ServiceBindingTransport != nil {
 			selectedBindings := app.Manifest.ServiceBindings
@@ -1564,6 +1576,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.ServiceBindingTransport != nil {
 		oldApp["service_binding_transport"] = app.Manifest.EffectiveServiceBindingTransport()
 		newApp["service_binding_transport"] = updated.Manifest.EffectiveServiceBindingTransport()
+	}
+	if len(req.ServiceReliability) > 0 {
+		oldApp["service_reliability"] = app.Manifest.ServiceReliability
+		newApp["service_reliability"] = updated.Manifest.ServiceReliability
 	}
 	if lifecycleChanged {
 		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)
@@ -1974,7 +1990,8 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 //     for Hobby/Free.
 //  5. Call store.UpdateDeploymentTraffic (atomic, with FOR UPDATE
 //     lock on live rows + Σ = 100 invariant check via
-//     RedistributeTraffic largest-remainder — issue #556 PR-C).
+//     RedistributeTraffic largest-remainder — issue #556 PR-C). An active
+//     managed canary returns 409 before traffic, audit, or notify writes.
 //  6. Audit emit deployment.traffic_percent_changed with
 //     {app, deployment, traffic_percent, prev} payload.
 //  7. pg_notify `deployment_changed` with kind="traffic" so the
@@ -2069,6 +2086,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
+		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
+			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",

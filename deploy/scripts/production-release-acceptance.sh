@@ -8,6 +8,19 @@ set -euo pipefail
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid RELEASE_SHA" >&2; exit 2; }
 [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "invalid RUN_ID" >&2; exit 2; }
 [[ "$ACTIVE_NODE_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "invalid ACTIVE_NODE_COUNT" >&2; exit 2; }
+SHARED_RETRY_BUDGET_REQUIRED="${SHARED_RETRY_BUDGET_REQUIRED:-false}"
+case "$SHARED_RETRY_BUDGET_REQUIRED" in
+	true|false) ;;
+	*) echo "SHARED_RETRY_BUDGET_REQUIRED must be true or false" >&2; exit 2 ;;
+esac
+if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
+	: "${PROMETHEUS_URL:?set PROMETHEUS_URL when shared retry-budget mode is required}"
+	EXPECTED_GATEWAY_COUNT="${EXPECTED_GATEWAY_COUNT:-$ACTIVE_NODE_COUNT}"
+	[[ "$EXPECTED_GATEWAY_COUNT" =~ ^[1-9][0-9]*$ ]] || {
+		echo "EXPECTED_GATEWAY_COUNT must be a positive integer" >&2
+		exit 2
+	}
+fi
 
 GREGALE_BIN="${GREGALE_BIN:-/opt/faas/current/bin/gregale}"
 GREGALECTL_BIN="${GREGALECTL_BIN:-/usr/local/bin/gregalectl}"
@@ -195,6 +208,12 @@ while kill -0 "$wait_pid" 2>/dev/null; do
 done
 wait "$wait_pid"
 verify_receipt "$redeploy_final"
+
+if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
+	PROMETHEUS_URL="$PROMETHEUS_URL" \
+		EXPECTED_GATEWAY_COUNT="$EXPECTED_GATEWAY_COUNT" \
+		deploy/scripts/verify-shared-retry-budget.sh
+fi
 
 printf 'production acceptance passed: release=%s nodes=%s deployments=%s\n' \
 	"$RELEASE_SHA" "$ACTIVE_NODE_COUNT" "${#slugs[@]}"

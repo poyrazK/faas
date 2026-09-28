@@ -768,7 +768,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
-	if suffix == "usage" || suffix == "usage-statements" {
+	if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" {
 		return true
 	}
 	return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")

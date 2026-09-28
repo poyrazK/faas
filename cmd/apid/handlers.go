@@ -493,6 +493,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if bindingsProblem != nil {
 		return state.App{}, bindingsProblem
 	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForCreate(req.ServiceReliability, bindings)
+	if reliabilityProblem != nil {
+		return state.App{}, reliabilityProblem
+	}
 	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
 	if servicePolicyProblem != nil {
 		return state.App{}, servicePolicyProblem
@@ -505,6 +509,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.AllowedServiceCallScopes = allowedCallScopes
 	appManifest.ServiceBindings = bindings
+	appManifest.ServiceReliability = serviceReliability
 	appManifest.ServiceBindingPolicy = servicePolicy
 	appManifest.ServiceBindingTransport = serviceTransport
 	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
@@ -666,6 +671,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, dep) {
 		return
 	}
 	// Capture the current predecessor for audit. It remains live until the
@@ -869,6 +877,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
+		ServiceReliability:        a.Manifest.ServiceReliability,
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
 		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),

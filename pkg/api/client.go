@@ -6156,7 +6156,7 @@ func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since st
 // id from another app is indistinguishable from a missing request.
 func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
 	var out DebugTelemetryRequestItem
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID)
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6164,7 +6164,7 @@ func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (De
 // deterministic explanation for one request telemetry row.
 func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID string) (DebugRequestEvidenceResponse, error) {
 	var out DebugRequestEvidenceResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/evidence"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/evidence"
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6250,7 +6250,7 @@ func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) 
 // deployment.
 func (c *Client) ReplayAppDebugRequestWithTarget(ctx context.Context, slug, reqID, mirrorDeploymentID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/replay"
 	var body any
 	if strings.TrimSpace(mirrorDeploymentID) != "" {
 		body = DebugReplayRequest{MirrorDeploymentID: strings.TrimSpace(mirrorDeploymentID)}

@@ -1,11 +1,13 @@
 # Installing the gregale CLI
 
-Two channels, both published automatically from a `v*.*.*` tag. Decision
-and rejected alternatives: [ADR-172](adr/172-cli-distribution-channels.md).
+The curl installer is the available install path. The npm channel is staged
+by the release workflow, but is not available until a release successfully
+publishes it to the public registry. Decision and rejected alternatives:
+[ADR-172](adr/172-cli-distribution-channels.md).
 
 | | curl installer | npm |
 |---|---|---|
-| Command | `curl -fsSL https://get.gregale.dev \| sh` | `npm install -g gregale` |
+| Command | `curl -fsSL https://get.gregale.dev \| sh` | `npm install -g gregale@rc` after publication |
 | Needs | curl/wget, tar, sha256sum | Node ≥ 18 |
 | Verifies checksum | yes, against the release `CLI-SHA256SUMS` | yes, npm integrity + provenance |
 | Pin a version | `--version v0.1.18` | `gregale@0.1.18` |
@@ -71,10 +73,21 @@ silently starts preferring it — pass `--version` to stay on a specific rc.
 
 ## npm
 
+Check that the package has been published before using this channel:
+
 ```bash
-npm install -g gregale
-npx gregale deploy          # without installing
-npm install -g gregale@rc   # newest release candidate
+npm view gregale dist-tags --json
+```
+
+The release workflow now fails if `NPM_TOKEN` is missing and verifies that the
+published package installs from the public registry. Until that job succeeds,
+use the curl installer above. Prereleases use the `rc` tag; `latest` appears
+only after the first stable release.
+
+```bash
+npm install -g gregale@rc
+npx gregale@rc deploy       # without installing
+npm install -g gregale      # after a stable release publishes
 ```
 
 The `gregale` package holds no binary. It declares four
@@ -92,6 +105,16 @@ npm install --include=optional gregale
 `latest` tracks stable releases; prerelease tags publish under `rc`.
 
 ## In CI
+
+For scripts that need to save a CLI session, pass a token on stdin so it does
+not appear in the process argument list:
+
+```bash
+printf '%s' "$GREGALE_API_TOKEN" | gregale login --token-stdin
+```
+
+Bare `gregale login` requires an interactive terminal. Existing `--token`
+calls continue to work.
 
 GitHub Actions already has a first-class path that needs no install — the
 action vendors the binary:
