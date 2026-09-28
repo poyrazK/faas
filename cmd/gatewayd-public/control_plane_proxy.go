@@ -64,10 +64,16 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 				req.Out.Header.Set("X-Forwarded-For", clientIP)
 			}
 			req.Out.Header.Set("X-Forwarded-Proto", proto)
+			if !isPlatformSessionHost(req.In.Host, p.appsDomain) {
+				req.Out.Header.Del("Cookie")
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			// The outer gatewayd-public middleware owns these headers.
 			httpsec.StripStaticHeaders(resp.Header)
+			if resp.Request != nil && !isPlatformSessionHost(resp.Request.Host, p.appsDomain) {
+				resp.Header.Del("Set-Cookie")
+			}
 			// httputil.ReverseProxy copies response headers with Add.
 			// Drop apid's copy so the edge's already-stamped value is
 			// the only customer-visible X-Faas-Request-ID.
@@ -159,10 +165,53 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if apid.IsApidPath(r.URL.Path) && !isComputeOwnedGatewayPath(r.URL.Path) {
+		// The reserved paths are served on every Host (spec §4.1.1),
+		// including app subdomains and customers' custom domains. Those
+		// origins run tenant code, so platform sessions must never be
+		// issued or honoured there: a visitor who signed in on
+		// attacker.<apps domain>/login handed the attacker's same-origin
+		// JavaScript a session apid treated as same-origin (it could mint
+		// an admin key and read the plaintext), and the app received the
+		// cookie on every other path. Browser pages move to the platform
+		// host; API calls keep working with bearer credentials only
+		// (Cookie and Set-Cookie are stripped in the proxy above).
+		if !isPlatformSessionHost(r.Host, p.appsDomain) && isPlatformBrowserPage(r.URL.Path) &&
+			(r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			http.Redirect(w, r, "https://"+p.appsDomain+r.URL.RequestURI(), http.StatusFound)
+			return
+		}
 		p.proxy.ServeHTTP(w, r)
 		return
 	}
 	p.next.ServeHTTP(w, r)
+}
+
+// isPlatformSessionHost reports whether Host is a platform-owned origin that
+// may carry the dashboard session: the apex, the API host, the operator
+// console, or a direct loopback/IP probe. Every other Host is an app
+// subdomain or a customer domain and runs tenant code.
+func isPlatformSessionHost(rawHost, appsDomain string) bool {
+	if isPlatformHealthHost(rawHost, appsDomain) {
+		return true
+	}
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(appsDomain)), ".")
+	return domain != "" && hostWithoutPort(rawHost) == "operations."+domain
+}
+
+// isPlatformBrowserPage reports whether path is a session-bearing HTML
+// surface (dashboard, sign-in/up/out, email and reset links, CLI pairing,
+// OAuth callbacks) rather than the JSON API, status page or docs.
+func isPlatformBrowserPage(path string) bool {
+	for _, root := range []string{
+		apid.ApidRootDashboard, apid.ApidRootLogin, apid.ApidRootSignup,
+		apid.ApidRootAuthVerify, apid.ApidRootAuthReset, apid.ApidRootLogout,
+		apid.ApidRootCliAuth,
+	} {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return strings.HasPrefix(path, apid.ApidRootOAuthPrefix)
 }
 
 // isPlatformHealthHost scopes the public platform probe to the apex/API host

@@ -389,3 +389,72 @@ func TestIsComputeOwnedGatewayPath(t *testing.T) {
 		}
 	}
 }
+
+// The reserved apid paths are served on every Host, including app
+// subdomains and custom domains, which run tenant code. A platform session
+// must never be issued or honoured there: a visitor who signed in on
+// attacker.gregale.dev/login gave the attacker's same-origin JavaScript a
+// session apid accepted as same-origin, and the app received the cookie.
+func TestControlPlaneProxyKeepsSessionsOffTenantHosts(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	var gotCookie string
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		http.SetCookie(w, &http.Cookie{Name: "faas_sid", Value: "issued"})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer controlPlane.Close()
+	compute := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	handler, err := newControlPlaneProxy(controlPlane.URL, compute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		host        string
+		keepSession bool
+	}{
+		{"gregale.dev", true},
+		{"api.gregale.dev", true},
+		{"operations.gregale.dev", true},
+		{"127.0.0.1", true},
+		{"attacker.gregale.dev", false},
+		{"pr-1-shop.gregale.dev", false},
+		{"customer.example", false},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			gotCookie = ""
+			req := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/v1/keys", nil)
+			req.AddCookie(&http.Cookie{Name: "faas_sid", Value: "victim"})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want the API reachable", rec.Code)
+			}
+			if forwarded := gotCookie != ""; forwarded != tc.keepSession {
+				t.Errorf("Cookie forwarded = %v (%q), want %v", forwarded, gotCookie, tc.keepSession)
+			}
+			if issued := rec.Header().Get("Set-Cookie") != ""; issued != tc.keepSession {
+				t.Errorf("Set-Cookie passed through = %v, want %v", issued, tc.keepSession)
+			}
+		})
+	}
+
+	for _, path := range []string{"/dashboard", "/dashboard/apps/shop", "/login?next=%2Fdashboard", "/signup", "/logout", "/auth/reset/abc", "/cli-auth", "/oauth/callback"} {
+		req := httptest.NewRequest(http.MethodGet, "http://attacker.gregale.dev"+path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "https://gregale.dev"+path {
+			t.Errorf("GET %s on a tenant host = %d Location=%q, want 302 to https://gregale.dev%s",
+				path, rec.Code, rec.Header().Get("Location"), path)
+		}
+	}
+	for _, path := range []string{"/status", "/docs", "/v1/whoami"} {
+		req := httptest.NewRequest(http.MethodGet, "http://attacker.gregale.dev"+path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s on a tenant host = %d, want it proxied without a session", path, rec.Code)
+		}
+	}
+}
