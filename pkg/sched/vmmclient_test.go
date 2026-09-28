@@ -9,9 +9,11 @@ package sched_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -360,6 +362,20 @@ func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 	}
 	if !got.BeforeCheckpoint {
 		t.Fatal("before_checkpoint flag was lost across gRPC")
+	}
+}
+
+func TestVMMClient_PauseAndSnapshot_BeforeCheckpointFailure(t *testing.T) {
+	c := newClient(t, &fakeVMM{parkFn: func(context.Context, string, fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
+		return fcvm.SnapshotInfo{}, fmt.Errorf("private host path: %w", fcvm.ErrBeforeCheckpointFailed)
+	}})
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "", true)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeBeforeCheckpointFailed || problem.Status != 422 {
+		t.Fatalf("PauseAndSnapshot error = %v, want typed 422/%s", err, api.CodeBeforeCheckpointFailed)
+	}
+	if strings.Contains(problem.Error(), "private host path") {
+		t.Fatalf("callback failure leaked host detail: %v", problem)
 	}
 }
 

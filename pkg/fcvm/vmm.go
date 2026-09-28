@@ -2202,6 +2202,10 @@ const extensionHookMsgEvent uint32 = 3
 const beforeCheckpointHookMsg uint32 = 5
 const beforeCheckpointHookAckFailed byte = 14
 
+// ErrBeforeCheckpointFailed means the guest rejected the required callback
+// before a terminal init snapshot. The guest logs retain the specific cause.
+var ErrBeforeCheckpointFailed = errors.New("before_checkpoint application callback failed")
+
 const extensionHookDialDeadline = extension.DefaultTimeout
 
 const extensionHookMaxBodyBytes = extension.MaxEventBytes
@@ -2472,7 +2476,7 @@ func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error 
 		return fmt.Errorf("vmm: before_checkpoint ACK: %w", err)
 	}
 	if result[0] == beforeCheckpointHookAckFailed {
-		return fmt.Errorf("vmm: before_checkpoint application callback failed")
+		return fmt.Errorf("vmm: %w", ErrBeforeCheckpointFailed)
 	}
 	if result[0] != 0 {
 		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", result[0])

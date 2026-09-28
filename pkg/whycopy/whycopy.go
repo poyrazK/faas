@@ -212,6 +212,12 @@ var catalog = map[string]Render{
 		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
 		Fix:   "• check `gregale deploys status <id>` and `gregale logs <slug>` for the last completed startup step\n• retry once in case the compute node was temporarily saturated\n• if the same artifact fails again, include the deployment id in a support report",
 	},
+	api.CodeBeforeCheckpointFailed: {
+		Title: "Before checkpoint callback failed",
+		Hint:  "your before_checkpoint callback did not complete successfully",
+		Why:   "the guest rejected the callback before the init snapshot was captured; its application log contains the HTTP or timeout cause",
+		Fix:   "• inspect `gregale logs <slug>` for the before_checkpoint failure\n• make the configured callback return 2xx within timeout_ms, then retry the deployment",
+	},
 	api.CodeStageReadinessFailed: {
 		Title: "Readiness probe failed",
 		Hint:  "the deployed VM's /healthz never returned 200",

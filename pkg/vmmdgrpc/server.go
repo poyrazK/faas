@@ -2042,11 +2042,16 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.
-// Manager errors are *fmt.Errorf-wrapped strings, so we synthesise an
-// Internal problem rather than risk leaking go-internals across the wire.
+// A rejected customer callback gets a closed code and safe description;
+// other Manager errors retain the generic Internal envelope.
 func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
+		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,
+			"Before checkpoint callback failed",
+			"the guest could not complete the configured callback before snapshot capture")
 	}
 	if p := api.AsProblem(err); p != nil {
 		return p

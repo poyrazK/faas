@@ -32,3 +32,14 @@ The guest callback is a required snapshot barrier. The existing extension
 notification is best effort and cannot provide this guarantee. Native KVM
 acceptance must prove a successful callback precedes the pause, a failed
 callback publishes no snapshot, and the guest is cleaned up after failure.
+
+## Failure diagnostics
+
+The guest's rejected callback ACK becomes the stable
+`before_checkpoint_failed` code across vmmd and schedd. Snapshot prime
+stores that code and customer guidance on the failed deployment. A later
+park retains its existing `park_snapshot_error` audit kind and uses
+`before_checkpoint_failed` as its closed reason. Guest logs keep the HTTP
+or timeout detail; deployment and audit records carry no callback response
+body or host path. Other snapshot failures retain their existing codes and
+reasons.

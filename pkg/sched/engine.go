@@ -6199,6 +6199,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	message := "snapshot prime failed: " + cause.Error()
 	if code == api.CodeStageSnapshotPrepareTimeout {
 		message = "snapshot prime failed: " + problem.Error()
+	} else if code == api.CodeBeforeCheckpointFailed {
+		// Keep the customer-facing deployment row independent of vmmd's
+		// transport wording and any guest-local callback detail.
+		message = "snapshot prime failed: before_checkpoint callback did not complete successfully"
 	}
 	if _, err := e.store.SetDeploymentFailedEx(markCtx, deploymentID, code, message, problem.Hint, problem.Why, problem.Fix, nil); err != nil {
 		e.log.Warn("sched: prime failure: mark deployment failed", "deployment", deploymentID, "err", err)
@@ -7398,7 +7402,11 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		// Audit-log it as park_snapshot_error (per the kind taxonomy) so
 		// "all park-snapshot failures in the last hour" is queryable.
 		e.ledger.Release(ins.ID)
-		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", "snapshot_failed")
+		reason := "snapshot_failed"
+		if problem := api.AsProblem(err); problem != nil && problem.Code == api.CodeBeforeCheckpointFailed {
+			reason = api.CodeBeforeCheckpointFailed
+		}
+		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", reason)
 		return fmt.Errorf("sched: park: snapshot %s: %w", ins.ID, err)
 	}
 	e.ledger.Release(ins.ID)

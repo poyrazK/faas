@@ -5,6 +5,7 @@ package fcvm
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -67,6 +68,9 @@ func TestTriggerBeforeCheckpointWire(t *testing.T) {
 			err = v.TriggerBeforeCheckpoint(context.Background(), Lease{Instance: instance})
 			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("TriggerBeforeCheckpoint() = %v, want %q", err, tc.want)
+			}
+			if tc.ack == beforeCheckpointHookAckFailed && !errors.Is(err, ErrBeforeCheckpointFailed) {
+				t.Fatalf("TriggerBeforeCheckpoint() = %v, want typed callback failure", err)
 			}
 			if typ := <-got; typ != beforeCheckpointHookMsg {
 				t.Fatalf("message type = %d", typ)
