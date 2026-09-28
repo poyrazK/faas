@@ -32308,6 +32308,7 @@ components:
             - cold_wake_rate_pct
             - daily_cost_cents
             - slo_burn_rate
+            - pre_auth_target_threshold
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -32332,7 +32333,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%.'
+          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. pre_auth_target_threshold supports webhook only.'
           default: webhook
           example: webhook
         state:
@@ -32353,7 +32354,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -32375,7 +32376,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. Omit to default to webhook.'
+          description: 'What to do when the rule fires. Omit to default to webhook. pre_auth_target_threshold supports webhook only.'
           default: webhook
           example: webhook
 
@@ -32388,7 +32389,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -32401,7 +32402,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'Replace the action. Omit to leave the existing action in place.'
+          description: 'Replace the action. Omit to leave the existing action in place. pre_auth_target_threshold supports webhook only.'
 
     RotateAlertRuleSecretResponse:
       description: 'rotate-secret response — returns the rotated_at timestamp + the masked constant.'
@@ -32477,7 +32478,7 @@ components:
         description: { type: string, example: "Fires when the rolling 15-minute error rate exceeds 2%." }
         category:
           type: string
-          enum: [availability, reliability, cost, deployment, infrastructure]
+          enum: [availability, reliability, cost, deployment, infrastructure, security]
           example: "reliability"
         metric: { type: string, example: "error_rate_pct" }
         comparison: { type: string, enum: [gt, gte, lt, lte], example: "gt" }
@@ -32512,7 +32513,8 @@ components:
           default: webhook
           description: |
             Action to run when the instantiated alert fires. Omit to
-            use the default webhook-only behavior.
+            use the default webhook-only behavior. The login_target_pressure
+            preset supports webhook only.
         cooldown_minutes:
           type: integer
           minimum: 5

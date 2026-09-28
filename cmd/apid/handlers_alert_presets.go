@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"time"
 
 	"filippo.io/age"
@@ -68,7 +69,7 @@ func isOperatorOnlyAlertPreset(name string) bool {
 }
 
 // listAlertPresets returns every row in alert_presets ordered by
-// category, name. The catalog is small (15 rows after O2) so no
+// category, name. The catalog is small (16 rows after the login-abuse preset) so no
 // pagination; the response is a flat slice.
 //
 // Plan-tier filtering: rows whose minimum_plan is above the
@@ -164,6 +165,9 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 	}
 	if req.WebhookURL == "" || req.WebhookSecret == "" {
 		return state.AlertRule{}, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required")
+	}
+	if req.Action != nil && !api.AlertRuleActionAllowedForMetric(preset.Metric, *req.Action) {
+		return state.AlertRule{}, api.ErrAlertPresetInvalid("login target alerts support webhook action only")
 	}
 	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
 		return state.AlertRule{}, prob
@@ -597,20 +601,21 @@ func buildTestAlertEvent(acct state.Account, app state.App, rule state.AlertRule
 	case "lt":
 		observed = preset.Threshold - margin
 	}
+	payload := map[string]any{
+		"preset": preset.Name, "metric": preset.Metric, "observed": observed,
+		"threshold": preset.Threshold, "window": preset.WindowSpec, "test": true,
+	}
+	if preset.Metric == string(state.AlertMetricPreAuthTargetThreshold) {
+		payload["observations_path"] = "/v1/apps/" + url.PathEscape(app.Slug) +
+			"/pre-auth-observations?range=" + url.QueryEscape(preset.WindowSpec)
+	}
 	return deliveryID, webhookout.Event{
 		ID:         deliveryID,
 		OccurredAt: time.Now().UTC(),
 		Rule:       preset.Name,
 		RuleName:   preset.DisplayName,
 		AppID:      app.Slug,
-		Payload: map[string]any{
-			"preset":    preset.Name,
-			"metric":    preset.Metric,
-			"observed":  observed,
-			"threshold": preset.Threshold,
-			"window":    preset.WindowSpec,
-			"test":      true,
-		},
+		Payload:    payload,
 	}, observed, nil
 }
 

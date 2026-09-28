@@ -192,6 +192,15 @@ var catalog = map[string]row{
 				"• check `gregale logs <slug>` and the error-rate breakdown for the failing status codes\n• correlate the start time with the latest deployment or dependency incident\n• roll back the deployment if the errors began immediately after release"
 		},
 	},
+	"login_target_pressure": {
+		Explanation: Explanation{
+			Title:   "Repeated login target failures",
+			Hint:    "several login targets crossed the configured failure threshold",
+			Why:     "the gateway observed repeated selected login failures for app-supplied opaque target digests during the alert window. Target counters use bounded shards, so collisions can create false signals. No account identifier or digest enters this alert",
+			Fix:     "• inspect the app's pre-auth observations for this window\n• compare the alert with your login logs before changing the route policy\n• keep account-level lockout decisions in your application",
+			DocsURL: "/docs/security#optional-pre-auth-source-limit",
+		},
+	},
 }
 
 // Decorate copies the catalog row for name into a fresh *Explanation.

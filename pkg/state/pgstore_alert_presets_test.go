@@ -13,7 +13,7 @@
 // surface here is the schema-vs-row mapping + the (category, name)
 // order. TestPg_AlertPresetCatalog_SeedMigration pins that the
 // migrations 00348, 20260905000000001, and the B3 alert-metrics seed
-// migration seed the 15 catalog rows.
+// migration seed the 16 catalog rows.
 //
 // pgtest.Open handles the skip when Postgres is unreachable, so
 // the test is safe to run on a dev box without /var/run/postgresql.
@@ -23,12 +23,39 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPGLoginTargetAlertPresetIsNotificationOnly(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	preset, err := store.AlertPresetByName(ctx, "login_target_pressure")
+	if err != nil || preset.Metric != "pre_auth_target_threshold" || preset.Category != "security" || !preset.EnabledInCatalog {
+		t.Fatalf("login target preset=%+v err=%v", preset, err)
+	}
+	acct, err := store.CreateAccount(ctx, "login-alert-"+uuid.NewString()+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	const insert = `INSERT INTO alert_rules
+		(account_id, name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret_sealed, action)
+		VALUES ($1, $2, 'pre_auth_target_threshold', 'gt', 5, '15m', 'https://example.com/hook', $3, $4)`
+	if _, err := pool.Exec(ctx, insert, acct.ID, "webhook only", []byte{0}, "webhook"); err != nil {
+		t.Fatalf("webhook-only rule rejected: %v", err)
+	}
+	_, err = pool.Exec(ctx, insert, acct.ID, "forbidden deployment action", []byte{0}, "rollback")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("deployment action error=%v, want check violation", err)
+	}
+}
+
 // TestPg_AlertPresetCatalog_ListOrdered pins the
 // (category, name) sort order of ListAlertPresets. After the seed
-// migration lands, the 15 catalog rows must come back in the order
+// migration lands, the 16 catalog rows must come back in the order
 // availability < cost < deployment < infrastructure < reliability, and
 // within each category by name.
 func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
@@ -55,10 +82,10 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
-	// safe-releases, B3, and O2 seeds ship 15 rows. The exact names may shift in future migrations; this
+	// safe-releases, B3, O2, and login-abuse seeds ship 16 rows. The exact names may shift in future migrations; this
 	// test pins the COUNT + the (category, name) ordering shape.
-	if len(got) != 15 {
-		t.Errorf("catalog row count = %d; want 15 (base + safe-releases + B3 + O2 seeds)", len(got))
+	if len(got) != 16 {
+		t.Errorf("catalog row count = %d; want 16 (base + safe-releases + B3 + O2 + login-abuse seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {

@@ -116,6 +116,7 @@ var AllowedAlertRuleMetrics = []string{
 	"cert_expiry_seconds",
 	"cert_issuance_failed",
 	"queue_depth",
+	"pre_auth_target_threshold",
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
@@ -167,6 +168,12 @@ var AllowedAlertRuleActions = []string{"webhook", "rollback", "demote", "promote
 // AllowedAlertRuleMetric / AllowedAlertRuleComparison / etc.
 func AllowedAlertRuleAction(v string) bool {
 	return containsString(AllowedAlertRuleActions, v)
+}
+
+// Pre-auth target observations can be triggered by attackers against someone
+// else's login. Their alert must never initiate a deployment action.
+func AlertRuleActionAllowedForMetric(metric, action string) bool {
+	return metric != "pre_auth_target_threshold" || action == "" || action == "webhook"
 }
 
 // CreateAlertRuleRequest is the POST /v1/apps/{slug}/alerts body.

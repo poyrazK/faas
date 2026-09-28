@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -63,6 +64,7 @@ const AlertSecretNamespace = "alert_rule"
 type Store interface {
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
+	AppByID(ctx context.Context, id string) (state.App, error)
 	CountFailedInvocationsSince(ctx context.Context, accountID, appID string, source state.InvocationSource, since time.Time) (int, error)
 	// Issue #1233 / ADR-123 — 5 new metric cases learn these:
 	CountFailedDeploymentsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
@@ -439,7 +441,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed)
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthObservationsPath(ctx, rule))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -601,6 +603,11 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 	// Empty string and the explicit 'webhook' default are the
 	// legacy path — ActionExecutor is not consulted.
 	if action == "" || action == state.AlertActionWebhook {
+		return
+	}
+	if rule.Metric == state.AlertMetricPreAuthTargetThreshold {
+		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
+		stats.ActionSkipped++
 		return
 	}
 	// Membership check against the closed vocabulary (mirrors
@@ -948,7 +955,19 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // the canonical map across both sides, we guarantee the dashboard
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
-func buildPayload(rule state.AlertRule, observed float64) ([]byte, map[string]any, error) {
+func (e *Evaluator) preAuthObservationsPath(ctx context.Context, rule state.AlertRule) string {
+	if rule.Metric != state.AlertMetricPreAuthTargetThreshold || rule.AppID == "" {
+		return ""
+	}
+	app, err := e.store.AppByID(ctx, rule.AppID)
+	if err != nil || app.AccountID != rule.AccountID || app.Slug == "" {
+		e.log.Warn("alerts: cannot resolve app for pre-auth observations link", "rule", rule.ID, "error", err)
+		return ""
+	}
+	return "/v1/apps/" + url.PathEscape(app.Slug) + "/pre-auth-observations?range=" + url.QueryEscape(string(rule.WindowSpec))
+}
+
+func buildPayload(rule state.AlertRule, observed float64, observationsPath string) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -961,6 +980,9 @@ func buildPayload(rule state.AlertRule, observed float64) ([]byte, map[string]an
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
+	}
+	if observationsPath != "" {
+		m["observations_path"] = observationsPath
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

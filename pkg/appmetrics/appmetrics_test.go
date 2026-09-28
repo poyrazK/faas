@@ -116,6 +116,7 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
 		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
 		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
+		{"pre_auth_target_threshold", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome="target_threshold"`, `[5m]`, "or vector(0)"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.metric, func(t *testing.T) {

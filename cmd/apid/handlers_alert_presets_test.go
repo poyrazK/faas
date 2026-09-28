@@ -45,6 +45,20 @@ func TestValidateAndDeriveEnablePresetOpts_ActionClosedSet(t *testing.T) {
 	}
 }
 
+func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
+	_, event, _, prob := buildTestAlertEvent(state.Account{ID: "a"},
+		state.App{Slug: "login-api"}, state.AlertRule{}, state.AlertPreset{
+			Name: "login_target_pressure", Metric: "pre_auth_target_threshold",
+			Comparison: "gt", Threshold: 5, WindowSpec: "15m",
+		})
+	if prob != nil {
+		t.Fatalf("build test alert: %v", prob)
+	}
+	if got := event.Payload["observations_path"]; got != "/v1/apps/login-api/pre-auth-observations?range=15m" {
+		t.Fatalf("observations_path=%v", got)
+	}
+}
+
 // TestBuildTestAlertEvent_PayloadDiscriminator pins the
 // load-bearing shape of the test-alert payload:
 //   - payload.test == true on EVERY event (the discriminator the

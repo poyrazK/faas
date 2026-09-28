@@ -15,7 +15,7 @@ export type AlertPresetResponse = {
   name: string;
   display_name: string;
   description: string;
-  category: 'availability' | 'reliability' | 'cost' | 'deployment' | 'infrastructure';
+  category: 'availability' | 'reliability' | 'cost' | 'deployment' | 'infrastructure' | 'security';
   metric: string;
   comparison: 'gt' | 'gte' | 'lt' | 'lte';
   threshold: number;

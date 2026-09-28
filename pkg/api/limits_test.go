@@ -193,7 +193,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 0, OrgPendingInvitationsMax: 0,
 			// ADR-045 (#396): alert rules — Free gated to 402, so the limits
 			// surface is 0/0 to fail-closed by default.
-			AlertRuleLimitPerApp: 0, AlertRuleLimitPerAccount: 0, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 0, AlertRuleLimitPerAccount: 0, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Free gets 5 rules
 			// (route|rewrite|redirect|headers|cors) but jwt/ip stay
 			// plan-gated to Hobby+. The limits surface reflects only
@@ -356,7 +356,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// need sealed-credential storage cost.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: false,
 			// ADR-045 (#396): Hobby gets 3 per-app and 10 per-account.
-			AlertRuleLimitPerApp: 3, AlertRuleLimitPerAccount: 10, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 3, AlertRuleLimitPerAccount: 10, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Hobby unlocks 25 rules
 			// AND the jwt|ip kinds. The plan-kind gate surface
 			// (EdgeRulesJWTAllowed / EdgeRulesIPAllowed) feeds the
@@ -513,7 +513,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// receiver / admin-endpoint use cases.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
 			// ADR-045 (#396): Pro gets 10 per-app and 30 per-account.
-			AlertRuleLimitPerApp: 10, AlertRuleLimitPerAccount: 30, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 10, AlertRuleLimitPerAccount: 30, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Pro unlocks 100 rules
 			// AND jwt|ip. Same surface as Hobby; the gate only
 			// flips the Free arm of the kind-switch.
@@ -673,7 +673,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #477 / ADR-079: Scale unlocks both bearer + basic.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
 			// ADR-045 (#396): Scale gets 25 per-app and 100 per-account.
-			AlertRuleLimitPerApp: 25, AlertRuleLimitPerAccount: 100, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 25, AlertRuleLimitPerAccount: 100, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Scale unlocks 500 rules
 			// (5× Pro) AND jwt|ip. The 500 cap is the practical upper
 			// bound the LRU + per-host matcher budget tolerates before

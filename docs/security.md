@@ -148,6 +148,19 @@ when the pre-auth policy mode is `enforce`. Each valid failure uses two central
 counter calls. If central coordination is unavailable, the signal uses
 replica-local counters and records `target_fallback`.
 
+Hobby and higher plans can opt into the `login_target_pressure` alert preset
+after configuring `observe_targets`. The preset sends a signed webhook when
+more than five aggregate `target_threshold` observations occur in 15 minutes;
+its default cooldown is one hour. The app owner can adjust the cloned alert
+rule's threshold and cooldown. The alert payload contains an
+`observations_path` such as
+`/v1/apps/my-app/pre-auth-observations?range=15m` for investigation. It never
+contains the login identifier or its digest. The signal is approximate, so
+review the observations and application login logs before changing policy.
+This preset and metric support webhook notifications only; neither can run a
+deployment action or lock an account. If Prometheus is unavailable, the alert
+rule reports a degraded source and does not fire.
+
 Before switching to `enforce`, read
 `GET /v1/apps/{slug}/pre-auth-observations?range=1h` (available on every
 plan). It returns one app policy, each configured route policy, each

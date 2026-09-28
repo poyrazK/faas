@@ -1,6 +1,6 @@
 from typing import Literal
 
-AlertPresetResponseCategory = Literal["availability", "cost", "deployment", "infrastructure", "reliability"]
+AlertPresetResponseCategory = Literal["availability", "cost", "deployment", "infrastructure", "reliability", "security"]
 
 ALERT_PRESET_RESPONSE_CATEGORY_VALUES: set[AlertPresetResponseCategory] = {
     "availability",
@@ -8,6 +8,7 @@ ALERT_PRESET_RESPONSE_CATEGORY_VALUES: set[AlertPresetResponseCategory] = {
     "deployment",
     "infrastructure",
     "reliability",
+    "security",
 }
 
 

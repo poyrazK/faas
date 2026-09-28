@@ -24,6 +24,7 @@ var AllowedAlertPresetCategories = []string{
 	"cost",
 	"deployment",
 	"infrastructure",
+	"security",
 }
 
 // AllowedAlertPresetMinimumPlans is the closed set for the

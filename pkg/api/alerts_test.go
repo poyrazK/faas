@@ -314,6 +314,22 @@ func TestClosedSetPredicates(t *testing.T) {
 	}
 }
 
+func TestPreAuthTargetAlertActionIsNotificationOnly(t *testing.T) {
+	for _, action := range []string{"", "webhook"} {
+		if !api.AlertRuleActionAllowedForMetric("pre_auth_target_threshold", action) {
+			t.Fatalf("pre-auth target alert rejected action %q", action)
+		}
+	}
+	for _, action := range []string{"rollback", "demote", "promote"} {
+		if api.AlertRuleActionAllowedForMetric("pre_auth_target_threshold", action) {
+			t.Fatalf("pre-auth target alert accepted deployment action %q", action)
+		}
+	}
+	if !api.AlertRuleActionAllowedForMetric("error_rate_pct", "rollback") {
+		t.Fatal("unrelated alert action rejected")
+	}
+}
+
 func TestAllowedClosedSets_OrderedAndNonEmpty(t *testing.T) {
 	// Pin order + non-empty for the closed sets the OpenAPI spec
 	// enumerates verbatim. Drift would break the spec.
