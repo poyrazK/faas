@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+var errJobManagedArtifactMismatch = errors.New("output artifact size or checksum mismatch")
+var errJobInputManifestInvalid = errors.New("invalid job input manifest")
 
 // obj://<app-id>/<bucket-id>/<key> is an account-scoped reference to an
 // existing Gregale object. UUIDs keep parsing unambiguous; object keys are
@@ -86,7 +90,7 @@ func (s *server) loadJobManagedObject(w http.ResponseWriter, r *http.Request, ac
 
 func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader, bucket, key, expectedDigest string) ([]api.JobRunInput, error) {
 	if len(expectedDigest) != len("sha256:")+64 || !strings.HasPrefix(expectedDigest, "sha256:") {
-		return nil, fmt.Errorf("input manifest sha256 is required")
+		return nil, fmt.Errorf("%w: sha256 is required", errJobInputManifestInvalid)
 	}
 	stream, err := reader.ReadObject(ctx, bucket, key)
 	if err != nil {
@@ -98,17 +102,17 @@ func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader
 		return nil, err
 	}
 	if int64(len(data)) > api.JobInputManifestMaxBytes {
-		return nil, fmt.Errorf("input manifest exceeds %d bytes", api.JobInputManifestMaxBytes)
+		return nil, fmt.Errorf("%w: exceeds %d bytes", errJobInputManifestInvalid, api.JobInputManifestMaxBytes)
 	}
 	if fmt.Sprintf("sha256:%x", sha256.Sum256(data)) != expectedDigest {
-		return nil, fmt.Errorf("input manifest checksum mismatch")
+		return nil, fmt.Errorf("%w: checksum mismatch", errJobInputManifestInvalid)
 	}
 	var inputs []api.JobRunInput
 	if err := json.Unmarshal(data, &inputs); err != nil {
-		return nil, fmt.Errorf("invalid input manifest JSON: %w", err)
+		return nil, fmt.Errorf("%w: invalid JSON: %v", errJobInputManifestInvalid, err)
 	}
 	if len(inputs) == 0 {
-		return nil, fmt.Errorf("input manifest is empty")
+		return nil, fmt.Errorf("%w: empty input set", errJobInputManifestInvalid)
 	}
 	return inputs, nil
 }
@@ -128,7 +132,7 @@ func verifyJobManagedArtifact(ctx context.Context, reader objectstorage.ObjectRe
 		return 0, closeErr
 	}
 	if size != artifact.SizeBytes || fmt.Sprintf("sha256:%x", hasher.Sum(nil)) != artifact.SHA256 {
-		return 0, fmt.Errorf("output artifact size or checksum mismatch")
+		return 0, errJobManagedArtifactMismatch
 	}
 	return size, nil
 }
@@ -193,8 +197,12 @@ func (s *server) downloadJobArtifact(w http.ResponseWriter, r *http.Request, acc
 	}
 	size, err := verifyJobManagedArtifact(r.Context(), reader, bucket.PhysicalName, key, *artifact)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Output artifact verification failed", "the object bytes differ from the task's output manifest"))
+		if errors.Is(err, errJobManagedArtifactMismatch) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Output artifact verification failed", "the object bytes differ from the task's output manifest"))
+		} else {
+			bucketProblem(w, err)
+		}
 		return
 	}
 	sign := objectstorage.SignRequest{Method: http.MethodGet, Key: key, ExpiresIn: api.JobArtifactDownloadURLExpiresSec}

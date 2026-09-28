@@ -1,5 +1,6 @@
 // Package jobresult defines the bounded metadata a job can publish when its
-// command exits. Artifact bytes stay in customer-managed object storage.
+// command exits. Artifact bytes stay in object storage, including Gregale
+// managed buckets when the manifest uses an obj:// URI.
 package jobresult
 
 import (

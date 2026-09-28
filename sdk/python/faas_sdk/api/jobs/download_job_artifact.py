@@ -40,10 +40,20 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
         return response_401
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
@@ -54,6 +64,16 @@ def _parse_response(
         response_409 = Problem.from_dict(response.json())
 
         return response_409
+
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
+
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -83,7 +103,7 @@ def sync_detailed(
     """Verify a Gregale managed result and obtain a download URL.
 
      Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then
-    returns a 5-minute signed GET URL.
+    returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
 
     Args:
         name (str):
@@ -124,7 +144,7 @@ def sync(
     """Verify a Gregale managed result and obtain a download URL.
 
      Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then
-    returns a 5-minute signed GET URL.
+    returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
 
     Args:
         name (str):
@@ -160,7 +180,7 @@ async def asyncio_detailed(
     """Verify a Gregale managed result and obtain a download URL.
 
      Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then
-    returns a 5-minute signed GET URL.
+    returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
 
     Args:
         name (str):
@@ -199,7 +219,7 @@ async def asyncio(
     """Verify a Gregale managed result and obtain a download URL.
 
      Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then
-    returns a 5-minute signed GET URL.
+    returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
 
     Args:
         name (str):

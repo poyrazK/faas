@@ -63,9 +63,9 @@ func PresignObjectRead(ctx context.Context, provider Provider, bucket, method, k
 }
 
 // ObjectReader is an optional provider capability used by operator-owned
-// access-log collectors. It is deliberately separate from Provider so a
-// storage driver does not have to expose raw object bodies to customer API
-// code merely to support usage accounting.
+// access-log collectors and the API's verified job artifact paths. It is
+// deliberately separate from Provider so a storage driver does not have to
+// expose raw object bodies merely to support usage accounting.
 type ObjectReader interface {
 	ReadObject(context.Context, string, string) (io.ReadCloser, error)
 }

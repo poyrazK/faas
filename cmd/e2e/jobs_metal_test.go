@@ -22,6 +22,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 // TestJobsE2E_HappyPath dispatches a Hobby job with 5 tasks of
@@ -45,6 +47,98 @@ func TestJobsE2E_HappyPath(t *testing.T) {
 	run := h.MustDispatchRun(t, job, 5)
 	h.MustWaitRunTerminal(t, run, "succeeded", 10*time.Minute)
 	h.MustAssertTaskExitCodes(t, run, 0)
+}
+
+// TestJobsE2E_RunInputOutputContract crosses the actual guest exit channel:
+// run arguments and input identity reach the image, and its structured output
+// manifest and attempt record return through schedd to the customer API.
+func TestJobsE2E_RunInputOutputContract(t *testing.T) {
+	h := newMetalHarness(t)
+	defer h.Close()
+	h.MustSeedFakeImage(t, "busybox:job-contract")
+	job := h.MustCreateJob(t, "contract-job", "busybox:job-contract", []string{"/job-fixture", "success"}, 512)
+	h.MustWaitJobImageReady(t, job, 5*time.Minute)
+	parallelism, retryMax, timeout := 1, 0, 120
+	arguments := []string{"contract"}
+	inputs := []api.JobRunInput{{ID: "first", Ref: "data/first"}, {ID: "second", Ref: "data/second"}}
+	run := h.MustDispatchRunWithRequest(t, job, api.CreateJobRunRequest{
+		Parallelism: &parallelism, RetryMax: &retryMax, TaskTimeoutSec: &timeout,
+		Arguments: &arguments, Inputs: inputs, EnvOverrides: map[string]string{"CONTRACT_MARKER": "run"},
+	})
+	if run.Tasks != 2 || run.Parallelism != 1 || run.InputDigest == "" ||
+		len(run.Command) != 2 || run.Command[1] != "contract" ||
+		run.ImageResolvedDigestSnapshot == "" || run.EffectiveEnvSnapshot["CONTRACT_MARKER"] != "run" {
+		t.Fatalf("run contract snapshot = %+v", run)
+	}
+	h.MustWaitRunTerminal(t, run, "succeeded", 10*time.Minute)
+	for index, input := range inputs {
+		task, ok := findTask(h.listTasks(t, run), index)
+		if !ok || task.Status != "succeeded" || task.Attempt != 1 || task.InputID != input.ID || task.InputRef != input.Ref {
+			t.Fatalf("task %d = %+v, found %v", index, task, ok)
+		}
+		var manifest jobresult.Manifest
+		if err := json.Unmarshal(task.OutputManifest, &manifest); err != nil || manifest.Version != jobresult.Version || len(manifest.Artifacts) != 1 {
+			t.Fatalf("task %d output manifest = %+v, %v", index, manifest, err)
+		}
+		artifact := manifest.Artifacts[0]
+		result := []byte(input.ID + ":" + input.Ref)
+		if artifact.Name != "result" || artifact.URI != "s3://job-contract-results/"+input.ID+".bin" ||
+			artifact.SizeBytes != int64(len(result)) || artifact.SHA256 != fmt.Sprintf("sha256:%x", sha256.Sum256(result)) {
+			t.Fatalf("task %d artifact = %+v", index, artifact)
+		}
+		path := fmt.Sprintf("/v1/jobs/%s/runs/%s/tasks/%d/attempts", job.Name, run.ID, index)
+		raw, status, _ := h.request(t, h.defaultKey, http.MethodGet, path, nil)
+		var attempts api.ListJobTaskAttemptsResponse
+		decodeOK(t, raw, status, &attempts, http.MethodGet, path)
+		if len(attempts.Attempts) != 1 || attempts.Attempts[0].Status != "succeeded" ||
+			attempts.Attempts[0].InputID != input.ID || len(attempts.Attempts[0].OutputManifest) == 0 {
+			t.Fatalf("task %d attempts = %+v", index, attempts)
+		}
+	}
+}
+
+// TestJobsE2E_PartialCompletionReplay proves that a successful partition
+// remains inspectable when a sibling fails, and replay selects only the
+// failed input with a durable source index and fresh execution record.
+func TestJobsE2E_PartialCompletionReplay(t *testing.T) {
+	h := newMetalHarness(t)
+	defer h.Close()
+	h.MustSeedFakeImage(t, "busybox:job-partial")
+	job := h.MustCreateJob(t, "partial-job", "busybox:job-partial", []string{"/job-fixture", "contract"}, 512)
+	h.MustWaitJobImageReady(t, job, 5*time.Minute)
+	parallelism, retryMax := 1, 0
+	run := h.MustDispatchRunWithRequest(t, job, api.CreateJobRunRequest{
+		Parallelism: &parallelism, RetryMax: &retryMax, FailurePolicy: "continue",
+		Inputs:       []api.JobRunInput{{ID: "good", Ref: "data/good"}, {ID: "fail", Ref: "data/fail"}},
+		EnvOverrides: map[string]string{"CONTRACT_MARKER": "run"},
+	})
+	h.MustWaitRunTerminal(t, run, "any-terminal", 10*time.Minute)
+	if run.TasksSucceeded != 1 || run.TasksFailed != 1 {
+		t.Fatalf("partial run counters = %+v", run)
+	}
+	tasks := h.listTasks(t, run)
+	good, goodFound := findTask(tasks, 0)
+	failed, failedFound := findTask(tasks, 1)
+	if !goodFound || !failedFound || good.Status != "succeeded" || len(good.OutputManifest) == 0 ||
+		failed.Status != "failed" || failed.InputID != "fail" || len(failed.OutputManifest) != 0 {
+		t.Fatalf("partial input outcomes = %+v", tasks)
+	}
+	path := fmt.Sprintf("/v1/jobs/%s/runs/%s/replay-failed", job.Name, run.ID)
+	raw, status, _ := h.request(t, h.defaultKey, http.MethodPost, path, nil)
+	var replay api.JobRunResponse
+	decodeOK(t, raw, status, &replay, http.MethodPost, path)
+	if replay.SourceRunID != run.ID || replay.Tasks != 1 || replay.ExecutionClass != "standard" {
+		t.Fatalf("replay run = %+v", replay)
+	}
+	h.mu.Lock()
+	h.runNames[replay.ID] = job.Name
+	h.mu.Unlock()
+	h.MustWaitRunTerminal(t, &replay, "any-terminal", 10*time.Minute)
+	replayed, ok := findTask(h.listTasks(t, &replay), 0)
+	if !ok || replayed.InputID != "fail" || replayed.SourceTaskIndex == nil ||
+		*replayed.SourceTaskIndex != 1 || replayed.Status != "failed" || replayed.Attempt != 1 {
+		t.Fatalf("replayed input = %+v, found %v", replayed, ok)
+	}
 }
 
 // TestJobsE2E_PrivateRegistry pulls the OCI image through the real imaged

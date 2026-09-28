@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http/httptest"
 	"regexp"
 	"strconv"
@@ -20,11 +22,21 @@ import (
 type fakeObjectProvider struct {
 	created              []string
 	accessed             []string
+	objects              map[string][]byte
 	createErr, deleteErr error
 	multipartErr         error
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
 	multipartAborted     []string
+}
+
+func (p *fakeObjectProvider) ReadObject(_ context.Context, b, key string) (io.ReadCloser, error) {
+	p.accessed = append(p.accessed, b)
+	data, ok := p.objects[key]
+	if !ok {
+		return nil, objectstorage.ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func (p *fakeObjectProvider) CreateBucket(_ context.Context, b string) error {

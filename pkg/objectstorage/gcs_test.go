@@ -28,6 +28,8 @@ type fakeGCSStore struct {
 	object                                                    gcsObjectState
 	copyObjectErr                                             error
 	copySourceBucket, copyDestinationBucket                   string
+	readBody                                                  string
+	readErr                                                   error
 	reconciled                                                bool
 }
 
@@ -56,6 +58,13 @@ func (s *fakeGCSStore) DeleteObject(context.Context, string, string) error {
 	return s.deleteObjectErr
 }
 
+func (s *fakeGCSStore) ReadObject(context.Context, string, string) (io.ReadCloser, error) {
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	return io.NopCloser(strings.NewReader(s.readBody)), nil
+}
+
 func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectState, error) {
 	return s.object, nil
 }
@@ -79,6 +88,31 @@ func testGCS(endpoint string, store gcsStore) *GCS {
 		origins: []string{"https://console.example.test"},
 		sign:    func(context.Context, []byte) ([]byte, error) { return []byte("test-signature"), nil },
 		now:     func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
+	}
+}
+
+func TestGCSReadObjectForVerifiedJobArtifacts(t *testing.T) {
+	store := &fakeGCSStore{readBody: "job output"}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	reader, ok := Provider(provider).(ObjectReader)
+	if !ok {
+		t.Fatal("GCS does not expose verified object reads")
+	}
+	stream, err := reader.ReadObject(context.Background(), "bucket", "outputs/result.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(stream)
+	closeErr := stream.Close()
+	if err != nil || closeErr != nil || string(data) != store.readBody {
+		t.Fatalf("GCS read = %q, read error %v, close error %v", data, err, closeErr)
+	}
+	store.readErr = storage.ErrObjectNotExist
+	if _, err := reader.ReadObject(context.Background(), "bucket", "outputs/missing.bin"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing GCS object = %v, want not found", err)
+	}
+	if _, err := reader.ReadObject(context.Background(), "bucket", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid GCS key = %v, want invalid", err)
 	}
 }
 

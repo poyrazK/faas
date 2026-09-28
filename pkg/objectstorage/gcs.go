@@ -215,6 +215,10 @@ func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) e
 	return s.client.Bucket(bucket).Object(key).Delete(ctx)
 }
 
+func (s *googleGCSStore) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	return s.client.Bucket(bucket).Object(key).NewReader(ctx)
+}
+
 func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
 	attrs, err := gcsMetadataForObject(metadata)
 	if err != nil {
@@ -376,6 +380,25 @@ func (p *GCS) DeleteObject(ctx context.Context, bucket, key string) error {
 		return nil
 	}
 	return normalizeGCS(err)
+}
+
+// ReadObject supports verified job inputs and outputs without buffering the
+// object in the API process. The reader is closed by the caller.
+func (p *GCS) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	if !ValidKey(key) {
+		return nil, ErrInvalid
+	}
+	reader, ok := p.store.(interface {
+		ReadObject(context.Context, string, string) (io.ReadCloser, error)
+	})
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	stream, err := reader.ReadObject(ctx, bucket, key)
+	if err != nil {
+		return nil, normalizeGCS(err)
+	}
+	return stream, nil
 }
 
 func (p *GCS) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {

@@ -1181,7 +1181,11 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 		}
 		req.Inputs, err = readJobInputManifest(r.Context(), reader, bucket.PhysicalName, key, req.InputManifestSHA256)
 		if err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid input manifest", err.Error()))
+			if errors.Is(err, errJobInputManifestInvalid) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid input manifest", err.Error()))
+			} else {
+				bucketProblem(w, err)
+			}
 			return
 		}
 	}

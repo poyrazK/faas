@@ -80,6 +80,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -110,7 +115,9 @@ def sync_detailed(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
@@ -158,7 +165,9 @@ def sync(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
@@ -201,7 +210,9 @@ async def asyncio_detailed(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
@@ -247,7 +258,9 @@ async def asyncio(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):

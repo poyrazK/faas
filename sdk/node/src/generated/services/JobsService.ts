@@ -368,7 +368,9 @@ export class JobsService {
    * `tasks` clamped against Plan.JobMaxTasksPerRun
    * (Hobby=100, Pro=1000, Scale=5000). Per-account
    * JobConcurrentPerAccount gate refuses if too many
-   * live job_task instances exist.
+   * live job_task instances exist. External input manifests are read from
+   * account-authorized obj:// storage; missing objects return 404 and
+   * unavailable storage returns 503.
    *
    * @returns JobRunResponse The new run + fan-out.
    * @throws ApiError
@@ -411,6 +413,10 @@ export class JobsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -683,7 +689,7 @@ export class JobsService {
   }
   /**
    * Verify a Gregale managed result and obtain a download URL.
-   * Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then returns a 5-minute signed GET URL.
+   * Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
    * @returns JobArtifactDownloadResponse Verified artifact and download capability.
    * @throws ApiError
    */
@@ -720,9 +726,16 @@ export class JobsService {
         'artifact': artifact,
       },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

@@ -285,8 +285,12 @@ func (h *MetalJobHarness) MustUpdateJob(t *testing.T, job *api.JobResponse, mut 
 }
 
 func (h *MetalJobHarness) MustDispatchRun(t *testing.T, job *api.JobResponse, tasks int) *api.JobRunResponse {
+	return h.MustDispatchRunWithRequest(t, job, api.CreateJobRunRequest{Tasks: tasks})
+}
+
+func (h *MetalJobHarness) MustDispatchRunWithRequest(t *testing.T, job *api.JobResponse, request api.CreateJobRunRequest) *api.JobRunResponse {
 	path := "/v1/jobs/" + job.Name + "/runs"
-	raw, status, _ := h.request(t, h.defaultKey, http.MethodPost, path, api.CreateJobRunRequest{Tasks: tasks})
+	raw, status, _ := h.request(t, h.defaultKey, http.MethodPost, path, request)
 	var out api.JobRunResponse
 	decodeOK(t, raw, status, &out, http.MethodPost, path)
 	h.mu.Lock()

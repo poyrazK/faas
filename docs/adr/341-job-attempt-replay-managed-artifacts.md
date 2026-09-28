@@ -36,6 +36,9 @@ path. Flexible jobs had no dedicated queue and expiry measurements.
    exact bytes must match the supplied SHA-256. Entry order assigns task
    indexes. Plan task limits and existing uniqueness/field checks still apply.
    The run retains both the source URI/checksum and the canonical input digest.
+   The built-in S3 and GCS providers expose streamed reads for this path.
+   Missing input objects return 404; malformed or mismatched manifests return
+   400.
 5. A successful task's `obj://` output artifact can be requested through a
    managed download endpoint. The endpoint checks bucket read access, streams
    the current object to verify size and SHA-256, accounts for the URL, then
@@ -56,4 +59,5 @@ Apply the attempt, snapshot, and metering migrations before deploying API or
 scheduler code. Regenerate the Node and Python SDKs from `api/openapi.yaml`;
 update the Go SDK alongside the DTO. Run PostgreSQL, API, scheduler, and SDK
 tests. The native Linux KVM job lifecycle and recovery drill remain release
-gates.
+gates. Run `RUN_REGEX='^TestJobsE2E_(RunInputOutputContract|PartialCompletionReplay)$' make test-metal`
+and `make leakcheck` on the native host before promoting this contract.

@@ -133,6 +133,8 @@ retry policy. For an `obj://` artifact, call
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check
 the downloaded checksum too, because an object can change after verification.
+Missing objects return 404; an object whose current bytes disagree with the
+manifest returns 422.
 External `s3://` and `gs://` artifacts remain customer-managed references.
 
 Job definitions cannot be edited or deleted while a run has queued or claimed
