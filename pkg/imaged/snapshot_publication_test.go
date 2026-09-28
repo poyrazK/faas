@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -13,6 +14,24 @@ import (
 // Hides the cache listing capability: cleanup must use recorded keys even
 // when none of the compute-node blobs are cached on the control plane.
 type snapshotUnlistedBackend struct{ storage.StorageBackend }
+
+type snapshotPolicyRaceStore struct {
+	*state.MemStore
+	accountID string
+	appID     string
+	inserted  bool
+}
+
+func (s *snapshotPolicyRaceStore) CreateSnapshot(ctx context.Context, snap state.Snapshot) (state.Snapshot, error) {
+	if !s.inserted {
+		s.inserted = true
+		if err := s.MemStore.UpsertAppSecretWithClassInScope(ctx, s.accountID, s.appID, api.DefaultEnvScope,
+			"SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
+			return state.Snapshot{}, err
+		}
+	}
+	return s.MemStore.CreateSnapshot(ctx, snap)
+}
 
 func TestSnapshotPublicationRejectsRAMMismatchAndCleansCandidate(t *testing.T) {
 	ctx := context.Background()
@@ -47,6 +66,101 @@ func TestSnapshotPublicationRejectsRAMMismatchAndCleansCandidate(t *testing.T) {
 		if err == nil {
 			_ = rc.Close()
 			t.Fatalf("RAM-incompatible snapshot artifact remains: %s", part)
+		}
+		if !storage.IsNotFound(err) {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSnapshotPublicationRejectsEphemeralSecretAndCleansCandidate(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "snapshot-ephemeral@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "snapshot-ephemeral", RAMMB: 256, MaxConcurrency: 3, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertAppSecretWithClassInScope(ctx, acct.ID, app.ID, api.DefaultEnvScope,
+		"SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
+		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
+	}
+	be := mustLocalStorage(t, t.TempDir())
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "ephemeral")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err = h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID, StorageKey: key, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ephemeral secrets") {
+		t.Fatalf("handleSnapshotWritten error = %v, want ephemeral-secret rejection", err)
+	}
+	if _, err := store.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ephemeral-secret snapshot was published: %v", err)
+	}
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		rc, err := be.Get(ctx, part)
+		if err == nil {
+			_ = rc.Close()
+			t.Fatalf("ephemeral-secret snapshot artifact remains: %s", part)
+		}
+		if !storage.IsNotFound(err) {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	acct, err := mem.CreateAccount(ctx, "snapshot-policy-race@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := mem.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "snapshot-policy-race", RAMMB: 256, MaxConcurrency: 3, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := mem.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &snapshotPolicyRaceStore{MemStore: mem, accountID: acct.ID, appID: app.ID}
+	be := mustLocalStorage(t, t.TempDir())
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "policy-race")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err = h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID, StorageKey: key, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ephemeral secrets") {
+		t.Fatalf("handleSnapshotWritten error = %v, want reclassification rejection", err)
+	}
+	if _, err := mem.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("snapshot row survived retention-policy race: %v", err)
+	}
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		rc, err := be.Get(ctx, part)
+		if err == nil {
+			_ = rc.Close()
+			t.Fatalf("raced ephemeral snapshot artifact remains: %s", part)
 		}
 		if !storage.IsNotFound(err) {
 			t.Fatal(err)

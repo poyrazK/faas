@@ -439,6 +439,33 @@ func TestCmdSecretsSetExplainsDefaultNextColdWake(t *testing.T) {
 	}
 }
 
+func TestCmdSecretsSetSendsEphemeralClass(t *testing.T) {
+	var body api.PutAppSecretRequest
+	sink := &secretsSink{
+		onPut: func(raw []byte) (int, any) {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Errorf("decode secret request: %v", err)
+			}
+			return http.StatusOK, nil
+		},
+	}
+	server := httptest.NewServer(sink)
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "SESSION_TOKEN=value", "--class", api.SecretClassEphemeral}); code != 0 {
+		t.Fatalf("cmdSecrets set ephemeral = %d, want 0", code)
+	}
+	if body.Value != "value" || body.SecretClass != api.SecretClassEphemeral {
+		t.Fatalf("secret request = %+v", body)
+	}
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "SESSION_TOKEN=value", "--class", "temporary"}); code != 1 {
+		t.Fatalf("invalid --class exit = %d, want 1", code)
+	}
+}
+
 func TestCmdSecretsSetRestartUsesFreshRestartAfterWrites(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

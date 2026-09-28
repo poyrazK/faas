@@ -33864,11 +33864,12 @@ components:
     # ─── Secrets ──────────────────────────────────────────────────────────
 
     PutAppSecretRequest:
-      description: "Set a secret: key name and plaintext (sealed at rest immediately, plaintext discarded after seal)."
+      description: "Set a secret: key name and plaintext (sealed at rest immediately, plaintext discarded after seal). secret_class is optional; omission preserves an existing class and defaults new rows to persistent. Ephemeral values prevent future init/warm captures for the app scope; older artifacts age out under normal snapshot garbage collection."
       type: object
       required: [value]
       properties:
         value: { type: string, description: 'Plaintext. Sealed server-side; never persisted in plaintext.' , example: "sk_test_secret_value"}
+        secret_class: { type: string, enum: [persistent, ephemeral], description: "Optional snapshot-retention policy. Ephemeral secrets cause their runtime VM to be destroyed instead of creating warm or init snapshots when parked; new requests cold-boot." }
 
     RotateAppSecretRequest:
       description: |
@@ -33901,7 +33902,7 @@ components:
     AppSecretResponse:
       description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row."
       type: object
-      required: [key, scope, created_at, updated_at, delivery_version, delivery_status]
+      required: [key, scope, secret_class, created_at, updated_at, delivery_version, delivery_status]
       properties:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
@@ -33914,6 +33915,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
           maxLength: 40
           example: "prod"
+        secret_class: { type: string, enum: [persistent, ephemeral], description: "Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         kid: { type: string, description: "age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before migration 00166.", example: "age1q..." }
@@ -33979,7 +33981,7 @@ components:
         a second lookup. Value is NEVER echoed (same posture as
         AppSecretResponse).
       type: object
-      required: [scope, key, created_at, updated_at, delivery_version, delivery_status]
+      required: [scope, key, secret_class, created_at, updated_at, delivery_version, delivery_status]
       properties:
         scope:
           type: string
@@ -33987,6 +33989,7 @@ components:
           maxLength: 40
           example: "staging"
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
+        secret_class: { type: string, enum: [persistent, ephemeral], description: "Retention class applied to the named secret in this scope; ephemeral disables init and warm captures." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         kid: { type: string, description: "age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before migration 00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-reference.", example: "age1q..." }
@@ -35479,7 +35482,7 @@ components:
         env-scope the row belongs to; the account-wide list
         crosses scopes.
       type: object
-      required: [app_id, app_slug, key, scope, ciphertext, created_at, updated_at]
+      required: [app_id, app_slug, key, scope, secret_class, ciphertext, created_at, updated_at]
       properties:
         app_id:
           type: string
@@ -35505,6 +35508,12 @@ components:
           maxLength: 40
           x-since: "2026-08"
           x-issue: "adr-092"
+        secret_class:
+          type: string
+          enum: [persistent, ephemeral]
+          description: "Retention treatment for this envelope: persistent values may be present in VM state, while ephemeral values prohibit init and warm snapshot publication for the app scope."
+          x-since: "2026-09"
+          x-issue: "secrets-ephemeral"
         ciphertext:
           type: string
           description: "base64 age-sealed envelope. Plaintext NEVER appears on this wire."

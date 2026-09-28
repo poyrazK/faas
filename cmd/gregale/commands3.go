@@ -7,7 +7,7 @@
 //
 // Operations:
 //   gregale secrets list   --app <slug> [--scope <name>]
-//   gregale secrets set    --app <slug> KEY=VALUE [--from-stdin] [--scope <name>]
+//   gregale secrets set    --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--class persistent|ephemeral]
 //   gregale secrets unset  --app <slug> KEY [--scope <name>] [--wait-for-ack [--timeout 2m]]
 //
 // `--from-stdin` reads the value from stdin (one pair per line, KEY=VALUE)
@@ -309,6 +309,7 @@ func secretsSet(args []string) int {
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
+	secretClass := fs.String("class", "", "snapshot retention (persistent or ephemeral; omitted updates preserve the class)")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
@@ -319,7 +320,11 @@ func secretsSet(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>] [--restart]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>] [--class <persistent|ephemeral>] [--restart]", "secrets")
+		return 1
+	}
+	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
+		fmt.Fprintln(os.Stderr, "secret set: --class must be persistent or ephemeral")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -385,7 +390,7 @@ func secretsSet(args []string) int {
 	}
 
 	for _, p := range pairs {
-		if err := client.SetSecretWithScope(context.Background(), *app, p.Key, p.Value, *scope); err != nil {
+		if err := client.SetSecretWithScopeAndClass(context.Background(), *app, p.Key, p.Value, *scope, *secretClass); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
 		PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(*scope))
@@ -437,7 +442,7 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			break
 		}
 		switch {
-		case a == "--app" || a == "-app" || a == "--scope" || a == "-scope":
+		case a == "--app" || a == "-app" || a == "--scope" || a == "-scope" || a == "--class" || a == "-class":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("%s requires a value", a)
 			}
@@ -451,6 +456,7 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			i++
 		case strings.HasPrefix(a, "--app=") || strings.HasPrefix(a, "-app=") ||
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
+			strings.HasPrefix(a, "--class=") || strings.HasPrefix(a, "-class=") ||
 			strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "-timeout=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
 			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||

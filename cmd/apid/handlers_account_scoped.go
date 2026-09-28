@@ -133,14 +133,15 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 	out := make([]api.AccountAppSecretResponse, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, api.AccountAppSecretResponse{
-			AppID:      r.AppID,
-			AppSlug:    r.AppSlug,
-			Key:        r.Key,
-			Scope:      r.Scope,
-			Ciphertext: base64.RawURLEncoding.EncodeToString(r.Ciphertext),
-			ValueHash:  r.ValueHash,
-			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
-			UpdatedAt:  r.UpdatedAt.UTC().Format(time.RFC3339),
+			AppID:       r.AppID,
+			AppSlug:     r.AppSlug,
+			Key:         r.Key,
+			Scope:       r.Scope,
+			SecretClass: r.SecretClass,
+			Ciphertext:  base64.RawURLEncoding.EncodeToString(r.Ciphertext),
+			ValueHash:   r.ValueHash,
+			CreatedAt:   r.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt:   r.UpdatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	var nextBefore string

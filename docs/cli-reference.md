@@ -2772,15 +2772,16 @@ gregale secrets list --app my-api --scope __all__
 
 ### secrets set
 
-Set a sealed secret
+Set a sealed secret; ephemeral values disable VM snapshots for the scope
 
-`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart]`
+`gregale secrets set [<KEY=VALUE>...] --app <slug> [--from-stdin] [--scope <SCOPE>] [--class <CLASS>] [--restart]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
+| `--class <CLASS>` | retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class | one of `persistent` · `ephemeral` |
 | `--restart` | restart the app and apply updated secrets now |  |
 
 Examples:
@@ -2789,6 +2790,7 @@ Examples:
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
 printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemeral
 ```
 
 ### secrets unset

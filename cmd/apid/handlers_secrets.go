@@ -134,7 +134,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 	out := make([]api.AppSecretResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, api.AppSecretResponse{
-			Key: row.Key, Scope: row.Scope,
+			Key: row.Key, Scope: row.Scope, SecretClass: row.SecretClass,
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: row.Kid, ValueHash: row.ValueHash,
 			DeliveryVersion: row.DeliveryVersion, DeliveredVersion: row.DeliveredVersion,
@@ -179,7 +179,7 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 	bucket := map[string][]api.ScopedAppSecretResponse{}
 	for _, r := range rows {
 		bucket[r.Scope] = append(bucket[r.Scope], api.ScopedAppSecretResponse{
-			Scope: r.Scope, Key: r.Key,
+			Scope: r.Scope, Key: r.Key, SecretClass: r.SecretClass,
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid: r.Kid, ValueHash: r.ValueHash,
 			DeliveryVersion: r.DeliveryVersion, DeliveredVersion: r.DeliveredVersion,
@@ -307,7 +307,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.sealAndPersist(r.Context(), acct, app, scope, key, req.Value, limits); prob != nil {
+	if prob := s.sealAndPersist(r.Context(), acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -336,10 +336,11 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// the secret key (not the value); data.scope is the env-scope
 	// the row was written to (ADR-092 PR-B).
 	s.audit.Emit(r.Context(), "secret.set", &acct.ID, map[string]any{
-		"app_id":                app.ID,
-		"name":                  key,
-		"scope":                 scope,
-		"snapshots_invalidated": invalidated,
+		"app_id":                 app.ID,
+		"name":                   key,
+		"scope":                  scope,
+		"secret_class_requested": req.SecretClass,
+		"snapshots_invalidated":  invalidated,
 	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
@@ -379,7 +380,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 // the env-disabled path; calling sealAndPersist without a host
 // HMAC key is a misconfiguration that must surface as a 5xx, not
 // a silently empty value_hash.
-func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits) *api.Problem {
+func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value, secretClass string, limits api.Limits) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
@@ -453,7 +454,7 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 	// ADR-117 PR-C: value_hash is the value-hash discriminator the
 	// env-diff endpoint reads. Stamped alongside ciphertext so the
 	// row is usable by the diff surface immediately.
-	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
+	if err := s.store.UpsertAppSecretWithClassInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, secretClass, ciphertext); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			return s.managedSecretConflictProblem(c, acct.ID, app.ID, scope, key)
 		}
