@@ -4599,6 +4599,12 @@ func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPerc
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	for _, other := range m.deployments {
+		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
+			(other.RolloutState == "pending" || other.RolloutState == "rolling_out") {
+			return Deployment{}, ErrTrafficChangeDuringCanary
+		}
+	}
 	if len(expectedServingID) > 0 {
 		servingID := ""
 		servingCount := 0

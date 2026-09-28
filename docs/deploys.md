@@ -189,3 +189,7 @@ dwell time. APID rechecks the persisted stage timestamp against the database
 clock in the same transaction that changes traffic, so a worker clock skew or
 premature request cannot skip the observation window. Customer-requested
 manual stage advances remain immediate.
+
+While a canary is pending or rolling out, the generic traffic-split endpoint
+returns `409 traffic_change_during_canary`. Advance or recover the rollout
+before applying a separate traffic split.

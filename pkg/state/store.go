@@ -155,6 +155,11 @@ var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 // different sole 100% serving deployment while holding the live-row locks.
 var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
 
+// ErrTrafficChangeDuringCanary means an ordinary traffic-split update tried
+// to change traffic while the app has a live, in-flight managed canary. The
+// rollout state machine owns traffic until the canary completes or aborts.
+var ErrTrafficChangeDuringCanary = errors.New("state: traffic change blocked during active canary")
+
 // sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
 // dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
 func sameDeploymentID(a, b string) bool {
