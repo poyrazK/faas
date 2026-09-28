@@ -238,6 +238,7 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 	serviceDependencyFound := false
 	outboundDependencyFound := false
 	dependencyRevisionFound := false
+	routeDeploymentFound := false
 	analyticsDeadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(analyticsDeadline) {
 		body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
@@ -251,6 +252,15 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 		for _, route := range analytics.Routes {
 			if route.Route != request.Route || route.Method != request.Method {
 				continue
+			}
+			for _, observation := range route.DeploymentObservations {
+				if observation.DeploymentID != sourceDeployment.ID {
+					continue
+				}
+				if observation.Requests < 1 || observation.RequestSharePct <= 0 {
+					t.Fatalf("route deployment observation = %+v, want positive request count and app share", observation)
+				}
+				routeDeploymentFound = true
 			}
 			for _, dependency := range route.Dependencies {
 				if dependency.Type == "managed_binding" && dependency.Kind == "service_proxy" && dependency.Name == "service.analyticsdependency" && dependency.Samples >= 1 {
@@ -270,13 +280,13 @@ func TestE2E_NormalPath_DebuggerTelemetryAnalyticsAndReplay(t *testing.T) {
 				}
 			}
 		}
-		if serviceDependencyFound && outboundDependencyFound && dependencyRevisionFound {
+		if serviceDependencyFound && outboundDependencyFound && dependencyRevisionFound && routeDeploymentFound {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !serviceDependencyFound || !outboundDependencyFound || !dependencyRevisionFound {
-		t.Fatalf("route analytics dependencies: service=%t outbound=%t deployment-observation=%t routes=%+v", serviceDependencyFound, outboundDependencyFound, dependencyRevisionFound, analytics.Routes)
+	if !serviceDependencyFound || !outboundDependencyFound || !dependencyRevisionFound || !routeDeploymentFound {
+		t.Fatalf("route analytics: service=%t outbound=%t dependency-deployment=%t route-deployment=%t routes=%+v", serviceDependencyFound, outboundDependencyFound, dependencyRevisionFound, routeDeploymentFound, analytics.Routes)
 	}
 	if analytics.Requests < 1 {
 		t.Fatalf("request analytics = %+v, want at least one persisted request", analytics)

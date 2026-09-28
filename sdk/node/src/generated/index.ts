@@ -714,6 +714,7 @@ export type { RequestAnalyticsDeploymentCostBreakdown } from './models/RequestAn
 export type { RequestAnalyticsGroup } from './models/RequestAnalyticsGroup.js';
 export type { RequestAnalyticsResponse } from './models/RequestAnalyticsResponse.js';
 export type { RequestAnalyticsRoute } from './models/RequestAnalyticsRoute.js';
+export type { RequestAnalyticsRouteDeploymentObservation } from './models/RequestAnalyticsRouteDeploymentObservation.js';
 export type { RequestAnalyticsTimeseriesPoint } from './models/RequestAnalyticsTimeseriesPoint.js';
 export type { RequestAnalyticsTimeseriesResponse } from './models/RequestAnalyticsTimeseriesResponse.js';
 export type { RequestAnalyticsTimeseriesSeries } from './models/RequestAnalyticsTimeseriesSeries.js';
