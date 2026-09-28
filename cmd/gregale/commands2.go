@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -207,7 +208,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -296,10 +297,10 @@ func cmdApp(args []string) int {
 	// already a sentinel-friendly enum (unlike the bool pair
 	// for require_authn).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to use server default)")
-	// Issue #477 / ADR-079: per-app public-URL auth mode.
-	// The CLI uses a single string flag (open|bearer|basic)
-	// plus optional --basic-user / --basic-pass plaintext
-	// args for mode='basic'. The apid seal step encrypts
+	// Issue #477 / ADR-079 and ADR-118: per-app public-URL auth
+	// mode. The CLI uses a single string flag plus mode-specific
+	// basic credentials or repeatable CIDRs for ip_allowlist.
+	// The apid seal step encrypts
 	// them under the APP_BASIC_AUTH secretbox namespace
 	// before persistence. The CLI never sees the sealed
 	// blob — the customer supplies plaintext at PATCH
@@ -310,11 +311,12 @@ func cmdApp(args []string) int {
 	// "Update failed" error with the API's problem
 	// code): Free PATCH 'bearer' = 402
 	// plan_public_auth_bearer_not_allowed; Free/Hobby
-	// PATCH 'basic' = 402
-	// plan_public_auth_basic_not_allowed.
-	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: 'open' (default), 'bearer' (Hobby+), or 'basic' (Pro+; pair with --basic-user + --basic-pass)")
+	// PATCH 'basic' or 'ip_allowlist' = 402.
+	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: open|bearer|basic|ip_allowlist (basic and ip_allowlist are Pro+)")
 	basicUser := fs.String("basic-user", "", "basic-auth username (RFC 7617 §2); required when --public-auth=basic")
 	basicPass := fs.String("basic-pass", "", "basic-auth password (RFC 7617 §2); required when --public-auth=basic")
+	var ipAllowlist stringListFlag
+	fs.Var(&ipAllowlist, "ip-allowlist", "CIDR allowed through the public URL; repeat with --public-auth=ip_allowlist (Pro+)")
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The CLI takes the operator-supplied compute_nodes.name
 	// (the human-readable label) — apid resolves to UUID
@@ -553,7 +555,7 @@ func cmdApp(args []string) int {
 		}
 		req.AppProtocol = &v
 	}
-	// Issue #477 / ADR-079: public-auth block. The CLI
+	// Issue #477 / ADR-079 + ADR-118: public-auth block. The CLI
 	// validates the mode locally (so a typo surfaces
 	// before the round-trip) and forwards the
 	// basic_user + basic_pass as plaintext — the apid
@@ -563,10 +565,10 @@ func cmdApp(args []string) int {
 	if explicit["public-auth"] {
 		v := *publicAuth
 		switch v {
-		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic:
+		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic, api.AppPublicAuthModeIPAllowlist:
 		default:
 			return printErr("Invalid --public-auth",
-				fmt.Errorf("must be 'open', 'bearer', or 'basic'; got %q", v))
+				fmt.Errorf("must be 'open', 'bearer', 'basic', or 'ip_allowlist'; got %q", v))
 		}
 		block := &api.PublicAuthBlock{Mode: v}
 		if v == api.AppPublicAuthModeBasic {
@@ -583,7 +585,29 @@ func cmdApp(args []string) int {
 			block.BasicUser = bu
 			block.BasicPass = bp
 		}
+		if v == api.AppPublicAuthModeIPAllowlist {
+			if len(ipAllowlist) == 0 {
+				return printErr("Invalid --ip-allowlist",
+					fmt.Errorf("at least one --ip-allowlist CIDR is required when --public-auth=ip_allowlist"))
+			}
+			for _, raw := range ipAllowlist {
+				prefix, err := netip.ParsePrefix(raw)
+				if err != nil {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q is not a valid CIDR: %w", raw, err))
+				}
+				if prefix.Bits() == 0 {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q cannot be a default route (/0)", raw))
+				}
+				if prefix.Addr().Is4In6() {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q is IPv4-mapped IPv6; use the IPv4 CIDR form", raw))
+				}
+			}
+			block.IPAllowlist = append([]string(nil), ipAllowlist...)
+		}
 		req.PublicAuth = block
+	} else if explicit["ip-allowlist"] {
+		return printErr("Invalid --ip-allowlist",
+			fmt.Errorf("--ip-allowlist requires --public-auth=ip_allowlist"))
 	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The fs.Visit branch distinguishes "flag not passed" (nil

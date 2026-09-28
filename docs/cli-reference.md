@@ -408,7 +408,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes] [--public-auth <open|bearer|basic|ip_allowlist>] [--ip-allowlist <CIDR>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -426,6 +426,8 @@ Get/update one app or run a deployment-attached command
 | `--security-policy <value>` | deploy posture policy | one of `off` · `warn` · `enforce` |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
+| `--public-auth <MODE>` | set public URL authentication; `ip_allowlist` is Pro+ | `open` · `bearer` · `basic` · `ip_allowlist` |
+| `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges | required with `--public-auth ip_allowlist` |
 
 ### app scale
 

@@ -421,6 +421,70 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 	})
 }
 
+func TestCmdAppPublicAuthIPAllowlistParsesAndForwards(t *testing.T) {
+	var seen api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %s, want PATCH", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"slug":"hello","public_auth":{"mode":"ip_allowlist"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	if code := cmdApp([]string{constSlug,
+		"--public-auth", "ip_allowlist",
+		"--ip-allowlist", "10.1.0.0/16",
+		"--ip-allowlist", "2001:db8::/32",
+	}); code != 0 {
+		t.Fatalf("cmdApp ip allowlist exit = %d; want 0", code)
+	}
+	if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeIPAllowlist {
+		t.Fatalf("PublicAuth = %+v; want mode=ip_allowlist", seen.PublicAuth)
+	}
+	if len(seen.PublicAuth.IPAllowlist) != 2 || seen.PublicAuth.IPAllowlist[0] != "10.1.0.0/16" || seen.PublicAuth.IPAllowlist[1] != "2001:db8::/32" {
+		t.Fatalf("PublicAuth.IPAllowlist = %v; want both CIDRs in input order", seen.PublicAuth.IPAllowlist)
+	}
+}
+
+func TestCmdAppPublicAuthIPAllowlistRejectsInvalidInputsLocally(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing list", args: []string{"--public-auth", "ip_allowlist"}},
+		{name: "malformed CIDR", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "10.0.0.1"}},
+		{name: "default route", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "0.0.0.0/0"}},
+		{name: "mapped IPv4", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "::ffff:192.0.2.0/120"}},
+		{name: "mode required", args: []string{"--ip-allowlist", "10.1.0.0/16"}},
+		{name: "allowlist mode required", args: []string{"--public-auth", "open", "--ip-allowlist", "10.1.0.0/16"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_test_x")
+			if code := cmdApp(append([]string{constSlug}, tc.args...)); code == 0 {
+				t.Fatal("cmdApp succeeded; want local validation error")
+			}
+			if called {
+				t.Fatal("invalid input made an API request")
+			}
+		})
+	}
+}
+
 // TestCmdTrafficSet_BasicFlow (issue #556 PR-A) is the wire-level
 // CLI check for `gregale traffic set --deployment <id> --percent N`.
 // Pins:
