@@ -53,9 +53,11 @@ type testScenario struct {
 }
 
 type testService struct {
-	Source   string            `yaml:"source"`
-	Postgres bool              `yaml:"postgres"`
-	Secrets  map[string]string `yaml:"secrets"`
+	Source    string            `yaml:"source"`
+	Fixture   string            `yaml:"fixture"`
+	FailFirst int               `yaml:"fail_first"`
+	Postgres  bool              `yaml:"postgres"`
+	Secrets   map[string]string `yaml:"secrets"`
 }
 
 type testConsumer struct {
@@ -64,8 +66,21 @@ type testConsumer struct {
 }
 
 type testWaitFor struct {
-	QueueIdle bool               `yaml:"queue_idle"`
-	Objects   []testObjectOutput `yaml:"objects"`
+	QueueIdle  bool                 `yaml:"queue_idle"`
+	Objects    []testObjectOutput   `yaml:"objects"`
+	Deliveries []testDeliveryOutput `yaml:"deliveries"`
+}
+
+type testDeliveryOutput struct {
+	Service     string `yaml:"service"`
+	MinAttempts int    `yaml:"min_attempts"`
+	LastStatus  int    `yaml:"last_status"`
+}
+
+type testDeliveryEvidence struct {
+	Service  string `json:"service"`
+	Attempts int    `json:"attempts"`
+	Statuses []int  `json:"statuses"`
 }
 
 type testObjectOutput struct {
@@ -125,6 +140,7 @@ type testRunReceipt struct {
 	Buckets      []string                           `json:"buckets,omitempty"`
 	Evidence     testWakeEvidence                   `json:"evidence"`
 	Outputs      []testOutputEvidence               `json:"outputs,omitempty"`
+	Deliveries   []testDeliveryEvidence             `json:"deliveries,omitempty"`
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 }
 
@@ -248,15 +264,36 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		}
 		for service, spec := range scenario.Services {
 			if !api.ValidAppSlug(service) ||
-				len(scenario.Project)+1+len(service) > 40 || service == scenario.Project || spec.Source == "" {
-				return nil, "", fmt.Errorf("scenario %q has an invalid service %q or missing source", name, service)
+				len(scenario.Project)+1+len(service) > 40 || service == scenario.Project || (spec.Source == "") == (spec.Fixture == "") {
+				return nil, "", fmt.Errorf("scenario %q service %q needs exactly one source or fixture", name, service)
+			}
+			if spec.Fixture != "" && spec.Fixture != testDeliverySinkFixture {
+				return nil, "", fmt.Errorf("scenario %q service %q has unknown fixture %q", name, service, spec.Fixture)
+			}
+			if spec.FailFirst < 0 || spec.FailFirst > 20 || (spec.FailFirst != 0 && spec.Fixture != testDeliverySinkFixture) {
+				return nil, "", fmt.Errorf("scenario %q service %q has invalid fail_first", name, service)
+			}
+			if spec.Fixture == testDeliverySinkFixture {
+				if _, reserved := spec.Secrets["GREGALE_TEST_SINK_FAIL_FIRST"]; reserved {
+					return nil, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
+				}
+				if _, reserved := spec.Secrets["GREGALE_TEST_SINK_TOKEN"]; reserved {
+					return nil, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
+				}
 			}
 		}
 		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q has an empty trigger command", name)
 		}
-		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Objects) > 0) && len(scenario.Trigger) == 0 {
+		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 {
 			return nil, "", fmt.Errorf("scenario %q needs trigger when wait_for is set", name)
+		}
+		for _, delivery := range scenario.WaitFor.Deliveries {
+			service, ok := scenario.Services[delivery.Service]
+			if !ok || service.Fixture != testDeliverySinkFixture || delivery.MinAttempts < 1 || delivery.MinAttempts > 100 ||
+				(delivery.LastStatus != 0 && (delivery.LastStatus < 200 || delivery.LastStatus > 599)) {
+				return nil, "", fmt.Errorf("scenario %q has an invalid delivery wait condition for service %q", name, delivery.Service)
+			}
 		}
 		for _, step := range append(append([][]string{}, scenario.Setup...), scenario.Cleanup...) {
 			if len(step) == 0 || step[0] == "" {
@@ -506,12 +543,30 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		serviceNames = append(serviceNames, name)
 	}
 	sort.Strings(serviceNames)
+	fixtureTokens := make(map[string]string)
 	for _, serviceName := range serviceNames {
 		spec := scenario.Services[serviceName]
-		serviceDir, err := resolveDeploySourceDir(manifestDir, spec.Source)
+		serviceDir := ""
+		if spec.Fixture != "" {
+			var cleanup func()
+			serviceDir, cleanup, err = materializeScenarioFixture(spec.Fixture)
+			if err == nil {
+				defer cleanup()
+			}
+		} else {
+			serviceDir, err = resolveDeploySourceDir(manifestDir, spec.Source)
+		}
 		if err != nil {
 			receipt.Error = fmt.Sprintf("source directory for %s: %v", serviceName, err)
 			return
+		}
+		if spec.Fixture == testDeliverySinkFixture {
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				receipt.Error = fmt.Sprintf("create fixture token for %s: %v", serviceName, err)
+				return
+			}
+			fixtureTokens[serviceName] = hex.EncodeToString(secret)
 		}
 		serviceConfig, err := resolveDevSourceConfig(serviceDir)
 		if err != nil {
@@ -608,6 +663,16 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		if workload.name != scenario.Project {
 			secrets = scenario.Services[workload.name].Secrets
 		}
+		if token := fixtureTokens[workload.name]; token != "" {
+			if err := client.SetSecret(ctx, workload.session.App.Slug, "GREGALE_TEST_SINK_TOKEN", token); err != nil {
+				receipt.Error = fmt.Sprintf("set fixture token for %s: %v", workload.name, err)
+				return
+			}
+			if err := client.SetSecret(ctx, workload.session.App.Slug, "GREGALE_TEST_SINK_FAIL_FIRST", fmt.Sprint(scenario.Services[workload.name].FailFirst)); err != nil {
+				receipt.Error = fmt.Sprintf("set fixture failure count for %s: %v", workload.name, err)
+				return
+			}
+		}
 		keys := make([]string, 0, len(secrets))
 		for key := range secrets {
 			keys = append(keys, key)
@@ -677,6 +742,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		key := strings.ToUpper(strings.ReplaceAll(workload.name, "-", "_"))
 		env = append(env, "GREGALE_TEST_SERVICE_"+key+"_URL="+canonicalAppURL(workload.session.App))
 		env = append(env, "GREGALE_TEST_SERVICE_"+key+"_APP_SLUG="+workload.session.App.Slug)
+		if token := fixtureTokens[workload.name]; token != "" {
+			env = append(env, "GREGALE_TEST_SINK_"+key+"_TOKEN="+token)
+		}
 	}
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -735,6 +803,18 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		receipt.QueueIdle = scenario.WaitFor.QueueIdle
+		for _, condition := range scenario.WaitFor.Deliveries {
+			serviceURL := serviceURLs[condition.Service]
+			serviceSlug := serviceSlugs[condition.Service]
+			evidence, err := waitForTestDelivery(ctx, client, serviceSlug, serviceURL, fixtureTokens[condition.Service], profile,
+				serviceWakeBaseline[condition.Service], condition)
+			receipt.Deliveries = append(receipt.Deliveries, evidence)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("wait for delivery sink %s: %v", condition.Service, err)
+				receipt.Evidence = recorder.snapshot()
+				return
+			}
+		}
 	}
 	if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
 		receipt.Error = fmt.Sprintf("application assertion command: %v", err)
@@ -989,6 +1069,76 @@ func waitForTestOutputs(ctx context.Context, client testOutputClient, slugs []st
 		select {
 		case <-ctx.Done():
 			return observed, fmt.Errorf("completion conditions not reached: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+type testDeliveryClient interface {
+	GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error)
+}
+
+func waitForTestDelivery(ctx context.Context, client testDeliveryClient, slug, serviceURL, token, profile string,
+	baseline map[string]bool, condition testDeliveryOutput) (testDeliveryEvidence, error) {
+	evidence := testDeliveryEvidence{Service: condition.Service}
+	url := strings.TrimRight(serviceURL, "/") + "/__gregale_test__/attempts"
+	httpClient := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	awake := profile == "warm"
+	lastIssue := ""
+	for {
+		if !awake {
+			timeline, err := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{})
+			if err != nil {
+				return evidence, fmt.Errorf("read sink wake timeline: %w", err)
+			}
+			awake = firstNewTestWakeID(timeline.Rows, baseline) != ""
+		}
+		if awake {
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return evidence, err
+			}
+			request.Header.Set("Authorization", "Bearer "+token)
+			response, err := httpClient.Do(request)
+			if err != nil {
+				lastIssue = err.Error()
+			} else if response.StatusCode >= 500 {
+				lastIssue = fmt.Sprintf("HTTP %d", response.StatusCode)
+				_ = response.Body.Close()
+			} else {
+				if response.StatusCode != http.StatusOK {
+					_ = response.Body.Close()
+					return evidence, fmt.Errorf("read sink attempts: HTTP %d", response.StatusCode)
+				}
+				var payload struct {
+					Attempts []struct {
+						Status int `json:"status"`
+					} `json:"attempts"`
+				}
+				err = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload)
+				_ = response.Body.Close()
+				if err != nil {
+					return evidence, fmt.Errorf("decode sink attempts: %w", err)
+				}
+				evidence.Statuses = evidence.Statuses[:0]
+				for _, attempt := range payload.Attempts {
+					evidence.Statuses = append(evidence.Statuses, attempt.Status)
+				}
+				evidence.Attempts = len(evidence.Statuses)
+				lastIssue = fmt.Sprintf("%d attempts", evidence.Attempts)
+				if evidence.Attempts >= condition.MinAttempts &&
+					(condition.LastStatus == 0 || evidence.Statuses[evidence.Attempts-1] == condition.LastStatus) {
+					return evidence, nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return evidence, fmt.Errorf("delivery condition not reached (last read: %s): %w", lastIssue, ctx.Err())
 		case <-ticker.C:
 		}
 	}

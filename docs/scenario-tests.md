@@ -33,7 +33,8 @@ scenarios:
         secrets:
           NOTIFICATION_URL: ${service.notifications.url}/deliver
       notifications:
-        source: ./test/notification-sink
+        fixture: delivery-sink
+        fail_first: 1
     postgres: true
     buckets:
       - name: exports
@@ -46,6 +47,10 @@ scenarios:
     trigger: [node, test/submit-export.mjs]
     wait_for:
       queue_idle: true
+      deliveries:
+        - service: notifications
+          min_attempts: 2
+          last_status: 200
       objects:
         - bucket: exports
           prefix: reports/${GREGALE_TEST_RUN_ID}/
@@ -98,10 +103,34 @@ binding plan gates still apply.
 The runner sets per-workload `secrets` on these expiring apps before deploying.
 Values can reference `${service.NAME.url}`, `${service.NAME.slug}`,
 `${bucket.NAME.name}`, or `${run.id}`. The example gives the worker a test
-notification endpoint. Its app can return a failure for the first delivery,
-then record the retries for the assertion command to inspect through
-`GREGALE_TEST_SERVICE_NOTIFICATIONS_URL`. Secret values are sent to Gregale's
+notification endpoint. The built-in `delivery-sink` is deployed as another
+real workload. `fail_first: 1` makes its first `POST /deliver` return 503 and
+later deliveries return 200. The assertion command can inspect the sink's
+recorded attempts with `GET /__gregale_test__/attempts` at
+`GREGALE_TEST_SERVICE_NOTIFICATIONS_URL`, using
+`Authorization: Bearer $GREGALE_TEST_SINK_NOTIFICATIONS_TOKEN`. The token is
+only supplied to local commands and the sink. Custom notification services can
+still use `source` instead of `fixture`. Secret values are sent to Gregale's
 sealed secret API and are not included in the test report.
+`wait_for.deliveries` waits for the configured number of attempts and final
+status, then records their status sequence in the report. In cold and restored
+runs it waits for the sink to wake after the trigger before reading attempts,
+so the inspection request cannot create the lifecycle evidence itself.
+
+For example, a Node assertion can check the failed delivery and successful
+retry:
+
+```js
+import assert from "node:assert/strict";
+
+const response = await fetch(
+  `${process.env.GREGALE_TEST_SERVICE_NOTIFICATIONS_URL}/__gregale_test__/attempts`,
+  { headers: { Authorization: `Bearer ${process.env.GREGALE_TEST_SINK_NOTIFICATIONS_TOKEN}` } },
+);
+if (!response.ok) throw new Error(`notification evidence: ${response.status}`);
+const { attempts } = await response.json();
+assert.deepEqual(attempts.map(({ status }) => status), [503, 200]);
+```
 
 `trigger` runs immediately after Gregale prepares the selected lifecycle
 profile. It can submit the authenticated export request through
@@ -146,10 +175,9 @@ the trigger and verifies the primary app's first request is hot.
 The assertion commands own application-specific expectations.
 For an export test they should submit and retry the same
 export request, inspect the produced object through both customers' credentials,
-and check notification delivery. A declared notification sink can return
-failures to exercise the application's retry policy. Built-in fault controls,
-warm first-request evidence for sibling workloads, and simulated execution are
-still being added. Test reports label
+and check notification delivery. The delivery sink records each attempt's
+status and body for retry assertions. Warm first-request evidence for sibling
+workloads and simulated execution are still being added. Test reports label
 this path `real-vm`; no simulated run is silently accepted as lifecycle proof.
 
 `--profile cold` relies on the preview-only `fresh=true` form of

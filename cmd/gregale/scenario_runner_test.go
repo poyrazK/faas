@@ -22,6 +22,8 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	path := filepath.Join(dir, "gregale-test.yaml")
 	content := "version: 1\nscenarios:\n  customer-export:\n    project: export-api\n    source: .\n    consumers: [{name: customer-a}, {name: customer-b, scopes: [read]}]\n    services:\n      worker:\n        source: ./worker\n        secrets: {NOTIFICATION_URL: '${service.notifications.url}/deliver'}\n      notifications: {source: ./notifications}\n    trigger: [node, test/submit.mjs]\n    command: [go, test, ./test]\n    postgres: true\n    buckets: [{name: exports, service: worker, prefix: EXPORT_STORAGE}]\n    wait_for:\n      queue_idle: true\n      objects: [{bucket: exports, prefix: 'reports/${GREGALE_TEST_RUN_ID}/', min_count: 1}]\n"
 	content = strings.Replace(content, "    consumers:", "    consumer_auth_mode: required\n    consumers:", 1)
+	content = strings.Replace(content, "notifications: {source: ./notifications}", "notifications: {fixture: delivery-sink, fail_first: 1}", 1)
+	content = strings.Replace(content, "      queue_idle: true", "      queue_idle: true\n      deliveries: [{service: notifications, min_attempts: 2, last_status: 200}]", 1)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +31,7 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || scenarios["customer-export"].Services["notifications"].Fixture != testDeliverySinkFixture || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired || len(scenarios["customer-export"].WaitFor.Deliveries) != 1 {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
@@ -55,6 +57,30 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	}
 	if _, _, err := readTestManifest(path); err == nil {
 		t.Fatal("unknown secret service reference was accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "fail_first: 1", "fail_first: 21", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("excessive fixture failures were accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "fixture: delivery-sink", "source: ./notifications, fixture: delivery-sink", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("ambiguous service source and fixture was accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "fail_first: 1", "fail_first: 1, secrets: {GREGALE_TEST_SINK_TOKEN: override}", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("fixture token override was accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(content, "min_attempts: 2", "min_attempts: 0", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(path); err == nil {
+		t.Fatal("zero delivery attempts were accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "customer-b, scopes: [read]", "customer-a, scopes: [read]", 1)), 0o600); err != nil {
 		t.Fatal(err)
@@ -159,6 +185,28 @@ func TestExpandTestSecretValue(t *testing.T) {
 	}
 }
 
+func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
+	dir, cleanup, err := materializeScenarioFixture(testDeliverySinkFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	config, err := resolveDevSourceConfig(dir)
+	if err != nil || config.shape != shapeApp {
+		t.Fatalf("delivery sink source shape = (%+v, %v)", config, err)
+	}
+	for _, file := range []string{"package.json", "server.js"} {
+		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
+			t.Fatalf("fixture file %s: %v", file, err)
+		}
+	}
+	archive := filepath.Join(t.TempDir(), "delivery-sink.tar.gz")
+	count, err := packDirToTarGz(dir, archive, defaultZeroConfigSourceCapMB, nil)
+	if err != nil || count != 2 {
+		t.Fatalf("fixture archive = (%d files, %v)", count, err)
+	}
+}
+
 type testServiceWakeFakeClient struct {
 	rows     []api.WakeTimelineJSONRow
 	selected string
@@ -182,6 +230,40 @@ func TestVerifyTestServiceWakeChecksFirstNewCompletedBoot(t *testing.T) {
 	evidence, err := verifyTestServiceWake(context.Background(), client, "worker-app", "cold", map[string]bool{"baseline": true})
 	if err != nil || evidence.WakeID != "first" || evidence.Method != "cold_boot" || client.selected != "first" {
 		t.Fatalf("service evidence = (%+v, %v), selected %q", evidence, err, client.selected)
+	}
+}
+
+func TestWaitForTestDeliveryRequiresWorkloadWakeBeforeInspection(t *testing.T) {
+	reads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads++
+		if r.URL.Path != "/__gregale_test__/attempts" || r.Header.Get("Authorization") != "Bearer sink-token" {
+			t.Errorf("sink inspection request = %s auth %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if reads == 1 {
+			_, _ = w.Write([]byte(`{"attempts":[{"status":503}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"attempts":[{"status":503},{"status":200}]}`))
+		}
+	}))
+	defer server.Close()
+	condition := testDeliveryOutput{Service: "notifications", MinAttempts: 2, LastStatus: 200}
+	client := &testServiceWakeFakeClient{rows: []api.WakeTimelineJSONRow{{WakeID: "baseline"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 650*time.Millisecond)
+	defer cancel()
+	if _, err := waitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition); err == nil {
+		t.Fatal("delivery inspection proceeded without a post-trigger sink wake")
+	}
+	if reads != 0 {
+		t.Fatalf("sink was inspected before delivery wake: %d reads", reads)
+	}
+	client.rows = []api.WakeTimelineJSONRow{{WakeID: "delivery-wake"}, {WakeID: "baseline"}}
+	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	evidence, err := waitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition)
+	if err != nil || evidence.Attempts != 2 || len(evidence.Statuses) != 2 || evidence.Statuses[0] != 503 || evidence.Statuses[1] != 200 || reads != 2 {
+		t.Fatalf("delivery evidence = (%+v, %v), reads=%d", evidence, err, reads)
 	}
 }
 
