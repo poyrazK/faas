@@ -44,19 +44,12 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"path"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
-
-// pathMatch is the stdlib path.Match wrapper — aliased here so the
-// path-glob filter unit tests can stub it via build tags in the
-// future without changing the production call site. Today it is a
-// straight passthrough; the indirection documents the seam.
-var pathMatch = path.Match
 
 type edgeRuleRequestHeadersContextKey struct{}
 
@@ -1548,8 +1541,5 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 // "" (any path) and "*" (any path). Stdlib path.Match treats
 // both as errors for the empty / star input, so we short-circuit.
 func pathGlobMatch(glob, p string) (bool, error) {
-	if glob == "" || glob == "*" {
-		return true, nil
-	}
-	return pathMatch(glob, p)
+	return api.MatchEdgeRulePath(glob, p)
 }

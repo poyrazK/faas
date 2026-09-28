@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -489,7 +488,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		default:
 			matched, matchErr := true, error(nil)
 			if rule.MatchPath != "" && rule.MatchPath != "*" {
-				matched, matchErr = path.Match(rule.MatchPath, input.Path)
+				matched, matchErr = api.MatchEdgeRulePath(rule.MatchPath, input.Path)
 			}
 			switch {
 			case matchErr != nil:
@@ -1025,7 +1024,7 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, metho
 		}
 		matched, err := true, error(nil)
 		if rule.MatchPath != "" && rule.MatchPath != "*" {
-			matched, err = path.Match(rule.MatchPath, requestPath)
+			matched, err = api.MatchEdgeRulePath(rule.MatchPath, requestPath)
 		}
 		if err != nil || !matched {
 			continue
