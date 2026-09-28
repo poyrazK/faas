@@ -730,10 +730,13 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	if err != nil || secret.ManagedCredentialGeneration != 2 {
 		t.Fatalf("rotated binding secret: secret=%+v err=%v", secret, err)
 	}
-	now = time.Now().UTC()
 	if err := stateStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, app.ID, rotated.RotationWakeID); err != nil {
 		t.Fatalf("mark rotation delivered: %v", err)
 	}
+	// The finalization update uses the database clock. Advance the service's
+	// injected clock after that write so its retry_at comparison cannot race
+	// the database timestamp by a few milliseconds.
+	now = time.Now().UTC().Add(time.Second)
 	retired, err := service.ReconcileRotationCleanup(ctx, accountID, binding.ID)
 	if err != nil || retired.RotationPreviousGeneration != 0 || provider.revokeCalls != 1 {
 		t.Fatalf("retire previous credential: binding=%+v revoke_calls=%d err=%v", retired, provider.revokeCalls, err)
