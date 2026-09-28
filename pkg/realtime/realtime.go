@@ -1051,24 +1051,31 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 
 // Unsubscribe removes a channel membership from a live connection.
 func (m *Manager) Unsubscribe(connectionID, channel string) error {
+	_, err := m.UnsubscribeWithRouteState(connectionID, channel)
+	return err
+}
+
+// UnsubscribeWithRouteState removes a channel membership and reports whether
+// any local connection still subscribes to the endpoint/channel pair.
+func (m *Manager) UnsubscribeWithRouteState(connectionID, channel string) (bool, error) {
 	if !validChannel(channel) {
-		return ErrInvalidChannel
+		return false, ErrInvalidChannel
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.conns[connectionID]
 	if !ok {
-		return ErrConnectionNotFound
+		return false, ErrConnectionNotFound
 	}
 	select {
 	case <-c.done:
-		return ErrConnectionClosed
+		return false, ErrConnectionClosed
 	default:
 	}
 	c.mu.Lock()
+	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 	if _, subscribed := c.channels[channel]; subscribed {
 		delete(c.channels, channel)
-		key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 		members := m.subscribers[key]
 		delete(members, connectionID)
 		if len(members) == 0 {
@@ -1076,7 +1083,7 @@ func (m *Manager) Unsubscribe(connectionID, channel string) error {
 		}
 	}
 	c.mu.Unlock()
-	return nil
+	return len(m.subscribers[key]) > 0, nil
 }
 
 // Publish queues a message to all local connections subscribed to channel on

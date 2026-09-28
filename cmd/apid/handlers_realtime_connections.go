@@ -126,6 +126,13 @@ func (o localRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, connect
 	return o.client.Unsubscribe(ctx, connectionID, channel)
 }
 
+func (o localRealtimeOwner) UnsubscribeWithRouteState(ctx context.Context, endpointID, connectionID, channel string) (bool, bool, error) {
+	if err := o.ownsConnection(ctx, endpointID, connectionID); err != nil {
+		return false, false, err
+	}
+	return o.client.UnsubscribeWithRouteState(ctx, connectionID, channel)
+}
+
 func (o localRealtimeOwner) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	return o.client.Publish(ctx, endpointID, channel, message)
 }

@@ -41,6 +41,10 @@ type realtimeNodeOperator interface {
 	RemoveEndpoint(context.Context, string) error
 }
 
+type realtimeRouteAwareUnsubscriber interface {
+	UnsubscribeWithRouteState(context.Context, string, string, string) (hasSubscribers bool, known bool, err error)
+}
+
 type localRealtimeNodeOperator struct {
 	owner  realtimeOwner
 	client *realtime.Client
@@ -57,6 +61,12 @@ func (o localRealtimeNodeOperator) Subscribe(ctx context.Context, endpointID, co
 }
 func (o localRealtimeNodeOperator) Unsubscribe(ctx context.Context, endpointID, connectionID, channel string) error {
 	return o.owner.Unsubscribe(ctx, endpointID, connectionID, channel)
+}
+func (o localRealtimeNodeOperator) UnsubscribeWithRouteState(ctx context.Context, endpointID, connectionID, channel string) (bool, bool, error) {
+	if unsubscriber, ok := o.owner.(realtimeRouteAwareUnsubscriber); ok {
+		return unsubscriber.UnsubscribeWithRouteState(ctx, endpointID, connectionID, channel)
+	}
+	return false, false, o.owner.Unsubscribe(ctx, endpointID, connectionID, channel)
 }
 func (o localRealtimeNodeOperator) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	return o.owner.Publish(ctx, endpointID, channel, message)
@@ -101,6 +111,9 @@ func (o remoteRealtimeNodeOperator) Subscribe(ctx context.Context, _, connection
 }
 func (o remoteRealtimeNodeOperator) Unsubscribe(ctx context.Context, _, connectionID, channel string) error {
 	return o.client.Unsubscribe(ctx, connectionID, channel)
+}
+func (o remoteRealtimeNodeOperator) UnsubscribeWithRouteState(ctx context.Context, _, connectionID, channel string) (bool, bool, error) {
+	return o.client.UnsubscribeWithRouteState(ctx, connectionID, channel)
 }
 func (o remoteRealtimeNodeOperator) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	return o.client.Publish(ctx, endpointID, channel, message)
@@ -316,8 +329,48 @@ func (o *leasedRealtimeOwner) Subscribe(ctx context.Context, endpointID, connect
 }
 
 func (o *leasedRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, connectionID, channel string) error {
-	return o.connectionOperation(ctx, endpointID, connectionID, false, func(_ state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
-		return op.Unsubscribe(ctx, endpointID, connectionID, channel)
+	return o.connectionOperation(ctx, endpointID, connectionID, false, func(lease state.ManagedRealtimeConnectionOwner, op realtimeNodeOperator) error {
+		var lock state.ManagedRealtimeChannelRouteLock
+		canRemoveRoute := false
+		if o.channelRoutes != nil {
+			var err error
+			lock, err = o.channelRoutes.AcquireManagedRealtimeChannelRouteLock(ctx, lease.NodeID)
+			if err != nil {
+				// Route cleanup is an optimization. Keep the positive hint and
+				// allow the unsubscribe if its coordination lock is unavailable.
+				return op.Unsubscribe(ctx, endpointID, connectionID, channel)
+			}
+			defer lock.Release(ctx)
+			canRemoveRoute = true
+		}
+
+		var hasSubscribers, known bool
+		var err error
+		if unsubscriber, ok := op.(realtimeRouteAwareUnsubscriber); ok {
+			hasSubscribers, known, err = unsubscriber.UnsubscribeWithRouteState(ctx, endpointID, connectionID, channel)
+		} else {
+			err = op.Unsubscribe(ctx, endpointID, connectionID, channel)
+		}
+		if err != nil {
+			return err
+		}
+		if !known || hasSubscribers || o.channelRoutes == nil || !canRemoveRoute {
+			return nil
+		}
+		remover, ok := o.channelRoutes.(state.ManagedRealtimeChannelRouteRemover)
+		if !ok {
+			return nil
+		}
+		if err := remover.RemoveManagedRealtimeChannelRoute(ctx, state.ManagedRealtimeChannelRoute{
+			EndpointID: endpointID, Channel: channel, NodeID: lease.NodeID,
+		}); err != nil {
+			logger := o.log
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.WarnContext(ctx, "failed to remove empty realtime channel route; retaining route hint", "node_id", lease.NodeID, "error", err)
+		}
+		return nil
 	})
 }
 

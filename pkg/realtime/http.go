@@ -739,7 +739,19 @@ func (m *Manager) handleConnectionRoute(w http.ResponseWriter, r *http.Request, 
 		case http.MethodPut:
 			err = m.Subscribe(parts[0], channel)
 		case http.MethodDelete:
-			err = m.Unsubscribe(parts[0], channel)
+			hasSubscribers, err := m.UnsubscribeWithRouteState(parts[0], channel)
+			if err != nil {
+				writeOperationError(w, err)
+				return
+			}
+			if r.Header.Get(unsubscribeRouteStateHeader) == "1" {
+				writeJSON(w, http.StatusOK, struct {
+					HasSubscribers bool `json:"has_subscribers"`
+				}{HasSubscribers: hasSubscribers})
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return

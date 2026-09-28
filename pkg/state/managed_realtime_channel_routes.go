@@ -80,6 +80,12 @@ type ManagedRealtimeChannelRouteStore interface {
 	FinalizeManagedRealtimeChannelRouteRebuild(context.Context) (bool, error)
 }
 
+// ManagedRealtimeChannelRouteRemover removes one node-local route hint after
+// the realtime node confirms that its last local subscriber has left.
+type ManagedRealtimeChannelRouteRemover interface {
+	RemoveManagedRealtimeChannelRoute(context.Context, ManagedRealtimeChannelRoute) error
+}
+
 // ManagedRealtimeChannelPublishTargetStore lets the publish hot path fetch
 // only routed nodes and nodes whose snapshots are not current. Implementors
 // that do not provide this optimization continue to use the route-view path.
@@ -100,6 +106,8 @@ type ManagedRealtimeChannelRouteSnapshotCoordinator interface {
 var (
 	_ ManagedRealtimeChannelRouteStore               = (*PgStore)(nil)
 	_ ManagedRealtimeChannelRouteStore               = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteRemover             = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteRemover             = (*MemStore)(nil)
 	_ ManagedRealtimeChannelPublishTargetStore       = (*PgStore)(nil)
 	_ ManagedRealtimeChannelPublishTargetStore       = (*MemStore)(nil)
 	_ ManagedRealtimeChannelRouteSnapshotCoordinator = (*PgStore)(nil)
@@ -324,6 +332,30 @@ func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeI
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit realtime channel route snapshot: %w", err)
+	}
+	return nil
+}
+
+func (s *PgStore) RemoveManagedRealtimeChannelRoute(ctx context.Context, route ManagedRealtimeChannelRoute) error {
+	if err := validateManagedRealtimeChannelRoute(route); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin realtime channel route removal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockManagedRealtimeChannelRouteEndpoints(ctx, tx, []string{route.EndpointID}); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from managed_realtime_channel_routes
+		 where endpoint_id = $1 and channel = $2 and node_id = $3
+	`, route.EndpointID, route.Channel, route.NodeID); err != nil {
+		return fmt.Errorf("state: remove realtime channel route: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit realtime channel route removal: %w", err)
 	}
 	return nil
 }
@@ -1024,6 +1056,17 @@ func (m *MemStore) AddManagedRealtimeChannelRoutes(_ context.Context, routes []M
 	return m.enforceMemRealtimeChannelRouteLimitLocked(managedRealtimeChannelRouteEndpointIDs(unique))
 }
 
+func (m *MemStore) RemoveManagedRealtimeChannelRoute(_ context.Context, route ManagedRealtimeChannelRoute) error {
+	if err := validateManagedRealtimeChannelRoute(route); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureRealtimeChannelRouteMapsLocked()
+	m.removeRealtimeChannelRouteLocked(route)
+	return nil
+}
+
 func (m *MemStore) CurrentManagedRealtimeChannelRouteGeneration(_ context.Context) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1325,6 +1368,17 @@ func (m *MemStore) addRealtimeChannelRouteLocked(route ManagedRealtimeChannelRou
 	}
 	m.realtimeChannelRoutes[route] = struct{}{}
 	m.realtimeChannelRouteCounts[route.EndpointID]++
+}
+
+func (m *MemStore) removeRealtimeChannelRouteLocked(route ManagedRealtimeChannelRoute) {
+	if _, ok := m.realtimeChannelRoutes[route]; !ok {
+		return
+	}
+	delete(m.realtimeChannelRoutes, route)
+	m.realtimeChannelRouteCounts[route.EndpointID]--
+	if m.realtimeChannelRouteCounts[route.EndpointID] <= 0 {
+		delete(m.realtimeChannelRouteCounts, route.EndpointID)
+	}
 }
 
 func (m *MemStore) enforceMemRealtimeChannelRouteLimitLocked(endpointIDs []string) error {
