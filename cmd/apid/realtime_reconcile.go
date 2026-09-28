@@ -161,6 +161,19 @@ func reconcileDueManagedRealtimeChannelRoutes(ctx context.Context, owner *leased
 }
 
 func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *leasedRealtimeOwner, nodes []state.ComputeNode) error {
+	var persistedRevisions map[string]state.ManagedRealtimeChannelRouteSnapshotRevision
+	revisionStore, hasRevisionStore := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotRevisionStore)
+	if hasRevisionStore {
+		nodeIDs := make([]string, 0, len(nodes))
+		for _, node := range nodes {
+			nodeIDs = append(nodeIDs, node.ID)
+		}
+		var err error
+		persistedRevisions, err = revisionStore.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, nodeIDs)
+		if err != nil {
+			return fmt.Errorf("list persisted realtime channel route revisions: %w", err)
+		}
+	}
 	results := make([]error, len(nodes))
 	jobs := make(chan int)
 	var workers sync.WaitGroup
@@ -185,9 +198,16 @@ func reconcileManagedRealtimeChannelRouteRevisions(ctx context.Context, owner *l
 				if revision == nil {
 					continue
 				}
-				previous, ok := owner.routeRevision(nodes[index].ID)
-				if ok && previous == *revision {
-					continue
+				if hasRevisionStore {
+					previous, ok := persistedRevisions[nodes[index].ID]
+					if ok && previous.InstanceID == revision.InstanceID && previous.Revision == revision.Revision {
+						continue
+					}
+				} else {
+					previous, ok := owner.routeRevision(nodes[index].ID)
+					if ok && previous == *revision {
+						continue
+					}
 				}
 				attempted, err := snapshotManagedRealtimeChannelRoutesWithRevision(ctx, owner, nodes[index], true, revision)
 				if (attempted || err != nil) && owner.channelRouteMetrics != nil {
@@ -278,11 +298,26 @@ func snapshotManagedRealtimeChannelRoutesWithRevision(ctx context.Context, owner
 			NodeID:     node.ID,
 		})
 	}
-	if err := owner.channelRoutes.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, routes); err != nil {
-		return false, fmt.Errorf("node %s route snapshot: %w", node.ID, err)
+	var replaceErr error
+	if revisionStore, ok := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotRevisionStore); ok {
+		var snapshotRevision *state.ManagedRealtimeChannelRouteSnapshotRevision
+		if observedRevision != nil {
+			snapshotRevision = &state.ManagedRealtimeChannelRouteSnapshotRevision{
+				InstanceID: observedRevision.InstanceID,
+				Revision:   observedRevision.Revision,
+			}
+		}
+		replaceErr = revisionStore.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, node.ID, generation, routes, snapshotRevision)
+	} else {
+		replaceErr = owner.channelRoutes.ReplaceManagedRealtimeChannelRoutes(ctx, node.ID, generation, routes)
+	}
+	if replaceErr != nil {
+		return false, fmt.Errorf("node %s route snapshot: %w", node.ID, replaceErr)
 	}
 	if observedRevision != nil {
-		owner.setRouteRevision(node.ID, *observedRevision)
+		if _, persisted := owner.channelRoutes.(state.ManagedRealtimeChannelRouteSnapshotRevisionStore); !persisted {
+			owner.setRouteRevision(node.ID, *observedRevision)
+		}
 	}
 	return true, nil
 }

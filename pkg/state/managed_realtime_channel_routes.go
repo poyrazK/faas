@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,13 @@ type ManagedRealtimeChannelRoute struct {
 	EndpointID string
 	Channel    string
 	NodeID     string
+}
+
+// ManagedRealtimeChannelRouteSnapshotRevision is the realtime process-local
+// revision captured by a node route snapshot.
+type ManagedRealtimeChannelRouteSnapshotRevision struct {
+	InstanceID string
+	Revision   uint64
 }
 
 // ManagedRealtimeChannelRouteView is one consistent directory snapshot.
@@ -80,6 +88,14 @@ type ManagedRealtimeChannelRouteStore interface {
 	FinalizeManagedRealtimeChannelRouteRebuild(context.Context) (bool, error)
 }
 
+// ManagedRealtimeChannelRouteSnapshotRevisionStore persists the process
+// revision represented by each node snapshot so apid replicas can share the
+// same change cursor.
+type ManagedRealtimeChannelRouteSnapshotRevisionStore interface {
+	ListManagedRealtimeChannelRouteSnapshotRevisions(context.Context, []string) (map[string]ManagedRealtimeChannelRouteSnapshotRevision, error)
+	ReplaceManagedRealtimeChannelRoutesWithRevision(context.Context, string, int64, []ManagedRealtimeChannelRoute, *ManagedRealtimeChannelRouteSnapshotRevision) error
+}
+
 // ManagedRealtimeChannelRouteRemover removes one node-local route hint after
 // the realtime node confirms that its last local subscriber has left.
 type ManagedRealtimeChannelRouteRemover interface {
@@ -104,14 +120,16 @@ type ManagedRealtimeChannelRouteSnapshotCoordinator interface {
 }
 
 var (
-	_ ManagedRealtimeChannelRouteStore               = (*PgStore)(nil)
-	_ ManagedRealtimeChannelRouteStore               = (*MemStore)(nil)
-	_ ManagedRealtimeChannelRouteRemover             = (*PgStore)(nil)
-	_ ManagedRealtimeChannelRouteRemover             = (*MemStore)(nil)
-	_ ManagedRealtimeChannelPublishTargetStore       = (*PgStore)(nil)
-	_ ManagedRealtimeChannelPublishTargetStore       = (*MemStore)(nil)
-	_ ManagedRealtimeChannelRouteSnapshotCoordinator = (*PgStore)(nil)
-	_ ManagedRealtimeChannelRouteSnapshotCoordinator = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteStore                 = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteStore                 = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotRevisionStore = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotRevisionStore = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteRemover               = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteRemover               = (*MemStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore         = (*PgStore)(nil)
+	_ ManagedRealtimeChannelPublishTargetStore         = (*MemStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotCoordinator   = (*PgStore)(nil)
+	_ ManagedRealtimeChannelRouteSnapshotCoordinator   = (*MemStore)(nil)
 )
 
 type managedRealtimeChannelRouteOverflowState struct {
@@ -261,9 +279,57 @@ func (s *PgStore) ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx context.Conte
 	return current, nil
 }
 
+func (s *PgStore) ListManagedRealtimeChannelRouteSnapshotRevisions(ctx context.Context, nodeIDs []string) (map[string]ManagedRealtimeChannelRouteSnapshotRevision, error) {
+	revisions := make(map[string]ManagedRealtimeChannelRouteSnapshotRevision)
+	if len(nodeIDs) == 0 {
+		return revisions, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, realtime_process_instance_id, realtime_route_revision
+		  from managed_realtime_channel_route_node_state
+		 where node_id = any($1::uuid[])
+		   and realtime_process_instance_id is not null
+		   and realtime_route_revision is not null
+	`, uniqueStrings(nodeIDs))
+	if err != nil {
+		return nil, fmt.Errorf("state: list realtime channel route snapshot revisions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID, instanceID, revisionText string
+		if err := rows.Scan(&nodeID, &instanceID, &revisionText); err != nil {
+			return nil, fmt.Errorf("state: scan realtime channel route snapshot revision: %w", err)
+		}
+		revision, err := strconv.ParseUint(revisionText, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("state: parse realtime channel route snapshot revision for node %s: %w", nodeID, err)
+		}
+		revisions[nodeID] = ManagedRealtimeChannelRouteSnapshotRevision{
+			InstanceID: instanceID,
+			Revision:   revision,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate realtime channel route snapshot revisions: %w", err)
+	}
+	return revisions, nil
+}
+
 func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
+	return s.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, nodeID, snapshotGeneration, routes, nil)
+}
+
+func (s *PgStore) ReplaceManagedRealtimeChannelRoutesWithRevision(ctx context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute, revision *ManagedRealtimeChannelRouteSnapshotRevision) error {
 	if nodeID == "" || snapshotGeneration < 0 {
 		return errors.New("state: node id and non-negative route snapshot generation are required")
+	}
+	var instanceIDValue, revisionValue any
+	if revision != nil {
+		if revision.InstanceID == "" {
+			return errors.New("state: realtime channel route snapshot revision requires a process instance")
+		}
+		instanceIDValue = revision.InstanceID
+		revisionValue = strconv.FormatUint(revision.Revision, 10)
 	}
 	unique, err := uniqueManagedRealtimeChannelRoutes(routes)
 	if err != nil {
@@ -315,12 +381,15 @@ func (s *PgStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeI
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		insert into managed_realtime_channel_route_node_state (node_id, snapshot_generation)
-		values ($1, $2)
+		insert into managed_realtime_channel_route_node_state
+			(node_id, snapshot_generation, realtime_process_instance_id, realtime_route_revision)
+		values ($1, $2, $3, $4)
 		on conflict (node_id) do update set
 			snapshot_generation = excluded.snapshot_generation,
+			realtime_process_instance_id = excluded.realtime_process_instance_id,
+			realtime_route_revision = excluded.realtime_route_revision,
 			updated_at = now()
-	`, nodeID, snapshotGeneration); err != nil {
+	`, nodeID, snapshotGeneration, instanceIDValue, revisionValue); err != nil {
 		return fmt.Errorf("state: record realtime channel route snapshot generation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1124,9 +1193,32 @@ func (m *MemStore) ManagedRealtimeChannelRouteNodeSnapshotFresh(_ context.Contex
 	return ok && snapshotGeneration >= m.realtimeChannelRouteGeneration && hasUpdateTime && time.Since(updatedAt) < managedRealtimeChannelRouteSnapshotRefreshInterval, nil
 }
 
-func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
+func (m *MemStore) ListManagedRealtimeChannelRouteSnapshotRevisions(ctx context.Context, nodeIDs []string) (map[string]ManagedRealtimeChannelRouteSnapshotRevision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	revisions := make(map[string]ManagedRealtimeChannelRouteSnapshotRevision)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureRealtimeChannelRouteMapsLocked()
+	for _, nodeID := range uniqueStrings(nodeIDs) {
+		if revision, ok := m.realtimeChannelRouteRevisions[nodeID]; ok {
+			revisions[nodeID] = revision
+		}
+	}
+	return revisions, nil
+}
+
+func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(ctx context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute) error {
+	return m.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, nodeID, snapshotGeneration, routes, nil)
+}
+
+func (m *MemStore) ReplaceManagedRealtimeChannelRoutesWithRevision(_ context.Context, nodeID string, snapshotGeneration int64, routes []ManagedRealtimeChannelRoute, revision *ManagedRealtimeChannelRouteSnapshotRevision) error {
 	if nodeID == "" || snapshotGeneration < 0 {
 		return errors.New("state: node id and non-negative route snapshot generation are required")
+	}
+	if revision != nil && revision.InstanceID == "" {
+		return errors.New("state: realtime channel route snapshot revision requires a process instance")
 	}
 	unique, err := uniqueManagedRealtimeChannelRoutes(routes)
 	if err != nil {
@@ -1172,6 +1264,11 @@ func (m *MemStore) ReplaceManagedRealtimeChannelRoutes(_ context.Context, nodeID
 	}
 	m.realtimeChannelRouteSnapshots[nodeID] = snapshotGeneration
 	m.realtimeRouteSnapshotAt[nodeID] = time.Now()
+	if revision == nil {
+		delete(m.realtimeChannelRouteRevisions, nodeID)
+	} else {
+		m.realtimeChannelRouteRevisions[nodeID] = *revision
+	}
 	now := time.Now()
 	for endpointID, overflow := range m.realtimeChannelRouteOverflow {
 		if overflow.Rebuilding && overflow.RebuildGeneration <= snapshotGeneration {
@@ -1304,6 +1401,7 @@ func (m *MemStore) FinalizeManagedRealtimeChannelRouteRebuild(ctx context.Contex
 			}
 			delete(m.realtimeChannelRouteSnapshots, nodeID)
 			delete(m.realtimeRouteSnapshotAt, nodeID)
+			delete(m.realtimeChannelRouteRevisions, nodeID)
 		}
 		m.mu.Unlock()
 		lock.Release(ctx)
@@ -1359,6 +1457,9 @@ func (m *MemStore) ensureRealtimeChannelRouteMapsLocked() {
 	}
 	if m.realtimeRouteSnapshotAt == nil {
 		m.realtimeRouteSnapshotAt = make(map[string]time.Time)
+	}
+	if m.realtimeChannelRouteRevisions == nil {
+		m.realtimeChannelRouteRevisions = make(map[string]ManagedRealtimeChannelRouteSnapshotRevision)
 	}
 }
 

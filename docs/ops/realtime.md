@@ -96,10 +96,11 @@ until its snapshot succeeds. Explicit unsubscriptions remove a route hint as
 soon as the node confirms that its last local subscriber has left. Realtime
 nodes expose a lightweight process-scoped route revision; apid polls it on its
 30-second reconcile pass and refreshes a node snapshot when a channel loses
-its last local subscriber or the realtime process restarts. Ready snapshots
-still refresh every five minutes as a recovery path for older nodes and missed
-revisions. Directory
-read errors fall back to full broadcast. The route directory caps each
+its last local subscriber or the realtime process restarts. The last applied
+process and revision are stored with the shared node snapshot so any apid
+replica can continue from the same checkpoint. Ready snapshots still refresh
+every five minutes as a recovery path for older nodes and missed revisions.
+Directory read errors fall back to full broadcast. The route directory caps each
 endpoint at 10,000 rows by isolating the channels with the largest route sets;
 after node snapshots are ready, those channels use full broadcast while
 unrelated indexed channels remain targeted. The reconciler retries isolated
