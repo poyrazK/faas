@@ -26,9 +26,9 @@ func TestPgStoreManagedRealtimeChannelRouteSnapshot(t *testing.T) {
 		t.Fatalf("AddManagedRealtimeChannelRoutes: %v", err)
 	}
 
-	nodeIDs, disabled, err := s.ListManagedRealtimeChannelRouteNodeIDs(ctx, endpoint.ID, "updates")
-	if err != nil || disabled || len(nodeIDs) != 1 || nodeIDs[0] != nodeID {
-		t.Fatalf("route snapshot = (%v, %v, %v), want ([%s], false, nil)", nodeIDs, disabled, err, nodeID)
+	view, err := s.ListManagedRealtimeChannelRouteView(ctx, endpoint.ID, "updates")
+	if err != nil || view.Disabled || len(view.NodeIDs) != 1 || view.NodeIDs[0] != nodeID {
+		t.Fatalf("route snapshot = (%+v, %v), want one enabled route for %s", view, err, nodeID)
 	}
 
 	// Overflow publication and route clearing commit together. The reader must
@@ -49,9 +49,9 @@ func TestPgStoreManagedRealtimeChannelRouteSnapshot(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("Commit overflow transition: %v", err)
 	}
-	nodeIDs, disabled, err = s.ListManagedRealtimeChannelRouteNodeIDs(ctx, endpoint.ID, "updates")
-	if err != nil || !disabled || len(nodeIDs) != 0 {
-		t.Fatalf("overflow snapshot = (%v, %v, %v), want ([], true, nil)", nodeIDs, disabled, err)
+	view, err = s.ListManagedRealtimeChannelRouteView(ctx, endpoint.ID, "updates")
+	if err != nil || !view.Disabled || len(view.NodeIDs) != 0 {
+		t.Fatalf("overflow snapshot = (%+v, %v), want disabled and empty", view, err)
 	}
 }
 
