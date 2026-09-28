@@ -5079,6 +5079,13 @@ func (c *Client) CreateOrg(ctx context.Context, req CreateOrgRequest) (OrgRespon
 	return out, c.do(ctx, "POST", "/v1/orgs", req, &out)
 }
 
+// CreateOrgApp creates an app attributed to the selected organization. The
+// creator retains account-level quota/billing identity in this rollout slice.
+func (c *Client) CreateOrgApp(ctx context.Context, slug string, req CreateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/apps", req, &out)
+}
+
 // GetOrg returns the active org by slug. Authz: any active member
 // (`org.view`); non-members see 403 `org_role_forbidden`. Unknown
 // slugs are 404 `org_not_found`.

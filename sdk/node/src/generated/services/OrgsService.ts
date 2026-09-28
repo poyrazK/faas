@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
+import type { AppResponse } from '../models/AppResponse.js';
 import type { ChangeMemberRoleRequest } from '../models/ChangeMemberRoleRequest.js';
+import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { InvitationListResponse } from '../models/InvitationListResponse.js';
@@ -516,6 +518,67 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `Caller is not an active member with \`org.view\`.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create an app attributed to the organization.
+   * Creates an app in this workspace and records the workspace id on the
+   * app row, so app lifecycle activity is attributed to this organization.
+   * The creator remains the account-level quota and billing identity in
+   * this rollout slice; existing app-specific routes remain creator-scoped
+   * until shared app access is migrated in follow-up work. Owners, admins,
+   * and developers may create apps (`org.create_app`).
+   *
+   * @returns AppResponse The newly created organization-attributed app.
+   * @throws ApiError
+   */
+  public static createOrgApp({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * App creation payload. See CreateAppRequest.
+     */
+    requestBody: CreateAppRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/apps',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller is not verified or lacks \`org.create_app\`.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: invalid_cpu_ram_pair — explicit ram_mb and vcpu do not match the canonical shape for the account plan.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
