@@ -361,6 +361,11 @@ note instead of the banner.
 - [ADR-346: event fanout recipient snapshots](346-event-fanout-recipient-snapshots.md) — capture eligible subscription candidates when an event is accepted
 - [ADR-347: recipient-scoped event fanout recovery](347-recipient-scoped-event-fanout-recovery.md) — persist candidate outcomes, retry transient routing failures independently, and cap poison recipients
 
+## Job execution decisions
+
+- [ADR-346: job run inputs, results, and flexible scheduling](346-job-run-input-results-and-flexible-scheduling.md)
+- [ADR-347: job attempt history, linked replay, and managed object evidence](347-job-attempt-replay-managed-artifacts.md)
+
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
 concurrently). The log above already contains several such pairs (157, 158, 167,
