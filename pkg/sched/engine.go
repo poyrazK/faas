@@ -620,6 +620,11 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// restorePlacementMu serializes only the brief choose-and-reserve window
+	// for snapshot restores. restorePlacementInFlight approximates vmmd's
+	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
+	restorePlacementMu       sync.Mutex
+	restorePlacementInFlight map[string]int
 	// restartMu/restartInFlight coalesce duplicate restart notifications for
 	// one app. The notification is a best-effort hint and can be delivered
 	// more than once, so a second caller waits for the first park+fresh-wake
@@ -856,25 +861,26 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		log = slog.Default()
 	}
 	e := &Engine{
-		store:            store,
-		ledger:           ledger,
-		vmm:              vmm,
-		notif:            notif,
-		fcVer:            fcVer,
-		log:              log,
-		jobContext:       ctx,
-		appMu:            map[string]*sync.Mutex{},
-		restartInFlight:  map[string]*restartCall{},
-		restartCompleted: map[string]string{},
-		serviceAppMu:     map[string]*sync.Mutex{},
-		serviceMu:        map[string]*sync.Mutex{},
-		wakeCoord:        newWakeCoord(),
-		warmBroadcaster:  newWarmHintBroadcaster(),
-		capacityTable:    newNodeCapacityTable(),
-		telemetryCache:   NewNodeTelemetryCache(),
-		nodePresence:     newNodePresenceTracker(),
-		usageCache:       NewNodeUsageCache(),
-		now:              time.Now, // tests override post-construction
+		store:                    store,
+		ledger:                   ledger,
+		vmm:                      vmm,
+		notif:                    notif,
+		fcVer:                    fcVer,
+		log:                      log,
+		jobContext:               ctx,
+		appMu:                    map[string]*sync.Mutex{},
+		restorePlacementInFlight: map[string]int{},
+		restartInFlight:          map[string]*restartCall{},
+		restartCompleted:         map[string]string{},
+		serviceAppMu:             map[string]*sync.Mutex{},
+		serviceMu:                map[string]*sync.Mutex{},
+		wakeCoord:                newWakeCoord(),
+		warmBroadcaster:          newWarmHintBroadcaster(),
+		capacityTable:            newNodeCapacityTable(),
+		telemetryCache:           NewNodeTelemetryCache(),
+		nodePresence:             newNodePresenceTracker(),
+		usageCache:               NewNodeUsageCache(),
+		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
 	// doesn't block the daemon's boot forever — the watchdog goroutine
@@ -2625,6 +2631,13 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
+	var releaseRestorePressure func()
+	defer func() {
+		if releaseRestorePressure != nil {
+			releaseRestorePressure()
+		}
+	}()
+
 	// ── Phase 2: admit window, under appMu ──────────────────
 	release := e.lockApp(appID)
 	var (
@@ -2998,7 +3011,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{
+	placementRequest := Request{
 		AppID:                      appID,
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
@@ -3009,7 +3022,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		PreferredNodeIDs:           snapshotNodes,
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
-	})
+	}
+	var placement Placement
+	if haveSnap && snap.StorageKey != "" {
+		placement, releaseRestorePressure, err = e.chooseRestorePlacementLocked(ctx, placementRequest)
+	} else {
+		placement, err = e.choosePlacementLocked(ctx, placementRequest)
+	}
 	if err != nil {
 		release()
 		return WakeResult{}, err // *api.Problem from chooser
@@ -3573,6 +3592,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_cold_boot", "", bootInput)
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
 		endSpan(createSpan)
+	}
+	if releaseRestorePressure != nil {
+		releaseRestorePressure()
+		releaseRestorePressure = nil
 	}
 	if err != nil {
 		// Boot error path. Release the reservation, transition to
@@ -4248,6 +4271,43 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
 	return choosePlacementWithCPU(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
+}
+
+// chooseRestorePlacementLocked snapshots local restore pressure, selects a
+// fitting node, and reserves one in-flight slot before another restore may
+// make a placement decision. The reservation lasts through the vmmd RPC and
+// is process-local because the Engine has no shared restore queue view.
+func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
+	e.restorePlacementMu.Lock()
+	defer e.restorePlacementMu.Unlock()
+
+	r.restorePressureAware = !r.PrioritizeSnapshotLocality
+	r.restorePressureByNode = make(map[string]int, len(e.restorePlacementInFlight))
+	for nodeID, inFlight := range e.restorePlacementInFlight {
+		r.restorePressureByNode[nodeID] = inFlight
+	}
+	placement, err := e.choosePlacementLocked(ctx, r)
+	if err != nil {
+		return Placement{}, nil, err
+	}
+	if e.restorePlacementInFlight == nil {
+		e.restorePlacementInFlight = make(map[string]int)
+	}
+	e.restorePlacementInFlight[placement.NodeID]++
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			e.restorePlacementMu.Lock()
+			defer e.restorePlacementMu.Unlock()
+			if inFlight := e.restorePlacementInFlight[placement.NodeID]; inFlight > 1 {
+				e.restorePlacementInFlight[placement.NodeID] = inFlight - 1
+			} else {
+				delete(e.restorePlacementInFlight, placement.NodeID)
+			}
+		})
+	}
+	return placement, release, nil
 }
 
 // ClaimUnplaced is the schedd-side async placement claim
