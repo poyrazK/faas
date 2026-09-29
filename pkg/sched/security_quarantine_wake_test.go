@@ -32,7 +32,8 @@ func assertSecurityQuarantineRefusal(t *testing.T, err error) {
 	}
 }
 
-// A security-quarantined deployment must not boot from any schedd trigger:
+// adr: 075 — a deployment whose live scan evidence regressed is quarantined
+// (security_scan_regressed) and must not boot from any schedd trigger:
 // cron, service mesh, floors and prewarm reach schedd without passing the
 // gateway or apid checks that refuse quarantined traffic.
 func TestSecurityQuarantinedDeploymentNeverBoots(t *testing.T) {
