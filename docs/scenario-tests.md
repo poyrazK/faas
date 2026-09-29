@@ -276,12 +276,24 @@ load:
   thresholds:
     p95: 250ms
     error_rate: 0.01
+    steps:
+      submit: {p95: 200ms, error_rate: 0}
+      read: {p95: 100ms}
 ```
+
+`thresholds.steps` keys must name declared HTTP requests or checks. Step budgets
+add to the aggregate limits; they do not replace them. Only explicitly supplied
+step limits apply. A step with a budget and no samples fails, including a check
+skipped because an earlier request failed. This prevents an aggregate percentile
+or an allowed error rate from hiding a problem in a critical step. JSON reports
+include evaluated budgets under each step, terminal summaries identify them by
+step name, and failed budgets fail the JUnit case and command.
 
 This optional block configures `--load`; it does not enable load for a normal
 test. Replace `iterations` with `duration: 30s` to choose a timed run. CLI flags
 override the manifest; selecting `--duration` clears its iteration setting and
-selecting `--iterations` clears its duration. Without configuration, `--load`
+stages, and selecting `--iterations` clears its duration and stages. Without
+configuration, `--load`
 uses one user and 100 journeys. `--vus`, `--iterations`, and `--duration` require
 `--load`. Validate the configuration without contacting the app:
 
@@ -297,6 +309,61 @@ runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
 `GREGALE_TEST_LOAD_VUS`, `GREGALE_TEST_LOAD_ITERATIONS`, and
 `GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
 aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
+
+### Ramp traffic, pace users, and follow progress
+
+Declare a stage schedule instead of `iterations` or `duration`:
+
+```yaml
+load:
+  vus: 1
+  pacing: 100ms
+  stages:
+    - {duration: 10s, target: 5}
+    - {duration: 20s, target: 5}
+    - {duration: 10s, target: 20}
+    - {duration: 20s, target: 20}
+    - {duration: 10s, target: 0}
+  thresholds:
+    error_rate: 0.01
+    steps:
+      submit: {p95: 200ms, error_rate: 0}
+      read: {p95: 100ms}
+```
+
+`vus` is the initial user count. Each stage interpolates linearly from the
+previous target to its target, rounded to the nearest whole user. Repeating a
+target holds that concurrency. A target of zero stops starting journeys for the
+affected users; it can also hold an idle period. During a ramp down, running
+users finish their entire current journey before becoming inactive. Active
+journeys can temporarily exceed the new target while they finish. After the
+schedule ends, in-flight journeys get the same 30-second drain allowance as a
+timed run.
+
+Schedules may contain up to 20 stages, each at least 1 second, with a combined
+duration of at most 5 minutes and targets from 0 to 50 users. The scenario timeout
+and HTTP-step budget still apply. Reports label the mode and stop reason as
+`stages`, record initial/max/peak users, and include each stage's duration, start
+and target user counts, and journeys started in that stage. Journeys are assigned
+to the stage in which they start, even if they finish in a later stage.
+
+`pacing` pauses each user after a journey finishes before starting its next one,
+including after a failed journey. It applies to all load modes and defaults to
+zero. It adds no pause after the final journey and does not count toward HTTP
+step latency. The allowed range is 0 seconds to 1 minute; `--pacing 0s` disables
+manifest pacing. This remains a concurrency model, not a fixed arrival-rate
+promise.
+
+```sh
+gregale test --scenario customer-export --engine local --base-url http://localhost:3000 \
+  --load --progress --report load.json --junit load.xml
+```
+
+`--progress` prints a snapshot once per second to stderr: elapsed time, current
+stage or draining state, target and active users, completed/started journeys,
+HTTP steps, and failures. It also works with `--json`; stdout remains a single
+JSON result. `--pacing` and `--progress` require `--load`. Commands additionally
+receive `GREGALE_TEST_LOAD_MAX_VUS` and `GREGALE_TEST_LOAD_PACING`.
 
 A failed request or assertion ends that journey; other journeys continue.
 `error_rate` is failed HTTP steps divided by all attempted HTTP steps, as a

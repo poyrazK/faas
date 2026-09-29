@@ -213,6 +213,8 @@ func cmdTest(args []string) int {
 	vus := fs.Int("vus", 0, "concurrent users for --load (1..50, default 1)")
 	iterations := fs.Int("iterations", 0, "total journeys for --load (1..10000, default 100)")
 	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
+	pacing := fs.String("pacing", "", "pause between each user's load journeys (0s..1m)")
+	progress := fs.Bool("progress", false, "print live load progress to stderr")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
 	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
 	maxWorkloadMinutes := fs.Int("max-workload-minutes", 0, "maximum estimated VM workload-minutes for this command (0 disables guard)")
@@ -223,10 +225,10 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D] [--pacing D] [--progress]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
 		return 1
 	}
-	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Duration: *duration}
+	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Duration: *duration, Pacing: *pacing}
 	fs.Visit(func(selected *flag.Flag) {
 		switch selected.Name {
 		case "vus":
@@ -235,10 +237,12 @@ func cmdTest(args []string) int {
 			loadOverrides.IterationsSet = true
 		case "duration":
 			loadOverrides.DurationSet = true
+		case "pacing":
+			loadOverrides.PacingSet = true
 		}
 	})
-	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.DurationSet) {
-		return printErr("Invalid load options", errors.New("--vus, --iterations, and --duration require --load"))
+	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
+		return printErr("Invalid load options", errors.New("--vus, --iterations, --duration, --pacing, and --progress require --load"))
 	}
 	if *load && *engine != "local" {
 		return printErr("Invalid load engine", errors.New("--load currently requires --engine local"))
@@ -305,6 +309,9 @@ func cmdTest(args []string) int {
 			if err != nil {
 				return printErr("Invalid load scenario", fmt.Errorf("scenario %q: %w", name, err))
 			}
+			if *progress {
+				cfg.Progress = func(update testLoadProgress) { printTestLoadProgress(osStderr, update) }
+			}
 			loadConfigs[name] = cfg
 		}
 	}
@@ -370,6 +377,9 @@ runLoop:
 					budget := fmt.Sprintf("%d total journeys", cfg.Iterations)
 					if cfg.Duration > 0 {
 						budget = cfg.Duration.String()
+					}
+					if len(cfg.Stages) > 0 {
+						budget += fmt.Sprintf(", %d stages, max %d VUs", len(cfg.Stages), cfg.maxVUs())
 					}
 					label := *scenarioName
 					if testCase.Name != "" {
@@ -517,6 +527,9 @@ func readTestManifestForScenario(path, selected string, dataFields []string) (ma
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if err := validateTestLoadSpec(scenario.Load); err != nil {
+			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLoadStepThresholds(scenario); err != nil {
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {

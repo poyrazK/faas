@@ -143,6 +143,8 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 			"GREGALE_TEST_LOAD_MODE="+receipt.Load.Mode,
 			"GREGALE_TEST_LOAD_ITERATIONS="+strconv.Itoa(load.Iterations),
 			"GREGALE_TEST_LOAD_DURATION="+load.Duration.String(),
+			"GREGALE_TEST_LOAD_MAX_VUS="+strconv.Itoa(load.maxVUs()),
+			"GREGALE_TEST_LOAD_PACING="+load.Pacing.String(),
 		)
 	}
 	defer func() {

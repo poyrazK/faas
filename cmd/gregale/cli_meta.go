@@ -1223,7 +1223,7 @@ var cliCommands = []cliCommand{
 		Name:     "test",
 		DocSlug:  "test",
 		Short:    "Run application scenarios and bounded local HTTP load tests",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s", "gregale test --scenario customer-export --engine simulated"},
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
@@ -1250,6 +1250,8 @@ var cliCommands = []cliCommand{
 			{Name: "vus", Short: "concurrent users for --load (1..50, default 1)", Value: "N"},
 			{Name: "iterations", Short: "total journeys for --load (1..10000, default 100)", Value: "N"},
 			{Name: "duration", Short: "schedule journeys for this duration with --load (1s..5m)", Value: "DURATION"},
+			{Name: "pacing", Short: "pause between each user's load journeys (0s..1m)", Value: "DURATION"},
+			{Name: "progress", Short: "print live load progress to stderr"},
 			{Name: "profile", Short: "required lifecycle (default all)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
 			{Name: "repeat", Short: "runs per lifecycle profile or local case (1..20)", Value: "N"},
 			{Name: "max-workload-minutes", Short: "abort if the estimated VM workload-minute ceiling exceeds N", Value: "N"},

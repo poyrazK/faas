@@ -388,9 +388,11 @@ func TestLoadCLIRejectsInvalidOptionsAndManifestDoesNotEnableLoad(t *testing.T) 
 	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
 	for _, options := range [][]string{
 		{"--vus", "2"}, {"--iterations", "2"}, {"--duration", "1s"},
+		{"--pacing", "0s"}, {"--progress"},
 		{"--load", "--engine", "simulated"}, {"--load", "--engine", "real-vm"},
 		{"--load", "--vus", "0"}, {"--load", "--iterations", "0"},
 		{"--load", "--iterations", "2", "--duration", "1s"}, {"--load", "--duration", "6m"},
+		{"--load", "--pacing", "-1s"}, {"--load", "--pacing", "2m"},
 	} {
 		args := append([]string{"--validate", "--engine", "local", "--manifest", manifest}, options...)
 		if code := cmdTest(args); code == 0 {
