@@ -1677,89 +1677,19 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// is returned unchanged, so pre-PR-B callers (cron, meterd,
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
+	scope = ScopeFrom(ctx)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
 	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
-		// PR-C (issue #460 / ADR-053): resolve the live deployment so
-		// the response's Port field is consistent with what
-		// AdmitInstance would have produced. The instance row
-		// carries no port (port is a deployment-level concept); the
-		// live dep row carries dep.OverridePort.
-		//
-		// Why a LiveDeployment read is acceptable here: Wake is the
-		// legacy fast path used by meterd's per-minute sampler + cron
-		// firings, NOT the customer hot path. Production customer
-		// requests go through AdmitInstance (cmd/gatewayd-internal/main.go),
-		// which has the live deployment already loaded. So this read
-		// adds one cheap PG roundtrip (~1ms, single-row lookup with
-		// the existing (app_id, status) partial index) per minute per
-		// active app — well below any customer-facing budget.
-		//
-		// A read failure here logs (slog) and falls through with
-		// Port=0 — the vmmd wire boundary defaults to 8080 in that
-		// case, so a transient PG hiccup never widens the failure
-		// surface beyond the legacy behaviour.
-		//
-		// If Wake ever becomes customer-facing, denormalise port onto
-		// the instances row at admit time and read it back alongside
-		// the existing fields — that costs a migration + an extra
-		// column on state.Instance + the RunningInstanceForApp query,
-		// which is overkill for synth traffic.
-		var port int
-		// resolvedDeploymentID (issue #556 / PR-C) is the per-deployment
-		// wake-fan-out target the gateway caches on Target so the
-		// weighted picker routes subsequent requests to the right
-		// bucket. Preference order:
-		//
-		//  1. Caller-supplied non-empty deploymentID wins — the gateway
-		//     passed the deployment id it cached on Target; that
-		//     wins over any concurrent redeploy. (Shadowing guard:
-		//     do NOT name this local `deploymentID` — Go would silently
-		//     rebind the parameter, and a regression that did so would
-		//     drop the gateway's hint on the floor. Pin via TestEngineWake_HonorsCallerDeploymentID.)
-		//  2. Otherwise resolve from LiveDeployment — legacy
-		//     single-deployment behaviour, unchanged.
-		//
-		// The LiveDeployment lookup also feeds the effective runtime port;
-		// when the caller passes a non-empty deploymentID we still
-		// need the lookup unless port defaults are acceptable. vmmd
-		// defaults to 8080 when port=0, so a transient lookup failure
-		// here is benign; we surface it via slog and carry on.
-		//
-		// PR-B (issue #272): the LiveDeployment read is scope-aware.
-		// A preview wake (scope="pr-{N}") MUST NOT route to the
-		// parent's live deployment; it must consult
-		// LiveDeploymentForScope so the preview gets the preview's
-		// own deployment row. Empty scope falls through to the
-		// legacy LiveDeployment (single-deployment app).
-		resolvedDeploymentID := deploymentID
-		var depErr error
-		var dep state.Deployment
-		if scope == "" {
-			dep, depErr = e.store.LiveDeployment(ctx, appID)
-		} else {
-			dep, depErr = e.store.LiveDeploymentForScope(ctx, appID, scope)
+		// Port and provenance belong to the selected instance's deployment.
+		// A newer live row, including one in another stage, cannot replace it.
+		resolvedDeploymentID := ins.DeploymentID
+		dep, depErr := e.store.DeploymentByID(ctx, resolvedDeploymentID)
+		if depErr != nil {
+			release()
+			return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", depErr)
 		}
-		if depErr == nil {
-			port = deploymentRuntimePort(dep)
-			if resolvedDeploymentID == "" {
-				resolvedDeploymentID = dep.ID
-			}
-			// A caller-supplied deployment hint wins routing selection. If
-			// it differs from the newest live row used for the legacy port
-			// lookup, reload the hinted deployment before projecting commit,
-			// tag, digest, and creation time; otherwise provenance could be
-			// attributed to the wrong deployment.
-			if deploymentID != "" && dep.ID != deploymentID {
-				if hinted, hintedErr := e.store.DeploymentByID(ctx, deploymentID); hintedErr == nil {
-					dep = hinted
-					port = deploymentRuntimePort(hinted)
-				}
-			}
-		} else {
-			e.log.Warn("sched: wake: live deployment lookup for port/deployment_id failed; falling through with caller hint (or empty)",
-				"app", appID, "caller_deployment_id", deploymentID, "scope", scope, "err", depErr)
-		}
+		port := deploymentRuntimePort(dep)
 		release()
 		// Surface the existing row's wake_id so a Phase-1 fast-path
 		// response carries x-faas-wake-id just like a cold-wake
@@ -1801,14 +1731,23 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	return e.admitAndDispatch(ctx, appID, trigger, false)
 }
 
-// An exact wake must never borrow another revision's running instance. The
-// ordinary app-wide lookup deliberately excludes 0%-traffic deployments, so
-// it cannot serve retained revisions; inspect the app's instances instead.
+// A wake can reuse only its selected deployment's running instance. Unscoped
+// wakes select production; explicit scopes select their own lane. An exact
+// retained-release wake can use a zero-weight deployment without borrowing
+// another revision's instance.
 func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID, scope string) (state.Instance, error) {
+	var dep state.Deployment
+	var err error
 	if deploymentID == "" {
-		return e.store.RunningInstanceForApp(ctx, appID)
+		if scope == "" {
+			dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
+		} else {
+			dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
+		}
+		deploymentID = dep.ID
+	} else {
+		dep, err = e.store.DeploymentByID(ctx, deploymentID)
 	}
-	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -2041,10 +1980,10 @@ func (e *Engine) destroyForRuntimeConfigRestart(ctx context.Context, instance st
 }
 
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
-	app, err := e.store.AppByID(ctx, appID)
+	app, err := state.AppForInstance(ctx, e.store, ins)
 	if err != nil {
-		e.log.Warn("sched: wake: app lookup for instance mode failed; preserving fast path", "app", appID, "instance", ins.ID, "err", err)
-		return true
+		e.log.Warn("sched: wake: pinned app lookup for instance mode failed", "app", appID, "instance", ins.ID, "err", err)
+		return false
 	}
 	if instanceModeMatchesApp(app, ins) {
 		return true
@@ -5258,7 +5197,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	} else {
 		// Legacy instance rows created before deployment correlation was
 		// required retain the previous best-effort live-deployment lookup.
-		dep, err = e.store.LiveDeployment(ctx, ins.AppID)
+		dep, err = state.ResolveProductionDeployment(ctx, e.store, ins.AppID)
 		if err != nil {
 			return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
 		}
@@ -7778,8 +7717,8 @@ func (e *Engine) hasEphemeralSecretForDeployment(ctx context.Context, accountID,
 //
 // PR-B (issue #272): the LiveDeployment lookup is scope-aware —
 // a non-empty scope reads the scope's live deployment row via
-// LiveDeploymentForScope. Empty scope falls through to the legacy
-// single-deployment LiveDeployment. The scope is read from the
+// LiveDeploymentForScope. Empty scope resolves the production graph or
+// traffic-bearing production/default deployment. The scope is read from the
 // ctx stamped by WithScope at Wake / AdmitInstance /
 // AdmitInstanceForDeployment entry points — see engine_scope.go.
 func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state.Account, api.Limits, state.Deployment, error) {
@@ -7790,7 +7729,7 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 	scope := ScopeFrom(ctx)
 	var dep state.Deployment
 	if scope == "" {
-		dep, err = e.store.LiveDeployment(ctx, appID)
+		dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
 	} else {
 		dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
 	}

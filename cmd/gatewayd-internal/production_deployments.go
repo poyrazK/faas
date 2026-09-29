@@ -19,20 +19,5 @@ func productionLiveDeployments(ctx context.Context, store liveDeploymentStore, a
 	if err != nil {
 		return nil, err
 	}
-	var production, legacy []state.Deployment
-	var productionTraffic, legacyTraffic bool
-	for _, deployment := range deployments {
-		switch deployment.Scope {
-		case "production":
-			production = append(production, deployment)
-			productionTraffic = productionTraffic || deployment.TrafficPercent > 0
-		case "", "default":
-			legacy = append(legacy, deployment)
-			legacyTraffic = legacyTraffic || deployment.TrafficPercent > 0
-		}
-	}
-	if productionTraffic || (!legacyTraffic && len(production) > 0) {
-		return production, nil
-	}
-	return legacy, nil
+	return state.ProductionRoutingDeployments(deployments), nil
 }

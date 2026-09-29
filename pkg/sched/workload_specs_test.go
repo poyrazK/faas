@@ -29,6 +29,10 @@ func TestSchedulerResolvesDeploymentWorkloadRevision(t *testing.T) {
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
+	production, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
 	settings, err := state.WorkloadSettingsFromApp(app)
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +54,10 @@ func TestSchedulerResolvesDeploymentWorkloadRevision(t *testing.T) {
 	resolved, _, _, dep, err := engine.resolveApp(WithScope(ctx, "staging"), app.ID)
 	if err != nil || dep.ID != deployment.ID || resolved.RAMMB != 512 || resolved.CPUMillicores != 500 || resolved.StartCommand != "serve staging" {
 		t.Fatalf("scheduler lost tested stage revision: %+v, dep=%s, err=%v", resolved, dep.ID, err)
+	}
+	resolved, _, _, dep, err = engine.resolveApp(ctx, app.ID)
+	if err != nil || dep.ID != production.ID || resolved.RAMMB != 256 || resolved.StartCommand != "serve production" {
+		t.Fatalf("unscoped scheduler selected staging: %+v, dep=%s, err=%v", resolved, dep.ID, err)
 	}
 }
 

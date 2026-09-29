@@ -111,12 +111,16 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		return nil
 	}
 
-	dep, err := e.store.LiveDeployment(ctx, appID)
+	dep, err := state.ResolveProductionDeployment(ctx, e.store, appID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("sched: warm pool: live deployment: %w", err)
+	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return fmt.Errorf("sched: warm pool: workload settings: %w", err)
 	}
 	if securityQuarantineErr(dep) != nil {
 		return e.reclaimWarmPool(ctx, warm, 0)

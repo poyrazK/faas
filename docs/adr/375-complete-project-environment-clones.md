@@ -198,5 +198,25 @@ Exact deployment routes retain their own settings without replacing the app-ID
 production cache. Their companion routes also work for zero-traffic candidates.
 Focused gateway and daemon contracts cover stage-only apps, preparation and
 cutover, out-of-band stage wakes, cache eviction and failed-read retry, quarantine,
-sidecars, and interleaved production/preview settings. Default scheduler selection
-and request-specific retained-release settings still require separate work.
+sidecars, and interleaved production/preview settings. Request-specific retained
+release settings and scope-specific capacity/reconciliation still require work.
+
+### Production wake selection (2026-09-29)
+
+Gateway scope filtering and scheduler default selection share one production
+lane policy. An unscoped scheduler wake honors the active production graph;
+without a graph it selects serving named production or legacy default traffic.
+Stage-only and dark-only deployments cannot become production implicitly.
+Running-instance reuse is limited to the selected deployment, including explicit
+stage and retained-release wakes. Fast-path port and provenance come from that
+instance's deployment, and its execution mode is checked against pinned settings.
+Legacy migration fallback, production warm-pool snapshot selection, and cron's
+missing-production check use the same resolver. Warm-pool restore reads pinned
+settings for its selected deployment.
+
+The MemStore and PostgreSQL selection contracts cover legacy preparation,
+production cutover, stage-only apps, and a newer direct deployment after graph
+publication. Scheduler fake lifecycle checks cover cross-scope running-instance
+reuse, pinned stage execution mode, existing wake behavior, and warm pools.
+Scope-specific admission ledgers, pool counts, reaper floors, and reconciliation
+remain unfinished. These local checks do not replace native VM acceptance.

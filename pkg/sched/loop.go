@@ -4040,7 +4040,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// MarkDeploymentLive clears the reason after a successful redeploy.
 		// Parked apps still have a live deployment, so they remain schedulable.
 		if errors.Is(err, ErrPermanentWake) {
-			_, liveErr := l.engine.Store().LiveDeployment(ctx, c.AppID)
+			_, liveErr := state.ResolveProductionDeployment(ctx, l.engine.Store(), c.AppID)
 			switch {
 			case errors.Is(liveErr, state.ErrNotFound):
 				if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
