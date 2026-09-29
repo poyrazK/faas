@@ -85,7 +85,7 @@ Idempotency-Key: <stable-client-operation-id>
 {"expected_plan_hash":"<plan_hash from preview>"}
 ```
 
-The apply rechecks the hash while holding the tenant and linked-resource locks. A changed inventory returns `409 platform_tenant_plan_stale` without mutation. A successful transaction suspends the tenant, revokes active consumer keys and tenant-bound tokens, disables delegated policies, detaches only managed consumers and surfaces, removes only managed hostnames, and stores a secret-free receipt atomically. Repeating the request with the same idempotency key replays the original response. Recover the receipt with `GET /v1/account/platform-tenants/{id}/offboardings/{receipt_id}`, or list history from `/v1/account/platform-tenants/{id}/offboardings`. Reads require the account's normal read scope and recent MFA. See [ADR-346](adr/346-platform-tenant-offboarding-apply.md).
+The apply rechecks the hash while holding the tenant and linked-resource locks. A changed inventory returns `409 platform_tenant_plan_stale` without mutation. A successful transaction suspends the tenant, revokes active consumer keys and tenant-bound tokens, disables delegated policies, detaches only managed consumers and surfaces, removes only managed hostnames, and stores a secret-free receipt atomically. Repeating the request with the same idempotency key replays the original response. Recover the receipt with `GET /v1/account/platform-tenants/{id}/offboardings/{receipt_id}`, or list history from `/v1/account/platform-tenants/{id}/offboardings`. Reads require the account's normal read scope and recent MFA. See [ADR-365](adr/365-platform-tenant-offboarding-apply.md).
 
 Platform owners can configure the domain boundary for downstream hostname self-service:
 

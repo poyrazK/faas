@@ -1,4 +1,4 @@
-# ADR-346 · Confirmed platform-tenant offboarding apply
+# ADR-365 · Confirmed platform-tenant offboarding apply
 
 - **Status:** accepted
 - **Date:** 2026-09-28
