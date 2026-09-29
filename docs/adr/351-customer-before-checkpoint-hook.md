@@ -1,4 +1,4 @@
-# ADR-343 · Customer callback before terminal init capture
+# ADR-351 · Customer callback before terminal init capture
 
 - **Status:** accepted
 - **Date:** 2026-09-28

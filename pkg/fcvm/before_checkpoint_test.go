@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 343 — the guest callback must acknowledge before a terminal init capture.
+// adr: 351 — the guest callback must acknowledge before a terminal init capture.
 
 import (
 	"context"
