@@ -175,21 +175,30 @@ func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID
 }
 
 func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error {
-	// A failed teardown keeps the namespace fenced until its apps are reaped.
-	var active bool
-	if err := s.pool.QueryRow(ctx, `select exists(select 1 from scenario_test_members m
-		join apps a on a.id = m.app_id where m.account_id = $1 and m.run_id = $2
-		and a.status <> 'deleted')`, accountID, runID).Scan(&active); err != nil {
-		return err
-	}
-	if active {
-		return ErrConflict
-	}
-	result, err := s.pool.Exec(ctx, `delete from scenario_test_members where account_id = $1 and run_id = $2`, accountID, runID)
+	// Check and delete in one statement snapshot. A separate active-member
+	// check followed by an unconditional DELETE could erase a member that was
+	// registered between those statements while its app was still running.
+	result, err := s.pool.Exec(ctx, `delete from scenario_test_members m
+		where m.account_id = $1 and m.run_id = $2
+		and not exists (
+			select 1 from scenario_test_members member
+			join apps a on a.id = member.app_id
+			where member.account_id = $1 and member.run_id = $2
+			and a.status <> 'deleted'
+		)`, accountID, runID)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() == 0 {
+		var active bool
+		if err := s.pool.QueryRow(ctx, `select exists(select 1 from scenario_test_members m
+			join apps a on a.id = m.app_id where m.account_id = $1 and m.run_id = $2
+			and a.status <> 'deleted')`, accountID, runID).Scan(&active); err != nil {
+			return err
+		}
+		if active {
+			return ErrConflict
+		}
 		return ErrNotFound
 	}
 	return nil
