@@ -1,4 +1,4 @@
--- filename: 20260928221125542_app_wake_webhook_completion.sql
+-- filename: 20260929004227177_app_wake_webhook_completion.sql
 
 -- +goose Up
 ALTER TABLE apps
