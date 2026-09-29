@@ -416,3 +416,103 @@ func TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement(t *testi
 		t.Fatalf("large lane blocked independent work: %+v", secondBatch)
 	}
 }
+
+func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "queue-receipts-"+time.Now().Format("150405.000000000")+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "queue-receipts", Type: state.AppTypeApp, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateQueueBinding(ctx, state.QueueBinding{
+		AccountID: account.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs",
+		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		[]byte(`{"mode":"queue"}`), "queue", 1, 20, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := newQueuePoller(pool, trigger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poller := source.(*queuePoller)
+
+	for _, terminal := range []string{"superseded", "cancelled", "expired"} {
+		t.Run(terminal, func(t *testing.T) {
+			policy := workpolicy.Policy{Name: "receipt-" + terminal, MaxRunningPerKey: 1}
+			if terminal == "superseded" {
+				policy.PendingUpdates = workpolicy.PendingKeepLatest
+			}
+			key := "s:document-" + terminal
+			old, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{
+				AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue,
+				QueueName: "jobs", Payload: json.RawMessage(`{"version":1}`),
+				DueAt: time.Now().Add(-time.Second),
+			}, policy, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result := poller.Poll(ctx, trigger); result.Error != nil ||
+				len(result.Records) != 1 || result.Records[0].ItemIdentifier != old.ID {
+				t.Fatalf("first delivery = %+v", result)
+			}
+			recordID, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), old.ID, old.Payload, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := store.ClaimTriggerRecords(ctx, trigger.ID.String(), 1)
+			if err != nil || len(claimed) != 1 {
+				t.Fatalf("claim receipt = %+v, err=%v", claimed, err)
+			}
+			if err := store.RetryClaimedTriggerRecord(ctx, recordID, claimed[0].ClaimGeneration,
+				"retry", time.Now().Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if err := poller.Nack(ctx, trigger, []string{old.ID}, triggerReasonBrokerError); err != nil {
+				t.Fatal(err)
+			}
+			assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "retry", "")
+
+			switch terminal {
+			case "superseded":
+				_, err = store.EnqueueKeyedInvocation(ctx, state.Invocation{
+					AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue,
+					QueueName: "jobs", Payload: json.RawMessage(`{"version":2}`),
+					DueAt: time.Now().Add(time.Hour),
+				}, policy, key)
+			case "cancelled":
+				_, err = store.CancelPendingKeyedInvocations(ctx, app.ID, policy.Name, key, "")
+			case "expired":
+				if _, err = pool.Exec(ctx, `update invocations set work_expires_at=now()-interval '1 second' where id=$1`, old.ID); err == nil {
+					_, err = store.ExpirePendingKeyedInvocations(ctx, time.Now(), 64)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome := terminal
+			if terminal == "cancelled" {
+				outcome = ""
+			}
+			assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, terminal, terminal, outcome)
+			if err := store.RetryTriggerRecordByOperator(ctx, recordID); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("operator revived policy-terminal receipt: %v", err)
+			}
+			if result := poller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 0 {
+				t.Fatalf("terminal work delivered again: %+v", result)
+			}
+		})
+	}
+}

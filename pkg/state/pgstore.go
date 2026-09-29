@@ -30041,7 +30041,15 @@ func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) e
 		       attempts = 0,
 		       last_error = null,
 		       next_fire_at = now()
-		 where id = $1`,
+		 where id = $1
+		   and not exists (
+		       select 1 from triggers t
+		       join invocations i on i.app_id = t.app_id
+		         and i.id::text = trigger_records.item_identifier
+		       where t.id = trigger_records.trigger_id
+		         and t.kind = 'queue' and i.source = 'queue'
+		         and i.state in ('superseded', 'cancelled', 'expired')
+		   )`,
 		id)
 	if err != nil {
 		return fmt.Errorf("state: retry trigger_record %s: %w", id, err)
