@@ -1,4 +1,4 @@
-// adr: 341
+// adr: 349
 // Table-driven coverage for the wake-error classifier (issue #1059 /
 // ADR-127). Each row exercises one classification path so the closed
 // reason vocabulary is locked: a future refactor that drops a branch

@@ -1,8 +1,8 @@
-# ADR-341 · Distinguish application restore-hook failures
+# ADR-349 · Distinguish application restore-hook failures
 
 - **Status:** accepted
 - **Date:** 2026-09-28
-- **Decision:** Guest resume ACK 13 from ADR-346 maps to a typed
+- **Decision:** Guest resume ACK 13 from ADR-348 maps to a typed
   `ErrAfterRestoreHook` on the host. The wake-failure classifier emits the
   closed reason `after_restore_failed` for that error, including when the
   restore falls back to a successful cold boot. The vmmd counter
