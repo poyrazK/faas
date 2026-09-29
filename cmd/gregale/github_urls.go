@@ -27,6 +27,18 @@ func validateGitHubRef(ref string) error {
 	return nil
 }
 
+func isGitHubCommitSHA(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, r := range ref {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // githubTarballURL builds the GitHub archive URL from encoded path segments.
 // Repo validation prevents an extra repository path from being injected;
 // segment-by-segment ref escaping preserves valid ref slashes without allowing

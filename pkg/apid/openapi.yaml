@@ -8125,7 +8125,8 @@ paths:
         '400':
           description: |
             code: invalid_ref | validation_failed. ref must be a valid 40-char
-            SHA, branch, or tag.
+            SHA, branch, or tag. source_branch can only be paired with a full
+            commit SHA.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -8135,6 +8136,13 @@ paths:
           description: |
             No durable GitHub install bound to the caller's account
             (code: github_install_not_found).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: |
+            code: source_ref_stale. source_branch no longer points at the
+            requested immutable commit SHA.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -32700,6 +32708,18 @@ components:
             caller's `ref` is preserved on the `deploy.source_ref`
             audit row for traceability).
           example: main
+        source_branch:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Optional branch provenance for a request whose `ref` is a full
+            commit SHA. The server verifies this branch still points at the
+            fetched commit, then rechecks it immediately before promotion.
+            GitHub Actions push deployments use this to keep their immutable
+            event SHA from becoming stale during a long build. Omit for an
+            explicit pinned deployment or a tag.
+          example: release/2026-q3
         format:
           type: string
           enum: [tarball]

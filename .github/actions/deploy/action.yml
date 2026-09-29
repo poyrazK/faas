@@ -139,6 +139,7 @@ runs:
         INPUT_APP: ${{ inputs.app }}
         INPUT_REPO: ${{ inputs.repo || github.repository }}
         INPUT_REF: ${{ inputs.ref || github.sha }}
+        INPUT_REF_EXPLICIT: ${{ inputs.ref != '' }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}

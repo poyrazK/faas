@@ -1002,7 +1002,7 @@ func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *
 // explicit selectors below. A ref is meaningful only for the repository
 // transport. Run this before authentication or source I/O so a malformed CI
 // invocation cannot silently deploy different bytes.
-func validateDeploySourceSelection(sourcePath string, worktree bool, image, archive, repo, templateName string, githubSnippet bool, ref string) error {
+func validateDeploySourceSelection(sourcePath string, worktree bool, image, archive, repo, templateName string, githubSnippet bool, ref, sourceBranch string) error {
 	var selected []string
 	if sourcePath != "" || worktree {
 		if sourcePath != "" {
@@ -1029,6 +1029,17 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if ref != "" && repo == "" {
 		return errors.New("--ref requires --repo")
 	}
+	if sourceBranch != "" && repo == "" {
+		return errors.New("--source-branch requires --repo")
+	}
+	if sourceBranch != "" && !isGitHubCommitSHA(ref) {
+		return errors.New("--source-branch requires --ref to be a full 40-character commit SHA")
+	}
+	if sourceBranch != "" {
+		if err := validateGitHubRef(sourceBranch); err != nil {
+			return fmt.Errorf("invalid --source-branch: %w", err)
+		}
+	}
 	if len(selected) > 1 {
 		return fmt.Errorf("source selectors are mutually exclusive: %s", strings.Join(selected, ", "))
 	}
@@ -1053,7 +1064,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	return fmt.Errorf("unsupported with --repo: %s", strings.Join(unsupported, ", "))
 }
 
-func validateSourceRefPreviewFlags(explicit map[string]bool) error {
+func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string) error {
 	var unsupported []string
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
@@ -1063,6 +1074,9 @@ func validateSourceRefPreviewFlags(explicit map[string]bool) error {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
 		}
+	}
+	if sourceBranch != "" {
+		unsupported = append(unsupported, "--source-branch")
 	}
 	if len(unsupported) == 0 {
 		return nil
@@ -2124,14 +2138,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// explicit 1-exit error.
 	repo := fs.String("repo", "", "GitHub repo to deploy from (owner/name)")
 	ref := fs.String("ref", "", "git ref for --repo (branch, tag, or 40-char SHA)")
+	sourceBranch := fs.String("source-branch", "", "branch that produced a pinned --ref; reject promotion if it moves")
 	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to a project")
 	installID := fs.Int64("install-id", 0, "GitHub installation id for a project binding")
 	productionBranch := fs.String("production-branch", "main", "production branch for a project binding")
 	// Issue #270: --github emits a copy-paste-ready GitHub Actions
-	// workflow snippet to stdout and exits 0. No auth, no side effects,
-	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
+	// workflow snippet to stdout and exits 0. It does not authenticate or
+	// write files; --pin-action explicitly resolves the public Action tag.
 	// See cmd_deploy_github.go for the snippet body.
 	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
+	pinnedActionSHA := fs.String("pinned-sha", "", "with --github only, pin the generated deploy Action to this full 40-character commit SHA")
+	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -2322,7 +2339,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2526,7 +2543,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *function && *app {
 		return printErr("Invalid flags", fmt.Errorf("--function and --app are mutually exclusive"))
 	}
-	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref); err != nil {
+	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref, *sourceBranch); err != nil {
 		return printErr("Invalid flags", err)
 	}
 	if *image != "" && !api.ValidDeploymentImage(*image) {
@@ -2704,8 +2721,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var dirtyFileCount int
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
-	// stdout and exits 0 (issue #270). No auth, no side effects — this
-	// is a documentation-generation path, not a deploy path. The snippet
+	// stdout and exits 0 (issue #270). This path does not authenticate or
+	// write files; --pin-action opts into a public tag lookup. The snippet
 	// uses the resolved slug from --name / cwd (slug variable above)
 	// and emits ${{ github.* }} placeholders by default, or concrete
 	// values when running inside a Actions runner (GITHUB_REPOSITORY +
@@ -2722,7 +2739,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *noTraffic {
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
-		return cmdDeployGithubSnippet([]string{"--app", slug})
+		snippetArgs := []string{"--app", slug}
+		if *pinnedActionSHA != "" {
+			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
+		}
+		if *pinGithubAction {
+			snippetArgs = append(snippetArgs, "--pin-action")
+		}
+		return cmdDeployGithubSnippet(ctx, snippetArgs)
+	}
+	if *pinnedActionSHA != "" || *pinGithubAction {
+		return printErr("Invalid flags", fmt.Errorf("--pinned-sha and --pin-action require --github"))
 	}
 
 	// --repo is the headless source-ref deploy path (issue #739 /
@@ -2761,7 +2788,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 1
 		}
 		if *diff {
-			if err := validateSourceRefPreviewFlags(explicit); err != nil {
+			if err := validateSourceRefPreviewFlags(explicit, *sourceBranch); err != nil {
 				return printErr("Invalid flags", err)
 			}
 			projectSlug := defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
@@ -2775,7 +2802,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
@@ -2802,6 +2829,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
+			SourceBranch:           *sourceBranch,
 			Reason:                 *reason,
 			Tag:                    *tag,
 			Environment:            *environment,

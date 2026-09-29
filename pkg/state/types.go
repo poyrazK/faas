@@ -2048,7 +2048,8 @@ func ScalingPolicyOrDefault(p *ScalingPolicy) ScalingPolicy {
 //
 // PR-B adds AccountID + BindingID + LinkedAt so the bind row carries
 // the (account → app → install) shape and the dashboard's "connected
-// on" pill has a single source.
+// on" pill has a single source. OwnerID and RepoID are captured from the
+// installation's GitHub repository catalog and pin immutable OIDC identity.
 type GitHubBinding struct {
 	AppID            string
 	AccountID        string
@@ -2056,6 +2057,8 @@ type GitHubBinding struct {
 	LinkedAt         time.Time
 	InstallID        int64
 	RepoFullName     string
+	OwnerID          int64
+	RepoID           int64
 	ProductionBranch string
 }
 

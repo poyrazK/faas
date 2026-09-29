@@ -64,3 +64,9 @@ available and defaults to the same deploy-only bearer. Its optional closed
 environment-preflight GitHub Action uses that profile to qualify a source
 release set and check promotion policy without receiving deployment or secret
 permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+
+For GitHub Actions, first-use account lookup accepts both the legacy
+`repo:OWNER/REPO:...` subject and GitHub's immutable
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:...` form. Gregale uses the owner/repository
+names only to locate an existing GitHub App binding. It verifies and pins the
+complete signed subject, including immutable IDs, in the trust policy.

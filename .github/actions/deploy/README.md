@@ -89,14 +89,18 @@ that check only confirms admission and must not be used as a release gate.
 Check publication is best-effort, so missing permission never
 blocks the deployment.
 
-On a branch push that deploys `github.sha`, the Action checks the current
-GitHub branch head before submitting the deployment. A superseded run or an
-old rerun exits with `status=skipped` and never queues a stale release. On a
+On a branch push that uses the event SHA, the Action checks the current
+GitHub branch head before submitting the deployment and passes the branch
+identity to Gregale. The server checks it again after fetching source, then
+imaged checks it immediately before promotion. A superseded run or an old
+rerun exits with `status=skipped`; a branch that moves during the build fails
+with `source_ref_stale` and cannot replace the live deployment. On a
 `v*` tag push, it accepts only a new, unforced SemVer tag creation; moved,
 deleted, and invalid tags exit with `status=skipped`. The deployment uses the
 event's immutable `github.sha`, not the mutable tag name. The generated
 workflow also serializes runs for the same app. A workflow that deliberately
-supplies another `ref` bypasses these push-event checks.
+supplies another `ref` bypasses branch freshness checks, preserving explicit
+rollback and release choices.
 
 Set `rollout: "safe"` for a balanced health-gated canary. The action submits
 the canary, waits for readiness, and then waits for rollout completion when
@@ -106,15 +110,32 @@ in the step summary and Check Run title.
 
 ## Pin reproducibility
 
-The action is pinned to `@v0` during public beta. The `release.yml` workflow force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always resolves to the latest vendored binary. For full immutability, resolve that moving tag once and pin its commit SHA:
+The action uses `@v0` during public beta by default. The `release.yml` workflow
+force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always
+resolves to the latest vendored binary. For full immutability, setup can
+resolve that moving tag and write its commit SHA into the generated workflow:
 
 ```bash
-git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0
+gregale github setup my-app --repo OWNER/NAME --pin-action
+gregale deploy --github --name my-app --pin-action
 ```
 
-```yaml
-- uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
+`--pin-action` resolves the current `v0` tag and writes its commit SHA into
+the generated workflow or snippet. It needs network access; on `github setup`
+it cannot be combined with `--dry-run`. To pin a chosen SHA explicitly,
+resolve the tag yourself and pass it with `--pinned-sha`:
+
+```bash
+set -euo pipefail
+ACTION_SHA="$(git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0 | cut -f1)"
+test "${#ACTION_SHA}" -eq 40
+# Generate the smaller workflow snippet:
+gregale deploy --github --name my-app --pinned-sha "$ACTION_SHA"
 ```
+
+Both `--pinned-sha` options put the SHA directly in the generated workflow's
+`uses:` reference. Without a pin, generated workflows keep using the moving
+`@v0` tag.
 
 The bundled `cli-version` output lets you lint for drift in enterprise monorepos.
 
@@ -131,7 +152,8 @@ The bundled `cli-version` output lets you lint for drift in enterprise monorepos
 
 | Server response | What it means | What to do |
 |---|---|---|
-| `409 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Re-run the workflow. |
+| `503 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Re-run the workflow. |
+| `409 source_ref_stale` | The source branch moved after this workflow's commit was selected. | Let the newer branch run deploy, or rerun from its current head. |
 | `404 github_install_not_found` | The account has no `github_installations` row. | Run `gregale connect` on a workstation once. |
 | `413 source_too_large` | Repo tarball exceeds the per-plan `SourceTarballMaxMB` cap. | Trim history or upgrade plan. |
 | `400 invalid_ref` | `--ref` is not a branch, tag, or 7+/40-char SHA. | Pin to a SHA. |

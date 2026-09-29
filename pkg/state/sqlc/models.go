@@ -218,6 +218,8 @@ type App struct {
 	Manifest                []byte
 	GithubInstallID         pgtype.Int8
 	GithubRepoFullName      pgtype.Text
+	GithubOwnerID           pgtype.Int8
+	GithubRepoID            pgtype.Int8
 	GithubProductionBranch  pgtype.Text
 	MinInstances            int32
 	EgressAllowlist         []netip.Prefix

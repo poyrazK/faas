@@ -6387,6 +6387,10 @@ type SourceRefDeployRequest struct {
 	Repo   string `json:"repo"`
 	Ref    string `json:"ref"`
 	Format string `json:"format,omitempty"`
+	// SourceBranch associates an immutable commit ref with the branch that
+	// triggered a GitHub Actions push. The server verifies this branch still
+	// points at the commit and carries the provenance through final promotion.
+	SourceBranch string `json:"source_branch,omitempty"`
 	// Environment selects a registered project environment. The server
 	// resolves it to the deployment's env scope before enqueueing the build.
 	Environment string `json:"environment,omitempty"`

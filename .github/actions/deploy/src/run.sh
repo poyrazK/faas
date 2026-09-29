@@ -193,6 +193,7 @@ cmd_validate() {
 # operator choices and do not use this guard.
 verify_current_push_head() {
 	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/heads/* ]] ||
+		[ "${INPUT_REF_EXPLICIT:-false}" = "true" ] ||
 		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] || [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
 		return 0
 	fi
@@ -222,6 +223,20 @@ verify_current_push_head() {
 		return 1
 	fi
 	return 0
+}
+
+# Return the branch name when this run is deploying the immutable commit
+# selected by GitHub for a branch event. The Action carries this branch to
+# apid so imaged can recheck freshness after the build, immediately before
+# promotion. Explicit refs and tags remain pinned deployment choices.
+current_run_source_branch() {
+	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/heads/* ]] ||
+		[ "${INPUT_REF_EXPLICIT:-false}" = "true" ] ||
+		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] ||
+		[ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		return 0
+	fi
+	printf '%s' "${GITHUB_REF#refs/heads/}"
 }
 
 # Release-tag deployments are deliberately narrower than arbitrary ref
@@ -369,6 +384,12 @@ cmd_deploy() {
 	if [ -n "${INPUT_ENVIRONMENT:-}" ]; then
 		environment_args+=(--environment "$INPUT_ENVIRONMENT")
 	fi
+	local source_branch_args=()
+	local source_branch
+	source_branch="$(current_run_source_branch)"
+	if [ -n "$source_branch" ]; then
+		source_branch_args=(--source-branch "$source_branch")
+	fi
 	local rollout_args=()
 	if [ "$rollout" = "safe" ]; then
 		rollout_args+=(--canary-preset balanced)
@@ -377,8 +398,9 @@ cmd_deploy() {
     if ! dep_json="$(
         "$BIN" deploy --json --no-wait \
             --name "$INPUT_APP" \
-            --repo "$INPUT_REPO" \
-            --ref "$INPUT_REF" \
+			--repo "$INPUT_REPO" \
+			--ref "$INPUT_REF" \
+			"${source_branch_args[@]}" \
 			"${environment_args[@]}" \
 			"${rollout_args[@]}" \
             "${annotation_args[@]}" \

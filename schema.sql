@@ -1690,6 +1690,8 @@ CREATE TABLE public.apps (
     manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
     github_install_id bigint,
     github_repo_full_name text,
+    github_owner_id bigint,
+    github_repo_id bigint,
     github_production_branch text,
     min_instances integer DEFAULT 0 NOT NULL,
     egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
@@ -1773,6 +1775,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
     CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
     CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
     CONSTRAINT apps_streaming_enabled_plan_check CHECK ((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id)),
@@ -6420,6 +6423,11 @@ CREATE INDEX apps_github_install_id_idx ON public.apps USING btree (github_insta
 --
 
 CREATE INDEX apps_github_install_repo_branch_idx ON public.apps USING btree (github_repo_full_name, github_production_branch) WHERE ((github_repo_full_name IS NOT NULL) AND (github_production_branch IS NOT NULL));
+
+-- Name: apps_github_oidc_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_github_oidc_identity_idx ON public.apps USING btree (github_owner_id, github_repo_id) WHERE ((github_install_id IS NOT NULL) AND (github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL));
 
 
 --

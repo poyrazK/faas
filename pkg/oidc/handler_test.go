@@ -240,9 +240,13 @@ const (
 // without a real signature. The signature itself is fake — the
 // fakeVerifier in the test doesn't actually verify.
 func makeEnvelope(t *testing.T, iss string, exp time.Time) string {
+	return makeEnvelopeWithSubject(t, iss, testSub, exp)
+}
+
+func makeEnvelopeWithSubject(t *testing.T, iss, subject string, exp time.Time) string {
 	t.Helper()
 	header := base64URLEncode([]byte(`{"alg":"RS256","kid":"k1"}`))
-	body := `{"iss":"` + iss + `","sub":"` + testSub + `","exp":` + intstr(exp.Unix()) + `}`
+	body := `{"iss":"` + iss + `","sub":"` + subject + `","exp":` + intstr(exp.Unix()) + `}`
 	payload := base64URLEncode([]byte(body))
 	return header + "." + payload + ".fakesig"
 }
@@ -644,6 +648,37 @@ func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected %q audit event, got %+v", KindOIDCTrustPolicyCreated, audit.events)
+	}
+}
+
+func TestServeHTTP_FirstUse_ImmutableGitHubSubjectStaysExact(t *testing.T) {
+	t.Parallel()
+	h, policies, _, _, verifier := newHarness(t, nil)
+	const subject = "repo:octocat@123456/hello@789012:environment:production"
+	h.deps.Lookups.(*stubAccountLookup).bySubject[subject] = state.Account{
+		ID: testAcctID, Email: "octo@example.com", Plan: "free", Status: "active",
+	}
+
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github",
+		Token:    makeEnvelopeWithSubject(t, testIssuer, subject, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com",
+	})
+	req := httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	policy, err := policies.Get(context.Background(), testAcctID, testIssuer)
+	if err != nil {
+		t.Fatalf("expected auto-created policy, got %v", err)
+	}
+	if got, want := policy.SubjectPattern, "^"+subject+"$"; got != want {
+		t.Fatalf("SubjectPattern = %q, want exact immutable subject %q", got, want)
+	}
+	if verifier.lastPolicy == nil || verifier.lastPolicy.SubjectPattern != policy.SubjectPattern {
+		t.Fatalf("verifier did not receive the exact immutable-subject policy: %+v", verifier.lastPolicy)
 	}
 }
 

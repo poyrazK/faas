@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,9 +30,6 @@ func nullableTriggerSource(source string) pgtype.Text {
 	return pgtype.Text{String: source, Valid: source != ""}
 }
 
-// githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
-// `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
-// from an already OAuth-verified repository binding to an OIDC trust policy.
 // OIDCRepositoryBindingResolver resolves a GitHub Actions OIDC subject to the
 // single account whose app binds the subject's repository through an
 // installation proven by that account's user OAuth. The exchange uses it to
@@ -46,20 +44,72 @@ var (
 	_ OIDCRepositoryBindingResolver = (*MemStore)(nil)
 )
 
+// githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
+// `repo:OWNER/REPO:...` and immutable
+// `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` subject forms. It is used only as a
+// first-use bridge from an already OAuth-verified repository binding to an
+// OIDC trust policy. The caller must still verify and pin the original,
+// complete subject; the parsed name and IDs only locate the existing binding.
 func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
+	identity, ok := githubActionsRepositoryIdentityFromSubject(issuerURL, subject)
+	return identity.FullName, ok
+}
+
+type githubActionsRepositoryIdentity struct {
+	FullName string
+	OwnerID  int64
+	RepoID   int64
+}
+
+func githubActionsRepositoryIdentityFromSubject(issuerURL, subject string) (githubActionsRepositoryIdentity, bool) {
 	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
 	rest := strings.TrimPrefix(subject, "repo:")
 	colon := strings.IndexByte(rest, ':')
 	if colon <= 0 {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
-	repo := rest[:colon]
-	if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {
-		return "", false
+	repoPath := rest[:colon]
+	if strings.Count(repoPath, "/") != 1 || strings.HasPrefix(repoPath, "/") || strings.HasSuffix(repoPath, "/") {
+		return githubActionsRepositoryIdentity{}, false
 	}
-	return repo, true
+	parts := strings.SplitN(repoPath, "/", 2)
+	owner, ownerID, ownerImmutable, ok := githubActionsSubjectRepoComponent(parts[0])
+	if !ok {
+		return githubActionsRepositoryIdentity{}, false
+	}
+	repo, repoID, repoImmutable, ok := githubActionsSubjectRepoComponent(parts[1])
+	if !ok || ownerImmutable != repoImmutable {
+		return githubActionsRepositoryIdentity{}, false
+	}
+	return githubActionsRepositoryIdentity{
+		FullName: owner + "/" + repo,
+		OwnerID:  ownerID,
+		RepoID:   repoID,
+	}, true
+}
+
+// GitHub's immutable OIDC subject format appends a numeric owner or repo ID
+// after an @. Repository names themselves cannot contain @, so reject
+// malformed or partial immutable components rather than treating an ID as
+// part of the binding name.
+func githubActionsSubjectRepoComponent(component string) (name string, id int64, immutable, ok bool) {
+	if !strings.Contains(component, "@") {
+		return component, 0, false, component != ""
+	}
+	if strings.Count(component, "@") != 1 {
+		return "", 0, false, false
+	}
+	name, idPart, _ := strings.Cut(component, "@")
+	if name == "" || idPart == "" {
+		return "", 0, false, false
+	}
+	numericID, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || numericID <= 0 {
+		return "", 0, false, false
+	}
+	return name, numericID, true, true
 }
 
 // ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd

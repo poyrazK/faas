@@ -525,22 +525,24 @@ func (s *RealService) BindAppRepo(appID, accountID string, installationID int64,
 	if productionBranch == "" {
 		productionBranch = defaultProductionBranch
 	}
-	bindingID := fmt.Sprintf("bind-%s-%s", appID, repoFullName)
-
-	inst, err := s.installForAccount(context.Background(), accountID, installationID)
+	repo, err := s.repositoryForInstallation(context.Background(), accountID, installationID, repoFullName)
 	if err != nil {
 		return "", err
 	}
+	repoFullName = repo.FullName
 
 	if s.Store == nil {
 		return "", fmt.Errorf("githubd: bindings store not configured")
 	}
+	bindingID := fmt.Sprintf("bind-%s-%s", appID, repoFullName)
 
 	bid, err := s.Store.Upsert(context.Background(), state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        inst.InstallationID,
+		InstallID:        installationID,
 		RepoFullName:     repoFullName,
+		OwnerID:          repo.Owner.ID,
+		RepoID:           repo.ID,
 		ProductionBranch: productionBranch,
 		BindingID:        bindingID,
 	})
@@ -556,13 +558,33 @@ func (s *RealService) BindAppRepo(appID, accountID string, installationID int64,
 	s.bindingsCache[accountID][appID] = state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        inst.InstallationID,
+		InstallID:        installationID,
 		RepoFullName:     repoFullName,
+		OwnerID:          repo.Owner.ID,
+		RepoID:           repo.ID,
 		ProductionBranch: productionBranch,
 		BindingID:        bid,
 	}
 	s.bindingsCacheMu.Unlock()
 	return bid, nil
+}
+
+func (s *RealService) repositoryForInstallation(ctx context.Context, accountID string, installationID int64, repoFullName string) (InstallableRepo, error) {
+	if s.Auth == nil || s.Tokens == nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: OAuth not configured")
+	}
+	if _, err := s.installForAccount(ctx, accountID, installationID); err != nil {
+		return InstallableRepo{}, err
+	}
+	_, token, err := s.ensureInstallTokenForInstallation(ctx, accountID, installationID)
+	if err != nil {
+		return InstallableRepo{}, err
+	}
+	repo, err := s.Auth.GetInstallableRepo(ctx, token, repoFullName)
+	if err != nil {
+		return InstallableRepo{}, err
+	}
+	return repo, nil
 }
 
 // lookupInstall returns the GitHub installation_id for an account,

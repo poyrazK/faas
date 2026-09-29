@@ -54,7 +54,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 366 | [Application-keyed background work policies](366-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
+| 368 | [Application-keyed background work policies](368-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
+| 366 | [GitHub Actions immutable OIDC subject bootstrap](366-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
 | 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
 | 354 | [Confirmed platform-tenant reconciliation apply](354-platform-tenant-confirmed-reconciliation-apply.md) | accepted | Apply only a current ownership-aware plan atomically; detach managed links, remove managed declared hostnames, preserve unmanaged resources |
 | 362 | [Durable platform-tenant reconciliation receipts](362-platform-tenant-reconciliation-receipts.md) | accepted | Persist secret-free, immutable outcomes atomically and expose tenant-scoped recovery and audit reads |
@@ -111,6 +112,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 295 | [Per-integration outbound circuit breaker](295-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
 | 294 | [Opt-in outbound HTTP response cache](294-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
 | 293 | [Tenant-scoped self-service customer creation](293-platform-tenant-self-service-customers.md) | accepted | Atomic creation on a linked active surface under the owner's default-off tenant cap |
+| 292 | [Bind GitHub OIDC to immutable repository identity](292-github-oidc-binding-identity-ids.md) | accepted | Persist GitHub owner and repository IDs with bindings and require exact immutable identity for OIDC bootstrap |
 | 290 | [Tenant-scoped surface certificate lifecycle webhooks](290-platform-tenant-certificate-webhooks.md) | accepted | Transactional certificate-state events for surfaces explicitly linked to the tenant; expose status and expiry only, not secrets or raw provider errors |
 | 289 | [Tenant-scoped hostname verification webhooks](289-platform-tenant-hostname-webhooks.md) | accepted | Transactional hostname-verification events only for surfaces explicitly linked to the tenant; DNS ownership does not imply certificate or route readiness |
 | 288 | [Service dependency reliability controls and fleet signals](288-service-dependency-reliability.md) | accepted | Caller-bounded timeouts and retries, shared retry budgets, breakers, and trusted per-edge telemetry |

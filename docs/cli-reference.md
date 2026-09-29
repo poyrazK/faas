@@ -791,13 +791,16 @@ gregale github bind my-api --repo acme/my-api --branch main
 
 Bind GitHub, configure previews, and write an Actions workflow
 
-`gregale github setup <slug> [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force]`
+`gregale github setup <slug> [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
 | `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
 | `--deploy-branches <MAPPINGS>` | comma-separated branch=environment mappings (default or registered environment) |  |
+| `--pinned-sha <SHA>` | pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release) |  |
+| `--pin-action` | resolve the current v0 deploy Action tag to its commit SHA |  |
+| `--enable-action-updates` | add a weekly GitHub Actions Dependabot updater |  |
 | `--workflow <PATH>` | workflow path relative to repository root |  |
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
@@ -806,7 +809,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
 | `--rollout <MODE>` | production rollout mode: standard\|safe (safe requires Pro/Scale) | one of `standard` · `safe` |
-| `--dry-run` | show the workflow without writing or changing remote state |  |
+| `--dry-run` | show generated files without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
 Examples:
@@ -1474,7 +1477,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1488,7 +1491,10 @@ Deploy an app, function, or project
 | `--install-id <N>` | GitHub installation id for a project binding |  |
 | `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
+| `--source-branch <BRANCH>` | reject promotion if the branch for a pinned --ref moves |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
+| `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
+| `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |

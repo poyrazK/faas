@@ -1987,6 +1987,23 @@ order by length(p.subject_pattern) desc,
          a.id
 limit 1;
 
+-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
+-- First-use GitHub Actions bootstrap through an OAuth-verified install
+-- binding. Immutable subjects must match both persisted numeric IDs as well
+-- as the current repository name; a zero ID preserves legacy name-only
+-- subject behavior.
+select min(a.github_install_account_id::text)::uuid as account_id
+from apps a
+join github_installations gi
+  on gi.account_id = a.github_install_account_id
+ and gi.installation_id = a.github_install_id
+where lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+  and a.github_install_account_id = a.account_id
+  and a.deleted_at is null
+  and (sqlc.arg(owner_id)::bigint = 0 or a.github_owner_id = sqlc.arg(owner_id)::bigint)
+  and (sqlc.arg(repo_id)::bigint = 0 or a.github_repo_id = sqlc.arg(repo_id)::bigint)
+having count(distinct a.github_install_account_id) = 1;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).

@@ -675,6 +675,9 @@ var cliCommands = []cliCommand{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "comma-separated branch=environment mappings (default or registered environment)", Value: "MAPPINGS"},
+				{Name: "pinned-sha", Short: "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)", Value: "SHA"},
+				{Name: "pin-action", Short: "resolve the current v0 deploy Action tag to its commit SHA"},
+				{Name: "enable-action-updates", Short: "add a weekly GitHub Actions Dependabot updater"},
 				{Name: "workflow", Short: "workflow path relative to repository root", Value: "PATH"},
 				{Name: "preview", Short: "enable pull-request previews"},
 				{Name: "no-preview", Short: "disable pull-request previews"},
@@ -683,7 +686,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe (safe requires Pro/Scale)", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
-				{Name: "dry-run", Short: "show the workflow without writing or changing remote state"},
+				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
 			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -1052,10 +1055,13 @@ var cliCommands = []cliCommand{
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
 			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
+			{Name: "source-branch", Short: "reject promotion if the branch for a pinned --ref moves", Value: "BRANCH"},
 			// Issue #270: --github emits a copy-paste Actions workflow
-			// snippet for the Gregale deploy action. No auth, no side effects.
+			// snippet; --pin-action can resolve the public Action tag.
 			// The snippet uses --name / cwd as the app slug.
 			{Name: "github", Short: "emit a GitHub Actions workflow snippet for the Gregale deploy action"},
+			{Name: "pinned-sha", Short: "with --github only, pin the generated Action to this full 40-character commit SHA", Value: "SHA"},
+			{Name: "pin-action", Short: "with --github only, resolve the current v0 Action tag to its commit SHA"},
 			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
 			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313"}},

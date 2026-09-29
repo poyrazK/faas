@@ -2293,7 +2293,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "app: my-app") {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
-	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@v0") {
+	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
 		t.Errorf("snippet missing the action reference; got:\n%s", out)
 	}
 	if !strings.Contains(out, "id-token: write") {
@@ -2306,11 +2306,34 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 		t.Errorf("snippet path should not write to stderr; got %q", stderr.String())
 	}
 
-	// No HTTP server is set up — the flag must NOT have hit the network.
-	// The test would fail with a different error if it had tried to
-	// auth or call the API (authedClient would return an error and
-	// printErr would write to stderr). The empty stderr is the
-	// contract.
+	stdout.Reset()
+	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pinned-sha", sha}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pinned-sha: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not use immutable Action SHA %q; got:\n%s", sha, got)
+	}
+
+	stdout.Reset()
+	tagObjectSHA := "0123456789abcdef0123456789abcdef01234567"
+	installFakeGithubActionTagGit(t, tagObjectSHA+" refs/tags/v0\n"+sha+" refs/tags/v0^{}\n")
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action"}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pin-action: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not resolve the current Action tag to commit %q; got:\n%s", sha, got)
+	} else if !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
+		t.Errorf("auto-pinned snippet lacks same-line Dependabot version metadata; got:\n%s", got)
+	}
+	stdout.Reset()
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action", "--pinned-sha", sha}); code == 0 {
+		t.Fatal("cmdDeployTarball accepted --pin-action with --pinned-sha")
+	}
+
+	// No Gregale API server is set up — snippet generation must not
+	// authenticate or call the control plane. --pin-action only uses the
+	// explicitly requested public Git tag lookup.
 }
 
 // TestStreamDeployLogs_DrivesStageTicker pins ADR-117 §3 end-to-end

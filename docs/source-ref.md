@@ -61,6 +61,20 @@ candidate fails with `source_ref_stale`; if GitHub cannot be checked, promotion
 fails closed with `source_ref_unavailable`. A tag or commit SHA stays pinned to
 the resolved commit and skips this branch check. See
 [ADR-316](adr/316-source-ref-branch-freshness-before-promotion.md).
+The first-party GitHub Action attaches the originating branch when a push
+workflow deploys its event SHA, so the same final check protects slow Actions
+builds. Explicit refs and release tags remain pinned choices.
+For a custom CI workflow that submits an immutable SHA for a branch push, pass
+`--source-branch` with the branch name to get the same final freshness guard:
+
+```sh
+gregale deploy --repo OWNER/NAME --ref "$GITHUB_SHA" \
+  --source-branch "${GITHUB_REF#refs/heads/}"
+```
+
+`--source-branch` requires a full 40-character SHA and should be omitted for
+an intentional pinned rollback or tag deployment.
+
 In split-box fleets, compute-side imaged performs the final check over the
 private `githubd.faas:50053` mTLS route provisioned by the manifest and Ansible.
 
@@ -97,7 +111,8 @@ keeps stdout machine-readable and omits this preflight block.
 
 | Server response | What it means | What to do |
 |---|---|---|
-| `409 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Back off and retry; the CLI surfaces the hint on stderr. |
+| `409 source_ref_stale` | `source_branch` moved away from the pinned `ref` commit before the source was accepted, or the branch moved during the build. | Let the newer branch commit deploy, or explicitly deploy a pinned SHA without `source_branch` when a rollback is intended. |
+| `503 source_ref_unavailable` | Transient githubd or codeload blip. Server sets `Retry-After: 30`. | Back off and retry; the CLI surfaces the hint on stderr. |
 | `404 github_install_not_found` | The account has no `github_installations` row. | Run `gregale connect` on a workstation once, then re-run CI. |
 | `413 source_too_large` | Repo tarball exceeds the per-plan `SourceTarballMaxMB` cap (Free/Hobby 100 MB, Pro/Scale 250 MB). | Trim history (`git gc`), use a sparse checkout, or upgrade plan. |
 | Local `Invalid --ref`, or server `400 invalid_ref` | The ref has invalid syntax, or the remote branch, tag, or SHA cannot be resolved. | Pin to a SHA or a real branch / tag. |
@@ -159,7 +174,7 @@ local/tarball deploy whose source can be inspected before mutation.
 ## Wire contract
 
 - `POST /v1/apps/{slug}/deployments/source-ref`
-- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball", "no_triggers": false}`
+- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball", "no_triggers": false, "source_branch": "<branch>"}` (`source_branch` is optional and requires `ref` to be a full commit SHA)
 - Auth chain: `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface) → idempotent → handler`
 - SDK binding: `pkg/api.Client.DeployFromSourceRef` (Go) /
   `DeploymentsService.createDeploymentFromSourceRef` (Node).
@@ -171,8 +186,9 @@ listener), the first-party `poyrazK/faas/.github/actions/deploy`
 action wraps this same endpoint. The action is a composite that
 vendors the `gregale` CLI per release. The public-beta `@v0` moving tag
 resolves to that release bundle, and the `cli-version` output surfaces the
-exact version for drift detection. Pin the resolved 40-character commit SHA
-when the workflow must be immutable.
+exact version for drift detection. CLI-generated workflows use an immutable
+40-character Action SHA by default; direct Action users can pin the resolved
+SHA when their workflow must be immutable.
 
 ### Generate a starter workflow
 
@@ -189,6 +205,16 @@ inside an Actions runner (the `GITHUB_REPOSITORY` +
 and the snippet emits the `${{ github.repository }}` /
 `${{ github.sha }}` expressions so the same file is portable
 across repos.
+
+Both `gregale github setup` and `gregale deploy --github` generate workflows
+pinned to an immutable Action SHA embedded in the CLI release. Generation stays
+network-free, and the same-line `# v0` comment lets Dependabot update that pin.
+Pass `--pin-action` to resolve the current public `v0` tag when generating the
+workflow; this uses the network, and `github setup` cannot combine it with
+`--dry-run`. Use `--pinned-sha <SHA>` to choose a particular commit or preview
+offline. Add `--enable-action-updates` to `gregale github setup <slug>` to merge
+a weekly GitHub Actions entry into `.github/dependabot.yml`; existing
+ecosystems are preserved, and `--dry-run` previews both files.
 
 ### What goes in the snippet
 

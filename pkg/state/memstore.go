@@ -1619,7 +1619,7 @@ func (m *MemStore) AccountByOIDCRepositoryBinding(_ context.Context, issuerURL, 
 }
 
 func (m *MemStore) accountByOIDCRepositoryBindingLocked(issuerURL, subject string) (Account, error) {
-	repo, ok := githubActionsRepositoryFromSubject(issuerURL, subject)
+	identity, ok := githubActionsRepositoryIdentityFromSubject(issuerURL, subject)
 	if !ok {
 		return Account{}, ErrNotFound
 	}
@@ -1629,7 +1629,9 @@ func (m *MemStore) accountByOIDCRepositoryBindingLocked(issuerURL, subject strin
 		_, accountOK := m.accounts[binding.AccountID]
 		installKey := binding.AccountID + "\x00" + strconv.FormatInt(binding.InstallID, 10)
 		_, installOK := m.githubInstalls[installKey]
-		if strings.EqualFold(binding.RepoFullName, repo) && appOK && accountOK && installOK &&
+		if strings.EqualFold(binding.RepoFullName, identity.FullName) &&
+			(identity.RepoID == 0 || binding.RepoID == identity.RepoID) &&
+			(identity.OwnerID == 0 || binding.OwnerID == identity.OwnerID) && appOK && accountOK && installOK &&
 			app.AccountID == binding.AccountID && app.Status != AppDeleted {
 			accountIDs[binding.AccountID] = struct{}{}
 		}
@@ -6483,6 +6485,9 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	}
 	if b.AccountID == "" {
 		return fmt.Errorf("state: AccountID required")
+	}
+	if b.OwnerID < 0 || b.RepoID < 0 || (b.OwnerID == 0) != (b.RepoID == 0) {
+		return fmt.Errorf("state: GitHub owner and repository IDs must both be positive or both be absent")
 	}
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()

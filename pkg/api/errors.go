@@ -5813,6 +5813,15 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		WithDocs(docsBase + "/build/source-ref#errors")
 }
 
+// ErrSourceRefStale is returned when a caller binds an immutable source SHA
+// to a mutable GitHub branch and that branch no longer points at the SHA.
+func ErrSourceRefStale(reason string) *Problem {
+	return NewProblem(http.StatusConflict, CodeSourceRefStale,
+		"Source ref is stale",
+		reason).
+		WithDocs(docsBase + "/build/source-ref")
+}
+
 // ErrBuildSBOMUnavailable is the issue #299 / ADR-038 Phase 3 surface
 // for `faas build sbom <id>` (and the SDK GetBuildsIdSbom) when no
 // SBOM artefact has been stored for this build yet — either the imaged

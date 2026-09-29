@@ -930,15 +930,22 @@ jobs:
           cache: false  # managed by the restore/save steps below
       - name: complete E2E shard inventory
         run: go run ./scripts/ci/e2eshard -check -shards=4
+      - name: generate Gregale workflow lint fixtures
+        run: bash scripts/ci/generate-github-workflow-lint-fixtures.sh
       - name: actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
         with:
           version: v1.7.12
           args: -shellcheck ''
+      - name: remove Gregale workflow lint fixtures
+        if: always()
+        run: rm -f .github/workflows/gregale-generated-check-"$GITHUB_RUN_ID"-*.yml
       - name: release asset-name uniqueness
         run: bash scripts/ci/check-release-assets_test.sh
       - name: release asset upload retry and immutability
         run: bash scripts/ci/upload-release-assets_test.sh
+      - name: GitHub deploy Action pin resolver contract
+        run: bash scripts/ci/resolve-github-action-pin_test.sh
       - name: native builder Go toolchain bundle contract
         run: bash scripts/ci/package-go-toolchain_test.sh
       - name: native metal invocation contract
