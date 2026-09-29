@@ -495,10 +495,11 @@ type MemStore struct {
 	// ... for update skip locked` semantics by serialising every access
 	// through m.mu (MemStore is inherently single-process); per-row
 	// lease_expires_at is in-memory instead of SQL NOW().
-	invocations       map[string]Invocation
-	workPolicies      map[string]AppWorkPolicy
-	eventWorkBindings map[string]EventWorkBinding
-	workCancellations map[string]WorkCancellation
+	invocations         map[string]Invocation
+	workPolicies        map[string]AppWorkPolicy
+	eventWorkBindings   map[string]EventWorkBinding
+	triggerWorkBindings map[string]TriggerWorkBinding
+	workCancellations   map[string]WorkCancellation
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
@@ -1164,6 +1165,7 @@ func NewMemStore() *MemStore {
 		invocations:             map[string]Invocation{},
 		workPolicies:            map[string]AppWorkPolicy{},
 		eventWorkBindings:       map[string]EventWorkBinding{},
+		triggerWorkBindings:     map[string]TriggerWorkBinding{},
 		workCancellations:       map[string]WorkCancellation{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
@@ -11915,6 +11917,7 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, co
 func (m *MemStore) DeleteTrigger(_ context.Context, id, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	delete(m.triggerWorkBindings, id)
 	delete(m.triggers, id)
 	return nil
 }

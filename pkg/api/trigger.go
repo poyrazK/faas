@@ -172,6 +172,14 @@ type Trigger struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// TriggerWorkBinding connects an external broker trigger to an app work
+// policy. Key and fairness_key are scalar paths into the JSON payload.
+type TriggerWorkBinding struct {
+	PolicyName  string `json:"policy_name"`
+	Key         string `json:"key"`
+	FairnessKey string `json:"fairness_key,omitempty"`
+}
+
 // CreateTriggerRequest creates a new trigger. Kind is immutable
 // after create; subsequent PATCH cannot change kind.
 //

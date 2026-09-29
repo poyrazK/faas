@@ -13893,6 +13893,53 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/triggers/{id}/work-binding:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [triggers]
+      operationId: getTriggerWorkBinding
+      summary: Get the broker trigger's application work-policy binding.
+      responses:
+        '200':
+          description: The configured broker work binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriggerWorkBinding' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [triggers]
+      operationId: putTriggerWorkBinding
+      summary: Set the broker trigger's application work-policy binding.
+      description: |
+        An initial binding requires a disabled external trigger with no
+        existing record receipts. Resume the trigger after binding it.
+        Updating an existing binding is allowed while the trigger is enabled;
+        records already admitted keep their captured policy and key.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerWorkBinding' }
+      responses:
+        '200':
+          description: The updated broker work binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriggerWorkBinding' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/TriggerInvalid' }
+    delete:
+      tags: [triggers]
+      operationId: deleteTriggerWorkBinding
+      summary: Remove the broker trigger's application work-policy binding.
+      responses:
+        '204': { description: The broker work binding was removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/triggers/{id}/pause:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -31315,6 +31362,15 @@ components:
           description: "Source discriminator for kind=queue rows."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    TriggerWorkBinding:
+      description: "An external broker trigger's binding to a named app work policy."
+      type: object
+      required: [policy_name, key]
+      properties:
+        policy_name: { type: string, description: "Named policy in the trigger's app." }
+        key: { type: string, description: "Scalar dot path into the broker message JSON payload." }
+        fairness_key: { type: string, description: "Optional scalar dot path for the fairness group." }
 
     CreateTriggerRequest:
       description: |

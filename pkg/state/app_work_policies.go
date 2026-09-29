@@ -152,7 +152,8 @@ func (s *PgStore) DeleteAppWorkPolicy(ctx context.Context, accountID, appID, nam
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation &&
-			pgErr.ConstraintName == "event_subscription_work_bindings_app_id_policy_name_fkey" {
+			(pgErr.ConstraintName == "event_subscription_work_bindings_app_id_policy_name_fkey" ||
+				pgErr.ConstraintName == "trigger_work_bindings_app_id_policy_name_fkey") {
 			return ErrConflict
 		}
 		return mapErr(err)
@@ -242,6 +243,11 @@ func (m *MemStore) DeleteAppWorkPolicy(_ context.Context, accountID, appID, name
 		return ErrNotFound
 	}
 	for _, binding := range m.eventWorkBindings {
+		if sameMemUUID(binding.AppID, appID) && binding.PolicyName == name {
+			return ErrConflict
+		}
+	}
+	for _, binding := range m.triggerWorkBindings {
 		if sameMemUUID(binding.AppID, appID) && binding.PolicyName == name {
 			return ErrConflict
 		}

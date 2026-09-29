@@ -893,6 +893,7 @@ export type { TriggerMetricsResponse } from './TriggerMetricsResponse.js';
 export type { TriggerRecord } from './TriggerRecord.js';
 export type { TriggerRecordState } from './TriggerRecordState.js';
 export type { TriggerRoutedTo } from './TriggerRoutedTo.js';
+export type { TriggerWorkBinding } from './TriggerWorkBinding.js';
 export type { TrustedSigner } from './TrustedSigner.js';
 export type { UpdateAccountBillingInfoRequest } from './UpdateAccountBillingInfoRequest.js';
 export type { UpdateAccountReleaseWebhookRequest } from './UpdateAccountReleaseWebhookRequest.js';

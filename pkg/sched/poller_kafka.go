@@ -374,11 +374,12 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		}
 		seqStr := fmt.Sprintf("%d-%d-%d", msg.Partition, msg.Offset, msg.HighWaterMark)
 		out = append(out, SourceRecord{
-			ItemIdentifier: seqStr,
-			Payload:        msg.Value,
-			Headers:        hdrs,
-			Metadata:       meta,
-			ReceivedAt:     msg.Time,
+			ItemIdentifier:   seqStr,
+			StableIdentifier: fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset),
+			Payload:          msg.Value,
+			Headers:          hdrs,
+			Metadata:         meta,
+			ReceivedAt:       msg.Time,
 		})
 		// Stash the message so Ack can find it. The map key is
 		// partition+offset+highWaterMark — unique within a topic

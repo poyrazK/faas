@@ -131,6 +131,14 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		        and older.work_key_digest = i.work_key_digest
 		        and older.work_sequence < i.work_sequence
 		        and older.state in ('pending','dispatching')))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from trigger_records older
+		      join triggers source on source.id=older.trigger_id
+		      where source.app_id=i.app_id
+		        and older.work_policy_name=i.work_policy_name
+		        and older.work_key_digest=i.work_key_digest
+		        and older.work_sequence<i.work_sequence
+		        and older.state in ('pending','retry','claimed')))
 		  and (i.work_fairness_limit is null or (
 		      select count(*) from invocations active
 		      where active.app_id = i.app_id
@@ -138,6 +146,14 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		        and active.work_fairness_digest = i.work_fairness_digest
 		        and active.state = 'dispatching'
 		        and active.lease_expires_at > clock_timestamp()
+		  ) + (
+		      select count(*) from trigger_records active
+		      join triggers source on source.id=active.trigger_id
+		      where source.app_id=i.app_id
+		        and active.work_policy_name=i.work_policy_name
+		        and active.work_fairness_digest=i.work_fairness_digest
+		        and active.state='claimed'
+		        and active.claim_expires_at > clock_timestamp()
 		  ) < i.work_fairness_limit)
 		  and (i.queue_name = $2 or (i.queue_name = ''
 		      and i.work_policy_name is null and not exists (

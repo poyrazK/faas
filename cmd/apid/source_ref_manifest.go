@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/tarball"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -42,6 +43,7 @@ type sourceRefManifestStaged struct {
 	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
 	triggerIDs            []string
+	triggerWorkChanges    []sourceRefTriggerWorkBindingChange
 	eventSubscriptionIDs  []string
 	eventWorkChanges      []sourceRefEventWorkBindingChange
 	workPolicyChanges     []sourceRefWorkPolicyChange
@@ -59,6 +61,11 @@ type sourceRefEventWorkBindingChange struct {
 	previous       *state.EventWorkBinding
 }
 
+type sourceRefTriggerWorkBindingChange struct {
+	triggerID string
+	previous  *state.TriggerWorkBinding
+}
+
 type sourceRefWorkPolicyChange struct {
 	name     string
 	previous *workpolicy.Policy
@@ -66,7 +73,7 @@ type sourceRefWorkPolicyChange struct {
 
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
-		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 ||
+		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 ||
 		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
 }
@@ -414,9 +421,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		}
 		cronKeys[cron.Schedule+"\x00"+cron.Path] = struct{}{}
 	}
-	triggerKeys := make(map[string]struct{}, len(triggers))
+	triggerKeys := make(map[string]sqlc.Trigger, len(triggers))
 	for _, trigger := range triggers {
-		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = struct{}{}
+		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = trigger
 	}
 	for _, declaration := range m.Triggers {
 		if declaration.App != app.Slug {
@@ -448,7 +455,27 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			return staged, api.ErrTriggerKindNotAllowed(acct.Plan, kind)
 		}
 		key := string(kind) + "\x00" + declaration.Slug
-		if _, exists := triggerKeys[key]; exists {
+		if existing, exists := triggerKeys[key]; exists {
+			if declaration.WorkPolicy != "" {
+				bindings, ok := s.store.(state.TriggerWorkBindingStore)
+				if !ok {
+					return staged, api.ErrCapacity("trigger work bindings unavailable")
+				}
+				id := uuidFromPgtype(existing.ID).String()
+				previous, err := bindings.TriggerWorkBindingByID(ctx, id)
+				if err != nil {
+					return staged, api.ErrCapacity("could not read trigger work binding")
+				}
+				if previous == nil || previous.PolicyName != declaration.WorkPolicy ||
+					previous.KeySelector != declaration.WorkKey || previous.FairnessSelector != declaration.WorkFairnessKey {
+					if _, err := bindings.SetTriggerWorkBinding(ctx, app.ID, id, declaration.WorkPolicy,
+						declaration.WorkKey, declaration.WorkFairnessKey); err != nil {
+						return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+					}
+					staged.triggerWorkChanges = append(staged.triggerWorkChanges,
+						sourceRefTriggerWorkBindingChange{triggerID: id, previous: previous})
+				}
+			}
 			continue
 		}
 		createReq := api.CreateTriggerRequest{
@@ -471,13 +498,30 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, declaration.IsEnabled(), sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
+		initialEnabled := declaration.IsEnabled() && declaration.WorkPolicy == ""
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, initialEnabled, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
 		}
 		id := uuidFromPgtype(created.ID).String()
 		staged.triggerIDs = append(staged.triggerIDs, id)
-		triggerKeys[key] = struct{}{}
+		if declaration.WorkPolicy != "" {
+			bindings, ok := s.store.(state.TriggerWorkBindingStore)
+			if !ok {
+				return staged, api.ErrCapacity("trigger work bindings unavailable")
+			}
+			if _, err := bindings.SetTriggerWorkBinding(ctx, app.ID, id, declaration.WorkPolicy,
+				declaration.WorkKey, declaration.WorkFairnessKey); err != nil {
+				return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+			}
+			if declaration.IsEnabled() {
+				enabled := true
+				if _, err := s.store.UpdateTrigger(ctx, id, &enabled, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+					return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+				}
+			}
+		}
+		triggerKeys[key] = created
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("created", uuidFromPgtype(created.AppID).String(), id))
 		s.audit.Emit(ctx, "trigger.created", &acct.ID, map[string]any{
 			"trigger_id": id, "app_id": app.ID, "kind": kind, "slug": declaration.Slug,
@@ -737,6 +781,24 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			continue
 		}
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", staged.appID, staged.triggerIDs[i]))
+	}
+	if len(staged.triggerWorkChanges) > 0 {
+		if bindings, ok := s.store.(state.TriggerWorkBindingStore); ok {
+			for i := len(staged.triggerWorkChanges) - 1; i >= 0; i-- {
+				change := staged.triggerWorkChanges[i]
+				policy, key, fairness := "", "", ""
+				if change.previous != nil {
+					policy, key, fairness = change.previous.PolicyName,
+						change.previous.KeySelector, change.previous.FairnessSelector
+				}
+				if _, err := bindings.SetTriggerWorkBinding(ctx, staged.appID, change.triggerID,
+					policy, key, fairness); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("trigger work bindings unavailable during rollback"))
+		}
 	}
 	if len(staged.eventWorkChanges) > 0 {
 		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {

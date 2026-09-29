@@ -899,6 +899,7 @@ export type { TriggerMetricsResponse } from './models/TriggerMetricsResponse.js'
 export type { TriggerRecord } from './models/TriggerRecord.js';
 export type { TriggerRecordState } from './models/TriggerRecordState.js';
 export type { TriggerRoutedTo } from './models/TriggerRoutedTo.js';
+export type { TriggerWorkBinding } from './models/TriggerWorkBinding.js';
 export type { TrustedSigner } from './models/TrustedSigner.js';
 export type { UpdateAccountBillingInfoRequest } from './models/UpdateAccountBillingInfoRequest.js';
 export type { UpdateAccountReleaseWebhookRequest } from './models/UpdateAccountReleaseWebhookRequest.js';

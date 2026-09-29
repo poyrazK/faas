@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -75,16 +76,111 @@ func (s *PgStore) ClaimTriggerRecordsByItems(ctx context.Context, triggerID stri
 	if len(items) == 0 {
 		return nil, nil
 	}
-	rows, err := s.triggerQueries().ClaimTriggerRecordsByItems(ctx, s.pool,
-		sqlc.ClaimTriggerRecordsByItemsParams{TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items})
+	// Ordinary records retain the bulk SKIP LOCKED path. Keyed records must
+	// take the shared lane lock before a claim can change their state.
+	rows, err := s.pool.Query(ctx, `select item_identifier, work_policy_name is not null
+		from trigger_records where trigger_id=$1 and item_identifier=any($2::text[])`, triggerID, items)
 	if err != nil {
-		return nil, fmt.Errorf("state: claim trigger batch: %w", err)
+		return nil, fmt.Errorf("state: list trigger batch work keys: %w", err)
 	}
-	out := make([]sqlc.TriggerRecord, len(rows))
-	for i, row := range rows {
-		out[i] = claimTriggerRecordByItemsRowToTriggerRecord(row)
+	ordinary := make([]string, 0, len(items))
+	keyed := make([]string, 0, len(items))
+	for rows.Next() {
+		var item string
+		var hasPolicy bool
+		if err := rows.Scan(&item, &hasPolicy); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("state: scan trigger batch work keys: %w", err)
+		}
+		if hasPolicy {
+			keyed = append(keyed, item)
+		} else {
+			ordinary = append(ordinary, item)
+		}
+	}
+	readErr := rows.Err()
+	rows.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("state: list trigger batch work keys: %w", readErr)
+	}
+	out := make([]sqlc.TriggerRecord, 0, len(items))
+	if len(ordinary) > 0 {
+		claimed, err := s.triggerQueries().ClaimTriggerRecordsByItems(ctx, s.pool,
+			sqlc.ClaimTriggerRecordsByItemsParams{TriggerID: mustPgUUID(triggerID), ItemIdentifiers: ordinary})
+		if err != nil {
+			return nil, fmt.Errorf("state: claim ordinary trigger batch: %w", err)
+		}
+		for _, row := range claimed {
+			out = append(out, claimTriggerRecordByItemsRowToTriggerRecord(row))
+		}
+	}
+	for _, item := range keyed {
+		record, err := s.claimKeyedTriggerRecord(ctx, triggerID, item)
+		if err == ErrConflict || err == ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
+		out = append(out, record)
 	}
 	return out, nil
+}
+
+func (s *PgStore) claimKeyedTriggerRecord(ctx context.Context, triggerID, item string) (sqlc.TriggerRecord, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var id, appID, policyName string
+	var digest, fairnessDigest []byte
+	var fairnessLimit *int
+	err = tx.QueryRow(ctx, `select r.id, t.app_id, r.work_policy_name,
+		r.work_key_digest, r.work_fairness_digest, r.work_fairness_limit
+		from trigger_records r join triggers t on t.id=r.trigger_id
+		where r.trigger_id=$1 and r.item_identifier=$2 and r.work_policy_name is not null`,
+		triggerID, item).Scan(&id, &appID, &policyName, &digest, &fairnessDigest, &fairnessLimit)
+	if err == pgx.ErrNoRows {
+		return sqlc.TriggerRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim lookup: %w", err)
+	}
+	if err := lockWorkLaneClaimTx(ctx, tx, id, appID, policyName, digest, true); err != nil {
+		return sqlc.TriggerRecord{}, err
+	}
+	if fairnessLimit != nil {
+		if err := lockFairnessClaimTx(ctx, tx, appID, policyName, fairnessDigest, *fairnessLimit); err != nil {
+			return sqlc.TriggerRecord{}, err
+		}
+	}
+	var record sqlc.TriggerRecord
+	err = tx.QueryRow(ctx, `update trigger_records r
+		set state='claimed', claim_generation=claim_generation+1,
+		    claim_expires_at=clock_timestamp()+interval '10 minutes'
+		where r.id=$1 and r.trigger_id=$2
+		  and ((r.state in ('pending','retry') and r.next_fire_at <= clock_timestamp()
+	        and (r.work_expires_at is null or r.work_expires_at > clock_timestamp()))
+	    or (r.state='claimed' and r.claim_expires_at <= clock_timestamp()))
+		returning r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+		  r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+		  r.last_error, r.last_dispatched_at, r.claim_generation, r.claim_expires_at`,
+		id, triggerID).Scan(&record.ID, &record.TriggerID, &record.ItemIdentifier,
+		&record.Payload, &record.Headers, &record.Metadata, &record.State,
+		&record.Attempts, &record.NextFireAt, &record.ReceivedAt,
+		&record.LastError, &record.LastDispatchedAt, &record.ClaimGeneration,
+		&record.ClaimExpiresAt)
+	if err == pgx.ErrNoRows {
+		return sqlc.TriggerRecord{}, ErrConflict
+	}
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim commit: %w", err)
+	}
+	return record, nil
 }
 
 func claimTriggerRecordByItemsRowToTriggerRecord(r sqlc.ClaimTriggerRecordsByItemsRow) sqlc.TriggerRecord {

@@ -126,6 +126,16 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 		return WorkCancellation{}, fmt.Errorf("state: cancel pending work: %w", err)
 	}
 	receipt.CancelledCount = tag.RowsAffected()
+	brokerTag, err := tx.Exec(ctx, `update trigger_records tr
+		set state='cancelled', last_error='cancelled by work policy',
+		claim_expires_at=null
+		from triggers t where t.id=tr.trigger_id and t.app_id=$1
+		  and tr.work_policy_name=$2 and tr.work_key_digest=$3
+		  and tr.state in ('pending','retry')`, appID, policyName, digest[:])
+	if err != nil {
+		return WorkCancellation{}, fmt.Errorf("state: cancel pending broker work: %w", err)
+	}
+	receipt.CancelledCount += brokerTag.RowsAffected()
 	if err := tx.QueryRow(ctx, `update invocation_work_cancellations
 		set cancelled_count = $2 where id = $1 returning created_at`, id, receipt.CancelledCount).Scan(&receipt.CreatedAt); err != nil {
 		return WorkCancellation{}, fmt.Errorf("state: cancellation receipt update: %w", err)

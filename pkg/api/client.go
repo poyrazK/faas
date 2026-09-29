@@ -2786,6 +2786,20 @@ func (c *Client) PostTriggersBatchCreate(ctx context.Context, req CreateTriggerB
 	return out, c.do(ctx, "POST", "/v1/triggers:batch_create", req, &out)
 }
 
+func (c *Client) GetTriggerWorkBinding(ctx context.Context, id string) (TriggerWorkBinding, error) {
+	var out TriggerWorkBinding
+	return out, c.do(ctx, "GET", "/v1/triggers/"+id+"/work-binding", nil, &out)
+}
+
+func (c *Client) PutTriggerWorkBinding(ctx context.Context, id string, binding TriggerWorkBinding) (TriggerWorkBinding, error) {
+	var out TriggerWorkBinding
+	return out, c.do(ctx, "PUT", "/v1/triggers/"+id+"/work-binding", binding, &out)
+}
+
+func (c *Client) DeleteTriggerWorkBinding(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/triggers/"+id+"/work-binding", nil, nil)
+}
+
 // FireCron manually triggers a cron fire-now (issue #791 PR-C /
 // ADR-090). The endpoint is asynchronous: apid inserts a pending row
 // into cron_fire_now_requests and emits db.NotifyCronRunNow; schedd

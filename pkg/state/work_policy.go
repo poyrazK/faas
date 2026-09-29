@@ -78,6 +78,10 @@ func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Ti
 	if limit <= 0 {
 		limit = 64
 	}
+	invocationLimit := limit
+	if limit > 1 {
+		invocationLimit = (limit + 1) / 2
+	}
 	var expired int
 	err := s.pool.QueryRow(ctx, `
 		with due as (
@@ -91,11 +95,28 @@ func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Ti
 			  completed_at = $1
 			from due where i.id = due.id returning i.id
 		)
-		select count(*) from updated`, now.UTC(), limit).Scan(&expired)
+		select count(*) from updated`, now.UTC(), invocationLimit).Scan(&expired)
 	if err != nil {
 		return 0, fmt.Errorf("state: expire pending keyed work: %w", err)
 	}
-	return expired, nil
+	var brokerExpired int
+	err = s.pool.QueryRow(ctx, `
+		with due as (
+			select id from trigger_records
+			where work_policy_name is not null and state in ('pending','retry')
+			  and work_expires_at <= $1
+			order by work_expires_at, id
+			for update skip locked limit $2
+		), updated as (
+			update trigger_records tr set state='expired',
+			  last_error='work policy pending deadline expired', claim_expires_at=null
+			from due where tr.id=due.id returning tr.id
+		)
+		select count(*) from updated`, now.UTC(), limit-expired).Scan(&brokerExpired)
+	if err != nil {
+		return expired, fmt.Errorf("state: expire pending keyed broker work: %w", err)
+	}
+	return expired + brokerExpired, nil
 }
 
 func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Time, limit int) (int, error) {
@@ -196,6 +217,14 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 			  and state = 'pending'`, inv.AppID, policy.Name, digest[:]); err != nil {
 			return Invocation{}, fmt.Errorf("state: keyed enqueue supersede: %w", err)
 		}
+		if _, err := tx.Exec(ctx, `update trigger_records tr
+			set state='superseded', last_error='superseded by newer work',
+			claim_expires_at=null
+			from triggers t where t.id=tr.trigger_id and t.app_id=$1
+			  and tr.work_policy_name=$2 and tr.work_key_digest=$3
+			  and tr.state in ('pending','retry')`, inv.AppID, policy.Name, digest[:]); err != nil {
+			return Invocation{}, fmt.Errorf("state: keyed enqueue supersede broker records: %w", err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		update invocation_work_lanes set next_sequence = next_sequence + 1
@@ -216,6 +245,10 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 // lockKeyedClaimTx holds the lane until the caller commits its claim. The
 // oldest active row wins, including a pending retry whose due time is later.
 func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName string, digest []byte) error {
+	return lockWorkLaneClaimTx(ctx, tx, id, appID, policyName, digest, false)
+}
+
+func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName string, digest []byte, broker bool) error {
 	if policyName == "" {
 		return nil
 	}
@@ -236,8 +269,18 @@ func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName stri
 	if err != nil {
 		return fmt.Errorf("state: keyed claim expiry: %w", err)
 	}
+	expiredBrokerRows, err := tx.Exec(ctx, `update trigger_records tr
+		set state='expired', last_error='work policy pending deadline expired',
+		claim_expires_at=null
+		from triggers t where t.id=tr.trigger_id and t.app_id=$1
+		  and tr.work_policy_name=$2 and tr.work_key_digest=$3
+		  and tr.state in ('pending','retry')
+		  and tr.work_expires_at <= clock_timestamp()`, appID, policyName, digest)
+	if err != nil {
+		return fmt.Errorf("state: keyed claim broker expiry: %w", err)
+	}
 	commitExpiry := func() error {
-		if expiredRows.RowsAffected() == 0 {
+		if expiredRows.RowsAffected() == 0 && expiredBrokerRows.RowsAffected() == 0 {
 			return nil
 		}
 		return tx.Commit(ctx)
@@ -246,10 +289,17 @@ func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName stri
 	var due bool
 	var oldestState string
 	if err := tx.QueryRow(ctx, `
-		select id, state, due_at <= clock_timestamp() from invocations
-		where app_id = $1 and work_policy_name = $2 and work_key_digest = $3
-		  and state in ('pending', 'dispatching')
-		order by work_sequence limit 1`, appID, policyName, digest).Scan(&oldestID, &oldestState, &due); err != nil {
+		select id, state, due from (
+		  select id::text, state, due_at <= clock_timestamp() as due,
+		         work_sequence from invocations
+		  where app_id=$1 and work_policy_name=$2 and work_key_digest=$3
+		    and state in ('pending','dispatching')
+		  union all
+		  select tr.id::text, tr.state, true as due, tr.work_sequence
+		  from trigger_records tr join triggers t on t.id=tr.trigger_id
+		  where t.app_id=$1 and tr.work_policy_name=$2 and tr.work_key_digest=$3
+		    and tr.state in ('pending','retry','claimed')
+		) work order by work_sequence limit 1`, appID, policyName, digest).Scan(&oldestID, &oldestState, &due); err != nil {
 		if err == pgx.ErrNoRows {
 			if commitErr := commitExpiry(); commitErr != nil {
 				return commitErr
@@ -258,7 +308,11 @@ func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName stri
 		}
 		return fmt.Errorf("state: keyed claim oldest: %w", err)
 	}
-	if oldestID != id || oldestState != string(InvocationPending) || !due {
+	claimableState := oldestState == string(InvocationPending)
+	if broker {
+		claimableState = oldestState == "pending" || oldestState == "retry" || oldestState == "claimed"
+	}
+	if oldestID != id || !claimableState || !due {
 		if err := commitExpiry(); err != nil {
 			return err
 		}
@@ -286,9 +340,13 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 		return fmt.Errorf("state: fairness lane lock: %w", err)
 	}
 	var running int
-	if err := tx.QueryRow(ctx, `select count(*) from invocations
-		where app_id = $1 and work_policy_name = $2 and work_fairness_digest = $3
-		and state = 'dispatching' and lease_expires_at > clock_timestamp()`,
+	if err := tx.QueryRow(ctx, `select
+		(select count(*) from invocations
+		 where app_id=$1 and work_policy_name=$2 and work_fairness_digest=$3
+		   and state='dispatching' and lease_expires_at > clock_timestamp()) +
+		(select count(*) from trigger_records tr join triggers t on t.id=tr.trigger_id
+		 where t.app_id=$1 and tr.work_policy_name=$2 and tr.work_fairness_digest=$3
+		   and tr.state='claimed' and tr.claim_expires_at > clock_timestamp())`,
 		appID, policyName, digest).Scan(&running); err != nil {
 		return fmt.Errorf("state: fairness running count: %w", err)
 	}

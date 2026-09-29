@@ -104,14 +104,50 @@ older **pending** work in the same lane). `debounce_ms` delays eligibility
 from admission; `expires_after_ms` expires work that has not begun before its
 deadline. A policy update increments its revision for new work; existing
 invocations retain their admitted settings. A policy bound to an event
-subscription cannot be deleted until the binding is removed.
+subscription or broker trigger cannot be deleted until the binding is removed.
+
+External broker triggers can use the same policy and lane. In a source-ref
+`gregale.yaml` deployment, bind the trigger to scalar fields in its JSON
+message payload:
+
+```yaml
+triggers:
+  - kind: kafka
+    app: my-app
+    slug: document-edits
+    config:
+      brokers: [broker.example:9092]
+      topic: document-edits
+      group: indexers
+    work_policy: document-index
+    work_key: document_id
+    work_fairness_key: tenant_id
+```
+
+For an API-created trigger, create it with `enabled: false`, then PUT
+`/v1/triggers/{id}/work-binding` with
+`{"policy_name":"document-index","key":"document_id","fairness_key":"tenant_id"}`,
+then resume it. GET and DELETE on that binding path inspect or remove it.
+The initial binding requires a disabled trigger with no record receipts,
+because older receipts may use delivery handles that change on redelivery.
+An existing binding may be updated; already admitted records keep their
+captured policy revision and lane. The batch-create trigger endpoint expects
+the named policy to exist before it applies a trigger declaration.
+
+Kafka uses topic, partition, and offset as a durable record identity; SQS
+uses `MessageId`; NATS and Redis Streams use stream sequence or entry ID.
+AMQP publishers must provide a unique `message_id`. A delivery without a
+stable identity or scalar work key goes to the trigger dead-letter ledger.
+Gregale acknowledges a terminal broker redelivery without invoking the app
+again. Superseding or cancelling a **pending** broker record leaves its
+running predecessor untouched.
 
 Dispatch and ledger updates are fenced by claim attempt. A worker that loses
 ownership can still have contacted an external service. Protect external
 side effects with an application idempotency key, version predicate, or
 external fencing mechanism. Delivery remains at least once.
 
-This release applies keyed policies to explicit async invocations, delayed
-tasks, internal event subscriptions, and queue or inbox sends. External broker
-producers and independent app tasks still use their existing execution
-behavior.
+Keyed policies apply to explicit async invocations, delayed tasks, internal
+event subscriptions, queue or inbox sends, and external broker triggers.
+Deployment-attached app tasks have a separate command lifecycle and do not
+yet join this shared work ledger.

@@ -632,12 +632,9 @@ func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []strin
 }
 func (f *ackRecordingPoller) Close() error { return nil }
 
-// TestRateLimitDeny_AcksBrokerOffset is the CRIT-1 regression
-// test (PR #993 / issue #757 closure). Pre-CRIT-1 the rate-limit
-// deny branches returned immediately after deadLetterAll without
-// ack'ing the poller — every deny pinned the broker offset at
-// the front of the batch and the same records re-poll'd forever.
-// handleRateLimitedBatch is the seam; the test pins both:
+// TestRateLimitDeny_AcksBrokerOffset is the CRIT-1 regression test
+// (PR #993 / issue #757 closure). The broker offset advances only
+// after the corresponding terminal receipt is durable. The test pins both:
 //
 //  1. deadLetterAll was called (audit row recorded) —
 //     covered indirectly via fakeDeadLetterStore.inserts.
@@ -650,13 +647,8 @@ func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
 		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		triggerPollers: map[string]triggerSource{triggerID: poller},
 	}
-	// fakeDeadLetterStore returns empty UUIDs (the row doesn't
-	// exist yet — the rate-limit fires before InsertTriggerRecord).
-	// That's fine for the Ack assertion because Ack operates on
-	// the broker handle, not the trigger_records row.
 	store := &fakeDeadLetterStore{
-		records:         map[string]string{},
-		forceMissingIDs: map[string]bool{"kafka-1": true, "kafka-2": true},
+		records: map[string]string{"kafka-1": "record-1", "kafka-2": "record-2"},
 	}
 	t1 := sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)}
 	batch := []SourceRecord{
@@ -667,6 +659,22 @@ func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
 
 	if got, want := poller.ackCalls, []string{"kafka-1", "kafka-2"}; !equalSlices(got, want) {
 		t.Errorf("Ack calls = %v, want %v (broker offset must advance after deny)", got, want)
+	}
+	if got, want := store.inserts, []string{"record-1", "record-2"}; !equalSlices(got, want) {
+		t.Errorf("DLQ receipts = %v, want %v", got, want)
+	}
+}
+
+func TestRateLimitDenyDoesNotCommitPastMissingKafkaReceipt(t *testing.T) {
+	const triggerID = "11111111-1111-1111-1111-111111111111"
+	poller := &ackRecordingPoller{}
+	store := &fakeDeadLetterStore{records: map[string]string{"kafka-2": "record-2"}}
+	l := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	l.handleRateLimitedBatch(context.Background(), poller,
+		sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)},
+		[]SourceRecord{{ItemIdentifier: "kafka-1"}, {ItemIdentifier: "kafka-2"}}, store)
+	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"kafka-1", "kafka-2"}) {
+		t.Fatalf("Kafka commit crossed missing receipt: ack=%v nack=%v", poller.ackCalls, poller.nackCalls)
 	}
 }
 

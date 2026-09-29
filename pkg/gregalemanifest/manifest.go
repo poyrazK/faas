@@ -453,9 +453,12 @@ func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, err
 // from "explicit false" — the spec is "absent → true" (a trigger with
 // no `enabled:` line is enabled).
 type Trigger struct {
-	Kind TriggerKind `yaml:"kind"`
-	App  string      `yaml:"app"`
-	Slug string      `yaml:"slug,omitempty"`
+	Kind            TriggerKind `yaml:"kind"`
+	App             string      `yaml:"app"`
+	Slug            string      `yaml:"slug,omitempty"`
+	WorkPolicy      string      `yaml:"work_policy,omitempty"`
+	WorkKey         string      `yaml:"work_key,omitempty"`
+	WorkFairnessKey string      `yaml:"work_fairness_key,omitempty"`
 	// Schedule + Path are cron-only fields. They are required for
 	// kind=cron and ignored for every other kind (the broker pulls
 	// on its own cadence; the runner doesn't know how to map a
@@ -1781,6 +1784,25 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		// typed Config map.
 		if err := t.validateKindConfig(i); err != nil {
 			return err
+		}
+		if (t.WorkPolicy == "") != (t.WorkKey == "") || (t.WorkPolicy == "" && t.WorkFairnessKey != "") {
+			return fmt.Errorf("trigger[%d]: work_policy and work_key must be set together; work_fairness_key requires them", i)
+		}
+		if t.WorkPolicy != "" {
+			if t.Kind == TriggerKindCron || t.Kind == TriggerKindQueue {
+				return fmt.Errorf("trigger[%d]: work policies require an external broker trigger", i)
+			}
+			if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
+				return fmt.Errorf("trigger[%d].work_policy: %w", i, err)
+			}
+			if _, err := workpolicy.ParseSelector(t.WorkKey); err != nil {
+				return fmt.Errorf("trigger[%d].work_key: %w", i, err)
+			}
+			if t.WorkFairnessKey != "" {
+				if _, err := workpolicy.ParseSelector(t.WorkFairnessKey); err != nil {
+					return fmt.Errorf("trigger[%d].work_fairness_key: %w", i, err)
+				}
+			}
 		}
 		// FilterCriteria (ADR-118) applies to every kind except
 		// cron — cron doesn't poll, so a record filter is a

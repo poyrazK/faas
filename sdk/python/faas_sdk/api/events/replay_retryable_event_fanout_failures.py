@@ -94,9 +94,10 @@ def sync_detailed(
      Requeues up to 100 terminal recipients for the app whose stable failure
     classification marks them retryable. Optional event_source and event_id
     narrow the action to one published event and must be supplied together.
-    Only settled event receipts are selected; non-retryable and
-    still-processing recipients are left alone. Repeat the request while
-    has_more is true to drain a larger batch.
+    Non-retryable recipients are left alone, and an event being processed
+    by the fanout worker is not modified. A replayed event can accept more
+    recipients while pending; if has_more remains true while the worker is
+    processing it, repeat the request after that event settles.
 
     Args:
         slug (str):
@@ -137,9 +138,10 @@ def sync(
      Requeues up to 100 terminal recipients for the app whose stable failure
     classification marks them retryable. Optional event_source and event_id
     narrow the action to one published event and must be supplied together.
-    Only settled event receipts are selected; non-retryable and
-    still-processing recipients are left alone. Repeat the request while
-    has_more is true to drain a larger batch.
+    Non-retryable recipients are left alone, and an event being processed
+    by the fanout worker is not modified. A replayed event can accept more
+    recipients while pending; if has_more remains true while the worker is
+    processing it, repeat the request after that event settles.
 
     Args:
         slug (str):
@@ -175,9 +177,10 @@ async def asyncio_detailed(
      Requeues up to 100 terminal recipients for the app whose stable failure
     classification marks them retryable. Optional event_source and event_id
     narrow the action to one published event and must be supplied together.
-    Only settled event receipts are selected; non-retryable and
-    still-processing recipients are left alone. Repeat the request while
-    has_more is true to drain a larger batch.
+    Non-retryable recipients are left alone, and an event being processed
+    by the fanout worker is not modified. A replayed event can accept more
+    recipients while pending; if has_more remains true while the worker is
+    processing it, repeat the request after that event settles.
 
     Args:
         slug (str):
@@ -216,9 +219,10 @@ async def asyncio(
      Requeues up to 100 terminal recipients for the app whose stable failure
     classification marks them retryable. Optional event_source and event_id
     narrow the action to one published event and must be supplied together.
-    Only settled event receipts are selected; non-retryable and
-    still-processing recipients are left alone. Repeat the request while
-    has_more is true to drain a larger batch.
+    Non-retryable recipients are left alone, and an event being processed
+    by the fanout worker is not modified. A replayed event can accept more
+    recipients while pending; if has_more remains true while the worker is
+    processing it, repeat the request after that event settles.
 
     Args:
         slug (str):

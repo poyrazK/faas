@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.oidc_exchange_request_capability import (
+    OIDCExchangeRequestCapability,
+    check_oidc_exchange_request_capability,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OIDCExchangeRequest")
@@ -24,6 +28,9 @@ class OIDCExchangeRequest:
     """The `aud` claim the customer pinned in the action. Must match the trust policy's `audience` array verbatim."""
     app: str | Unset = UNSET
     """Optional app slug for audit attribution. Empty skips the audit app attribution."""
+    capability: OIDCExchangeRequestCapability | Unset = UNSET
+    """Optional closed OIDC capability profile. Omit to retain the historical deploy:write bearer; environment-
+    preflight grants only project-environment read and qualification scopes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +41,10 @@ class OIDCExchangeRequest:
         aud = self.aud
 
         app = self.app
+
+        capability: str | Unset = UNSET
+        if not isinstance(self.capability, Unset):
+            capability = self.capability
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -46,6 +57,8 @@ class OIDCExchangeRequest:
         )
         if app is not UNSET:
             field_dict["app"] = app
+        if capability is not UNSET:
+            field_dict["capability"] = capability
 
         return field_dict
 
@@ -60,11 +73,19 @@ class OIDCExchangeRequest:
 
         app = d.pop("app", UNSET)
 
+        _capability = d.pop("capability", UNSET)
+        capability: OIDCExchangeRequestCapability | Unset
+        if isinstance(_capability, Unset):
+            capability = UNSET
+        else:
+            capability = check_oidc_exchange_request_capability(_capability)
+
         oidc_exchange_request = cls(
             provider=provider,
             token=token,
             aud=aud,
             app=app,
+            capability=capability,
         )
 
         oidc_exchange_request.additional_properties = d

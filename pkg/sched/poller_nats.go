@@ -268,11 +268,15 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		meta := map[string]any{"subject": msg.Subject()}
 		var (
 			seqStr      string
+			stableID    string
 			receivedAt  = time.Now()
 			deliveryNum uint64
 		)
 		if md, mdErr := msg.Metadata(); mdErr == nil && md != nil {
 			seqStr = fmt.Sprintf("%d", md.Sequence.Stream)
+			if md.Sequence.Stream > 0 {
+				stableID = seqStr
+			}
 			meta["sequence"] = md.Sequence.Stream
 			meta["delivery_count"] = md.NumDelivered
 			if !md.Timestamp.IsZero() {
@@ -295,11 +299,12 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			seqStr = fmt.Sprintf("seq-fallback-%d", fb)
 		}
 		out = append(out, SourceRecord{
-			ItemIdentifier: seqStr,
-			Payload:        msg.Data(),
-			Headers:        hdrs,
-			Metadata:       meta,
-			ReceivedAt:     receivedAt,
+			ItemIdentifier:   seqStr,
+			StableIdentifier: stableID,
+			Payload:          msg.Data(),
+			Headers:          hdrs,
+			Metadata:         meta,
+			ReceivedAt:       receivedAt,
 		})
 		// Stash the message handle so Ack/Nack can find it.
 		n.mu.Lock()

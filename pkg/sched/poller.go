@@ -57,11 +57,15 @@ import (
 // trigger's claim window is the SQL UNIQUE (trigger_id,
 // item_identifier) guarantee from migrations/00267_triggers.sql.
 type SourceRecord struct {
-	ItemIdentifier string            `json:"item_identifier"`
-	Payload        []byte            `json:"payload"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	Metadata       map[string]any    `json:"metadata,omitempty"`
-	ReceivedAt     time.Time         `json:"received_at"`
+	ItemIdentifier string `json:"item_identifier"`
+	// StableIdentifier identifies the broker message across deliveries. The
+	// dispatcher uses it for a configured work policy while Ack/Nack keep the
+	// current ItemIdentifier as the broker delivery handle.
+	StableIdentifier string            `json:"-"`
+	Payload          []byte            `json:"payload"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Metadata         map[string]any    `json:"metadata,omitempty"`
+	ReceivedAt       time.Time         `json:"received_at"`
 }
 
 // PollResult is what a poller's Poll call returns. Records is the

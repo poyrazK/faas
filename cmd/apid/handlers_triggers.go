@@ -1192,9 +1192,10 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
+		initialEnabled := t.IsEnabled() && t.WorkPolicy == ""
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
-			string(t.Kind), t.Slug, t.IsEnabled(), sealedConfig,
+			string(t.Kind), t.Slug, initialEnabled, sealedConfig,
 			triggerSourceForConfig(kind, sealedConfig),
 			bsm, bwm, ma, pmb, bps, limits)
 		if err != nil {
@@ -1208,6 +1209,30 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 				errs = append(errs, batchError{Slug: t.Slug, Message: "internal error"})
 			}
 			continue
+		}
+		if t.WorkPolicy != "" {
+			bindings, ok := s.store.(state.TriggerWorkBindingStore)
+			if !ok {
+				_ = s.store.DeleteTrigger(r.Context(), created.ID.String(), req.AppID)
+				errs = append(errs, batchError{Slug: t.Slug, Message: "trigger work bindings unavailable"})
+				continue
+			}
+			if _, bindErr := bindings.SetTriggerWorkBinding(r.Context(), req.AppID, created.ID.String(),
+				t.WorkPolicy, t.WorkKey, t.WorkFairnessKey); bindErr != nil {
+				_ = s.store.DeleteTrigger(r.Context(), created.ID.String(), req.AppID)
+				errs = append(errs, batchError{Slug: t.Slug, Message: "work binding: " + bindErr.Error()})
+				continue
+			}
+			if t.IsEnabled() {
+				enabled := true
+				created, err = s.store.UpdateTrigger(r.Context(), created.ID.String(), &enabled,
+					nil, nil, nil, nil, nil, nil, nil, nil)
+				if err != nil {
+					_ = s.store.DeleteTrigger(r.Context(), created.ID.String(), req.AppID)
+					errs = append(errs, batchError{Slug: t.Slug, Message: "enable trigger: " + err.Error()})
+					continue
+				}
+			}
 		}
 		out = append(out, triggerResponse(created))
 	}

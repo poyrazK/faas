@@ -12,6 +12,7 @@ import type { TriggerDeadLetterReason } from '../models/TriggerDeadLetterReason.
 import type { TriggerKind } from '../models/TriggerKind.js';
 import type { TriggerMetricsResponse } from '../models/TriggerMetricsResponse.js';
 import type { TriggerRecordState } from '../models/TriggerRecordState.js';
+import type { TriggerWorkBinding } from '../models/TriggerWorkBinding.js';
 import type { UpdateTriggerRequest } from '../models/UpdateTriggerRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -238,6 +239,99 @@ export class TriggersService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Get the broker trigger's application work-policy binding.
+   * @returns TriggerWorkBinding The configured broker work binding.
+   * @throws ApiError
+   */
+  public static getTriggerWorkBinding({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<TriggerWorkBinding> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/triggers/{id}/work-binding',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set the broker trigger's application work-policy binding.
+   * An initial binding requires a disabled external trigger with no
+   * existing record receipts. Resume the trigger after binding it.
+   * Updating an existing binding is allowed while the trigger is enabled;
+   * records already admitted keep their captured policy and key.
+   *
+   * @returns TriggerWorkBinding The updated broker work binding.
+   * @throws ApiError
+   */
+  public static putTriggerWorkBinding({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: TriggerWorkBinding,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<TriggerWorkBinding> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/triggers/{id}/work-binding',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: trigger_invalid_kind | trigger_invalid_config — kind does not exist, or per-kind validation failed (missing brokers, empty topic, malformed URL, etc.).`,
+      },
+    });
+  }
+  /**
+   * Remove the broker trigger's application work-policy binding.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteTriggerWorkBinding({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/triggers/{id}/work-binding',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
       },
     });
   }

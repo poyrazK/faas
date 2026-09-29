@@ -277,6 +277,10 @@ class UpdateAppRequest:
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
+    egress_ports: list[int] | Unset = UNSET
+    """Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-
+    administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are
+    dropped from the stored list. An empty array clears the extra ports."""
     autoscale_target_rps: int | None | Unset = UNSET
     """Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are
     422 invalid_autoscale_target_rps."""
@@ -663,6 +667,10 @@ class UpdateAppRequest:
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
 
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
+
         autoscale_target_rps: int | None | Unset
         if isinstance(self.autoscale_target_rps, Unset):
             autoscale_target_rps = UNSET
@@ -891,6 +899,8 @@ class UpdateAppRequest:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
         if autoscale_target_rps is not UNSET:
             field_dict["autoscale_target_rps"] = autoscale_target_rps
         if autoscale_target_cpu_pct is not UNSET:
@@ -1652,6 +1662,8 @@ class UpdateAppRequest:
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
+
         def _parse_autoscale_target_rps(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1976,6 +1988,7 @@ class UpdateAppRequest:
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
             streaming_enabled=streaming_enabled,

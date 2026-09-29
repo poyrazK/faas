@@ -13,6 +13,7 @@ from ..models.account_response_status import AccountResponseStatus, check_accoun
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.account_abuse_hold import AccountAbuseHold
     from ..models.account_limits import AccountLimits
 
 
@@ -49,6 +50,9 @@ class AccountResponse:
     """Free-form billing address used on future invoices."""
     tax_id: str | Unset = UNSET
     """Customer tax/VAT identifier used on future invoices."""
+    abuse_hold: AccountAbuseHold | Unset = UNSET
+    """Present while the account is on an abuse hold (ADR-361): outbound traffic from its workloads matched a
+    scanning or abuse pattern, so nothing runs or deploys until an operator releases it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +100,10 @@ class AccountResponse:
 
         tax_id = self.tax_id
 
+        abuse_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.abuse_hold, Unset):
+            abuse_hold = self.abuse_hold.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -127,11 +135,14 @@ class AccountResponse:
             field_dict["billing_address"] = billing_address
         if tax_id is not UNSET:
             field_dict["tax_id"] = tax_id
+        if abuse_hold is not UNSET:
+            field_dict["abuse_hold"] = abuse_hold
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.account_abuse_hold import AccountAbuseHold
         from ..models.account_limits import AccountLimits
 
         d = dict(src_dict)
@@ -191,6 +202,13 @@ class AccountResponse:
 
         tax_id = d.pop("tax_id", UNSET)
 
+        _abuse_hold = d.pop("abuse_hold", UNSET)
+        abuse_hold: AccountAbuseHold | Unset
+        if isinstance(_abuse_hold, Unset):
+            abuse_hold = UNSET
+        else:
+            abuse_hold = AccountAbuseHold.from_dict(_abuse_hold)
+
         account_response = cls(
             id=id,
             email=email,
@@ -209,6 +227,7 @@ class AccountResponse:
             business_name=business_name,
             billing_address=billing_address,
             tax_id=tax_id,
+            abuse_hold=abuse_hold,
         )
 
         account_response.additional_properties = d

@@ -153,6 +153,10 @@ class AppResponse:
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
     time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."""
+    egress_ports: list[int] | Unset = UNSET
+    """Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-
+    originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are
+    declared."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag (issue #471). Free customers always see this as false; Hobby/Pro/Scale can PATCH it.
     PR-B activates the streamed response path; PR-A only persists the flag."""
@@ -382,6 +386,10 @@ class AppResponse:
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
 
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -570,6 +578,8 @@ class AppResponse:
             field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -840,6 +850,8 @@ class AppResponse:
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -1078,6 +1090,7 @@ class AppResponse:
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             session_affinity=session_affinity,

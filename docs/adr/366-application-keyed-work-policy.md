@@ -1,6 +1,6 @@
 # ADR-366 · Application-keyed background work policies
 
-- **Status:** accepted; invocation, event, and internal queue producers implemented; broker and job adapters pending
+- **Status:** accepted; invocation, event, queue, and external broker producers implemented; deployment-attached app tasks pending
 - **Date:** 2026-09-28
 - **Decision:** Define one named, app-scoped work policy for durable invocation
   producers. Producers resolve an application key at admission and persist the
@@ -12,8 +12,9 @@
   drain ordering cannot coordinate work for an application-defined identity
   such as an order, document, or customer tenant.
 - **Consequences:** Enqueue, claim, retry, completion, cancellation, and lease
-  recovery must share the same durable policy state. Broker trigger records and
-  independent job tasks need adapters before they can claim this capability.
+  recovery must share the same durable policy state. Deployment-attached app
+  tasks need an adapter before they can claim this capability; standalone Jobs
+  have no app identity and remain outside the app-scoped policy namespace.
 - **Rejected alternatives:** A Go mutex cannot coordinate scheduler replicas.
   A queue per key is unbounded and exposes transport mechanics to customers.
   Advisory scheduling without a claim fence cannot reject a stale worker's
@@ -101,8 +102,9 @@ honors a fencing token. Delivery remains at least once.
    complete.
 4. Adapt queue-trigger and external broker `trigger_records` dispatch. Broker
    acknowledgement, partial batches, and redelivery must preserve the keyed
-   claim and replacement contract. Adapt independently materialized jobs only
-   after their separate lease and cancellation semantics are reconciled.
+   claim and replacement contract. Design a separate adapter for
+   deployment-attached app tasks after reconciling their at-most-once command
+   fence, lease, and cancellation semantics.
 
 Acceptance must cover concurrent schedulers, duplicate event replay,
 replacement versus claim, retry ordering, lease expiry and stale completion,
@@ -129,9 +131,18 @@ database reconciles that receipt in the same transaction when the invocation
 becomes superseded, cancelled, or expired. Operator retry cannot revive a
 policy-terminal queue receipt without its invocation.
 
-External broker records need a shared work-item claim ledger before policy
-fields can be exposed on those producers.
-The trigger path now persists a claim generation and a ten-minute lease on
+External broker records join `invocation_work_lanes` and reserve fairness
+capacity under `invocation_work_fairness_lanes`. Their pending, retry, and
+claimed states participate in the same FIFO head and fairness counts as
+invocations. A trigger binding is configured while the trigger is disabled
+and has no older receipts; this prevents transient historical handles from
+being mistaken for stable identities after enablement. Broker admission
+snapshots policy revision, digest, sequence, due time, and expiry. A replay
+of the same stable broker identity reuses its receipt and cannot supersede
+newer work. Invalid keys and missing stable identities receive durable poison
+receipts. Rate-limit dead-lettering of pending work takes the lane lock.
+
+The trigger path persists a claim generation and a ten-minute lease on
 `trigger_records`; retry, completion, and dead-letter transitions for broker
 records reject an expired or superseded claim. Queue polling can recover an
 expired record claim, and the scheduler claims only records present in its
@@ -139,20 +150,15 @@ polled broker batch. After a committed `succeeded` or policy-terminal receipt,
 a broker redelivery can be acknowledged without another gateway dispatch.
 Kafka defers that acknowledgement when the same batch contains live offsets,
 so a high-offset commit cannot skip work still awaiting its result.
-Dead-letter receipts retain their broker poison strategy. These are claim
-safety prerequisites, not a work-key
-reservation: broker handles are still acknowledged outside the invocation
-transaction. The adapter must resolve keys at durable record
-admission, reserve lane and fairness slots across both ledgers, carry a claim
-generation through the gateway result, and release reservations on retry,
-terminal outcome, and lease recovery. A late broker acknowledgement must not
-finish a newer claim. Replacing a pending broker record also needs a durable
-terminal disposition before acknowledging its source handle. Adding selector
-fields to a trigger alone would not enforce these transitions. The adapter
-must also separate stable record identity from the current delivery handle:
-Kafka's current item identifier includes the changing high-water mark, SQS
-uses a receipt handle that changes on redelivery, and AMQP uses a
-connection-scoped delivery tag. Canonicalizing these identities requires a
-migration of existing receipts and an Ack path for already-terminal records;
-changing poller identifiers by itself can duplicate work or cause endless
-redelivery.
+Dead-letter receipts retain their broker poison strategy. Broker handles are
+acknowledged outside the ledger transaction; a late acknowledgement cannot
+finish a newer claim. The adapter separates stable record identity from the
+current delivery handle: Kafka uses topic/partition/offset, SQS uses MessageId,
+NATS and Redis Streams use their stream identity, and AMQP requires a
+publisher-supplied message ID. Ack/Nack translate the durable identity to the
+current handle. Existing triggers with transient-handle receipts cannot be
+bound retroactively; the user creates a fresh disabled trigger, binds it, then
+enables it. Standalone Jobs are account-owned rather than app-owned.
+Deployment-attached app tasks are app-owned but have an at-most-once running
+fence and a separate lease lifecycle; their adapter needs a separate design
+before exposing policy fields on them.
