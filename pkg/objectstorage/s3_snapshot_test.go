@@ -21,6 +21,10 @@ func TestS3VersionedEnvironmentSnapshotPinsCopySource(t *testing.T) {
 			_, _ = io.WriteString(w, `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>data.json</NextKeyMarker><NextVersionIdMarker>new-version</NextVersionIdMarker><Version><Key>data.json</Key><VersionId>new-version</VersionId><LastModified>2026-09-29T12:00:01Z</LastModified><Size>5</Size><ETag>new</ETag></Version></ListVersionsResult>`)
 		case r.Method == http.MethodGet && r.URL.Query().Has("versions") && r.URL.Query().Get("key-marker") == "data.json":
 			_, _ = io.WriteString(w, `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>data.json</Key><VersionId>old+version</VersionId><LastModified>2026-09-29T11:59:59Z</LastModified><Size>4</Size><ETag>old</ETag></Version></ListVersionsResult>`)
+		case r.Method == http.MethodGet && r.URL.Query().Get("versionId") == "old+version":
+			_, _ = io.WriteString(w, "old!")
+		case r.Method == http.MethodGet && r.URL.Path == "/destination/data.json":
+			_, _ = io.WriteString(w, "old!")
 		case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
 			copySource = r.Header.Get("X-Amz-Copy-Source")
 			_, _ = io.WriteString(w, `<CopyObjectResult><LastModified>2026-09-29T12:00:10Z</LastModified><ETag>copied</ETag></CopyObjectResult>`)
@@ -42,9 +46,7 @@ func TestS3VersionedEnvironmentSnapshotPinsCopySource(t *testing.T) {
 	if err != nil || len(manifest) != 1 || manifest[0].VersionID != "old+version" {
 		t.Fatalf("S3 manifest = %+v, %v", manifest, err)
 	}
-	_, err = provider.(CrossBucketObjectCopier).CopyObjectBetweenBuckets(context.Background(), "source", "destination", CopyObjectRequest{
-		SourceKey: manifest[0].Key, SourceVersion: manifest[0].VersionID, DestinationKey: manifest[0].Key,
-	})
+	_, err = CopyAndVerifyObjectVersion(context.Background(), provider.(ObjectSnapshotCopier), "source", "destination", manifest[0])
 	if err != nil || !strings.Contains(copySource, "versionId=old%2Bversion") {
 		t.Fatalf("version-pinned S3 copy = %v, source header %q", err, copySource)
 	}

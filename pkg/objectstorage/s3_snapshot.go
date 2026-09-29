@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -81,4 +82,20 @@ func (p *S3) ListObjectVersions(ctx context.Context, bucket, cursor string, limi
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
+}
+
+func (p *S3) ReadObjectVersion(ctx context.Context, bucket, key, version string) (io.ReadCloser, error) {
+	if bucket == "" || !ValidKey(key) || version == "" {
+		return nil, ErrInvalid
+	}
+	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(version),
+	})
+	if err != nil {
+		return nil, normalize(err)
+	}
+	if out == nil || out.Body == nil {
+		return nil, ErrUnavailable
+	}
+	return out.Body, nil
 }

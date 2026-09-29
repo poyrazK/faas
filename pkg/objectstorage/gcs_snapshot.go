@@ -2,6 +2,7 @@ package objectstorage
 
 import (
 	"context"
+	"io"
 	"strconv"
 )
 
@@ -36,4 +37,26 @@ func (p *GCS) ListObjectVersions(ctx context.Context, bucket, cursor string, lim
 		})
 	}
 	return page, nil
+}
+
+func (s *googleGCSStore) ReadObjectVersion(ctx context.Context, bucket, key string, generation int64) (io.ReadCloser, error) {
+	return s.client.Bucket(bucket).Object(key).Generation(generation).NewReader(ctx)
+}
+
+func (p *GCS) ReadObjectVersion(ctx context.Context, bucket, key, version string) (io.ReadCloser, error) {
+	generation, err := strconv.ParseInt(version, 10, 64)
+	if bucket == "" || !ValidKey(key) || err != nil || generation <= 0 {
+		return nil, ErrInvalid
+	}
+	reader, ok := p.store.(interface {
+		ReadObjectVersion(context.Context, string, string, int64) (io.ReadCloser, error)
+	})
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	stream, err := reader.ReadObjectVersion(ctx, bucket, key, generation)
+	if err != nil {
+		return nil, normalizeGCS(err)
+	}
+	return stream, nil
 }

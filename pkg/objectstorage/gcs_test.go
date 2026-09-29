@@ -32,6 +32,7 @@ type fakeGCSStore struct {
 	copyGeneration                                            int64
 	copyMetaVersion                                           int64
 	readBody                                                  string
+	versionBody                                               string
 	readErr                                                   error
 	reconciled                                                bool
 }
@@ -70,6 +71,10 @@ func (s *fakeGCSStore) ReadObject(context.Context, string, string) (io.ReadClose
 		return nil, s.readErr
 	}
 	return io.NopCloser(strings.NewReader(s.readBody)), nil
+}
+
+func (s *fakeGCSStore) ReadObjectVersion(context.Context, string, string, int64) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader(s.versionBody)), nil
 }
 
 func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectState, error) {
@@ -151,16 +156,14 @@ func TestGCSVersionedEnvironmentSnapshot(t *testing.T) {
 			{Key: "data.json", Version: 41, MetaVersion: 3, Size: 4, LastModified: cutoff.Add(-time.Minute), ValidUntil: cutoff.Add(time.Minute)},
 			{Key: "data.json", Version: 42, MetaVersion: 1, Size: 5, LastModified: cutoff.Add(time.Minute)},
 		},
-		object: gcsObjectState{ETag: "copied"},
+		object: gcsObjectState{ETag: "copied"}, readBody: "data", versionBody: "data",
 	}
 	provider := testGCS(gcsDefaultEndpoint, store)
 	manifest, err := CaptureObjectManifest(context.Background(), provider, "source", cutoff, 1)
 	if err != nil || len(manifest) != 1 || manifest[0].VersionID != "41" {
 		t.Fatalf("GCS manifest = %+v, %v", manifest, err)
 	}
-	result, err := provider.CopyObjectBetweenBuckets(context.Background(), "source", "destination", CopyObjectRequest{
-		SourceKey: manifest[0].Key, SourceVersion: manifest[0].VersionID, SourceMetadataVersion: manifest[0].MetadataVersion, DestinationKey: manifest[0].Key,
-	})
+	result, err := CopyAndVerifyObjectVersion(context.Background(), provider, "source", "destination", manifest[0])
 	if err != nil || result.ETag != "copied" || store.copyGeneration != 41 || store.copyMetaVersion != 3 {
 		t.Fatalf("versioned copy = %+v, %v, generation %d/%d", result, err, store.copyGeneration, store.copyMetaVersion)
 	}

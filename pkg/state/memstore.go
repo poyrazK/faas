@@ -800,21 +800,22 @@ type MemStore struct {
 	// repo_full_name) partial uniques from migration 00073 so
 	// ProjectBySlug / ProjectByRepo are O(1) lookups the same way
 	// PgStore's btrees are.
-	projects                             map[string]Project
-	projectsByAccountSlug                map[string]map[string]string // account_id → slug → id
-	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
-	projectEnvironments                  map[string]ProjectEnvironment
-	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
-	projectEnvironmentCloneOperations    map[string]ProjectEnvironmentCloneOperation
-	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
-	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
-	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
-	projectEnvironmentEdgePolicies       map[string]ProjectEnvironmentEdgePolicy
-	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
-	projectEnvironmentQualifications     map[string][]ProjectEnvironmentQualification
-	projectReleaseSets                   map[string]ProjectReleaseSet
-	activeProjectReleaseSets             map[string]string
-	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
+	projects                               map[string]Project
+	projectsByAccountSlug                  map[string]map[string]string // account_id → slug → id
+	projectsByInstallRepo                  map[installRepoKey]string    // install_id, repo_full_name → id
+	projectEnvironments                    map[string]ProjectEnvironment
+	projectEnvironmentCleanupJobs          map[string]ProjectEnvironmentCleanupJob
+	projectEnvironmentCloneOperations      map[string]ProjectEnvironmentCloneOperation
+	projectEnvironmentCloneObjectManifests map[string]ProjectEnvironmentCloneObjectManifest
+	projectEnvironmentApprovals            map[string]ProjectEnvironmentApproval
+	projectEnvironmentConfigs              map[string][]ProjectEnvironmentConfig
+	projectEnvironmentRoutePolicies        map[string]ProjectEnvironmentRoutePolicy
+	projectEnvironmentEdgePolicies         map[string]ProjectEnvironmentEdgePolicy
+	projectEnvironmentPromotions           map[string]ProjectEnvironmentPromotion
+	projectEnvironmentQualifications       map[string][]ProjectEnvironmentQualification
+	projectReleaseSets                     map[string]ProjectReleaseSet
+	activeProjectReleaseSets               map[string]string
+	projectEnvironmentPromotionWorkloads   map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
@@ -1298,22 +1299,23 @@ func NewMemStore() *MemStore {
 		computeNodeHeartbeats: map[string][]ComputeNodeHeartbeat{},
 		// sessions is empty here; populated by CreateSession at each
 		// dashboard login (handlers_auth*.go + handlers_mfa reissue).
-		sessions:                             map[string]Session{},
-		projects:                             map[string]Project{},
-		projectsByAccountSlug:                map[string]map[string]string{},
-		projectsByInstallRepo:                map[installRepoKey]string{},
-		projectEnvironments:                  map[string]ProjectEnvironment{},
-		projectReleaseSets:                   map[string]ProjectReleaseSet{},
-		activeProjectReleaseSets:             map[string]string{},
-		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
-		projectEnvironmentCloneOperations:    map[string]ProjectEnvironmentCloneOperation{},
-		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
-		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
-		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
-		projectEnvironmentEdgePolicies:       map[string]ProjectEnvironmentEdgePolicy{},
-		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
-		projectEnvironmentQualifications:     map[string][]ProjectEnvironmentQualification{},
-		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
+		sessions:                               map[string]Session{},
+		projects:                               map[string]Project{},
+		projectsByAccountSlug:                  map[string]map[string]string{},
+		projectsByInstallRepo:                  map[installRepoKey]string{},
+		projectEnvironments:                    map[string]ProjectEnvironment{},
+		projectReleaseSets:                     map[string]ProjectReleaseSet{},
+		activeProjectReleaseSets:               map[string]string{},
+		projectEnvironmentCleanupJobs:          map[string]ProjectEnvironmentCleanupJob{},
+		projectEnvironmentCloneOperations:      map[string]ProjectEnvironmentCloneOperation{},
+		projectEnvironmentCloneObjectManifests: map[string]ProjectEnvironmentCloneObjectManifest{},
+		projectEnvironmentApprovals:            map[string]ProjectEnvironmentApproval{},
+		projectEnvironmentConfigs:              map[string][]ProjectEnvironmentConfig{},
+		projectEnvironmentRoutePolicies:        map[string]ProjectEnvironmentRoutePolicy{},
+		projectEnvironmentEdgePolicies:         map[string]ProjectEnvironmentEdgePolicy{},
+		projectEnvironmentPromotions:           map[string]ProjectEnvironmentPromotion{},
+		projectEnvironmentQualifications:       map[string][]ProjectEnvironmentQualification{},
+		projectEnvironmentPromotionWorkloads:   map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
 	// seeded row carries a real id and created_at timestamp. Mirrors
