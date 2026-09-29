@@ -12,6 +12,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 376
+// Async HTTP work preserves verified tenant identity and scopes idempotency to that tenant.
 func TestApplyEdgeRuleAsyncTenantIdentity(t *testing.T) {
 	enqueuer := &recordingAsyncRouteEnqueuer{}
 	h := &Handler{asyncRoutes: enqueuer}

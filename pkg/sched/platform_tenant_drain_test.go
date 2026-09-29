@@ -9,6 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 376
+// Suspended tenants cannot dispatch work; resumed retries retain the original identity.
 func TestDrain_PlatformTenantSuspensionAndRetry(t *testing.T) {
 	ctx := context.Background()
 	drain, store, vmm, _, synth := newDrainHarness(t, api.PlanHobby, true)
