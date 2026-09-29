@@ -121,3 +121,35 @@ func TestCDStagesTargetTheSelectedEnvironment(t *testing.T) {
 		t.Error("cd-compute's online-runner probe does not look for the selected fleet's label")
 	}
 }
+
+// Jobs on the self-hosted fleet runner cannot pip-install into the system
+// interpreter: Ubuntu 24.04 ships no pip and marks python3 externally
+// managed (PEP 668). cd-controlplane moved onto the fleet runner and failed
+// its first run at `python3 -m pip install`. Python tools go into a per-job
+// venv, and the runner role installs python3-venv so the venv can be made.
+func TestFleetRunnerJobsInstallPythonToolsInAVenv(t *testing.T) {
+	for _, name := range []string{"cd-platform.yml", "cd-controlplane.yml", "cd-compute.yml", "pki-renew.yml"} {
+		for i, line := range strings.Split(readWorkflow(t, name), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "pip install") && !strings.Contains(trimmed, "-venv/bin/") {
+				t.Errorf("%s:%d installs Python packages outside a venv: %s", name, i+1, trimmed)
+			}
+		}
+	}
+	controlPlane := readWorkflow(t, "cd-controlplane.yml")
+	for _, want := range []string{
+		`python3 -m venv "$RUNNER_TEMP/ansible-venv"`,
+		`echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"`,
+	} {
+		if !strings.Contains(controlPlane, want) {
+			t.Errorf("cd-controlplane renderer install lost %q", want)
+		}
+	}
+	role, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "github_actions_runner", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(role), "      - python3-venv\n") {
+		t.Error("github_actions_runner does not install python3-venv")
+	}
+}

@@ -31,6 +31,8 @@
       - git
       - jq
       - openssh-client
+      # cd-controlplane installs its pinned ansible-core into a per-job venv.
+      - python3-venv
       - tar
     state: present
     update_cache: true

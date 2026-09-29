@@ -128,7 +128,13 @@ jobs:
           cache: true
 
       - name: Install pinned config renderer
-        run: python3 -m pip install --quiet 'ansible-core==2.21.2'
+        # A per-job venv: the self-hosted fleet runner (Ubuntu 24.04) has no
+        # system pip and marks its interpreter externally managed (PEP 668).
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --quiet 'ansible-core==2.21.2'
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned cosign verifier
         env:
