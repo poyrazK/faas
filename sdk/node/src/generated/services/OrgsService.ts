@@ -14,6 +14,7 @@ import type { InviteMemberRequest } from '../models/InviteMemberRequest.js';
 import type { ListOrgActivityResponse } from '../models/ListOrgActivityResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
 import type { MemberListResponse } from '../models/MemberListResponse.js';
+import type { OrgAppListResponse } from '../models/OrgAppListResponse.js';
 import type { OrgInvitationResponse } from '../models/OrgInvitationResponse.js';
 import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
@@ -515,6 +516,46 @@ export class OrgsService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Workspace app inventory requires the \`org.view\` action.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List apps attributed to this workspace.
+   * Returns a newest-first inventory of non-deleted apps whose persisted
+   * `org_id` matches this workspace. Any active member with `org.view`
+   * may read the minimal summary; creator identity and app configuration
+   * are intentionally omitted while app-specific routes remain
+   * creator-scoped.
+   *
+   * @returns OrgAppListResponse Safe summary of apps attributed to this workspace.
+   * @throws ApiError
+   */
+  public static listOrgApps({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<OrgAppListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/apps',
+      path: {
+        'slug': slug,
+      },
+      errors: {
         401: `code: unauthorized`,
         403: `Caller is not an active member with \`org.view\`.`,
         404: `code: not_found`,

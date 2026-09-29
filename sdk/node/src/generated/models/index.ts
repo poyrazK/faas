@@ -525,6 +525,8 @@ export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOper
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './OrgAccountID.js';
 export type { OrgActivityResponse } from './OrgActivityResponse.js';
+export type { OrgAppListResponse } from './OrgAppListResponse.js';
+export type { OrgAppSummary } from './OrgAppSummary.js';
 export type { OrgInvitationResponse } from './OrgInvitationResponse.js';
 export type { OrgListResponse } from './OrgListResponse.js';
 export type { OrgMeResponse } from './OrgMeResponse.js';
