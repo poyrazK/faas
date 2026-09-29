@@ -1,4 +1,4 @@
-# ADR-343 · Durable platform-tenant reconciliation receipts
+# ADR-362 · Durable platform-tenant reconciliation receipts
 
 - **Status:** accepted
 - **Date:** 2026-09-28
