@@ -1,8 +1,8 @@
-# ADR-345 · Observe snapshot publication at the durable row boundary
+# ADR-353 · Observe snapshot publication at the durable row boundary
 
 - **Status:** accepted
 - **Date:** 2026-09-28
-- **Builds on:** ADR-074 and ADR-344
+- **Builds on:** ADR-074 and ADR-352
 
 ## Decision
 
@@ -27,7 +27,7 @@ snapshot identifier.
 Schedd's successful capture and notification send do not prove imaged
 accepted the row. The notification can be delayed behind a runtime
 configuration change, redelivered, or rejected for RAM incompatibility.
-ADR-344 makes row insertion the freshness decision. Recording promotion
+ADR-352 makes row insertion the freshness decision. Recording promotion
 at the same boundary prevents a false success audit for those cases and
 provides the snapshot ID for investigation.
 
