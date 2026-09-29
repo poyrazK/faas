@@ -129,6 +129,10 @@ export type AppResponse = {
    */
   egress_allowlist?: Array<string>;
   /**
+   * Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared.
+   */
+  egress_ports?: Array<number>;
+  /**
    * Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured per-instance RPS exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037.
    */
   autoscale_target_rps: number;

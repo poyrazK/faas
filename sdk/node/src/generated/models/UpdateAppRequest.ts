@@ -167,6 +167,10 @@ export type UpdateAppRequest = {
    */
   egress_allowlist?: Array<string>;
   /**
+   * Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the stored list. An empty array clears the extra ports.
+   */
+  egress_ports?: Array<number>;
+  /**
    * Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are 422 invalid_autoscale_target_rps.
    */
   autoscale_target_rps?: number | null;
