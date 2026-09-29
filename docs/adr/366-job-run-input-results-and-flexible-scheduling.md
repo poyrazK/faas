@@ -1,4 +1,4 @@
-# ADR-346: Job run inputs, results, and flexible scheduling
+# ADR-366: Job run inputs, results, and flexible scheduling
 
 Status: accepted (2026-09-28).
 

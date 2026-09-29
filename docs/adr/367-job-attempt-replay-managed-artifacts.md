@@ -1,10 +1,10 @@
-# ADR-347: Job attempt history, linked replay, and managed object evidence
+# ADR-367: Job attempt history, linked replay, and managed object evidence
 
 Status: accepted (2026-09-29).
 
 ## Context
 
-ADR-346 added per-input runs, bounded parallelism, flexible start windows,
+ADR-366 added per-input runs, bounded parallelism, flexible start windows,
 and result manifests. The task row is a mutable dispatch projection, so a
 retry erased its previous outcome. A run also still read image, RAM, and base
 environment from the job at dispatch. Inline inputs were bounded by the API

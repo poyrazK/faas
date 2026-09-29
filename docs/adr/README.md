@@ -363,8 +363,8 @@ note instead of the banner.
 
 ## Job execution decisions
 
-- [ADR-346: job run inputs, results, and flexible scheduling](346-job-run-input-results-and-flexible-scheduling.md)
-- [ADR-347: job attempt history, linked replay, and managed object evidence](347-job-attempt-replay-managed-artifacts.md)
+- [ADR-366: job run inputs, results, and flexible scheduling](366-job-run-input-results-and-flexible-scheduling.md)
+- [ADR-367: job attempt history, linked replay, and managed object evidence](367-job-attempt-replay-managed-artifacts.md)
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number

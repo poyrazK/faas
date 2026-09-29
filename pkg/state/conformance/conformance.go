@@ -1566,7 +1566,7 @@ func testJobTaskDeferQueued(t *testing.T, fx *Fixture) {
 	}
 }
 
-// adr: 346 — completed attempts retain input identity, failed inputs can be
+// adr: 367 — completed attempts retain input identity, failed inputs can be
 // replayed, and an unstarted flexible task expires after its admission window.
 func testJobAttemptReplayAndFlexibleExpiry(t *testing.T, fx *Fixture) {
 	job, err := fx.Store.JobCreate(fx.Ctx, fx.Account.ID, "replay-"+uuid.NewString()[:8], "batch",
