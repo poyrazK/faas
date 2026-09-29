@@ -22,6 +22,8 @@ scenarios:
   customer-export:
     project: scenario-export
     source: ./export-api
+    secrets:
+      WORKER_URL: ${service.worker.url}
     consumer_auth_mode: required
     consumers:
       - name: customer-a
@@ -29,9 +31,17 @@ scenarios:
     services:
       worker:
         source: ./export-worker
+        async_routes:
+          - path: /process
+            methods: [POST]
+            retry_policy:
+              max_attempts: 3
+              base_seconds: 1
+              max_seconds: 2
         secrets:
           TEST_RUN_ID: ${run.id}
           NOTIFICATION_URL: ${service.notifications.url}/deliver
+          FAIL_FIRST_PROCESS: "1"
       notifications:
         fixture: delivery-sink
         fail_first: 1
@@ -42,6 +52,10 @@ scenarios:
         permission: read_write
     trigger: [node, test/trigger.mjs]
     wait_for:
+      invocations:
+        - service: worker
+          trigger_key: worker_invocation_id
+          min_attempts: 2
       deliveries:
         - service: notifications
           min_attempts: 2

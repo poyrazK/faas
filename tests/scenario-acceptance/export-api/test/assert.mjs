@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 const url = process.env.GREGALE_TEST_URL;
 const runID = process.env.GREGALE_TEST_RUN_ID;
@@ -7,6 +8,7 @@ const a = process.env.GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY;
 const b = process.env.GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY;
 const owner = createHash("sha256").update(a).digest("hex");
 const id = createHash("sha256").update(`${owner}:export-${runID}`).digest("hex").slice(0, 32);
+const firstInvocation = JSON.parse(await readFile(process.env.GREGALE_TEST_TRIGGER_OUTPUT, "utf8")).worker_invocation_id;
 const headers = (key) => ({ Authorization: `Bearer ${key}`, "Content-Type": "application/json" });
 
 const duplicate = await fetch(`${url}/exports`, {
@@ -14,8 +16,8 @@ const duplicate = await fetch(`${url}/exports`, {
   body: JSON.stringify({ idempotency_key: `export-${runID}`, report: "Customer A report" }),
 });
 const duplicateBody = await duplicate.json();
-assert.equal(duplicate.status, 200, JSON.stringify(duplicateBody));
-assert.deepEqual(duplicateBody, { id, created: false });
+assert.equal(duplicate.status, 202, JSON.stringify(duplicateBody));
+assert.deepEqual(duplicateBody, { id, invocation_id: firstInvocation, created: true });
 const owned = await fetch(`${url}/exports/${id}`, { headers: headers(a) });
 assert.equal(owned.status, 200);
 assert.deepEqual(await owned.json(), { id, report: "Customer A report", run_id: runID });

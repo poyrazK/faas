@@ -261,6 +261,7 @@ jobs:
       # planned failed delivery and retry.
       - name: scenario simulation fixture
         run: |
+          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario delivery-smoke --engine simulated
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario customer-export --engine simulated
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 
 const runID = process.env.GREGALE_TEST_RUN_ID;
 const response = await fetch(`${process.env.GREGALE_TEST_URL}/exports`, {
@@ -12,4 +13,6 @@ const response = await fetch(`${process.env.GREGALE_TEST_URL}/exports`, {
 const body = await response.text();
 assert.equal(response.status, 202, body);
 assert.equal(JSON.parse(body).created, true);
-assert.deepEqual(JSON.parse(body).delivery_statuses, [503, 200]);
+assert.match(JSON.parse(body).invocation_id, /^[a-f0-9-]{36}$/);
+await writeFile(process.env.GREGALE_TEST_TRIGGER_OUTPUT,
+  JSON.stringify({ worker_invocation_id: JSON.parse(body).invocation_id }));

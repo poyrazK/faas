@@ -22,6 +22,8 @@ scenarios:
   customer-export:
     project: export-api
     source: ./gateway
+    secrets:
+      WORKER_URL: ${service.worker.url}
     consumer_auth_mode: required
     consumers:
       - name: customer-a
@@ -30,6 +32,9 @@ scenarios:
     services:
       worker:
         source: ./worker
+        async_routes:
+          - path: /process
+            methods: [POST]
         secrets:
           NOTIFICATION_URL: ${service.notifications.url}/deliver
       notifications:
@@ -46,7 +51,9 @@ scenarios:
       - [node, test/fixtures/seed.mjs]
     trigger: [node, test/submit-export.mjs]
     wait_for:
-      queue_idle: true
+      invocations:
+        - service: worker
+          trigger_key: worker_invocation_id
       deliveries:
         - service: notifications
           min_attempts: 2
@@ -65,13 +72,42 @@ scenarios:
 Run all three profiles, or select one:
 
 ```sh
+gregale test --validate
+gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --report test-results.json
-gregale test --scenario customer-export --profile restored
+gregale test --scenario customer-export --profile restored --junit test-results.xml
+gregale test --scenario customer-export --profile restored --repeat 3 --report repeated.json
+gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135
 gregale test --scenario customer-export --engine simulated
 ```
 
+`--validate` checks every declared scenario and source directory without a
+platform login or resource provisioning. Add `--scenario NAME` to validate one
+scenario. `--preflight` also reads the current account plan, free developer app
+slots, consumer-key allowance, async-invocation entitlement, and any required
+managed PostgreSQL or object-storage entitlement. It shows how many workloads
+must coexist and how many deployments the selected profiles will attempt;
+the platform remains authoritative when provisioning begins. `--repeat N` runs
+each selected profile in a fresh environment N times (1–20); preflight includes
+these runs in its deployment estimate. Use it to reproduce intermittent
+lifecycle failures. Preflight also shows the ceiling in workload-minutes:
+workload count times per-run timeout times run count, assuming every VM runs
+for the entire timeout. `--max-workload-minutes N` stops a real-VM run before
+provisioning when that ceiling exceeds N. Actual compute billing follows VM
+running time and plan allowances. This is a planning guard, not a billing cap:
+cleanup time, lease expiry after an interrupted CLI, storage, and network usage
+are outside this estimate.
+`--junit PATH` writes one test case per profile and attempt alongside the JSON
+report; both formats identify the execution engine and include cleanup failures.
+The JSON report also records each run's start, finish, and elapsed time.
+When a real-VM run fails, its report also includes up to 20 recent wake rows
+and 30 request-telemetry rows per isolated workload. These diagnostics carry
+request, trace, wake, and instance IDs, status, route, and timing metadata;
+they exclude request bodies, headers, credentials, and app secrets. The real-VM
+acceptance workflow uploads both the JSON and JUnit reports even on failure.
+
 `real-vm` is the default engine. `--engine simulated` runs the separate
-`simulation` command locally, once, without platform provisioning or login.
+`simulation` command locally, once per requested attempt, without platform provisioning or login.
 It receives `GREGALE_TEST_ENGINE=simulated`,
 `GREGALE_TEST_PROFILE=simulated`, and `GREGALE_TEST_SCENARIO`. The report omits
 VM wake evidence and labels its engine `simulated`. VM lifecycle profiles only
@@ -113,6 +149,11 @@ Each workload's normal `gregale.yaml` is applied during deployment. A worker
 can declare `queue_bindings` and retry policy there; the runner waits for
 queues on all test workloads when `wait_for.queue_idle` is enabled. Queue
 binding plan gates still apply.
+For a worker reached through a public async edge route, declare
+`services.NAME.async_routes`. Gregale creates each route on the isolated
+workload's actual hostname after deployment and waits for the fleet to apply
+it. The worker URL in a sibling secret then reaches a durable HTTP 202 queue
+entry before the worker processes the request.
 The runner sets per-workload `secrets` on these expiring apps before deploying.
 Values can reference `${service.NAME.url}`, `${service.NAME.slug}`,
 `${bucket.NAME.name}`, or `${run.id}`. The example gives the worker a test
@@ -147,10 +188,17 @@ assert.deepEqual(attempts.map(({ status }) => status), [503, 200]);
 
 `trigger` runs immediately after Gregale prepares the selected lifecycle
 profile. It can submit the authenticated export request through
-`GREGALE_TEST_URL`. When `wait_for` is present, Gregale polls the isolated
-workloads' queues until each has zero depth and in-flight work on two consecutive
-polls, and polls declared
-bucket prefixes until the minimum object count and total size are present.
+`GREGALE_TEST_URL`. If `wait_for.invocations` is declared, the trigger writes
+a JSON object to the path in `GREGALE_TEST_TRIGGER_OUTPUT`, for example
+`{"worker_invocation_id":"<id from the async 202 response>"}`. Gregale polls
+that invocation by ID, checks that it belongs to the named isolated workload,
+and requires its terminal state to be `completed`. Failed, cancelled, and
+dead-letter invocations fail the scenario immediately. This ties completion
+to the submitted export rather than an unrelated empty queue.
+When `wait_for.queue_idle` is enabled, Gregale polls the isolated workloads'
+queues until each has zero depth and in-flight work on two consecutive polls.
+It also polls declared bucket prefixes until the minimum object count and
+total size are present.
 `${GREGALE_TEST_RUN_ID}` in an object prefix is replaced with the current run
 ID. The assertion `command` then checks application-specific ownership,
 authorization, deduplication, and delivery policy. The overall `timeout`
@@ -178,7 +226,8 @@ The report fails a profile when the assertion command fails, sends no request
 through the proxy, or when the completed wake method differs from the requested
 profile. A restore that falls back to cold boot is recorded as cold boot and
 fails the restored profile. Reports include the run ID, app slug, deployment ID,
-first response status, wake headers, completed method, and cleanup outcome.
+first response status, wake headers, completed method, correlated invocation
+state and attempt count, and cleanup outcome.
 For cold and restored profiles, Gregale also compares each declared service's
 wake timeline before and after the trigger. Every service must show a new wake
 whose completed boot method matches the requested profile; the report records

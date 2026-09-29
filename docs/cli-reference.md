@@ -1667,21 +1667,27 @@ Compare two named environments in the linked project
 
 Run an application scenario with real VMs or a local simulation
 
-`gregale test --scenario <NAME> [--engine <ENGINE>] [--profile <PROFILE>] [--manifest <PATH>] [--report <PATH>]`
+`gregale test [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--scenario <NAME>` | scenario declared in gregale-test.yaml | required |
+| `--scenario <NAME>` | scenario declared in gregale-test.yaml |  |
+| `--validate` | validate local scenario sources without a platform login |  |
+| `--preflight` | check account entitlements and developer app capacity |  |
 | `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `simulated` |
 | `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
+| `--repeat <N>` | independent runs per lifecycle profile (1..20) |  |
+| `--max-workload-minutes <N>` | abort if the estimated VM workload-minute ceiling exceeds N |  |
 | `--manifest <PATH>` | scenario manifest path |  |
 | `--report <PATH>` | write a JSON report |  |
+| `--junit <PATH>` | write a JUnit XML report |  |
 
 Examples:
 
 ```sh
-gregale test --scenario customer-export
-gregale test --scenario customer-export --profile restored --report test-results.json
+gregale test --validate
+gregale test --scenario customer-export --preflight
+gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
 gregale test --scenario customer-export --engine simulated
 ```
 

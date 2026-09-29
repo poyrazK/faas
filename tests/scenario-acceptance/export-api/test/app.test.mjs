@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import http from "node:http";
 import { test } from "node:test";
 import { createExportAPI } from "../server.js";
 import { createWorker } from "../../export-worker/server.js";
@@ -17,8 +19,43 @@ test("export crosses gateway, worker, object store and retrying notification", a
     put: async (key, value) => { objects.set(key, value); },
   };
   const sinkURL = await listen(t, createDeliverySink({ failFirst: 1, token: "fixture-token" }));
-  const workerURL = await listen(t, createWorker({ store, notificationURL: `${sinkURL}/deliver`, runID: "simulated-run" }));
-  const appURL = await listen(t, createExportAPI({ workerURL }));
+  const workerURL = await listen(t, createWorker({ store, notificationURL: `${sinkURL}/deliver`, runID: "simulated-run", failFirstProcess: true }));
+  const queued = new Map();
+  const pending = [];
+  const ingressURL = await listen(t, http.createServer(async (request, response) => {
+    const path = new URL(request.url, "http://localhost").pathname;
+    if (request.method === "POST" && path === "/process") {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const key = request.headers["idempotency-key"];
+      if (!queued.has(key)) {
+        const invocation = { id: randomUUID(), state: "pending" };
+        queued.set(key, invocation);
+        pending.push((async () => {
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const result = await fetch(`${workerURL}/process`, {
+              method: "POST", body: Buffer.concat(chunks),
+              headers: { "content-type": "application/json", "x-owner-digest": request.headers["x-owner-digest"] },
+            });
+            invocation.attempts = attempt;
+            if (result.ok) {
+              invocation.state = "completed";
+              return;
+            }
+          }
+          invocation.state = "dead_letter";
+        })());
+      }
+      response.writeHead(202, { "content-type": "application/json" });
+      return response.end(JSON.stringify({ id: queued.get(key).id }));
+    }
+    const result = await fetch(`${workerURL}${path}`, {
+      method: request.method, headers: { "x-owner-digest": request.headers["x-owner-digest"] },
+    });
+    response.writeHead(result.status, { "content-type": "application/json" });
+    response.end(await result.text());
+  }));
+  const appURL = await listen(t, createExportAPI({ workerURL: ingressURL }));
   const headers = (key) => ({ Authorization: `Bearer ${key}`, "Content-Type": "application/json" });
   const body = JSON.stringify({ idempotency_key: "same-input", report: "Customer A report" });
   const submit = () => fetch(`${appURL}/exports`, { method: "POST", headers: headers("customer-a-key"), body });
@@ -27,11 +64,14 @@ test("export crosses gateway, worker, object store and retrying notification", a
   assert.equal(first.status, 202);
   const created = await first.json();
   assert.equal(created.created, true);
-  assert.deepEqual(created.delivery_statuses, [503, 200]);
+  await Promise.all(pending);
+  assert.equal([...queued.values()][0].state, "completed");
+  assert.equal([...queued.values()][0].attempts, 2);
   const duplicate = await submit();
-  assert.equal(duplicate.status, 200);
-  assert.deepEqual(await duplicate.json(), { id: created.id, created: false });
-  assert.equal(objects.size, 1);
+  assert.equal(duplicate.status, 202);
+  assert.deepEqual(await duplicate.json(), created);
+  assert.equal(queued.size, 1);
+  assert.equal([...objects.keys()].filter((key) => key.startsWith("reports/")).length, 1);
 
   const owned = await fetch(`${appURL}/exports/${created.id}`, { headers: headers("customer-a-key") });
   assert.equal(owned.status, 200);

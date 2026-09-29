@@ -7,7 +7,7 @@ const send = (response, status, body) => {
   response.end(JSON.stringify(body));
 };
 
-export function createExportAPI({ workerURL = "http://worker.svc.gregale:10080", request = fetch } = {}) {
+export function createExportAPI({ workerURL = process.env.WORKER_URL, request = fetch } = {}) {
   return http.createServer(async (incoming, outgoing) => {
     const path = new URL(incoming.url, "http://localhost").pathname;
     if (incoming.method === "GET" && path === "/") return send(outgoing, 200, { ready: true });
@@ -34,12 +34,19 @@ export function createExportAPI({ workerURL = "http://worker.svc.gregale:10080",
     }
     const target = incoming.method === "POST" ? "/process" : `/result/${path.slice("/exports/".length)}`;
     try {
+      const id = body && createHash("sha256").update(`${owner}:${body.idempotency_key}`).digest("hex").slice(0, 32);
       const result = await request(`${workerURL}${target}`, {
         method: incoming.method,
-        headers: { "content-type": "application/json", "x-owner-digest": owner },
+        headers: { "content-type": "application/json", "x-owner-digest": owner,
+          ...(id && { "idempotency-key": id }) },
         body: body && JSON.stringify(body),
       });
-      return send(outgoing, result.status, await result.json());
+      const payload = await result.json();
+      if (incoming.method === "POST" && result.status === 202) {
+        if (typeof payload.id !== "string") return send(outgoing, 502, { error: "invalid_worker_receipt" });
+        return send(outgoing, 202, { id, invocation_id: payload.id, created: true });
+      }
+      return send(outgoing, result.status, payload);
     } catch (error) {
       return send(outgoing, 502, { error: "worker_unavailable", detail: String(error) });
     }

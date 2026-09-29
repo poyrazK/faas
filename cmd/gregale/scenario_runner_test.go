@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -444,7 +445,7 @@ func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) 
 	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--manifest", manifest, "--report", report}); code != 0 {
+	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--repeat", "2", "--manifest", manifest, "--report", report}); code != 0 {
 		t.Fatalf("simulated test exit = %d, want 0", code)
 	}
 	body, err := os.ReadFile(report)
@@ -454,8 +455,15 @@ func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) 
 	if !strings.Contains(string(body), `"engine": "simulated"`) || strings.Contains(string(body), `"evidence"`) || strings.Contains(string(body), `"app_slug"`) {
 		t.Fatalf("simulated report mislabels platform evidence: %s", body)
 	}
+	var attempts []testRunReceipt
+	if err := json.Unmarshal(body, &attempts); err != nil || len(attempts) != 2 || attempts[0].Attempt != 1 || attempts[1].Attempt != 2 {
+		t.Fatalf("repeat report = (%+v, %v)", attempts, err)
+	}
 	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--profile", "cold", "--manifest", manifest}); code == 0 {
 		t.Fatal("simulated run accepted a VM lifecycle profile")
+	}
+	if code := cmdTest([]string{"--scenario", "local-test", "--profile", "restored", "--max-workload-minutes", "1", "--manifest", manifest}); code == 0 {
+		t.Fatal("real VM run exceeded the workload-minute guard without stopping")
 	}
 }
 

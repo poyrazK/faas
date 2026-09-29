@@ -8,6 +8,10 @@ on:
         type: choice
         options: [all, warm, cold, restored]
         default: all
+      repeat:
+        description: Independent runs per profile (1-3)
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -19,7 +23,7 @@ concurrency:
 jobs:
   customer-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 240
     environment: scenario-acceptance
     env:
       FAAS_API: ${{ vars.GREGALE_ACCEPTANCE_API_URL }}
@@ -35,11 +39,20 @@ jobs:
           node-version: "22"
       - name: Check acceptance configuration
         run: |
+          test '${{ inputs.repeat }}' -ge 1 && test '${{ inputs.repeat }}' -le 3 || { echo '::error::repeat must be 1-3 for this workflow'; exit 1; }
           test -n "$FAAS_API" || { echo '::error::Set scenario-acceptance variable GREGALE_ACCEPTANCE_API_URL'; exit 1; }
           test -n "$FAAS_TOKEN" || { echo '::error::Set scenario-acceptance secret GREGALE_ACCEPTANCE_TOKEN'; exit 1; }
           curl --fail --silent --show-error --max-time 15 "$FAAS_API/healthz" >/dev/null
       - name: Build scenario CLI
         run: go build -o bin/gregale ./cmd/gregale
+      - name: Check scenario and account capacity
+        run: |
+          ./bin/gregale test \
+            --manifest tests/scenario-acceptance/gregale-test.yaml \
+            --scenario customer-export \
+            --profile '${{ inputs.profile }}' \
+            --repeat '${{ inputs.repeat }}' \
+            --preflight
       - name: Run real VM customer export
         run: |
           ./bin/gregale test \
@@ -47,12 +60,16 @@ jobs:
             --scenario customer-export \
             --engine real-vm \
             --profile '${{ inputs.profile }}' \
-            --report customer-export-report.json
+            --repeat '${{ inputs.repeat }}' \
+            --report customer-export-report.json \
+            --junit customer-export-report.xml
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: customer-export-real-vm-${{ inputs.profile }}
-          path: customer-export-report.json
+          path: |
+            customer-export-report.json
+            customer-export-report.xml
           if-no-files-found: warn
           retention-days: 14
