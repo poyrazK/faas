@@ -145,7 +145,7 @@ func reserveLocalAppEndpoint(baseURL string) (net.Listener, string, string, stri
 }
 
 func localAppCommandEnv(env []string, host, port string) []string {
-	result := make([]string, 0, len(env)+4)
+	result := make([]string, 0, len(env))
 	for _, variable := range env {
 		if !strings.HasPrefix(variable, "PORT=") && !strings.HasPrefix(variable, "HOST=") {
 			result = append(result, variable)
