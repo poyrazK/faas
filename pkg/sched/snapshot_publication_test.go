@@ -1,6 +1,6 @@
 package sched
 
-// adr: 343 — terminal init capture runs the callback and warm capture is skipped.
+// adr: 351 — terminal init capture runs the callback and warm capture is skipped.
 
 import (
 	"context"
