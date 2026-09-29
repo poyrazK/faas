@@ -460,6 +460,8 @@ func TestStatusForCode_AuthCodes(t *testing.T) {
 		{CodeConsumerKeyInvalid, http.StatusUnauthorized},
 		{CodeConsumerKeyInactive, http.StatusUnauthorized},
 		{CodeConsumerScopeMissing, http.StatusForbidden},
+		{CodePlatformTenantRequired, http.StatusForbidden},
+		{CodePlanPlatformTenantRequiredNotAllowed, http.StatusPaymentRequired},
 		{CodeEmailVerificationRequired, http.StatusForbidden},
 		{CodePasswordTooWeak, http.StatusBadRequest},
 		{CodeAccountExists, http.StatusBadRequest},

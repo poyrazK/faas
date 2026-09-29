@@ -5824,6 +5824,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetConsumerAuthMode && p.ConsumerAuthMode != nil {
 		a.ConsumerAuthMode = ConsumerAuthMode(*p.ConsumerAuthMode)
 	}
+	if p.SetPlatformTenantRequired {
+		a.PlatformTenantRequired = boolOrFalse(p.PlatformTenantRequired)
+	}
 	if p.SetVisibility && p.Visibility != nil {
 		a.Visibility = api.NormalizeAppVisibility(*p.Visibility)
 	}

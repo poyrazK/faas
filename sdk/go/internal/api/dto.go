@@ -174,6 +174,8 @@ type UpdateAppRequest struct {
 	// ConsumerAuthMode controls whether app requests may omit an
 	// end-customer consumer key. Values are "optional" and "required".
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
+	// PlatformTenantRequired gates app traffic on verified customer identity.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name; apid resolves to a UUID server-side.
@@ -511,6 +513,7 @@ type AppResponse struct {
 	// "optional" accepts anonymous requests and "required" mandates
 	// a valid consumer key.
 	ConsumerAuthMode string `json:"consumer_auth_mode"`
+	PlatformTenantRequired bool `json:"platform_tenant_required"`
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth configuration. Mode is the closed
 	// enum {open, bearer, basic}; HasBasicCreds is true

@@ -271,6 +271,8 @@ type App struct {
 	// authentication on this app's public path. Empty is treated as
 	// optional for legacy/fake app rows; required rejects anonymous traffic.
 	ConsumerAuthMode string
+	// PlatformTenantRequired gates app traffic on verified tenant attribution.
+	PlatformTenantRequired bool
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic|ip_allowlist|internal_only). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -6074,6 +6076,13 @@ haveApp:
 	// credential). nil-safe: open / unset modes pass
 	// through (the pre-#477 default is preserved).
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
+		return
+	}
+	// The three verified identity sources have all run by this point. Keep
+	// operator-authorized deployment smoke available for rollout readiness.
+	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
+		api.WriteProblem(w, api.ErrPlatformTenantRequired())
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 	// Preview-only fixed response rules return after both app auth gates and

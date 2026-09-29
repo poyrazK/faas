@@ -909,6 +909,8 @@ type UpdateAppRequest struct {
 	// consumer when a valid key is present; "required" rejects anonymous
 	// requests. Nil leaves the existing mode unchanged.
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
+	// PlatformTenantRequired rejects app traffic without verified tenant identity.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// PublicAuth (issue #477 / ADR-079) toggles per-app
 	// public-URL auth (open|bearer|basic). nil = don't
 	// touch the column (pre-#477 behaviour preserved).
@@ -1734,7 +1736,8 @@ type AppResponse struct {
 	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
 	// policy. It is "optional" by default and becomes "required" when the
 	// app owner wants every request attributed to a consumer identity.
-	ConsumerAuthMode string `json:"consumer_auth_mode"`
+	ConsumerAuthMode       string `json:"consumer_auth_mode"`
+	PlatformTenantRequired bool   `json:"platform_tenant_required"`
 	// PublicAuth (issue #477 / ADR-079) reflects the
 	// per-app public-URL auth mode. Three shapes:
 	//   {mode:"open"}    — pre-#477 default; every existing

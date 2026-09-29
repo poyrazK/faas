@@ -165,3 +165,36 @@ func TestUpdateAppConsumerAuthModeFreePlanGate(t *testing.T) {
 	rec := e.do(t, http.MethodPatch, "/v1/apps/consumer-mode-free", api.UpdateAppRequest{ConsumerAuthMode: &mode}, nil)
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
 }
+
+func TestUpdateAppPlatformTenantRequired(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "platform-app")
+	for _, required := range []bool{true, false} {
+		rec := e.do(t, http.MethodPatch, "/v1/apps/platform-app", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch platform_tenant_required=%t: code=%d body=%s", required, rec.Code, rec.Body.String())
+		}
+		var app api.AppResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &app); err != nil {
+			t.Fatal(err)
+		}
+		if app.PlatformTenantRequired != required {
+			t.Fatalf("response platform_tenant_required=%t, want %t", app.PlatformTenantRequired, required)
+		}
+		read := e.do(t, http.MethodGet, "/v1/apps/platform-app", nil, nil)
+		if err := json.Unmarshal(read.Body.Bytes(), &app); err != nil {
+			t.Fatal(err)
+		}
+		if app.PlatformTenantRequired != required {
+			t.Fatalf("read platform_tenant_required=%t, want %t", app.PlatformTenantRequired, required)
+		}
+	}
+}
+
+func TestUpdateAppPlatformTenantRequiredFreePlanGate(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "platform-app-free")
+	required := true
+	rec := e.do(t, http.MethodPatch, "/v1/apps/platform-app-free", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
+}

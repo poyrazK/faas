@@ -1724,6 +1724,7 @@ CREATE TABLE public.apps (
     eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
     require_authn boolean DEFAULT false NOT NULL,
     consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
+    platform_tenant_required boolean DEFAULT false NOT NULL,
     public_auth_mode text DEFAULT 'open'::text NOT NULL,
     public_auth_basic bytea,
     websocket_enabled boolean DEFAULT false NOT NULL,

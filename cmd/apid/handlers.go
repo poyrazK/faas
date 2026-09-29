@@ -943,8 +943,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		// can verify their PATCH landed without a second
 		// round-trip. The token-scope enforcement (cross-account
 		// 403) lives in gatewayd-internal, not here.
-		RequireAuthn:     a.RequireAuthn,
-		ConsumerAuthMode: consumerAuthMode,
+		RequireAuthn:           a.RequireAuthn,
+		ConsumerAuthMode:       consumerAuthMode,
+		PlatformTenantRequired: a.PlatformTenantRequired,
 		// Issue #477 / ADR-079: per-app public-URL auth.
 		// Surfaced so dashboards can show "public auth: open /
 		// bearer / basic" alongside the require_authn pill and

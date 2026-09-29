@@ -116,7 +116,7 @@ func TestAuthorizedDeploymentSmokeWakesAndPinsCandidate(t *testing.T) {
 	fake := &fakeBackend{
 		app: App{
 			ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree,
-			MaxConcurrency: 1, HealthPath: "/healthz",
+			MaxConcurrency: 1, HealthPath: "/healthz", PlatformTenantRequired: true,
 		},
 		host:     "demo.apps.dom",
 		upstream: upstream.Listener.Addr().String(),

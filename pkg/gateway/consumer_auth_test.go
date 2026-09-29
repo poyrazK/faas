@@ -167,6 +167,58 @@ func TestHandlerForwardsOnlyVerifiedPlatformTenantClaim(t *testing.T) {
 	}
 }
 
+func TestPlatformTenantRequiredBeforeGuest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.PlatformTenantIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+	store, token := consumerAuthFixture()
+	b := &fakeBackend{
+		app: App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			ConsumerAuthMode: api.ConsumerAuthModeOptional, PlatformTenantRequired: true},
+		host: "app.example", upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "instance-1"})
+	h := NewHandlerWith(b, NewMetrics(), nil).WithConsumerAuth(store)
+	for _, tc := range []struct {
+		name, tenantFromKey, surfaceID, surfaceTenant, authorization string
+		required                                                     bool
+		wantStatus                                                   int
+		wantBody                                                     string
+	}{
+		{name: "anonymous", required: true, wantStatus: http.StatusForbidden},
+		{name: "spoofed header", required: true, wantStatus: http.StatusForbidden},
+		{name: "unlinked key", required: true, authorization: "Bearer " + token, wantStatus: http.StatusForbidden},
+		{name: "linked key", required: true, tenantFromKey: "customer-a", authorization: "Bearer " + token, wantStatus: http.StatusOK, wantBody: "customer-a"},
+		{name: "verified surface", required: true, surfaceID: "surface-a", surfaceTenant: "customer-a", wantStatus: http.StatusOK, wantBody: "customer-a"},
+		{name: "policy disabled", wantStatus: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store.consumer.PlatformTenantID = tc.tenantFromKey
+			b.app.PlatformTenantRequired = tc.required
+			b.app.RoutedSurfaceID = tc.surfaceID
+			b.app.PlatformTenantID = tc.surfaceTenant
+			r := httptest.NewRequest(http.MethodGet, "http://app.example/resource", nil)
+			r.Header.Set(api.PlatformTenantIDHeader, "forged")
+			if tc.authorization != "" {
+				r.Header.Set("Authorization", tc.authorization)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d body=%s, want %d", w.Code, w.Body.String(), tc.wantStatus)
+			}
+			if tc.wantStatus == http.StatusForbidden {
+				if got := problemCode(t, w); got != api.CodePlatformTenantRequired {
+					t.Fatalf("problem code=%q", got)
+				}
+			} else if w.Body.String() != tc.wantBody {
+				t.Fatalf("body=%q, want %q", w.Body.String(), tc.wantBody)
+			}
+		})
+	}
+}
+
 func TestEnforceConsumerAuth_OptionalApplicationAuthorizationPasses(t *testing.T) {
 	store, _ := consumerAuthFixture()
 	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)

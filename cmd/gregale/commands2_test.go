@@ -303,6 +303,38 @@ func TestCmdAppMinInstances_HobbyRejects(t *testing.T) {
 	}
 }
 
+func TestCmdAppPlatformTenantRequiredFlags(t *testing.T) {
+	var seen api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	for _, tc := range []struct {
+		flag string
+		want bool
+	}{
+		{"--platform-tenant-required", true},
+		{"--no-platform-tenant-required", false},
+	} {
+		seen = api.UpdateAppRequest{}
+		if code := cmdApp([]string{constSlug, tc.flag}); code != 0 {
+			t.Fatalf("%s exit = %d", tc.flag, code)
+		}
+		if seen.PlatformTenantRequired == nil || *seen.PlatformTenantRequired != tc.want {
+			t.Fatalf("%s sent platform_tenant_required=%v", tc.flag, seen.PlatformTenantRequired)
+		}
+	}
+	if code := cmdApp([]string{constSlug, "--platform-tenant-required", "--no-platform-tenant-required"}); code == 0 {
+		t.Fatal("opposing platform tenant flags were accepted")
+	}
+}
+
 // TestCmdAppPublicAuth_ParsesAndForwards wires the --public-auth
 // flag (issue #477 / ADR-079). Three sub-cases pin the
 // customer-facing surface:

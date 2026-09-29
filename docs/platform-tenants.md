@@ -272,6 +272,16 @@ To temporarily stop the linked credential and hostname paths, send `PATCH /v1/ac
 
 On requests authenticated with a linked consumer key, or anonymous requests routed through a verified tenant-surface hostname, Gregale sends `X-Faas-Platform-Tenant-Id` to the guest and records `platform_tenant.id` on its request/forward traces. This is the stable account-level customer ID across apps and key rotations. It is distinct from `X-Faas-Tenant-Id`, which remains the app owner's account ID. Anonymous traffic on other domains receives no claim; incoming copies of the header are stripped. A consumer key presented on a hostname bound to a different platform tenant, including an unlinked key, is rejected with the same non-enumerating invalid-key response. Suspension is checked on cached hostname routes as well as cache misses; a custom-domain request may fail closed if the tenant guard's database read is unavailable.
 
+## Require customer identity on an app
+
+Enable the app ingress policy after linking your customer identities:
+
+```sh
+gregale app my-api --platform-tenant-required
+```
+
+The equivalent API request is `PATCH /v1/apps/my-api` with `{"platform_tenant_required":true}`. The setting is available on Hobby and above and appears in the app response. A request reaches the app only when Gregale verified a platform tenant through a linked consumer key, a verified tenant-surface hostname, or an opted-in JWT authorization rule with a tenant claim. Keep `consumer_auth_mode` at `optional` when accepting hostname or JWT identity without a consumer key. Anonymous requests on the ordinary app domain, unlinked consumer keys, and caller-supplied `X-Faas-Platform-Tenant-Id` headers receive `403 platform_tenant_required`. The check runs before fixed edge responses, cache lookup, and workload wake. Edge-handled CORS preflight, redirects, and health/crawler answers remain edge responses; authenticated deployment smoke remains available for rollout checks. Use `gregale app my-api --no-platform-tenant-required` to allow app traffic without tenant identity again.
+
 The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|activation|link-consumer|link-surface|usage|suspend|resume`.
 
 Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Account-scoped platform-tenant management requires the same MFA-gated account scopes as API consumer management; tenant-self read tokens are separate and remain limited to the tenant's own usage and finalized statements. Free plans do not expose the feature.

@@ -254,6 +254,7 @@ type App struct {
 	EvictionPriority          string
 	RequireAuthn              bool
 	ConsumerAuthMode          string
+	PlatformTenantRequired    bool
 	PublicAuthMode            string
 	PublicAuthBasic           []byte
 	WebsocketEnabled          bool

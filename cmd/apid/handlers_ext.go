@@ -475,6 +475,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.ErrConsumerKeysNotAllowed(acct.Plan)
 		}
 	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
+	}
 	// ADR-124: per-app wire-protocol selector. Same plan-gate
 	// shape as the streaming / require_authn gates above — Free +
 	// "grpc" = 403 plan_app_protocol_grpc_not_allowed. The
@@ -1352,10 +1355,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// customers may PATCH true → false to opt out on a
 		// Pro-upgraded app; Hobby customers may opt back out
 		// the same way.
-		RequireAuthn:        req.RequireAuthn,
-		SetRequireAuthn:     req.RequireAuthn != nil,
-		ConsumerAuthMode:    req.ConsumerAuthMode,
-		SetConsumerAuthMode: req.ConsumerAuthMode != nil,
+		RequireAuthn:              req.RequireAuthn,
+		SetRequireAuthn:           req.RequireAuthn != nil,
+		ConsumerAuthMode:          req.ConsumerAuthMode,
+		SetConsumerAuthMode:       req.ConsumerAuthMode != nil,
+		PlatformTenantRequired:    req.PlatformTenantRequired,
+		SetPlatformTenantRequired: req.PlatformTenantRequired != nil,
 		// Issue #477 / ADR-079: per-app public_auth
 		// (open|bearer|basic). Set bit distinguishes "unset"
 		// (don't touch) from explicit mode flip. The sealed
@@ -1605,6 +1610,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.ConsumerAuthMode != nil {
 		oldApp["consumer_auth_mode"] = string(app.ConsumerAuthMode)
 		newApp["consumer_auth_mode"] = string(updated.ConsumerAuthMode)
+	}
+	if req.PlatformTenantRequired != nil {
+		oldApp["platform_tenant_required"] = app.PlatformTenantRequired
+		newApp["platform_tenant_required"] = updated.PlatformTenantRequired
 	}
 	// Issue #477 / ADR-079: record the public_auth mode
 	// flip. Only the mode (not the credentials) is mirrored

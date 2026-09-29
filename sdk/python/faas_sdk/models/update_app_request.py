@@ -352,6 +352,9 @@ class UpdateAppRequest:
     ) = UNSET
     """End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests,
     required mandates a valid consumer key."""
+    platform_tenant_required: bool | None | Unset = UNSET
+    """Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked
+    consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above."""
     public_auth: None | PublicAuthBlock | Unset = UNSET
     """Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the
     closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step
@@ -792,6 +795,12 @@ class UpdateAppRequest:
         else:
             consumer_auth_mode = self.consumer_auth_mode
 
+        platform_tenant_required: bool | None | Unset
+        if isinstance(self.platform_tenant_required, Unset):
+            platform_tenant_required = UNSET
+        else:
+            platform_tenant_required = self.platform_tenant_required
+
         public_auth: dict[str, Any] | None | Unset
         if isinstance(self.public_auth, Unset):
             public_auth = UNSET
@@ -937,6 +946,8 @@ class UpdateAppRequest:
             field_dict["require_authn"] = require_authn
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if public_auth is not UNSET:
             field_dict["public_auth"] = public_auth
         if overflow_node is not UNSET:
@@ -1910,6 +1921,15 @@ class UpdateAppRequest:
 
         consumer_auth_mode = _parse_consumer_auth_mode(d.pop("consumer_auth_mode", UNSET))
 
+        def _parse_platform_tenant_required(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        platform_tenant_required = _parse_platform_tenant_required(d.pop("platform_tenant_required", UNSET))
+
         def _parse_public_auth(data: object) -> None | PublicAuthBlock | Unset:
             if data is None:
                 return data
@@ -2007,6 +2027,7 @@ class UpdateAppRequest:
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
             public_auth=public_auth,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

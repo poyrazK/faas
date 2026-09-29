@@ -25108,6 +25108,11 @@ components:
           enum: [optional, required]
           default: optional
           example: optional
+        platform_tenant_required:
+          description: "Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT authorization rule before app traffic is served. Default false."
+          type: boolean
+          default: false
+          example: false
         # Issue #554 / ADR-079 follow-up (AC #3 wire): the
         # most-recently parked deployment for this app, or absent
         # when the app has never been parked. Operators see the
@@ -27409,6 +27414,10 @@ components:
           type: [string, "null"]
           enum: [optional, required, null]
           example: required
+        platform_tenant_required:
+          description: "Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above."
+          type: [boolean, "null"]
+          example: true
 
         # Issue #477 / ADR-077: per-app public-URL auth
         # configuration. Omitted → no change. When present,

@@ -227,6 +227,9 @@ class AppResponse:
     consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
     """End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer
     keys; required mandates a valid consumer key."""
+    platform_tenant_required: bool | Unset = False
+    """Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT
+    authorization rule before app traffic is served. Default false."""
     parked_deployment: None | ParkedDeploymentRef | Unset = UNSET
     """Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The
     reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why
@@ -467,6 +470,8 @@ class AppResponse:
         if not isinstance(self.consumer_auth_mode, Unset):
             consumer_auth_mode = self.consumer_auth_mode
 
+        platform_tenant_required = self.platform_tenant_required
+
         parked_deployment: dict[str, Any] | None | Unset
         if isinstance(self.parked_deployment, Unset):
             parked_deployment = UNSET
@@ -624,6 +629,8 @@ class AppResponse:
             field_dict["require_authn"] = require_authn
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if parked_deployment is not UNSET:
             field_dict["parked_deployment"] = parked_deployment
         if overflow_node is not UNSET:
@@ -973,6 +980,8 @@ class AppResponse:
         else:
             consumer_auth_mode = check_app_response_consumer_auth_mode(_consumer_auth_mode)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         def _parse_parked_deployment(data: object) -> None | ParkedDeploymentRef | Unset:
             if data is None:
                 return data
@@ -1113,6 +1122,7 @@ class AppResponse:
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
             parked_deployment=parked_deployment,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

@@ -4079,7 +4079,8 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   security_policy = case when $78 then $79::text else security_policy end,
 			   request_rate_limit_rps = case when $80 then nullif($81, 0) else request_rate_limit_rps end,
 			   request_rate_limit_burst = case when $82 then nullif($83, 0) else request_rate_limit_burst end,
-			   egress_ports = case when $84 then $85::integer[] else egress_ports end
+		   egress_ports = case when $84 then $85::integer[] else egress_ports end,
+		   platform_tenant_required = case when $86 then $87 else platform_tenant_required end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -4211,7 +4212,8 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		p.SetSecurityPolicy, appSecurityPolicyValue(p.SecurityPolicy),
 		p.SetRequestRateLimitRPS, intOrZero(p.RequestRateLimitRPS),
 		p.SetRequestRateLimitBurst, intOrZero(p.RequestRateLimitBurst),
-		p.SetEgressPorts, egressPortsParam(p.EgressPorts))
+		p.SetEgressPorts, egressPortsParam(p.EgressPorts),
+		p.SetPlatformTenantRequired, boolOrFalse(p.PlatformTenantRequired))
 	return scanApp(row)
 }
 
@@ -24441,7 +24443,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
-		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts); err != nil {
+		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts,
+		&a.PlatformTenantRequired); err != nil {
 		return mapErr(err)
 	}
 	a.EgressPorts = egressPortsFromDB(egressPorts)
@@ -24638,7 +24641,8 @@ const appsSelectColumns = `
 	coalesce(org_id::text, ''),
 	request_rate_limit_rps, request_rate_limit_burst,
 	-- ADR-361: extra egress ports, appended to keep positional scans stable.
-	egress_ports`
+	egress_ports,
+	platform_tenant_required`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
