@@ -7,16 +7,29 @@
     state: restarted
   listen: restart grafana-server
 
+# The admin password lives on the Grafana host. A file lookup would read the
+# Ansible controller instead, which only worked while the deployment runner
+# ran on the control plane; read it on the target and keep it out of logs.
+- name: read grafana admin password for the provisioning reload
+  ansible.builtin.slurp:
+    src: "{{ gv_admin_password_file }}"
+  register: gv_admin_password_blob
+  no_log: true
+  failed_when: false        # dev_mode without a password file: skip the reload
+  listen: reload grafana provisioning
+
 - name: reload grafana provisioning
   ansible.builtin.uri:
     url: "http://{{ gv_listen_addr }}/api/admin/provisioning/dashboards/reload"
     method: POST
     user: admin
-    password: "{{ lookup('ansible.builtin.file', gv_admin_password_file) }}"
+    password: "{{ gv_admin_password_blob.content | b64decode }}"
     force_basic_auth: true
     status_code: 200
     validate_certs: false   # noqa: insecure — plaintext bridge bind; no TLS (admin-only)
-  failed_when: false        # dev_mode + missing password file => 401; carry on
+  no_log: true
+  failed_when: false        # a 401 in dev_mode must not stop the play
+  when: gv_admin_password_blob.content is defined
   listen: reload grafana provisioning
 
 - name: daemon-reload
