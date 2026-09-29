@@ -4,14 +4,26 @@
 -- exchanged bearers remain deploy:write; the new profile can only read
 -- non-secret project environment state and write qualification receipts.
 ALTER TABLE oidc_exchanged_tokens
-    ADD COLUMN scopes text[] NOT NULL DEFAULT ARRAY['deploy:write']::text[]
-    CHECK (
-        scopes <@ ARRAY[
-            'deploy:write', 'project_environments:read',
-            'project_environments:qualify'
-        ]::text[]
-        AND cardinality(scopes) > 0
-    );
+    ADD COLUMN IF NOT EXISTS scopes text[] NOT NULL DEFAULT ARRAY['deploy:write']::text[];
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+        WHERE conname = 'oidc_exchanged_tokens_scopes_check'
+          AND conrelid = 'oidc_exchanged_tokens'::regclass
+    ) THEN
+        ALTER TABLE oidc_exchanged_tokens
+            ADD CONSTRAINT oidc_exchanged_tokens_scopes_check
+            CHECK (
+                scopes <@ ARRAY[
+                    'deploy:write', 'project_environments:read',
+                    'project_environments:qualify'
+                ]::text[]
+                AND cardinality(scopes) > 0
+            );
+    END IF;
+END $$;
 
 ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_vocab_chk;
 ALTER TABLE api_keys ADD CONSTRAINT api_keys_scopes_vocab_chk CHECK (
