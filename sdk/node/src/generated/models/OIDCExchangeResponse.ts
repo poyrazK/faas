@@ -7,7 +7,7 @@
  */
 export type OIDCExchangeResponse = {
   /**
-   * Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on the deploy routes.
+   * Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on routes allowed by the returned scope profile.
    */
   bearer: string;
   /**
@@ -18,5 +18,9 @@ export type OIDCExchangeResponse = {
    * Opaque row id (UUID). Useful for log correlation / audit reads.
    */
   token_id: string;
+  /**
+   * The fixed scopes granted to this bearer.
+   */
+  scopes?: Array<string>;
 };
 
