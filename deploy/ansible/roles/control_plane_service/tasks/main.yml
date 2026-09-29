@@ -835,31 +835,60 @@
 # asserted here, because the operator almost certainly meant
 # `resend` (or `postmark`) and silently booting with a journal-
 # only sender in production will miss every dunning + quota notice.
-- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
+# apid persists its audit and MFA-recovery HMAC keys under /var/lib/faas on
+# first boot, but that directory is deliberately not writable by faas-apid,
+# and apid refuses to start without a persisted recovery key. Provision them
+# once, in apid's own file format (hex, 0600 faas-apid); existing keys are
+# never replaced, since rotating them breaks audit joins and recovery codes.
+- name: control_plane_service — provision apid HMAC keys on a fresh control plane
   ansible.builtin.shell: |
     set -euo pipefail
-    sealed=/etc/faas/sealed.env
-    if [ ! -f "$sealed" ]; then
-      echo "FAIL: $sealed missing — fill it before running this role on a production box."
-      exit 1
-    fi
-    transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    case "$transport" in
-      resend|postmark|noop)
-        # live transport — credentials are the operator's responsibility.
-        # The pkg/mail factory fails closed on a missing credential
-        # so we don't double-assert here.
-        echo "mail transport = $transport (prod)"
-        ;;
-      log|"")
-        echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a production control plane — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+    umask 077
+    tmp="$(mktemp /var/lib/faas/.{{ item }}.XXXXXX)"
+    openssl rand -hex 32 > "$tmp"
+    chown faas-apid:faas "$tmp"
+    chmod 0600 "$tmp"
+    mv -T "$tmp" /var/lib/faas/{{ item }}
+  args:
+    executable: /bin/bash
+    creates: /var/lib/faas/{{ item }}
+  loop:
+    - audit-hmac.key
+    - recovery-hmac.key
+  no_log: true
+
+- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
+  # apid reads sealed.env; meterd reads only its ADR-127 per-daemon
+  # billing.env. Check the file each daemon actually loads: a fresh control
+  # plane passed this assert with sealed.env alone and meterd then refused
+  # to boot.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for pair in apid:/etc/faas/sealed.env meterd:/etc/faas/secrets/meterd/billing.env; do
+      daemon="${pair%%:*}"
+      envfile="${pair#*:}"
+      if [ ! -f "$envfile" ]; then
+        echo "FAIL: $envfile missing — $daemon reads FAAS_MAIL_TRANSPORT from it; fill it before running this role on a production box."
         exit 1
-        ;;
-      *)
-        echo "FAIL: FAAS_MAIL_TRANSPORT=$transport is not a known transport (resend|postmark|log|noop). apid will refuse to boot."
-        exit 1
-        ;;
-    esac
+      fi
+      transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$envfile" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+      case "$transport" in
+        resend|postmark|noop)
+          # live transport — credentials are the operator's responsibility.
+          # The pkg/mail factory fails closed on a missing credential
+          # so we don't double-assert here.
+          echo "$daemon mail transport = $transport (prod)"
+          ;;
+        log|"")
+          echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} in $envfile — $daemon will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+          exit 1
+          ;;
+        *)
+          echo "FAIL: FAAS_MAIL_TRANSPORT=$transport in $envfile is not a known transport (resend|postmark|log|noop). $daemon will refuse to boot."
+          exit 1
+          ;;
+      esac
+    done
   args:
     executable: /bin/bash
   changed_when: false

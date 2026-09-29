@@ -39,6 +39,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -181,8 +182,11 @@ func secretsInit(f *secretsInitFlags, stdout io.Writer) error {
 	// across deployment retries, but it is not the compute-node TLS
 	// certificate and must not be used for cert_fingerprint.
 	hostAgePath := filepath.Join(f.dir, "host.age")
-	_, err := writeOrLoadHostAge(hostAgePath, f.force, f.preserveExisting)
+	hostID, err := writeOrLoadHostAge(hostAgePath, f.force, f.preserveExisting)
 	if err != nil {
+		return err
+	}
+	if err := writeHostAgeRecipient(filepath.Join(f.dir, "host.age.pub"), hostID); err != nil {
 		return err
 	}
 
@@ -378,6 +382,27 @@ func writeHostAge(path string, force bool) (*age.X25519Identity, error) {
 		return nil, err
 	}
 	return id, nil
+}
+
+// writeHostAgeRecipient publishes host.age's public recipient beside it
+// (0444). apid loads it through LoadCredential=cd_host_age_recipient; a fresh
+// control plane had host.age but no host.age.pub, so apid never started
+// (status 243/CREDENTIALS). The file is derived, so a stale copy is replaced.
+func writeHostAgeRecipient(path string, id *age.X25519Identity) error {
+	want := []byte(id.Recipient().String())
+	if got, err := os.ReadFile(path); err == nil && bytes.Equal(got, want) {
+		return enforceFileMode(path, 0o444)
+	}
+	tmp := path + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, want, 0o444); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("install %s: %w", path, err)
+	}
+	return enforceFileMode(path, 0o444)
 }
 
 // writeOrLoadHostAge is the deployment-retry variant of writeHostAge. An

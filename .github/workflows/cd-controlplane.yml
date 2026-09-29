@@ -513,10 +513,11 @@ jobs:
         env:
           FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
           FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
+          COMPUTE_VERIFY_KEY: ${{ secrets.COMPUTE_VERIFY_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" ]] || {
-            echo "::error::production secrets FLEET_AGE_KEY and FLEET_AGE_RECIPIENT are required" >&2
+          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" && -n "${COMPUTE_VERIFY_KEY:-}" ]] || {
+            echo "::error::production secrets FLEET_AGE_KEY, FLEET_AGE_RECIPIENT and COMPUTE_VERIFY_KEY are required" >&2
             exit 1
           }
           stage="$RUNNER_TEMP/fleet-age"
@@ -525,13 +526,15 @@ jobs:
           # newline makes the strict fleet-seal parser reject the key.
           printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
           printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
+          # Exactly one trailing newline, however the secret was pasted.
+          printf '%s\n' "$(printf '%s' "$COMPUTE_VERIFY_KEY")" > "$stage/sign-pub.pem"
           chmod 0400 "$stage/fleet.age"
-          chmod 0444 "$stage/fleet.age.pub"
+          chmod 0444 "$stage/fleet.age.pub" "$stage/sign-pub.pem"
           remote_stage="/tmp/gregale-fleet-age-${GITHUB_RUN_ID}"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "root@${{ env.CP_HOST }}" "install -d -m 0700 '$remote_stage'"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "$stage/fleet.age" "$stage/fleet.age.pub" \
+            "$stage/fleet.age" "$stage/fleet.age.pub" "$stage/sign-pub.pem" \
             "root@${{ env.CP_HOST }}:${remote_stage}/"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "root@${{ env.CP_HOST }}" "bash -s -- '$remote_stage'" <<'REMOTE'
@@ -540,6 +543,7 @@ jobs:
           trap 'rm -rf -- "$stage"' EXIT
           grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
           grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
+          grep -qx -- '-----BEGIN PUBLIC KEY-----' "$stage/sign-pub.pem"
           install -d -o root -g root -m 0700 /etc/faas/secrets
           for file in fleet.age fleet.age.pub; do
             if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
@@ -549,6 +553,16 @@ jobs:
           done
           install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
           install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+
+          # apid and schedd verify image signatures with the fleet's public
+          # signing key (LoadCredential=cd_sign_pub below). Compute joins
+          # install it from COMPUTE_VERIFY_KEY; the control plane never
+          # received it, so a fresh control plane could not start apid.
+          if [[ -e /etc/faas/secrets/sign-pub.pem ]] && ! cmp -s "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem; then
+            echo "existing sign-pub.pem differs from COMPUTE_VERIFY_KEY; use the signing-key rotation procedure" >&2
+            exit 1
+          fi
+          install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
 
           # Keep both the incoming release and an older rollback release able
           # to read the public recipients while /etc/faas/secrets stays 0700.
