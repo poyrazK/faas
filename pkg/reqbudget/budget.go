@@ -100,6 +100,27 @@ func budgetBaseContext(parent context.Context) context.Context {
 	return parent
 }
 
+// WithCancellationFence adds an independent lifetime fence while preserving
+// an existing request budget. A successful stream may detach the budget but
+// must still observe this fence and the original client/server cancellation.
+// Call cancel only after response ownership ends or to revoke the exchange.
+func WithCancellationFence(parent context.Context) (context.Context, context.CancelCauseFunc) {
+	base, cancelBase := context.WithCancelCause(budgetBaseContext(parent))
+	current, cancelCurrent := context.WithCancelCause(parent)
+	ctx := context.WithValue(current, budgetParentKey{}, base)
+	return ctx, func(cause error) {
+		cancelBase(cause)
+		cancelCurrent(cause)
+	}
+}
+
+// CancellationFenceCause reads the lifetime root, which can outlive the
+// original budget. A detached stream's current context may already carry the
+// ignored handshake timeout, so context.Cause(current) is insufficient.
+func CancellationFenceCause(ctx context.Context) error {
+	return context.Cause(budgetBaseContext(ctx))
+}
+
 // WithStream creates a context for a potentially long-lived response. Before
 // detach is called, the context observes the request budget and cancels when
 // it expires. After detach, the request budget is ignored, but cancellation

@@ -7370,6 +7370,12 @@ const (
 	// RequestBudgetErrorWriteTimeout bounds best-effort delivery of a 504
 	// generated after a request deadline, before any response was committed.
 	RequestBudgetErrorWriteTimeout = 100 * time.Millisecond
+	// Traffic security generations independently fence admitted HTTP work.
+	TrafficSecurityRefreshInterval  = time.Second
+	TrafficSecurityStoreTimeout     = 250 * time.Millisecond
+	TrafficSecurityMaxExchanges     = 65_536
+	TrafficSecurityMaxScopes        = 4_096
+	TrafficSecurityMaxRequestScopes = 16
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is

@@ -173,3 +173,16 @@ code with zero findings. Cross-node clocks, key rotation, blocked downstream
 write coverage, native VM/network/leak, full policy revocation/preview and
 customer release/rollout evidence remain pending. All six guarantees remain
 unchecked.
+
+The bounded security-generation registry and reqbudget lifetime fence are
+implemented as reusable primitives. Local tests passed for unchanged snapshots,
+missed revoke/release pairs, scoped cancellation, generation regression/conflict,
+store failure/timeouts, deduplicated scope/exchange capacity and observed limits,
+late older-generation admission refusal, idempotent cleanup,
+notification repair and shutdown. A real budget timer expired while its detached
+stream remained live; a later lifetime revoke still canceled that stream, and
+client cancellation remained effective. Unregistering a completed exchange does
+not cancel its final buffered flush. Registry and reqbudget suites passed, and
+their pinned linter reported zero findings. Durable security-generation triggers,
+store reads and production public/service admission wiring are still pending;
+this primitive is not yet an active runtime guarantee.

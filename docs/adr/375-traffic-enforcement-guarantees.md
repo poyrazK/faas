@@ -204,9 +204,35 @@ Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
 Ordinary policy updates fence new requests during convergence; an admitted
-request retains its snapshot. Emergency revocation needs an explicit live
-request fence and remains a required delivery item, along with preview
-agreement, declared internal-path coverage and update/recovery evidence.
+request retains its snapshot. Emergency security revocation uses a separate
+durable generation for an account, app or deployment. Account suspension/abuse
+hold, app deletion and deployment security quarantine advance that generation;
+release advances it again so a missed revoke/release pair cannot revive an old
+request. Generations retain deleted identity tombstones and contain no policy
+or credentials. Ordinary rule, configuration and deployment-weight updates do
+not advance a security generation.
+
+Every participating HTTP admission verifies its security scopes in Postgres and
+registers a cancellation fence. Public requests enroll account/app before wake
+and the selected deployment before forwarding; managed service calls enroll
+caller/target scopes before wake and selected deployments before forwarding.
+An independent cancellation root survives successful stream/Upgrade handshake
+detachment. Normal completion unregisters the request without prematurely
+canceling the HTTP server's final buffered flush. Revocation cancels the actual
+exchange; resource permits remain owned until forwarding cleanup completes.
+
+Each gateway re-reads all active scopes at least once a second with a 250 ms
+store-operation limit. Notifications request an earlier read; they never grant
+or revoke traffic based only on payload claims. A changed generation, an active
+revoke, a regressed/inconsistent store result or failed verification cancels the
+affected exchange. Store outages refuse new admissions and cancel active
+tracked traffic; no private allow fallback or indefinite warm lease is used.
+Tracking is bounded by 65,536 exchanges and 4,096 distinct active scopes per
+gateway; exhaustion refuses admission. The limits live in pkg/api/limits.go.
+This fence initially covers account/app/deployment security state, not individual
+credential revocation, managed realtime, detached work or arbitrary guest sockets.
+Preview agreement, declared internal-path coverage and update/recovery evidence
+remain required delivery work.
 
 ## Delivery and verification
 
