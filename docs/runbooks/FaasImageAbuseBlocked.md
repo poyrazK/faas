@@ -2,6 +2,8 @@
 
 imaged scanned a built image and matched an ADR-368 abuse signature rule.
 
+## Symptom
+
 - **FaasImageAbuseBlocked (page):** a blocking rule matched: a cryptominer
   (`miner-xmrig`, `miner-stratum`), a mass port scanner (`scanner-masscan`,
   `scanner-zmap`) or a flood tool (`flood-hping3`, `flood-mhddos`). The deploy
