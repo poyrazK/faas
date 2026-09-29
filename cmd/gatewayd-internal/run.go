@@ -3757,7 +3757,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}
-			// ADR-370: refuse abuse infrastructure at the pinned resolver.
+			// ADR-373: refuse abuse infrastructure at the pinned resolver.
 			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
 			// built-in mining-pool list; a configured file that cannot be
 			// read fails startup rather than silently dropping the feed.

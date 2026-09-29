@@ -1,4 +1,4 @@
-# ADR-370 · Guest DNS policy: blocklist and DNS-gated egress
+# ADR-373 · Guest DNS policy: blocklist and DNS-gated egress
 
 - **Status:** accepted
 - **Date:** 2026-09-29

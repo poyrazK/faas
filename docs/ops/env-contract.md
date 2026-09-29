@@ -112,6 +112,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DNS_API_URL` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_DNS_BLOCKLIST_FILE` | gatewayd-internal | `default` |  |  | `` | ADR-373 optional operator threat feed added to the built-in guest DNS blocklist; unset uses the built-in list only, an unreadable file fails startup |
 | `FAAS_DNS_PROVIDER` | gatewayd-public, shared | `default` |  |  | `` |  |
 | `FAAS_DNS_PROVIDER_SEALED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_ZONE` | gatewayd-public | `default` |  |  | `` |  |

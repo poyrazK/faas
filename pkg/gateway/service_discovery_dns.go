@@ -37,7 +37,7 @@ type ServiceDiscoveryDNSHandler struct {
 	onBlocked     func(category string)
 }
 
-// WithBlocklist makes the resolver answer NXDOMAIN for names on the ADR-370
+// WithBlocklist makes the resolver answer NXDOMAIN for names on the ADR-373
 // blocklist instead of forwarding them. onBlocked, if set, is called once
 // per refused query with the matched category.
 func (h *ServiceDiscoveryDNSHandler) WithBlocklist(b *DNSBlocklist, onBlocked func(category string)) *ServiceDiscoveryDNSHandler {

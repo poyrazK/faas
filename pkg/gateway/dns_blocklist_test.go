@@ -1,4 +1,4 @@
-// adr: 370 — guest DNS blocklist.
+// adr: 373 — guest DNS blocklist.
 package gateway
 
 import (

@@ -9,7 +9,7 @@ import (
 )
 
 // DNSBlocklist refuses tenant lookups of abuse infrastructure at the pinned
-// bridge resolver (ADR-370). Every guest's DNS is DNAT'd to this resolver
+// bridge resolver (ADR-373). Every guest's DNS is DNAT'd to this resolver
 // (ADR-361), so a blocked name cannot be resolved another way; with
 // DNS-gated egress it cannot be reached either.
 //

@@ -191,6 +191,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DEV", Owners: []string{"shared", "apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DEV_TOKEN", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DNS_API_URL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_DNS_BLOCKLIST_FILE", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-373 optional operator threat feed added to the built-in guest DNS blocklist; unset uses the built-in list only, an unreadable file fails startup"},
 	{Name: "FAAS_DNS_PROVIDER", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_PROVIDER_SEALED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_ZONE", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

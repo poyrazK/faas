@@ -1532,7 +1532,7 @@ type OpsMetrics struct {
 	// accountAbuseHolds counts ADR-361 account abuse holds placed, by
 	// reason.
 	accountAbuseHolds *prometheus.CounterVec
-	// dnsBlocked counts ADR-370 guest DNS lookups refused by the blocklist.
+	// dnsBlocked counts ADR-373 guest DNS lookups refused by the blocklist.
 	dnsBlocked *prometheus.CounterVec
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
@@ -3567,7 +3567,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"app", "reason"})
 	dnsBlocked := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_dns_blocked_total",
-		Help: "Guest DNS lookups the bridge resolver refused with NXDOMAIN because the name is on the ADR-370 blocklist, by category (miner for the built-in mining pool list, or the operator file's category). The log line names the calling app.",
+		Help: "Guest DNS lookups the bridge resolver refused with NXDOMAIN because the name is on the ADR-373 blocklist, by category (miner for the built-in mining pool list, or the operator file's category). The log line names the calling app.",
 	}, []string{"category"})
 	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_account_abuse_holds_total",
@@ -7526,7 +7526,7 @@ func (m *OpsMetrics) EgressAbuseRecycled(app, reason string) prometheus.Counter 
 	return m.egressAbuseRecycles.WithLabelValues(app, reason)
 }
 
-// DNSBlocked returns the ADR-370 blocked guest DNS lookup counter.
+// DNSBlocked returns the ADR-373 blocked guest DNS lookup counter.
 func (m *OpsMetrics) DNSBlocked(category string) prometheus.Counter {
 	if m == nil || m.dnsBlocked == nil {
 		return nil

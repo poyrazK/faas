@@ -184,7 +184,7 @@ the gauge surfaces the customer at their normal rps position.
 
 ## Blocked guest DNS lookups (FaasGuestDNSBlocked)
 
-The bridge resolver refused a lookup of a blocklisted name (ADR-370). Find the
+The bridge resolver refused a lookup of a blocklisted name (ADR-373). Find the
 calling app in the gatewayd-internal journal:
 
 ```

@@ -1745,7 +1745,7 @@ groups:
           description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m for egress {{ $labels.reason }}: fanout means at least the plan's EgressNewDestinationsPerMinute new destinations in one minute, flood means at least EgressFloodDropsPerMinute new flows dropped against single destinations. Treat it as a likely scan, flood or other abuse from the node's egress address until reviewed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
-      # ADR-370: a guest looked up a blocklisted name (mining pool or an
+      # ADR-373: a guest looked up a blocklisted name (mining pool or an
       # operator feed entry).
       - alert: FaasGuestDNSBlocked
         expr: sum by (category) (increase(gatewayd_dns_blocked_total[15m])) > 0
