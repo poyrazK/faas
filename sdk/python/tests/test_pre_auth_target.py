@@ -43,6 +43,8 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     package.mkdir(parents=True)
     helper = package / "pre_auth_target.py"
     helper.write_text("sentinel = 'hand-written helper'\n")
+    webhook = package / "webhook.py"
+    webhook.write_text("sentinel = 'hand-written webhook helper'\n")
     source_spec = tmp_path / "openapi.yaml"
     source_spec.write_text("openapi: 3.1.0\n")
     config = tmp_path / "config.yaml"
@@ -68,4 +70,5 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     module.regen()
 
     assert helper.read_text() == "sentinel = 'hand-written helper'\n"
+    assert webhook.read_text() == "sentinel = 'hand-written webhook helper'\n"
     assert (package / "__init__.py").exists()
