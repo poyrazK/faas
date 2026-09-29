@@ -217,6 +217,11 @@
     marker: "# {mark} faas control-plane peer map"
     block: |
       faas_map faas         faas
+      # cd-controlplane runs gregalectl/deployctl/migrate as root with
+      # --db-env /etc/faas/sealed.env (fleet-seal migrate, deploy, schema).
+      # Root can already reach the cluster as postgres; this only lets those
+      # tools use the same socket DSN as the daemons.
+      faas_map root         faas
       faas_map faas-apid    faas
       faas_map faas-schedd  faas
       faas_map faas-meterd  faas
