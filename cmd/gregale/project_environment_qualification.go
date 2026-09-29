@@ -168,6 +168,19 @@ func qualifyProjectEnvironmentWithProfileAndHTTPClient(ctx context.Context, clie
 	if err != nil {
 		return api.ProjectEnvironmentQualificationResponse{}, fmt.Errorf("fingerprint environment secret revisions: %w", err)
 	}
+	workloadConfigHashes := make(map[string]string, len(workloadBySlug))
+	for slug, workload := range workloadBySlug {
+		if workload.WorkloadConfigHash == "" && workload.Release.WorkloadConfigHash == "" {
+			continue // Older servers expose only the legacy qualification contract.
+		}
+		if !api.ValidProjectEnvironmentConfigHash(workload.WorkloadConfigHash) || workload.WorkloadConfigHash != workload.Release.WorkloadConfigHash {
+			return api.ProjectEnvironmentQualificationResponse{}, fmt.Errorf("workload %q has untested desired settings; deploy them before qualification", slug)
+		}
+		workloadConfigHashes[slug] = workload.Release.WorkloadConfigHash
+	}
+	if len(workloadConfigHashes) != 0 && len(workloadConfigHashes) != len(workloadBySlug) {
+		return api.ProjectEnvironmentQualificationResponse{}, errors.New("environment state is missing workload configuration fingerprints")
+	}
 
 	slugs := make([]string, 0, len(workloadBySlug))
 	for slug := range workloadBySlug {
@@ -231,6 +244,7 @@ func qualifyProjectEnvironmentWithProfileAndHTTPClient(ctx context.Context, clie
 		api.CreateProjectEnvironmentQualificationRequest{
 			ReleaseSetID: releaseSet.ID, ConfigurationVersion: configuration.Version,
 			ConfigurationHash: configuration.ConfigHash, SecretRevisionHashes: secretRevisionHashes, Checks: checks,
+			WorkloadConfigHashes: workloadConfigHashes,
 		})
 }
 

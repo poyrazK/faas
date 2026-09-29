@@ -32116,6 +32116,7 @@ components:
       type: object
       required: [workload_slug, workload_name, status]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         status: { type: string, enum: [live, not_deployed] }
@@ -32176,6 +32177,8 @@ components:
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        workload_config_revision: { type: integer, format: int64, minimum: 1 }
         app_id: { type: string, format: uuid }
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -32539,6 +32542,11 @@ components:
       additionalProperties: false
       required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
       properties:
+        workload_config_hashes:
+          description: Configuration fingerprints observed before probes; environment-owned settings require an exact match to deployed revisions.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         release_set_id: { type: string, format: uuid }
         configuration_version: { type: integer, minimum: 0 }
         configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
@@ -32583,6 +32591,11 @@ components:
       type: object
       required: [id, environment, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, status, checks, created_at, expires_at]
       properties:
+        workload_config_hashes:
+          description: Immutable per-workload fingerprints bound to this qualification receipt.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         id: { type: string, format: uuid }
         environment: { type: string }
         release_set_id: { type: string, format: uuid }

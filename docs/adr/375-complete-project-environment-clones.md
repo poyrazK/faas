@@ -136,3 +136,19 @@ promotion/rollback of the complete effective state. Production ingress must
 also exclude other scopes from ordinary weighted routing. Native x86_64 KVM
 acceptance remains required; the current local checks use store integration
 tests and scheduler/gateway fakes on macOS.
+
+### Qualification configuration fence (2026-09-29)
+
+Qualification state and receipts now include per-workload runtime configuration
+hashes. The CLI captures these before probing exact deployment previews. Receipt
+creation rejects a desired revision that differs from the deployed pin, and
+promotion publication rechecks the latest receipt, source graph, workload hashes,
+project configuration, and secret revisions in the cutover transaction. Legacy
+receipts without workload hashes are accepted only while the environment has no
+owned workload settings. New clients fingerprint legacy settings as well.
+
+The MemStore and real PostgreSQL contracts exercise caller mutation, missing
+fingerprints, desired edits during probes, and a source edit after qualification
+but before publication; the rejected publication leaves the target graph intact.
+API/CLI qualification checks and OpenAPI compliance pass. These checks do not
+establish full clone readiness or native VM lifecycle acceptance.

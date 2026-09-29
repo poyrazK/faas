@@ -134,8 +134,13 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment policies")
 	}
+	desiredHash, revision, err := s.projectEnvironmentWorkloadConfigIdentity(ctx, app, scope, "")
+	if err != nil {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not fingerprint desired workload settings")
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		AppID: app.ID, WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
+		WorkloadConfigHash: desiredHash, WorkloadConfigRevision: revision,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
 		Bindings: projectEnvironmentBindings(secrets), Domains: projectEnvironmentDomains(domains, environment.ID),
 		Routes:   routes,
@@ -164,7 +169,15 @@ func (s *server) projectEnvironmentReleaseState(ctx context.Context, environment
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Status: "not_deployed",
 		URL: projectEnvironmentWorkloadURL(environment.ID, app.ID),
 	}
-	deployment, err := s.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	active, problem := s.activeProjectEnvironmentReleaseSet(ctx, app.AccountID, app.ProjectID, environment.Slug)
+	if problem != nil {
+		return out, problem
+	}
+	var selected *state.ProjectReleaseSet
+	if active.ID != "" {
+		selected = &active
+	}
+	deployment, err := projectEnvironmentPromotionSelectedDeployment(ctx, s.store, app, environment.Slug, selected)
 	if errors.Is(err, state.ErrNotFound) {
 		return out, nil
 	}
@@ -175,7 +188,35 @@ func (s *server) projectEnvironmentReleaseState(ctx context.Context, environment
 	out.ImageDigest, out.SourceURL, out.CommitSHA = deployment.ImageDigest, deployment.SourceURL, deployment.CommitSHA
 	out.SourceSHA256, out.TrafficPercent = deployment.SourceSHA256, deployment.TrafficPercent
 	out.CreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
+	out.WorkloadConfigHash, _, err = s.projectEnvironmentWorkloadConfigIdentity(ctx, app, environment.Slug, deployment.ID)
+	if err != nil {
+		return out, api.ErrCapacity("could not fingerprint released workload settings")
+	}
 	return out, nil
+}
+
+func (s *server) projectEnvironmentWorkloadConfigIdentity(ctx context.Context, app state.App, environment, deploymentID string) (string, int64, error) {
+	var spec state.ProjectEnvironmentWorkloadSpec
+	var err error
+	if deploymentID == "" {
+		if reader, ok := s.store.(state.ProjectEnvironmentWorkloadSpecReader); ok {
+			spec, err = reader.ProjectEnvironmentWorkloadSpec(ctx, app.AccountID, app.ProjectID, environment, app.ID)
+		}
+	} else if reader, ok := s.store.(state.DeploymentWorkloadSpecReader); ok {
+		spec, err = reader.ProjectEnvironmentWorkloadSpecForDeployment(ctx, app.AccountID, app.ProjectID, deploymentID)
+	}
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return "", 0, err
+	}
+	if spec.ID != "" {
+		return spec.Hash, spec.Revision, nil
+	}
+	settings, err := state.MaterializeEnvironmentWorkloadSettings(ctx, s.store, app, environment)
+	if err != nil {
+		return "", 0, err
+	}
+	hash, err := state.WorkloadSettingsHash(settings)
+	return hash, 0, err
 }
 
 func projectEnvironmentWorkloadURL(environmentID, appID string) string {

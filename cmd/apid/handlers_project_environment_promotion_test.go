@@ -1097,7 +1097,7 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 		[]state.ProjectEnvironmentQualificationCheck{
 			{Name: "health", Status: health, Results: resultsForStatus(health)},
 			{Name: "smoke", Status: smoke, Results: resultsForStatus(smoke)},
-		})
+		}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

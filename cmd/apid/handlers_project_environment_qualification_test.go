@@ -19,7 +19,17 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 	}
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+	app, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.RAMMB = 512
+	spec, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, 0, settings)
+	if err != nil {
 		t.Fatal(err)
 	}
 	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", ImageDigest: "sha256:qualified", Status: state.DeployPending})
@@ -46,6 +56,7 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 		ReleaseSetID: release.ID, ConfigurationVersion: 0,
 		ConfigurationHash:    api.EmptyProjectEnvironmentConfigHash(),
 		SecretRevisionHashes: map[string]string{app.Slug: emptySecretHash},
+		WorkloadConfigHashes: map[string]string{app.Slug: spec.Hash},
 		Checks: []api.ProjectEnvironmentQualificationCheck{
 			{Name: "smoke", Status: "passed", Results: []api.ProjectEnvironmentQualificationResult{probeResult}},
 			{Name: "health", Status: "passed", Results: []api.ProjectEnvironmentQualificationResult{probeResult}},
@@ -82,6 +93,20 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 	}
 	if !preview.CanPromote || !preview.QualificationRequired || preview.Qualification == nil || preview.Qualification.ID != qualification.ID {
 		t.Fatalf("promotion preview=%+v", preview)
+	}
+	settings.RAMMB = 1024
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, spec.Revision, settings); err != nil {
+		t.Fatal(err)
+	}
+	changedReq, changedRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	changedReq.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentPromotion(changedRec, changedReq, acct)
+	var changed api.ProjectEnvironmentPromotionPreviewResponse
+	if err := json.Unmarshal(changedRec.Body.Bytes(), &changed); err != nil {
+		t.Fatal(err)
+	}
+	if changedRec.Code != http.StatusOK || changed.CanPromote || !strings.Contains(strings.Join(changed.BlockingReasons, ";"), "workload settings changed") {
+		t.Fatalf("workload edit did not invalidate receipt: status=%d preview=%+v", changedRec.Code, changed)
 	}
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "staging", "TOKEN", "age1test", "value-hash-not-bound", []byte("sealed-token")); err != nil {
 		t.Fatal(err)

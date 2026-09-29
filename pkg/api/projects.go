@@ -124,18 +124,19 @@ type ProjectReleaseSetMemberResponse struct {
 // serving one project workload in an environment. It contains release
 // metadata only; environment configuration and secret values are excluded.
 type ProjectEnvironmentReleaseWorkloadResponse struct {
-	WorkloadSlug   string `json:"workload_slug"`
-	WorkloadName   string `json:"workload_name"`
-	Status         string `json:"status"`
-	URL            string `json:"url,omitempty"`
-	DeploymentID   string `json:"deployment_id,omitempty"`
-	BuildID        string `json:"build_id,omitempty"`
-	ImageDigest    string `json:"image_digest,omitempty"`
-	SourceURL      string `json:"source_url,omitempty"`
-	CommitSHA      string `json:"commit_sha,omitempty"`
-	SourceSHA256   string `json:"source_sha256,omitempty"`
-	TrafficPercent int    `json:"traffic_percent,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
+	WorkloadConfigHash string `json:"workload_config_hash,omitempty"`
+	WorkloadSlug       string `json:"workload_slug"`
+	WorkloadName       string `json:"workload_name"`
+	Status             string `json:"status"`
+	URL                string `json:"url,omitempty"`
+	DeploymentID       string `json:"deployment_id,omitempty"`
+	BuildID            string `json:"build_id,omitempty"`
+	ImageDigest        string `json:"image_digest,omitempty"`
+	SourceURL          string `json:"source_url,omitempty"`
+	CommitSHA          string `json:"commit_sha,omitempty"`
+	SourceSHA256       string `json:"source_sha256,omitempty"`
+	TrafficPercent     int    `json:"traffic_percent,omitempty"`
+	CreatedAt          string `json:"created_at,omitempty"`
 }
 
 // ProjectEnvironmentVariableResponse is one non-secret runtime variable in
@@ -184,16 +185,18 @@ type ProjectEnvironmentDomainResponse struct {
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
-	AppID        string                                    `json:"app_id"`
-	WorkloadSlug string                                    `json:"workload_slug"`
-	WorkloadName string                                    `json:"workload_name"`
-	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
-	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
-	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
-	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
-	Domains      []ProjectEnvironmentDomainResponse        `json:"domains"`
-	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
-	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
+	WorkloadConfigHash     string                                    `json:"workload_config_hash,omitempty"`
+	WorkloadConfigRevision int64                                     `json:"workload_config_revision,omitempty"`
+	AppID                  string                                    `json:"app_id"`
+	WorkloadSlug           string                                    `json:"workload_slug"`
+	WorkloadName           string                                    `json:"workload_name"`
+	Release                ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
+	Variables              []ProjectEnvironmentVariableResponse      `json:"variables"`
+	Secrets                []ProjectEnvironmentSecretResponse        `json:"secrets"`
+	Bindings               []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Domains                []ProjectEnvironmentDomainResponse        `json:"domains"`
+	Routes                 ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
+	Policies               ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
 }
 
 // ProjectEnvironmentEdgePolicyResponse covers headers and CORS rules only.
@@ -511,6 +514,7 @@ type ProjectEnvironmentQualificationResult struct {
 // CreateProjectEnvironmentQualificationRequest records bounded probes for one
 // active release set and the exact non-secret environment configuration tested.
 type CreateProjectEnvironmentQualificationRequest struct {
+	WorkloadConfigHashes map[string]string                      `json:"workload_config_hashes,omitempty"`
 	ReleaseSetID         string                                 `json:"release_set_id"`
 	ConfigurationVersion int64                                  `json:"configuration_version"`
 	ConfigurationHash    string                                 `json:"configuration_hash"`
@@ -522,6 +526,7 @@ type CreateProjectEnvironmentQualificationRequest struct {
 // qualification for one immutable release set and configuration snapshot. It
 // contains no secret data.
 type ProjectEnvironmentQualificationResponse struct {
+	WorkloadConfigHashes map[string]string                      `json:"workload_config_hashes,omitempty"`
 	ID                   string                                 `json:"id"`
 	Environment          string                                 `json:"environment"`
 	ReleaseSetID         string                                 `json:"release_set_id"`

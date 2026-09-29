@@ -247,6 +247,17 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 			if !sameProjectEnvironmentSecretRevisionHashes(qualification.SecretRevisionHashes, currentSecretRevisionHashes) {
 				blockingReasons = append(blockingReasons, "source environment secret revisions changed after qualification; rerun health and smoke checks")
 			}
+			workloadStore, ok := s.store.(state.ProjectEnvironmentWorkloadQualificationStore)
+			if !ok {
+				return plan, api.ErrCapacity("workload configuration fingerprint storage is unavailable")
+			}
+			workloadHashes, scoped, err := workloadStore.ProjectEnvironmentWorkloadConfigHashes(ctx, acct.ID, project.ID, fromEnvironment, plan.FromReleaseSet.ID)
+			if errors.Is(err, state.ErrConflict) || (err == nil && (scoped || len(qualification.WorkloadConfigHashes) != 0) &&
+				!sameProjectEnvironmentSecretRevisionHashes(qualification.WorkloadConfigHashes, workloadHashes)) {
+				blockingReasons = append(blockingReasons, "source workload settings changed after qualification; deploy and rerun health and smoke checks")
+			} else if err != nil {
+				return plan, api.ErrCapacity("could not inspect source workload settings")
+			}
 		}
 	}
 	qualificationID := projectEnvironmentPromotionQualificationID(plan.Qualification)
@@ -1285,7 +1296,7 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 		// the durable promotion row was not yet updated.
 		target = active
 	case promotion.TargetReleaseSetID == "" && active.ID == expectedID:
-		if promotion.SyncConfig {
+		if promotion.SyncConfig || promotion.SourceQualificationID != "" {
 			configPublisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
 			if !ok {
 				return promotion, api.ErrCapacity("atomic project release and config activation is unavailable")
