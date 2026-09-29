@@ -1,4 +1,4 @@
-// adr: 370 — DNS-gated egress hook in the bridge resolver.
+// adr: 373 — DNS-gated egress hook in the bridge resolver.
 package gateway
 
 import (

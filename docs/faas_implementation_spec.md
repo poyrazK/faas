@@ -1719,7 +1719,7 @@ Every catalog CIDR (spec §11) carries a stable nftables named counter (`drop_v4
 | Surface | Metric name | Labels | Producer |
 |---|---|---|---|
 | Host nftables | `vmmd_egress_deny_total` | `cidr`, `family` | `cmd/vmmd/poller.go` reads `nft -j list counters` every 15 s and emits the per-counter delta |
-| Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, `allowlist`, `port_policy`, `rate_limit`, `flood` (ADR-361), or `unresolved` (ADR-370) |
+| Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, `allowlist`, `port_policy`, `rate_limit`, `flood` (ADR-361), or `unresolved` (ADR-373) |
 | Per-app destination fan-out (ADR-361) | `vmmd_egress_new_destinations_total` | `app` | same poller; destination addresses a guest contacted that it had not contacted in the previous 10 minutes (`faas_egress_new_dst`) |
 | Egress abuse enforcement (ADR-361) | `schedd_egress_abuse_recycles_total` | `app`, `reason` | instances schedd destroyed for reaching the plan's `EgressNewDestinationsPerMinute` (`fanout`) or `EgressFloodDropsPerMinute` (`flood`); any increase pages (`FaasTenantEgressAbuse`) |
 | Guest DNS blocklist (ADR-373) | `gatewayd_dns_blocked_total` | `category` | guest lookups the bridge resolver answered NXDOMAIN because the name is blocklisted; `FaasGuestDNSBlocked` warns |

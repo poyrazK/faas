@@ -198,7 +198,7 @@ account (`gregale admin abuse-hold place`).
 ## Unresolved-address drops (DNS-gated egress)
 
 `vmmd_egress_denied_total{class="unresolved"}` counts TCP a guest opened to an
-address it never resolved through the bridge resolver (ADR-370). Steady drops
+address it never resolved through the bridge resolver (ADR-373). Steady drops
 from one app usually mean it connects to a hard-coded IP address; the customer
 should add it to the egress allowlist. A burst across many addresses is
 scanning.

@@ -285,7 +285,7 @@ func TestMetalTenantEgressFloodLimited(t *testing.T) {
 // TestMetalTenantEgressDNSGated: with DNS gating, TCP to an address the
 // guest never resolved is dropped and counted; once vmmd adds it to
 // egress_resolved the same connection succeeds, and pinned DNS keeps
-// working throughout (ADR-370).
+// working throughout (ADR-373).
 func TestMetalTenantEgressDNSGated(t *testing.T) {
 	topo := newEgressTopology(t, "dng", func(c *Config) { c.DNSGated = true })
 	if reply, ok := topo.try("tcp", "198.51.100.10", 443); ok {

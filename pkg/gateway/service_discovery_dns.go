@@ -74,11 +74,11 @@ func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dn
 }
 
 // ResolvedEgressHook is told the addresses an upstream answer gave a guest
-// before the resolver replies (ADR-370 DNS-gated egress). remoteAddr is the
+// before the resolver replies (ADR-373 DNS-gated egress). remoteAddr is the
 // query's source; ttl is the answer's smallest record TTL.
 type ResolvedEgressHook func(ctx context.Context, remoteAddr string, addrs []netip.Addr, ttl time.Duration) error
 
-// WithResolvedEgressHook installs the ADR-370 hook. A hook error is logged
+// WithResolvedEgressHook installs the ADR-373 hook. A hook error is logged
 // and the answer is still returned; the guest's connection then fails
 // closed at the egress gate instead of the lookup failing.
 func (h *ServiceDiscoveryDNSHandler) WithResolvedEgressHook(hook ResolvedEgressHook) *ServiceDiscoveryDNSHandler {

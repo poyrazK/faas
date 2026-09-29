@@ -14,7 +14,7 @@ import (
 // resolver query's source address.
 var ErrResolvedEgressNoInstance = errors.New("fcvm: no live instance for the resolver source address")
 
-// clampResolvedTTL bounds a DNS answer's TTL for DNS-gated egress (ADR-370).
+// clampResolvedTTL bounds a DNS answer's TTL for DNS-gated egress (ADR-373).
 func clampResolvedTTL(ttl time.Duration) time.Duration {
 	lo := time.Duration(api.DNSGatedEgressMinTTLSeconds) * time.Second
 	hi := time.Duration(api.DNSGatedEgressMaxTTLSeconds) * time.Second
@@ -22,7 +22,7 @@ func clampResolvedTTL(ttl time.Duration) time.Duration {
 }
 
 // AllowResolvedEgress lets the instance whose host-side address is source
-// open TCP to addrs for the answer's ttl, clamped (ADR-370). The bridge
+// open TCP to addrs for the answer's ttl, clamped (ADR-373). The bridge
 // resolver calls it before returning an answer, so the guest never sees an
 // address it cannot reach yet. Addresses already allowed for more than half
 // the TTL are skipped, so repeated lookups of a name cost no nft call.

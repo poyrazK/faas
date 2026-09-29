@@ -188,7 +188,7 @@ func TestTenantEgressFloodLimit(t *testing.T) {
 	}
 }
 
-// ADR-370: DNS-gated egress drops new TCP to unresolved addresses after
+// ADR-373: DNS-gated egress drops new TCP to unresolved addresses after
 // the allowlist accept, so allowlisted destinations are exempt.
 func TestTenantEgressDNSGate(t *testing.T) {
 	c := egressTestConfig()

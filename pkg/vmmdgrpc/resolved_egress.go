@@ -21,7 +21,7 @@ type resolvedEgressAllower interface {
 	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration) error
 }
 
-// AllowResolvedEgress implements the ADR-370 DNS-gated egress hook: the
+// AllowResolvedEgress implements the ADR-373 DNS-gated egress hook: the
 // node's bridge resolver reports a guest's answer and vmmd adds the
 // addresses to that instance's egress_resolved set.
 func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResolvedEgressRequest) (*vmmdpb.AllowResolvedEgressAck, error) {

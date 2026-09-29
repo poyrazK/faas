@@ -1,4 +1,4 @@
-// adr: 370 — DNS-gated egress hook.
+// adr: 373 — DNS-gated egress hook.
 package vmmdgrpc_test
 
 import (

@@ -612,7 +612,7 @@ type Instance struct {
 	// recorded in the same poll tick as the fan-out sample.
 	EgressFloodDropsPerMin int64
 	// resolvedEgress is when each address vmmd added to this instance's
-	// egress_resolved set expires (ADR-370), so repeated lookups of the
+	// egress_resolved set expires (ADR-373), so repeated lookups of the
 	// same name skip the nft call until half the TTL has passed.
 	resolvedEgress map[netip.Addr]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
@@ -744,11 +744,11 @@ type Manager struct {
 	mu   sync.Mutex
 	live map[string]*Instance
 	// appResolved is each app's recently resolved addresses on this node
-	// with their expiry (ADR-370), used to seed a new instance's
+	// with their expiry (ADR-373), used to seed a new instance's
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
-	// dnsGatingOff is the operator's emergency switch for ADR-370 DNS-gated
+	// dnsGatingOff is the operator's emergency switch for ADR-373 DNS-gated
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
@@ -1497,7 +1497,7 @@ func (m *Manager) SetParentMountRegistry(r *vmmdmount.Registry) {
 // SetParentMountRegistry in spirit: optional, nil-safe, no-ops if
 // the cmd binary doesn't wire it. The returned *Manager is the
 // receiver so callers can chain (`m, ok := NewManager(...).WithMux(...)`).
-// WithDNSGatedEgress turns ADR-370 DNS-gated egress on (the default) or off
+// WithDNSGatedEgress turns ADR-373 DNS-gated egress on (the default) or off
 // for tenant VMs created from now on.
 func (m *Manager) WithDNSGatedEgress(enabled bool) *Manager {
 	m.dnsGatingOff = !enabled

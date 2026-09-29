@@ -1,4 +1,4 @@
-// adr: 370 — DNS-gated egress hook to the local vmmd.
+// adr: 373 — DNS-gated egress hook to the local vmmd.
 package main
 
 import (

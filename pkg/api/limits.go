@@ -4230,7 +4230,7 @@ const (
 	// that a clean restart fixes; a repeat means the account's own code.
 	EgressFanoutHoldRecycles      = 2
 	EgressFanoutHoldWindowSeconds = 3600
-	// ADR-370 DNS-gated egress: a resolved address stays reachable for its
+	// ADR-373 DNS-gated egress: a resolved address stays reachable for its
 	// DNS TTL clamped to [DNSGatedEgressMinTTLSeconds,
 	// DNSGatedEgressMaxTTLSeconds]. The floor covers clients that cache
 	// answers past their TTL (the JVM, connection pools); the ceiling

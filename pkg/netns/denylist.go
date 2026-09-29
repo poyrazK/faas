@@ -69,7 +69,7 @@ const (
 	// (ADR-361 decision 9).
 	EgressDenyClassFlood EgressDenyClass = "flood"
 	// EgressDenyClassUnresolved is TCP to an address the guest never
-	// resolved through the bridge resolver (ADR-370 DNS gating).
+	// resolved through the bridge resolver (ADR-373 DNS gating).
 	EgressDenyClassUnresolved EgressDenyClass = "unresolved"
 
 	// Named counters used by the aggregate rules. Per-CIDR counters keep

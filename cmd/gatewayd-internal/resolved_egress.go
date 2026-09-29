@@ -25,7 +25,7 @@ type allowResolvedEgressClient interface {
 }
 
 // newResolvedEgressHook reports each guest DNS answer to this node's vmmd
-// (ADR-370), which lets the guest open TCP to the answered addresses. The
+// (ADR-373), which lets the guest open TCP to the answered addresses. The
 // query source is the instance's host-side address; vmmd maps it to the
 // instance. A vmmd that predates the RPC has no DNS gate either, so
 // Unimplemented is not an error during a rolling release.

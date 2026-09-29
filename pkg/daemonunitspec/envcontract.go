@@ -204,6 +204,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
+	{Name: "FAAS_EGRESS_DNS_GATING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-373 per-node escape hatch; \"off\" disables DNS-gated tenant egress, any other value keeps it on"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
 	{Name: "FAAS_EXECUTION_", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1"},

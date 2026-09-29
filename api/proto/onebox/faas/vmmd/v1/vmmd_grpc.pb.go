@@ -233,7 +233,7 @@ type VmmdClient interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(ctx context.Context, in *UpdateEgressAllowlistRequest, opts ...grpc.CallOption) (*UpdateEgressAllowlistAck, error)
-	// AllowResolvedEgress (ADR-370): the node's bridge resolver reports the
+	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
 	// query's source, the instance's host-side address.
@@ -1125,7 +1125,7 @@ type VmmdServer interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error)
-	// AllowResolvedEgress (ADR-370): the node's bridge resolver reports the
+	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
 	// query's source, the instance's host-side address.

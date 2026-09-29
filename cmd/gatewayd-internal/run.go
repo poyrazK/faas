@@ -3776,7 +3776,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			})
 			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
-			// ADR-370 DNS-gated egress: report every guest answer to this
+			// ADR-373 DNS-gated egress: report every guest answer to this
 			// node's vmmd before replying, so the guest may connect to it.
 			if deps.nodeCache != nil && cfg.NodeName != "" {
 				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, cfg.NodeName))

@@ -205,7 +205,7 @@ type Config struct {
 	// disables the limit.
 	EgressDestConnRate  int
 	EgressDestConnBurst int
-	// DNSGated (ADR-370 decision 2) limits guest-originated TCP to
+	// DNSGated (ADR-373 decision 2) limits guest-originated TCP to
 	// addresses in the egress_resolved set: addresses the guest resolved
 	// through the bridge resolver recently, which vmmd adds when the
 	// resolver reports an answer. ADR-031 allowlisted destinations are
@@ -790,7 +790,7 @@ const (
 	EgressDstRateSet     = "egress_dst_rate"
 	egressDstRateTimeout = "1m"
 	// EgressResolvedSet holds the addresses the guest may open TCP to under
-	// DNS gating (ADR-370): each resolved address with its own timeout.
+	// DNS gating (ADR-373): each resolved address with its own timeout.
 	// EgressUnresolvedCounter counts new flows dropped because their
 	// destination was never resolved through the bridge resolver.
 	EgressResolvedSet       = "egress_resolved"
@@ -916,7 +916,7 @@ func (c Config) egressNonTCPRule(nft func(...string) []string, family string) []
 }
 
 // egressDNSGateRule drops guest-originated new TCP flows to addresses the
-// guest never resolved through the bridge resolver (ADR-370). It runs after
+// guest never resolved through the bridge resolver (ADR-373). It runs after
 // the ADR-031 allowlist accept, so allowlisted destinations are exempt.
 func (c Config) egressDNSGateRule(nft func(...string) []string, family string) []string {
 	if !c.DNSGated {
@@ -927,7 +927,7 @@ func (c Config) egressDNSGateRule(nft func(...string) []string, family string) [
 }
 
 // ResolvedEgressAddCommands adds resolved addresses to the egress_resolved
-// sets (ADR-370), each expiring after ttl. v4 and v6 addresses go to their
+// sets (ADR-373), each expiring after ttl. v4 and v6 addresses go to their
 // family's set. Run them as one nft -f transaction.
 func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
