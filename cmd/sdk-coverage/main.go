@@ -807,6 +807,11 @@ var methodRouteMap = map[string]string{
 	// idempotency key; the SDK follows the operator mental model rather than
 	// the generated PostAdminAccountsIdRefunds name.
 	"POST /v1/admin/accounts/{id}/refunds": "RefundAccount",
+	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
+	// the auto-derived name an illegal Go identifier; the SDK follows the
+	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.
+	"POST /v1/admin/accounts/{id}/abuse-hold":   "PlaceAccountAbuseHold",
+	"DELETE /v1/admin/accounts/{id}/abuse-hold": "ReleaseAccountAbuseHold",
 	// PR-D / ADR-012 §7 amendment — per-tenant webhook secret
 	// rotation. Auto-derivation produces
 	// "PostAdminGithub-webhook-secrets" (literal hyphen); the SDK

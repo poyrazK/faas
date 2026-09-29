@@ -4816,17 +4816,24 @@ func (c *Client) ListInvoices(ctx context.Context, month, before string, limit i
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
-// ChangeAccountAbuseHold places (place=true) or releases an ADR-361 account
-// abuse hold via POST / DELETE /v1/admin/accounts/{id}/abuse-hold. note is
-// the operator's audit note (3..500 chars). Operator-only, like credits.
-func (c *Client) ChangeAccountAbuseHold(ctx context.Context, accountID string, place bool, note string) (AccountAbuseHoldActionResponse, error) {
+// PlaceAccountAbuseHold places an ADR-361 account abuse hold via
+// POST /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit note
+// (3..500 chars). Operator-only, like credits.
+func (c *Client) PlaceAccountAbuseHold(ctx context.Context, accountID, note string) (AccountAbuseHoldActionResponse, error) {
+	return c.changeAccountAbuseHold(ctx, http.MethodPost, accountID, note)
+}
+
+// ReleaseAccountAbuseHold releases an ADR-361 account abuse hold via
+// DELETE /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit
+// note (3..500 chars).
+func (c *Client) ReleaseAccountAbuseHold(ctx context.Context, accountID, note string) (AccountAbuseHoldActionResponse, error) {
+	return c.changeAccountAbuseHold(ctx, http.MethodDelete, accountID, note)
+}
+
+func (c *Client) changeAccountAbuseHold(ctx context.Context, method, accountID, note string) (AccountAbuseHoldActionResponse, error) {
 	body, err := json.Marshal(AccountAbuseHoldAction{Note: note})
 	if err != nil {
 		return AccountAbuseHoldActionResponse{}, err
-	}
-	method := http.MethodDelete
-	if place {
-		method = http.MethodPost
 	}
 	req, err := http.NewRequestWithContext(ctx, method,
 		c.baseURL+"/v1/admin/accounts/"+accountID+"/abuse-hold", bytes.NewReader(body))

@@ -279,7 +279,11 @@ func cmdAdminAbuseHold(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ChangeAccountAbuseHold(context.Background(), accountUUID.String(), place, *note)
+	change := client.ReleaseAccountAbuseHold
+	if place {
+		change = client.PlaceAccountAbuseHold
+	}
+	resp, err := change(context.Background(), accountUUID.String(), *note)
 	if err != nil {
 		return printErr("Abuse hold change failed", err)
 	}
