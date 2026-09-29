@@ -766,6 +766,9 @@ jobs:
             echo "$COSIGN_SHA256  $COSIGN_DEST" | sha256sum -c -
             chmod 0755 "$COSIGN_DEST"
           fi
+          # The join's gregalectl verifies the signed release with `cosign`
+          # from PATH. A dedicated runner VM has no system cosign.
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
 
       - name: Download and verify the canonical release
         env:

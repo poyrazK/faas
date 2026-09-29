@@ -174,3 +174,22 @@ func TestCDControlPlaneBundleStepsPinTheUmask(t *testing.T) {
 		}
 	}
 }
+
+// The compute join's gregalectl verifies the signed release by running
+// `cosign` from PATH. The first dedicated fleet runner had no system cosign
+// ("exec: cosign: executable file not found"), so the pinned verifier this
+// workflow installs must be the one on PATH.
+func TestCDComputePutsThePinnedCosignOnPath(t *testing.T) {
+	workflow := readWorkflow(t, "cd-compute.yml")
+	start := strings.Index(workflow, "      - name: Install pinned cosign verifier\n")
+	if start < 0 {
+		t.Fatal("cd-compute lost its pinned cosign verifier step")
+	}
+	body := workflow[start+1:]
+	if next := strings.Index(body, "\n      - name: "); next >= 0 {
+		body = body[:next]
+	}
+	if !strings.Contains(body, `echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"`) {
+		t.Error("cd-compute installs a pinned cosign but does not put it on PATH for the join")
+	}
+}
