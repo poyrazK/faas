@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -204,6 +205,12 @@ type Config struct {
 	// disables the limit.
 	EgressDestConnRate  int
 	EgressDestConnBurst int
+	// DNSGated (ADR-373 decision 2) limits guest-originated TCP to
+	// addresses in the egress_resolved set: addresses the guest resolved
+	// through the bridge resolver recently, which vmmd adds when the
+	// resolver reports an answer. ADR-031 allowlisted destinations are
+	// exempt; they are accepted before the gate.
+	DNSGated bool
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -644,6 +651,7 @@ func (c Config) NftCommands() [][]string {
 	cmds = append(cmds, c.egressFloodRule(nft, "ip")...)
 	cmds = append(cmds, c.egressRateRule(nft, "ip")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip"))
+	cmds = append(cmds, c.egressFlowRule(nft, "ip"))
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
 	// lateral-movement deny but BEFORE the SMTP drop so explicitly
 	// allowlisted destinations can use submission ports 465/587.
@@ -657,6 +665,9 @@ func (c Config) NftCommands() [][]string {
 	// lateral-movement drop. Each rule stays inside its family chain
 	// block before that chain's terminal policy.
 	if rule := c.ForwardAllowlistRule(nft); rule != nil {
+		cmds = append(cmds, rule)
+	}
+	if rule := c.egressDNSGateRule(nft, "ip"); rule != nil {
 		cmds = append(cmds, rule)
 	}
 	// Keep the historical terminal drop rule byte-compatible for the
@@ -739,7 +750,11 @@ func (c Config) NftCommands() [][]string {
 	cmds = append(cmds, c.egressFloodRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
+	cmds = append(cmds, c.egressFlowRule(nft, "ip6"))
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
+		cmds = append(cmds, rule)
+	}
+	if rule := c.egressDNSGateRule(nft, "ip6"); rule != nil {
 		cmds = append(cmds, rule)
 	}
 	cmds = append(cmds, c.egressPortRule(nft, "ip6"))
@@ -776,6 +791,20 @@ const (
 	EgressFloodCounter   = "faas_egress_flood"
 	EgressDstRateSet     = "egress_dst_rate"
 	egressDstRateTimeout = "1m"
+	// EgressResolvedSet holds the addresses the guest may open TCP to under
+	// DNS gating (ADR-373): each resolved address with its own timeout.
+	// EgressUnresolvedCounter counts new flows dropped because their
+	// destination was never resolved through the bridge resolver.
+	EgressResolvedSet       = "egress_resolved"
+	EgressUnresolvedCounter = "faas_egress_unresolved"
+	// EgressFlowSet records every destination address and TCP port the
+	// guest opened a new flow to, after the rate limits (ADR-371). vmmd
+	// lists it each poll and persists the new entries to the egress flow
+	// log, so an abuse report about the platform's egress address can be
+	// traced to one instance. Entries refresh on every new flow and expire
+	// after EgressFlowTimeout of silence.
+	EgressFlowSet     = "egress_flows"
+	EgressFlowTimeout = "10m"
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -792,6 +821,8 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 		nft("add", "counter", family, "faas", EgressNewDstCounter, "{}"),
 		nft("add", "set", family, "faas", EgressDstSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
 			"timeout", EgressDstTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
+		nft("add", "set", family, "faas", EgressFlowSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "dynamic,timeout", ";",
+			"timeout", EgressFlowTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
 	}
 	if c.EgressConnRate > 0 {
 		cmds = append(cmds, nft("add", "counter", family, "faas", EgressDenyCounterRate, "{}"))
@@ -801,6 +832,12 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 			nft("add", "counter", family, "faas", EgressFloodCounter, "{}"),
 			nft("add", "set", family, "faas", EgressDstRateSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
 				"timeout", egressDstRateTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"))
+	}
+	if c.DNSGated {
+		cmds = append(cmds,
+			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
+			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
+				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
 	}
 	if elems := c.EgressPortElements(); elems != "" {
 		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
@@ -888,6 +925,52 @@ func (c Config) egressRateRule(nft func(...string) []string, family string) [][]
 func (c Config) egressNonTCPRule(nft func(...string) []string, family string) []string {
 	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
 		"meta", "l4proto", "!=", "tcp", "counter", "name", EgressDenyCounterPolicy, "drop")
+}
+
+// egressDNSGateRule drops guest-originated new TCP flows to addresses the
+// guest never resolved through the bridge resolver (ADR-373). It runs after
+// the ADR-031 allowlist accept, so allowlisted destinations are exempt.
+func (c Config) egressDNSGateRule(nft func(...string) []string, family string) []string {
+	if !c.DNSGated {
+		return nil
+	}
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		family, "daddr", "!=", "@"+EgressResolvedSet, "counter", "name", EgressUnresolvedCounter, "drop")
+}
+
+// ResolvedEgressAddCommands adds resolved addresses to the egress_resolved
+// sets (ADR-373), each expiring after ttl. v4 and v6 addresses go to their
+// family's set. Run them as one nft -f transaction.
+func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	secs := int(max(ttl, time.Second) / time.Second)
+	var v4, v6 []string
+	for _, a := range addrs {
+		elem := fmt.Sprintf("%s timeout %ds", a.Unmap(), secs)
+		if a.Unmap().Is4() {
+			v4 = append(v4, elem)
+		} else {
+			v6 = append(v6, elem)
+		}
+	}
+	var cmds [][]string
+	if len(v4) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip", "faas", EgressResolvedSet, "{", strings.Join(v4, ", "), "}"))
+	}
+	if len(v6) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressResolvedSet, "{", strings.Join(v6, ", "), "}"))
+	}
+	return cmds
+}
+
+// egressFlowRule records the destination and port of a guest-originated TCP
+// new flow (ADR-371). It runs after the rate limits and the non-TCP drop, so
+// it sees TCP flows that were not rate-limited; the port policy may still
+// drop some of them.
+func (c Config) egressFlowRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		"update", "@"+EgressFlowSet, "{", family, "daddr", ".", "tcp", "dport", "}")
 }
 
 // egressPortRule drops guest-originated TCP to any port outside egress_ports.

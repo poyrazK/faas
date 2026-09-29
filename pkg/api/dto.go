@@ -11480,3 +11480,22 @@ type CustomMetricListResponse struct {
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
 }
+
+// EgressFlowLogEntry is one ADR-371 egress flow log row: a destination
+// address and TCP port a tenant guest opened a new flow to.
+type EgressFlowLogEntry struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Node       string    `json:"node"`
+	AccountID  string    `json:"account_id"`
+	AppID      string    `json:"app_id"`
+	InstanceID string    `json:"instance_id"`
+	RemoteIP   string    `json:"remote_ip"`
+	RemotePort int       `json:"remote_port"`
+}
+
+// EgressFlowLogResponse is GET /v1/admin/egress-flows. Truncated is true
+// when the page limit was reached; narrow the window or filter to see more.
+type EgressFlowLogResponse struct {
+	Flows     []EgressFlowLogEntry `json:"flows"`
+	Truncated bool                 `json:"truncated"`
+}

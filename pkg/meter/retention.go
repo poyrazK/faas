@@ -32,6 +32,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DefaultRetentionInterval is the cadence the retention cron
@@ -500,6 +502,66 @@ func RetentionLoopDeploymentAudit(ctx context.Context, db retentionExecer, inter
 				// counter's rate over a 1h window.
 				if onTickError != nil {
 					onTickError(err)
+				}
+			}
+		}
+	}
+}
+
+// retentionEgressFlowLogBatchSQL deletes one batch of ADR-371 egress flow
+// log rows older than the retention window.
+const retentionEgressFlowLogBatchSQL = `DELETE FROM egress_flow_log
+                                        WHERE ctid IN (
+                                            SELECT ctid FROM egress_flow_log
+                                            WHERE observed_at < (now() - $1::interval)
+                                            LIMIT $2
+                                        )`
+
+// RetentionOnceEgressFlowLog deletes egress flow log rows older than
+// api.EgressFlowLogRetentionDays, in RetentionBatchSize batches up to
+// MaxRetentionBatches. Same contract as RetentionOnceDeploymentAudit.
+func RetentionOnceEgressFlowLog(ctx context.Context, db retentionExecer) (int64, error) {
+	interval := fmt.Sprintf("%d days", api.EgressFlowLogRetentionDays)
+	var total int64
+	for i := 0; i < MaxRetentionBatches; i++ {
+		tag, err := db.Exec(ctx, retentionEgressFlowLogBatchSQL, interval, RetentionBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("egress flow log retention delete (batch %d, deleted so far %d): %w", i, total, err)
+		}
+		total += tag
+		if tag < RetentionBatchSize {
+			return total, nil
+		}
+	}
+	return total, ErrRetentionBatchCap
+}
+
+// RetentionLoopEgressFlowLog runs RetentionOnceEgressFlowLog every interval
+// until ctx is done. A batch-cap hit is logged at Warn and resumes next tick.
+func RetentionLoopEgressFlowLog(ctx context.Context, db retentionExecer, interval time.Duration, log *slog.Logger) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, err := RetentionOnceEgressFlowLog(ctx, db)
+			switch {
+			case err == nil:
+				if log != nil && n > 0 {
+					log.Info("egress flow log retention tick ok", "rows_deleted", n)
+				}
+			case errors.Is(err, ErrRetentionBatchCap):
+				if log != nil {
+					log.Warn("egress flow log retention hit batch cap; will resume next tick", "rows_deleted", n, "err", err)
+				}
+			default:
+				if log != nil {
+					log.Error("egress flow log retention tick failed", "err", err)
 				}
 			}
 		}

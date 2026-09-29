@@ -399,6 +399,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/egress_allowlist_extra":                  "GetEgressAllowlistExtra",
 	"PATCH /v1/account/egress_allowlist_extra":                "SetEgressAllowlistExtra",
 	"GET /v1/account/managed-postgres-usage":                  "GetManagedPostgresUsage",
+	"GET /v1/account/realtime-history-usage":                  "GetManagedRealtimeHistoryUsage",
 	"GET /v1/account/usage":                                   "AccountUsage",
 	"GET /v1/postgres/databases":                              "ListManagedPostgresDatabases",
 	"POST /v1/postgres/databases":                             "CreateManagedPostgresDatabase",
@@ -712,6 +713,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}":    "SubscribeManagedRealtimeConnection",
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}": "UnsubscribeManagedRealtimeConnection",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish":                            "PublishManagedRealtimeChannel",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages":                  "AppendManagedRealtimeRetainedMessage",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages":                   "ReadManagedRealtimeRetainedMessages",
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
@@ -812,6 +815,9 @@ var methodRouteMap = map[string]string{
 	// idempotency key; the SDK follows the operator mental model rather than
 	// the generated PostAdminAccountsIdRefunds name.
 	"POST /v1/admin/accounts/{id}/refunds": "RefundAccount",
+	// ADR-371 egress flow log lookup; the hyphenated path follows the
+	// operationId listEgressFlows.
+	"GET /v1/admin/egress-flows": "ListEgressFlows",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
 	// the auto-derived name an illegal Go identifier; the SDK follows the
 	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.

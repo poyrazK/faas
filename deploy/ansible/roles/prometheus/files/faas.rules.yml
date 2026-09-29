@@ -1745,6 +1745,44 @@ groups:
           description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m for egress {{ $labels.reason }}: fanout means at least the plan's EgressNewDestinationsPerMinute new destinations in one minute, flood means at least EgressFloodDropsPerMinute new flows dropped against single destinations. Treat it as a likely scan, flood or other abuse from the node's egress address until reviewed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
+      # ADR-373: a guest looked up a blocklisted name (mining pool or an
+      # operator feed entry).
+      - alert: FaasGuestDNSBlocked
+        expr: sum by (category) (increase(gatewayd_dns_blocked_total[15m])) > 0
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: tenant_abuse
+        annotations:
+          summary: "Guest DNS lookup of a blocked {{ $labels.category }} domain"
+          description: "The bridge resolver refused {{ $value }} lookup(s) of blocklisted {{ $labels.category }} names in the last 15m. The gatewayd-internal log line 'guest DNS lookup blocked' names the app."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/tenant-abuse.md"
+
+      # ADR-368: imaged refused a deploy whose image carries abuse tooling
+      # (a miner, mass scanner or flood tool).
+      - alert: FaasImageAbuseBlocked
+        expr: sum by (category) (increase(imaged_abuse_scan_findings_total{action="block"}[15m])) > 0
+        labels:
+          severity: page
+          component: imaged
+          family: tenant_abuse
+        annotations:
+          summary: "Deploy blocked: {{ $labels.category }} tooling in an image"
+          description: "imaged failed {{ $value }} deploy finding(s) in the last 15m because the built image matched a blocking ADR-368 rule ({{ $labels.category }}). The deployment.abuse_scan audit event names the account, app, rule and file."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImageAbuseBlocked.md"
+
+      # ADR-368: an image matched a flag-only rule (pool domain, proxy server).
+      - alert: FaasImageAbuseFlagged
+        expr: sum by (category) (increase(imaged_abuse_scan_findings_total{action="flag"}[1h])) > 0
+        labels:
+          severity: warn
+          component: imaged
+          family: tenant_abuse
+        annotations:
+          summary: "Image flagged for review: {{ $labels.category }}"
+          description: "An image deployed in the last hour matched a flag-only ADR-368 rule ({{ $labels.category }}). The deploy continued; review the deployment.abuse_scan audit event."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImageAbuseBlocked.md"
+
       # ADR-361: schedd held an account after repeated egress abuse. The
       # account runs nothing until an operator reviews and releases it.
       - alert: FaasAccountAbuseHold

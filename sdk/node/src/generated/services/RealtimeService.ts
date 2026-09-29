@@ -9,8 +9,13 @@ import type { ManagedRealtimeConnectionListResponse } from '../models/ManagedRea
 import type { ManagedRealtimeDrainRequest } from '../models/ManagedRealtimeDrainRequest.js';
 import type { ManagedRealtimeDrainResponse } from '../models/ManagedRealtimeDrainResponse.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
+import type { ManagedRealtimeHistoryUsageResponse } from '../models/ManagedRealtimeHistoryUsageResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
+import type { ManagedRealtimeRetainedHistoryResponse } from '../models/ManagedRealtimeRetainedHistoryResponse.js';
+import type { ManagedRealtimeRetainedMessageRequest } from '../models/ManagedRealtimeRetainedMessageRequest.js';
+import type { ManagedRealtimeRetainedMessageResponse } from '../models/ManagedRealtimeRetainedMessageResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { RotateManagedRealtimeAuthRequest } from '../models/RotateManagedRealtimeAuthRequest.js';
 import type { RotateManagedRealtimeAuthResponse } from '../models/RotateManagedRealtimeAuthResponse.js';
 import type { UpdateManagedRealtimeEndpointRequest } from '../models/UpdateManagedRealtimeEndpointRequest.js';
@@ -18,6 +23,24 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class RealtimeService {
+  /**
+   * Read the account's retained realtime history snapshot
+   * Preview only; requires usage read scope and MFA for interactive sessions.
+   * Counts current retained message rows and payload bytes for this account,
+   * including expired rows awaiting cleanup. Replayable counts apply the
+   * channel's contiguous retention floor. These values are informational
+   * snapshots, not billed usage or physical database allocation.
+   *
+   * @returns ManagedRealtimeHistoryUsageResponse Account-scoped retained history snapshot; Cache-Control no-store
+   * @returns Problem Authentication or history usage error
+   * @throws ApiError
+   */
+  public static getManagedRealtimeHistoryUsage(): CancelablePromise<ManagedRealtimeHistoryUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/realtime-history-usage',
+    });
+  }
   /**
    * List managed realtime endpoints for this app.
    * @returns ManagedRealtimeEndpointResponse The configured managed realtime endpoints.
@@ -686,6 +709,116 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Append one ordered message to retained channel history.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is enabled. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
+   * @returns ManagedRealtimeRetainedMessageResponse Message committed to the channel log.
+   * @throws ApiError
+   */
+  public static appendManagedRealtimeRetainedMessage({
+    slug,
+    id,
+    channel,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Endpoint-scoped channel.
+     */
+    channel: string,
+    requestBody: ManagedRealtimeRetainedMessageRequest,
+  }): CancelablePromise<ManagedRealtimeRetainedMessageResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Read a page of retained channel history after a sequence.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
+   * @returns ManagedRealtimeRetainedHistoryResponse A consistent page of retained messages.
+   * @throws ApiError
+   */
+  public static readManagedRealtimeRetainedMessages({
+    slug,
+    id,
+    channel,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Endpoint-scoped channel.
+     */
+    channel: string,
+    /**
+     * Last processed sequence; zero starts at the first retained message.
+     */
+    after: number,
+    /**
+     * Maximum number of retained messages to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedRealtimeRetainedHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

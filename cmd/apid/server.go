@@ -132,6 +132,10 @@ type server struct {
 	// realtimeDrainWake nudges the durable drain worker after a new operation
 	// is committed; the ticker remains the restart/recovery backstop.
 	realtimeDrainWake chan struct{}
+	// Retained messages are a storage preview until channel grants and the
+	// versioned reconnect protocol are ready for customer traffic.
+	realtimeHistoryPreviewEnabled bool
+	realtimeHistoryMetrics        *managedRealtimeHistoryMetrics
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -467,6 +471,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
+		s.realtimeHistoryMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -474,6 +479,9 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
+		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about
@@ -713,6 +721,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
+	s.realtimeHistoryPreviewEnabled = enabled
 	return s
 }
 
@@ -1232,6 +1245,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
+	mux.HandleFunc("GET /v1/account/realtime-history-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedRealtimeHistoryUsage))))
 	// Disposable one-shot executions (ADR-171). The handlers are mounted
 	// behind a separate explicit opt-in so a control-plane upgrade cannot
 	// accept work before the restore/execute/destroy path is ready. POST and
@@ -2324,6 +2338,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannel))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appendManagedRealtimeRetainedMessage))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeRetainedMessages))))
 
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
@@ -2522,6 +2538,10 @@ func (s *server) handler() http.Handler {
 	// step-up elsewhere (ADR-091 §"Two-layer gate confirmed").
 	// All five routes are GETs; no s.idempotent wrapper needed
 	// (matches /v1/compute-nodes read precedent).
+	// ADR-371: which tenant connected to an address at a time. Operator-only
+	// read of the egress flow log.
+	mux.HandleFunc("GET /v1/admin/egress-flows",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listEgressFlows)))))
 	mux.HandleFunc("GET /v1/admin/obs/overview",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsOverview))))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",

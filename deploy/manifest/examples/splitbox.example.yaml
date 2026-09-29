@@ -184,6 +184,15 @@ overlay:
 egress:
   danger_accept_rfc1918_lateral_movement: false
   overlay_exceptions: []
+  # ADR-372: route tenant egress through an operator-provisioned WireGuard
+  # gateway so abuse reports name the gateway, not the compute nodes. The
+  # public_key is the gateway's own (`wg pubkey < /etc/wireguard/wg-tenant.key`
+  # on the gateway). Converge with `make bootstrap-tenant-egress-gateway`.
+  # tenant_gateway:
+  #   endpoint: egress-gw.example.net:51820
+  #   public_key: <gateway WireGuard public key>
+  #   tunnel_cidr: 10.43.0.0/24
+  #   ssh_host: egress-gw.example.net   # optional, defaults to the endpoint host
 
 # DNS — public-facing hostname contract. apps_domain is the single
 # source of truth consumed by gatewayd-internal and apid. A value of

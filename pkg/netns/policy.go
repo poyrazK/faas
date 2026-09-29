@@ -58,6 +58,16 @@ type HostPolicy struct {
 	// eth0 on the EX44; on the Lima guest it's the NAT'd default route.
 	PublicIface string
 
+	// TenantEgressIface (ADR-372) routes tenant egress through a dedicated
+	// gateway instead of the node's public address. When set, bridged
+	// tenant traffic from MasqueradeCIDR may leave only through this
+	// interface (a WireGuard tunnel to the egress gateway), masqueraded to
+	// the node's tunnel address, with TCP MSS clamped to the tunnel MTU.
+	// Tenant IPv6 has no path through the IPv4 gateway and is dropped.
+	// Static-egress-IP VMs (ADR-119, outside MasqueradeCIDR) keep
+	// PublicIface. Empty keeps the direct path.
+	TenantEgressIface string
+
 	// DenySet is the typed egress denylist (spec §11 + ADR-023 + ADR-034).
 	// All three renderers (host / per-netns / oci) consume the same
 	// NewDefaultDenySet() value so the firewall rules and the user-space
@@ -616,7 +626,13 @@ func (h HostPolicy) Render() string {
 	for _, overlayStr := range h.OverlayCIDRs {
 		fmt.Fprintf(&b, "    ip saddr %s accept\n", overlayStr)
 	}
-	fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", h.BridgeName, h.PublicIface)
+	if h.TenantEgressIface != "" {
+		fmt.Fprintf(&b, "    iifname %q oifname %q tcp flags syn tcp option maxseg size set rt mtu\n", h.BridgeName, h.TenantEgressIface)
+		fmt.Fprintf(&b, "    iifname %q ip saddr %s oifname %q accept\n", h.BridgeName, h.MasqueradeCIDR, h.TenantEgressIface)
+		fmt.Fprintf(&b, "    iifname %q ip saddr != %s oifname %q accept\n", h.BridgeName, h.MasqueradeCIDR, h.PublicIface)
+	} else {
+		fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", h.BridgeName, h.PublicIface)
+	}
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain output {\n")
@@ -650,7 +666,11 @@ func (h HostPolicy) Render() string {
 		fmt.Fprintf(&b, "    ip saddr %s oifname %q snat to %s%s\n",
 			r.PerVMHostIP.String(), h.PublicIface, r.CustomerIP.String(), comment)
 	}
-	fmt.Fprintf(&b, "    ip saddr %s oifname %q masquerade\n", h.MasqueradeCIDR, h.PublicIface)
+	tenantOut := h.PublicIface
+	if h.TenantEgressIface != "" {
+		tenantOut = h.TenantEgressIface
+	}
+	fmt.Fprintf(&b, "    ip saddr %s oifname %q masquerade\n", h.MasqueradeCIDR, tenantOut)
 	// Mega-PR-B Commit 2: per-overlay MASQUERADE siblings. Each
 	// OverlayCIDRs entry produces one MASQUERADE sibling after the
 	// bridge CIDR rule, so compute-node-originated overlay traffic
@@ -666,7 +686,7 @@ func (h HostPolicy) Render() string {
 	// v6 tenant traffic falls through `policy accept` and reaches the
 	// public internet under the tenant's link-local source — a return-
 	// routability black hole analogous to the v4 omission.
-	if h.MasqueradeCIDR6 != "" {
+	if h.MasqueradeCIDR6 != "" && h.TenantEgressIface == "" {
 		fmt.Fprintf(&b, "    ip6 saddr %s oifname %q masquerade\n", h.MasqueradeCIDR6, h.PublicIface)
 	}
 	b.WriteString("  }\n")

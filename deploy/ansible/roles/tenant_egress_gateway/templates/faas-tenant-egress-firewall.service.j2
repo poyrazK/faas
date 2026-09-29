@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=faas tenant egress gateway firewall (ADR-372)
+Before=wg-quick@{{ faas_tenant_egress_iface }}.service
+Wants=network-pre.target
+After=network-pre.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/faas/tenant-egress/tenant-egress-gw.nft
+ExecStop=/usr/sbin/nft delete table inet faas_tenant_gw
+
+[Install]
+WantedBy=multi-user.target

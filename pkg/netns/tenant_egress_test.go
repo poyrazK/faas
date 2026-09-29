@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 func egressTestConfig() Config {
@@ -184,5 +185,41 @@ func TestTenantEgressFloodLimit(t *testing.T) {
 		if strings.Contains(line, "egress_dst_rate") || strings.Contains(line, "faas_egress_flood") {
 			t.Fatalf("a zero per-destination rate rendered %q", line)
 		}
+	}
+}
+
+// ADR-373: DNS-gated egress drops new TCP to unresolved addresses after
+// the allowlist accept, so allowlisted destinations are exempt.
+func TestTenantEgressDNSGate(t *testing.T) {
+	c := egressTestConfig()
+	c.DNSGated = true
+	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	lines := renderedLines(c)
+	for _, tc := range []struct{ family, addrType string }{{"ip", "ipv4_addr"}, {"ip6", "ipv6_addr"}} {
+		lineIndex(t, lines, "add counter "+tc.family+" faas faas_egress_unresolved")
+		lineIndex(t, lines, "add set "+tc.family+" faas egress_resolved { type "+tc.addrType+" ; flags timeout ; size 65535 ; }")
+		gate := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new "+tc.family+" daddr != @egress_resolved counter name faas_egress_unresolved drop")
+		port := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 tcp dport != @egress_ports")
+		if gate >= port {
+			t.Fatalf("%s: DNS gate (%d) must precede the port policy (%d)", tc.family, gate, port)
+		}
+	}
+	allow := lineIndex(t, lines, "rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 }")
+	if gate := lineIndex(t, lines, "rule ip faas forward iifname tap0 ct state new ip daddr != @egress_resolved"); allow >= gate {
+		t.Fatalf("allowlist accept (%d) must precede the DNS gate (%d)", allow, gate)
+	}
+	ungated := egressTestConfig()
+	for _, line := range renderedLines(ungated) {
+		if strings.Contains(line, "egress_resolved") {
+			t.Fatalf("an ungated config rendered %q", line)
+		}
+	}
+	cmds := c.ResolvedEgressAddCommands([]netip.Addr{
+		netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("::ffff:198.51.100.11"), netip.MustParseAddr("2001:db8::1"),
+	}, 10*time.Minute)
+	if len(cmds) != 2 ||
+		!strings.HasSuffix(strings.Join(cmds[0], " "), "add element ip faas egress_resolved { 198.51.100.10 timeout 600s, 198.51.100.11 timeout 600s }") ||
+		!strings.HasSuffix(strings.Join(cmds[1], " "), "add element ip6 faas egress_resolved { 2001:db8::1 timeout 600s }") {
+		t.Fatalf("add commands = %v", cmds)
 	}
 }

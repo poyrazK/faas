@@ -752,6 +752,10 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 	@test -f deploy/ansible/bootstrap.yml || (echo "deploy/ansible/bootstrap.yml missing — run on the control-plane / compute node, not the dev box"; exit 1)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --limit $${ANSIBLE_LIMIT:-compute_nodes}
 
+.PHONY: bootstrap-tenant-egress-gateway
+bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
+
 .PHONY: bootstrap-fleet-runner
 bootstrap-fleet-runner: ## Install the pinned trusted runner. Gets a short-lived registration token via gh or the controller environment.
 	@if [ -n "$${FAAS_RUNNER_REGISTRATION_TOKEN:-}" ]; then \

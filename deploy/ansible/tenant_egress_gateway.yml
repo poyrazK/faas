@@ -1,0 +1,25 @@
+---
+# ADR-372: converge the tenant egress gateway, then register every compute
+# node with it. Run after `make manifest-ansible` with a manifest that
+# declares egress.tenant_gateway:
+#
+#   make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini \
+#     bootstrap-tenant-egress-gateway
+#
+# The gateway goes first so the peer directory and sync helper exist when
+# the compute nodes register; each compute node's tunnel starts only after
+# its peer is live on the gateway.
+
+- name: Converge the tenant egress gateway
+  hosts: tenant_egress_gateway
+  become: true
+  gather_facts: true
+  roles:
+    - role: tenant_egress_gateway
+
+- name: Register compute nodes with the tenant egress gateway
+  hosts: compute_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: tenant_egress_client

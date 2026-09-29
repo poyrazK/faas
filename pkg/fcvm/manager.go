@@ -611,6 +611,10 @@ type Instance struct {
 	// exceeding the per-destination rate (ADR-361 decision 9). It is
 	// recorded in the same poll tick as the fan-out sample.
 	EgressFloodDropsPerMin int64
+	// resolvedEgress is when each address vmmd added to this instance's
+	// egress_resolved set expires (ADR-373), so repeated lookups of the
+	// same name skip the nft call until half the TTL has passed.
+	resolvedEgress map[netip.Addr]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -642,8 +646,9 @@ type Instance struct {
 // per-namespace egress counter poller. Keeping this separate from Instance
 // prevents the telemetry loop from depending on mutable runtime state.
 type LiveEgressInstance struct {
-	AppID string
-	Netns string
+	AppID     string
+	AccountID string
+	Netns     string
 }
 
 // SnapshotLiveEgress returns a point-in-time instance → app/netns map. The
@@ -653,7 +658,7 @@ func (m *Manager) SnapshotLiveEgress() map[string]LiveEgressInstance {
 	defer m.mu.Unlock()
 	out := make(map[string]LiveEgressInstance, len(m.live))
 	for instance, live := range m.live {
-		out[instance] = LiveEgressInstance{AppID: live.AppID, Netns: live.Net.Netns}
+		out[instance] = LiveEgressInstance{AppID: live.AppID, AccountID: live.AccountID, Netns: live.Net.Netns}
 	}
 	return out
 }
@@ -739,6 +744,15 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// appResolved is each app's recently resolved addresses on this node
+	// with their expiry (ADR-373), used to seed a new instance's
+	// egress_resolved set: a restored snapshot may reconnect to addresses
+	// its guest resolved before the snapshot.
+	appResolved map[string]map[netip.Addr]time.Time
+	// dnsGatingOff is the operator's emergency switch for ADR-373 DNS-gated
+	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
+	// default; turning it off keeps every other egress control.
+	dnsGatingOff bool
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -1484,6 +1498,13 @@ func (m *Manager) SetParentMountRegistry(r *vmmdmount.Registry) {
 // SetParentMountRegistry in spirit: optional, nil-safe, no-ops if
 // the cmd binary doesn't wire it. The returned *Manager is the
 // receiver so callers can chain (`m, ok := NewManager(...).WithMux(...)`).
+// WithDNSGatedEgress turns ADR-373 DNS-gated egress on (the default) or off
+// for tenant VMs created from now on.
+func (m *Manager) WithDNSGatedEgress(enabled bool) *Manager {
+	m.dnsGatingOff = !enabled
+	return m
+}
+
 func (m *Manager) WithFrameworkReady(fm *FrameworkReadyMetrics) *Manager {
 	m.frameworkReadyMetrics = fm
 	return m
@@ -3636,6 +3657,16 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.TapUID = lease.UID
+	// Job VMs run tenant code with the same network policy as app
+	// instances: the plan's bandwidth cap, the conntrack cap and the
+	// ADR-361 egress policy. Without the policy the always-declared
+	// egress_ports set stays empty and fails closed, so a job could open
+	// no outbound TCP at all.
+	if lim, ok := api.LimitsFor(req.Plan); ok {
+		nc.EgressMbit = lim.EgressMbit
+	}
+	nc.ConntrackCap = m.conntrackCap
+	applyTenantEgressPolicy(&nc, req.Plan, nil)
 	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
 	}
@@ -3905,6 +3936,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	if !req.ExecutionOnly {
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
+		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
 	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
@@ -4465,6 +4497,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	phases.mark("post_bring_up")
 	if !req.ExecutionOnly {
 		m.renderHostSMTPAllowlistRules(ctx, true)
+		m.seedResolvedEgress(ctx, req.Instance)
 	}
 	phases.mark("host_policy")
 	wakeAttrs := []any{

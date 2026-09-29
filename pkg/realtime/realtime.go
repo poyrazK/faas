@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -65,6 +66,10 @@ const (
 	EventConnect    EventType = "realtime.connect"
 	EventMessage    EventType = "realtime.message"
 	EventDisconnect EventType = "realtime.disconnect"
+	// EventAuthorizeChannel is a synchronous authorization request. It is
+	// never queued in the durable callback outbox: a missed decision cannot
+	// safely grant channel access later.
+	EventAuthorizeChannel EventType = "realtime.authorize_channel"
 )
 
 // Message is a frame sent to a managed connection. Data is copied before it
@@ -86,6 +91,7 @@ type Event struct {
 	ConnectionID      string    `json:"connection_id"`
 	Principal         string    `json:"principal,omitempty"`
 	Channel           string    `json:"channel,omitempty"`
+	Permission        string    `json:"permission,omitempty"`
 	Sequence          uint64    `json:"sequence"`
 	Binary            bool      `json:"binary"`
 	Data              []byte    `json:"data,omitempty"`
@@ -156,6 +162,13 @@ type Hooks interface {
 	Disconnect(context.Context, Event) error
 }
 
+// ChannelAuthorizer is an optional, fail-closed extension used only by the
+// versioned subscription protocol. Legacy management subscriptions keep their
+// existing account-scoped authorization path.
+type ChannelAuthorizer interface {
+	AuthorizeChannel(context.Context, Event) (bool, error)
+}
+
 // NopHooks is a convenient default for embedding the data plane before the
 // durable callback dispatcher is wired.
 type NopHooks struct{}
@@ -178,6 +191,11 @@ type Config struct {
 	// JWTAuthorizer verifies endpoint policies using oidc_jwt. A nil authorizer
 	// deliberately fails closed for JWT-configured endpoints.
 	JWTAuthorizer JWTAuthorizer
+	// ResumePreview admits the opt-in v2 protocol only when a private history
+	// reader and synchronous channel authorizer are available.
+	ResumePreview      bool
+	HistoryReader      ManagedRealtimeHistoryReader
+	ResumePollInterval time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -204,6 +222,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.CallbackTimeout <= 0 {
 		c.CallbackTimeout = defaultCallbackWait
+	}
+	if c.ResumePollInterval <= 0 {
+		c.ResumePollInterval = 5 * time.Second
 	}
 	return c
 }
@@ -259,6 +280,7 @@ type EndpointInventory struct {
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
 	CurrentConnections                 uint64  `json:"current_connections"`
+	CurrentResumeSubscriptions         uint64  `json:"current_resume_subscriptions"`
 	AcceptedConnections                uint64  `json:"accepted_connections"`
 	RejectedConnections                uint64  `json:"rejected_connections"`
 	ReceivedMessages                   uint64  `json:"received_messages"`
@@ -303,6 +325,8 @@ type connection struct {
 	channels    map[string]struct{}
 	closeCode   int
 	closeReason string
+	v2          bool
+	resumeSubs  map[string]*resumeSubscription
 }
 
 type callbackAuthSnapshot struct {
@@ -346,6 +370,7 @@ type Manager struct {
 	channelRouteInstance string
 	channelRouteRevision uint64
 	reserved             atomic.Int64
+	resumeCount          atomic.Int64
 	closed               atomic.Bool
 
 	upgrader websocket.Upgrader
@@ -585,6 +610,52 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	state := value.(*endpointState)
 	endpoint := *state.config.Load()
+	protocols := websocket.Subprotocols(r)
+	wantsResume := false
+	for _, protocol := range protocols {
+		if protocol == ResumeSubprotocol {
+			wantsResume = true
+			break
+		}
+	}
+	browserToken, browserCredential, invalidCredential, remainingProtocols := resumeBearerFromProtocols(protocols)
+	if browserCredential {
+		// Browser credentials require an explicit endpoint origin policy. The
+		// normal WebSocket origin default allows non-browser clients without an
+		// Origin header, so it is insufficient for this credential carrier.
+		if !wantsResume || invalidCredential || len(r.Header.Values("Authorization")) != 0 {
+			m.recordAuthOutcome(authMetricModeForEndpoint(endpoint), authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "invalid realtime browser authentication", http.StatusBadRequest)
+			return
+		}
+		if len(endpoint.AllowedOrigins) == 0 || r.Header.Get("Origin") == "" || !checkAllowedOrigins(endpoint.AllowedOrigins)(r) {
+			m.recordAuthOutcome(authMetricModeForEndpoint(endpoint), authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime browser origin forbidden", http.StatusForbidden)
+			return
+		}
+		// Neither a custom authorization hook nor the upgrader should see or
+		// return the credential-bearing subprotocol.
+		r.Header.Del("Sec-WebSocket-Protocol")
+		if len(remainingProtocols) > 0 {
+			r.Header.Set("Sec-WebSocket-Protocol", strings.Join(remainingProtocols, ", "))
+		}
+	}
+	if wantsResume {
+		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
+			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
+			http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
+			return
+		}
+		if _, ok := m.hooks.(ChannelAuthorizer); !ok {
+			http.Error(w, "realtime channel authorization unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
 	switch endpoint.ClientAuth.Mode {
@@ -604,6 +675,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principal = "token"
 	case AuthModeOIDCJWT:
 		token, ok := bearerToken(r)
+		if browserCredential {
+			token, ok = browserToken, true
+		}
 		if !ok || m.cfg.JWTAuthorizer == nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
@@ -629,8 +703,17 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if wantsResume && strings.TrimSpace(principal) == "" {
+		m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+		m.rejectedConnections.Add(1)
+		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
+		return
+	}
 	m.recordAuthOutcome(authMetricMode, authMetricOutcomeAccepted)
 	upgrader := m.upgrader
+	if wantsResume {
+		upgrader.Subprotocols = []string{ResumeSubprotocol}
+	}
 	if endpoint.CheckOrigin != nil {
 		upgrader.CheckOrigin = endpoint.CheckOrigin
 	}
@@ -653,7 +736,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 		return
 	}
-	conn := m.addConnection(state, endpoint, principal, ws)
+	conn := m.addConnectionWithProtocol(state, endpoint, principal, ws, wantsResume)
 	state.gate.Unlock()
 	m.runConnection(r.Context(), conn)
 }
@@ -726,6 +809,10 @@ func endpointIDFromPath(path string) (string, bool) {
 }
 
 func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn) *connection {
+	return m.addConnectionWithProtocol(state, endpoint, principal, ws, false)
+}
+
+func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
@@ -739,13 +826,15 @@ func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, princip
 			LastSeen:   now,
 			Expires:    now.Add(endpoint.MaxConnectionAge),
 		},
-		ws:       ws,
-		endpoint: endpoint,
-		state:    state,
-		m:        m,
-		outbound: make(chan Message, m.cfg.OutboundQueue),
-		done:     make(chan struct{}),
-		channels: make(map[string]struct{}),
+		ws:         ws,
+		v2:         v2,
+		endpoint:   endpoint,
+		state:      state,
+		m:          m,
+		outbound:   make(chan Message, m.cfg.OutboundQueue),
+		done:       make(chan struct{}),
+		channels:   make(map[string]struct{}),
+		resumeSubs: make(map[string]*resumeSubscription),
 	}
 	if current := state.config.Load(); current != nil {
 		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
@@ -786,6 +875,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	}
 
 	c.ws.SetReadLimit(c.endpoint.MaxMessageBytes)
+	if c.v2 {
+		c.ws.SetReadLimit(api.RealtimeResumeClientFrameMaxBytes)
+	}
 	// Give the client until the first heartbeat plus a pong window. Setting
 	// only PongWait here would close an otherwise healthy idle socket before
 	// the first ping when Heartbeat is larger than PongWait (the defaults are
@@ -796,6 +888,10 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		// disconnect a healthy idle client between heartbeats.
 		return c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 	})
+	if c.v2 {
+		m.runResumeConnection(ctx, c)
+		return
+	}
 
 	for {
 		kind, data, err := c.ws.ReadMessage()
@@ -901,6 +997,9 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	m.mu.Lock()
 	if current, ok := m.conns[c.info.ID]; ok && current == c {
 		c.mu.Lock()
+		for _, subscription := range c.resumeSubs {
+			subscription.cancel()
+		}
 		for channel := range c.channels {
 			key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 			members := m.subscribers[key]
@@ -1000,6 +1099,9 @@ func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) er
 	if !ok {
 		return ErrConnectionNotFound
 	}
+	if c.v2 {
+		return ErrUnauthorized
+	}
 	if int64(len(msg.Data)) > c.endpoint.MaxMessageBytes {
 		return fmt.Errorf("realtime: message exceeds %d bytes", c.endpoint.MaxMessageBytes)
 	}
@@ -1044,6 +1146,9 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	if !ok {
 		return ErrConnectionNotFound
 	}
+	if c.v2 {
+		return ErrUnauthorized
+	}
 	select {
 	case <-c.done:
 		return ErrConnectionClosed
@@ -1081,6 +1186,9 @@ func (m *Manager) UnsubscribeWithRouteState(connectionID, channel string) (bool,
 	c, ok := m.conns[connectionID]
 	if !ok {
 		return false, ErrConnectionNotFound
+	}
+	if c.v2 {
+		return false, ErrUnauthorized
 	}
 	select {
 	case <-c.done:
@@ -1223,6 +1331,7 @@ func (m *Manager) Stats() Stats {
 	}
 	stats := Stats{
 		CurrentConnections:            uint64(current),
+		CurrentResumeSubscriptions:    uint64(maxInt64(m.resumeCount.Load(), 0)),
 		AcceptedConnections:           m.acceptedConnections.Load(),
 		RejectedConnections:           m.rejectedConnections.Load(),
 		ReceivedMessages:              m.receivedMessages.Load(),

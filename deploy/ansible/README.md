@@ -46,6 +46,8 @@ In order (each role is independent and verifies its own preconditions):
 | `systemd_slices` | §13 | three `.slice` unit drops | `creates:` on each |
 | `canary_artifact_retention` | §11 | declared validation roots, durable owner records, hourly bounded sweep, node-exporter metrics | closed path policy + live process/systemd reference proof |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
+| `tenant_egress_client` | ADR-372 | compute: `wg-tenant` tunnel, tenant policy routing, the node's peer file on the gateway (no-op without `egress.tenant_gateway`) | node-minted key kept, templated config, `wg syncconf` on the gateway |
+| `tenant_egress_gateway` | ADR-372 | gateway host only (`tenant_egress_gateway.yml`): WireGuard, forwarding, `inet faas_tenant_gw` deny + NAT table | key checked against the manifest, `nft -c` validated table replace |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 backup/restore gates | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |

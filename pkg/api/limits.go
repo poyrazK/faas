@@ -32,6 +32,17 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
+// Operator-only managed realtime resume preview safety bounds. These are not
+// plan entitlements or a billing allowance; product limits are decided before
+// the preview is promoted.
+const (
+	RealtimeResumeSubscriptionsPerNode       = 256
+	RealtimeResumeSubscriptionsPerConnection = 8
+	RealtimeResumeClientFrameMaxBytes        = 4096
+	RealtimeResumeServerFrameMaxBytes        = 8 << 10
+	RealtimeResumeBearerTokenMaxBytes        = 3072
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
@@ -4219,6 +4230,22 @@ const (
 	// that a clean restart fixes; a repeat means the account's own code.
 	EgressFanoutHoldRecycles      = 2
 	EgressFanoutHoldWindowSeconds = 3600
+	// ADR-373 DNS-gated egress: a resolved address stays reachable for its
+	// DNS TTL clamped to [DNSGatedEgressMinTTLSeconds,
+	// DNSGatedEgressMaxTTLSeconds]. The floor covers clients that cache
+	// answers past their TTL (the JVM, connection pools); the ceiling
+	// bounds how long a stale address stays open.
+	DNSGatedEgressMinTTLSeconds = 600
+	DNSGatedEgressMaxTTLSeconds = 3600
+	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
+	// keeps per app to seed new instances of that app.
+	DNSGatedEgressAppSeedMax = 4096
+	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
+	// (long enough to answer a provider abuse report, which can arrive
+	// weeks later) and an operator lookup returns at most
+	// EgressFlowLogPageMax rows.
+	EgressFlowLogRetentionDays = 30
+	EgressFlowLogPageMax       = 1000
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,

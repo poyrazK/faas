@@ -732,7 +732,7 @@ func TestEgressValidate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			errs := tc.egress.validate()
+			errs := tc.egress.validate("")
 			if tc.wantErr {
 				if len(errs) == 0 {
 					t.Fatalf("validate() = nil, want error containing %q", tc.wantConta)

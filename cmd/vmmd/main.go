@@ -943,6 +943,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// ADR-373: DNS-gated egress is on unless the operator turns it off for
+	// this node, e.g. while the node's resolver hook is unavailable.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {
+		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
+		mgr.WithDNSGatedEgress(false)
+	}
 	// Recover only unused cache names from a previous daemon, including when
 	// an operator has disabled the cache. Active instance names are excluded.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -1539,6 +1545,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		popInstance = netns.PopCountersInNetns
 	}
 	go runEgressDeniedPoll(ctx, mgr, ops, popInstance, interval, log)
+	// ADR-371: persist each instance's new egress destinations so an
+	// abuse report about this node's address can be traced to a tenant.
+	if flowStore, ok := store.(state.EgressFlowLogStore); ok && store != nil {
+		go runEgressFlowLog(ctx, mgr, flowStore, cfg.ComputeNode.NodeName, nil, ops, interval, log)
+	}
 
 	// CPU sample loop (issue #279 / PR-B): drives the cpustats
 	// cache at 250 ms cadence — half the schedd poller's

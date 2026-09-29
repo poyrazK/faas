@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -79,6 +80,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Client:       newCallbackHTTPClient(callbackTimeout),
 		DurableQueue: outbox,
 	}
+	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
+	var historyReader realtime.ManagedRealtimeHistoryReader
+	if resumePreview {
+		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CA_PATH"))
+		if tlsErr != nil {
+			return fmt.Errorf("realtimed: history TLS: %w", tlsErr)
+		}
+		reader, dialErr := apidgrpc.DialRealtimeHistory(ctx,
+			getenv("FAAS_REALTIME_HISTORY_TARGET", "/run/faas/request_telemetry.sock"), historyTLS)
+		if dialErr != nil {
+			return fmt.Errorf("realtimed: history reader: %w", dialErr)
+		}
+		defer func() { _ = reader.Close() }()
+		historyReader = reader
+	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:   envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:  int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
@@ -89,6 +108,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxConnectionAge: envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
 		CallbackTimeout:  callbackTimeout,
 		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
+		ResumePreview:    resumePreview,
+		HistoryReader:    historyReader,
 	}, hooks)
 	defer func() { _ = manager.Close() }()
 	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{

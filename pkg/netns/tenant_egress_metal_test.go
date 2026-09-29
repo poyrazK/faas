@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // egressTopology wires three namespaces around one rendered instance
@@ -279,4 +280,47 @@ func TestMetalTenantEgressFloodLimited(t *testing.T) {
 			t.Fatalf("second destination never reached its own bucket:\n%s", out)
 		}
 	}
+}
+
+// TestMetalTenantEgressDNSGated: with DNS gating, TCP to an address the
+// guest never resolved is dropped and counted; once vmmd adds it to
+// egress_resolved the same connection succeeds, and pinned DNS keeps
+// working throughout (ADR-373).
+func TestMetalTenantEgressDNSGated(t *testing.T) {
+	topo := newEgressTopology(t, "dng", func(c *Config) { c.DNSGated = true })
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); ok {
+		t.Fatalf("TCP to an unresolved address must be dropped, got %q", reply)
+	}
+	if n := topo.counter(EgressUnresolvedCounter); n == 0 {
+		t.Fatalf("%s did not count the dropped flow", EgressUnresolvedCounter)
+	}
+	if reply, ok := topo.try("udp", "8.8.8.8", 53); !ok || reply != "dns:q" {
+		t.Fatalf("pinned DNS must work under DNS gating: ok=%v reply=%q", ok, reply)
+	}
+	for _, argv := range topo.cfg.ResolvedEgressAddCommands([]netip.Addr{netip.MustParseAddr("198.51.100.10")}, 10*time.Minute) {
+		runIn(t, argv...)
+	}
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {
+		t.Fatalf("TCP to a resolved address must pass: ok=%v reply=%q", ok, reply)
+	}
+}
+
+// TestMetalTenantEgressFlowsRecorded opens a real flow and reads it back
+// through the egress_flows set vmmd polls (ADR-371).
+func TestMetalTenantEgressFlowsRecorded(t *testing.T) {
+	topo := newEgressTopology(t, "flw", nil)
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {
+		t.Fatalf("TCP 443 must pass: ok=%v reply=%q", ok, reply)
+	}
+	flows, err := ListEgressFlowsInNetns(context.Background(), topo.inst)
+	if err != nil {
+		t.Fatalf("ListEgressFlowsInNetns: %v", err)
+	}
+	want := EgressFlow{Addr: netip.MustParseAddr("198.51.100.10"), Port: 443}
+	for _, f := range flows {
+		if f == want {
+			return
+		}
+	}
+	t.Fatalf("flows = %+v, want %+v", flows, want)
 }

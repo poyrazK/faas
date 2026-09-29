@@ -3757,6 +3757,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}
+			// ADR-373: refuse abuse infrastructure at the pinned resolver.
+			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
+			// built-in mining-pool list; a configured file that cannot be
+			// read fails startup rather than silently dropping the feed.
+			var extraBlocked map[string]string
+			if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
+				loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
+				if loadErr != nil {
+					return fmt.Errorf("gatewayd: %w", loadErr)
+				}
+				extraBlocked = loaded
+			}
+			blocklist := gateway.NewDNSBlocklist(extraBlocked)
+			dnsHandler.WithBlocklist(blocklist, func(category string) {
+				if c := deps.opsMetrics.DNSBlocked(category); c != nil {
+					c.Inc()
+				}
+			})
+			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
+			// ADR-373 DNS-gated egress: report every guest answer to this
+			// node's vmmd before replying, so the guest may connect to it.
+			if deps.nodeCache != nil && cfg.NodeName != "" {
+				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, cfg.NodeName))
+			}
 			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
 			listenPacket := deps.listenPacket
 			if listenPacket == nil {

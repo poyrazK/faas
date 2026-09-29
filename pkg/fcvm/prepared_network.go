@@ -237,6 +237,7 @@ func (p *preparedNetworkPool) fill() {
 		nc.EgressPorts = api.TenantEgressBasePorts()
 		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
+		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		err = p.m.setupNetwork(ctx, nc)
@@ -354,6 +355,7 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 // Wake rejects invalid plans before this.
 func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
 	nc.EgressPorts = tenantEgressPorts(plan, extra)
+	nc.DNSGated = true
 	if lim, ok := api.LimitsFor(plan); ok {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst

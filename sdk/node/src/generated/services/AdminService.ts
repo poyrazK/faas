@@ -16,6 +16,7 @@ import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
 import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js';
+import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
@@ -391,6 +392,61 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `code: admin_required — releasing a hold needs an operator session with MFA and recent step-up.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Search the egress flow log (operator-only).
+   * Destination addresses and TCP ports tenant guests opened new flows to,
+   * newest first. Filter by remote address or CIDR, account, and a
+   * [from, to) window of at most the 30-day retention. Defaults to the
+   * last 24 hours and 200 rows.
+   *
+   * @returns EgressFlowLogResponse Matching flow log rows.
+   * @throws ApiError
+   */
+  public static listEgressFlows({
+    remote,
+    accountId,
+    from,
+    to,
+    limit,
+  }: {
+    /**
+     * Remote IP address or CIDR.
+     */
+    remote?: string,
+    /**
+     * Only flows from this account's instances.
+     */
+    accountId?: string,
+    /**
+     * Window start (inclusive); defaults to 24 hours before to.
+     */
+    from?: string,
+    /**
+     * Window end (exclusive); defaults to now.
+     */
+    to?: string,
+    /**
+     * Maximum rows; defaults to 200.
+     */
+    limit?: number,
+  }): CancelablePromise<EgressFlowLogResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/egress-flows',
+      query: {
+        'remote': remote,
+        'account_id': accountId,
+        'from': from,
+        'to': to,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — reading the flow log needs an operator session with MFA.`,
       },
     });
   }

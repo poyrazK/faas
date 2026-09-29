@@ -4860,6 +4860,42 @@ func (c *Client) ListInvoices(ctx context.Context, month, before string, limit i
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// EgressFlowQuery filters ListEgressFlows. Zero values use the server
+// defaults (last 24 hours, 200 rows).
+type EgressFlowQuery struct {
+	Remote    string // IP address or CIDR
+	AccountID string
+	From, To  time.Time
+	Limit     int
+}
+
+// ListEgressFlows searches the ADR-371 egress flow log via
+// GET /v1/admin/egress-flows. Operator-only.
+func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (EgressFlowLogResponse, error) {
+	v := url.Values{}
+	if q.Remote != "" {
+		v.Set("remote", q.Remote)
+	}
+	if q.AccountID != "" {
+		v.Set("account_id", q.AccountID)
+	}
+	if !q.From.IsZero() {
+		v.Set("from", q.From.UTC().Format(time.RFC3339))
+	}
+	if !q.To.IsZero() {
+		v.Set("to", q.To.UTC().Format(time.RFC3339))
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/admin/egress-flows"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out EgressFlowLogResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // PlaceAccountAbuseHold places an ADR-361 account abuse hold via
 // POST /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit note
 // (3..500 chars). Operator-only, like credits.
@@ -5691,6 +5727,26 @@ func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug,
 func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
 	var out ManagedRealtimePublishResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+}
+
+// AppendManagedRealtimeRetainedMessage commits a message to ordered channel
+// history. This storage API does not deliver the message to WebSocket clients.
+func (c *Client) AppendManagedRealtimeRetainedMessage(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeRetainedMessageRequest) (ManagedRealtimeRetainedMessageResponse, error) {
+	var out ManagedRealtimeRetainedMessageResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// ReadManagedRealtimeRetainedMessages reads a bounded page after a channel
+// sequence. An expired cursor returns a 410 history_unavailable APIError.
+func (c *Client) ReadManagedRealtimeRetainedMessages(ctx context.Context, slug, endpointID, channel string, after int64, limit int) (ManagedRealtimeRetainedHistoryResponse, error) {
+	var out ManagedRealtimeRetainedHistoryResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	query := url.Values{"after": {strconv.FormatInt(after, 10)}}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, http.MethodGet, path+"?"+query.Encode(), nil, &out)
 }
 
 // --- Customer runtime log drains (issue #1398 O4) -------------------------

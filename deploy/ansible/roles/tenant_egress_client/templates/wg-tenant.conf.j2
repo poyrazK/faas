@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+# ADR-372 tenant egress tunnel. Table = off keeps wg-quick from touching
+# the main table; PostUp routes only tenant-CIDR traffic arriving on the
+# tenant bridge into the tunnel table, after exempting the bridge and overlay
+# networks. Static-egress-IP VMs (ADR-119) sit outside the tenant CIDR and
+# keep the main table.
+[Interface]
+Address = {{ faas_tenant_egress_tunnel_address }}
+PrivateKey = {{ faas_tenant_egress_private_key }}
+MTU = {{ faas_tenant_egress_mtu }}
+Table = off
+# Replies arrive on the tunnel from public sources whose main-table route
+# is the public NIC; loose reverse-path filtering accepts them.
+PostUp = sysctl -qw net.ipv4.conf.%i.rp_filter=2
+PostUp = ip route replace default dev %i table {{ faas_tenant_egress_route_table }}
+{% for cidr in faas_tenant_egress_main_cidrs %}
+PostUp = ip rule add priority {{ faas_tenant_egress_rule_priority + loop.index0 }} iif {{ faas_tenant_egress_bridge }} to {{ cidr }} lookup main
+PreDown = ip rule del priority {{ faas_tenant_egress_rule_priority + loop.index0 }} iif {{ faas_tenant_egress_bridge }} to {{ cidr }} lookup main
+{% endfor %}
+PostUp = ip rule add priority {{ faas_tenant_egress_rule_priority + 100 }} iif {{ faas_tenant_egress_bridge }} from {{ faas_tenant_egress_source_cidr }} lookup {{ faas_tenant_egress_route_table }}
+PreDown = ip rule del priority {{ faas_tenant_egress_rule_priority + 100 }} iif {{ faas_tenant_egress_bridge }} from {{ faas_tenant_egress_source_cidr }} lookup {{ faas_tenant_egress_route_table }}
+PreDown = ip route flush table {{ faas_tenant_egress_route_table }}
+
+[Peer]
+# tenant egress gateway
+PublicKey = {{ faas_tenant_egress_gateway_public_key }}
+Endpoint = {{ faas_tenant_egress_gateway_endpoint }}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

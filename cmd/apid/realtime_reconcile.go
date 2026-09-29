@@ -22,6 +22,8 @@ const managedRealtimeEndpointReconcileInterval = 30 * time.Second
 const (
 	managedRealtimeOwnerReapInterval             = time.Minute
 	managedRealtimeOwnerReapBatch                = 1000
+	managedRealtimeHistoryReapInterval           = time.Minute
+	managedRealtimeHistoryReapBatch              = 100
 	managedRealtimeChannelRouteReconcileInterval = 30 * time.Second
 )
 
@@ -639,6 +641,54 @@ func (s *server) runManagedRealtimeOwnerReaper(ctx context.Context) {
 	runPass()
 
 	ticker := time.NewTicker(managedRealtimeOwnerReapInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runPass()
+		}
+	}
+}
+
+// runManagedRealtimeHistoryReaper removes expired outbound payloads. Reads
+// apply the same expiry immediately, so a delayed pass cannot replay old data.
+func (s *server) runManagedRealtimeHistoryReaper(ctx context.Context) {
+	reaper, ok := s.store.(state.ManagedRealtimeHistoryReaper)
+	if !ok {
+		return
+	}
+	log := s.log
+	if log == nil {
+		log = slog.Default()
+	}
+	runPass := func() {
+		removed, err := reaper.PruneExpiredManagedRealtimeChannelMessages(ctx, managedRealtimeHistoryReapBatch)
+		if !errors.Is(err, context.Canceled) {
+			s.realtimeHistoryMetrics.observePrune(removed, err)
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("managed realtime history reaper pass failed", "err", err)
+		} else if removed > 0 {
+			log.Info("managed realtime history reaper pass complete", "removed", removed)
+		}
+		observer, ok := s.store.(state.ManagedRealtimeHistoryStorageObserver)
+		if !ok || ctx.Err() != nil {
+			return
+		}
+		stats, err := observer.ObserveManagedRealtimeHistoryStorage(ctx)
+		if err != nil {
+			s.realtimeHistoryMetrics.observeStorageFailure()
+			if !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime history storage sample failed", "err", err)
+			}
+			return
+		}
+		s.realtimeHistoryMetrics.observeStorage(stats, time.Now().UTC())
+	}
+	runPass()
+	ticker := time.NewTicker(managedRealtimeHistoryReapInterval)
 	defer ticker.Stop()
 	for {
 		select {

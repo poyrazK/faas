@@ -173,6 +173,8 @@ type MemStore struct {
 	outboundAppBindings       map[string]OutboundAppBinding
 	outboundCredentials       map[string][]byte
 	mu                        sync.Mutex
+	// egressFlows is the ADR-371 egress flow log.
+	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
@@ -361,6 +363,7 @@ type MemStore struct {
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
+	managedRealtimeHistory          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState
 	realtimeChannelRoutes           map[ManagedRealtimeChannelRoute]struct{}
 	realtimeChannelRouteCounts      map[string]int
 	realtimeChannelRouteOverflow    map[string]managedRealtimeChannelRouteOverflowState
@@ -1104,6 +1107,7 @@ func NewMemStore() *MemStore {
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
 		queueBindings:                   map[string]QueueBinding{},
 		managedRealtimeEndpoints:        map[string]ManagedRealtimeEndpoint{},
+		managedRealtimeHistory:          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState{},
 		realtimeChannelRoutes:           map[ManagedRealtimeChannelRoute]struct{}{},
 		realtimeChannelRouteCounts:      map[string]int{},
 		realtimeChannelRouteOverflow:    map[string]managedRealtimeChannelRouteOverflowState{},

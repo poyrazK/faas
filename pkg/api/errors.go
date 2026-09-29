@@ -437,6 +437,11 @@ const (
 	// the customer knows to look at the build path rather
 	// than the source tree.
 	CodeImageSecretDetected = "image_secret_detected"
+	// CodeImageAbuseDetected (ADR-368) marks a deploy whose built image
+	// carries abuse tooling matched by a blocking rule: a cryptominer,
+	// mass port scanner or flood tool. The deployment's error detail names
+	// the rules and files.
+	CodeImageAbuseDetected = "image_abuse_detected"
 	// CodeInvalidRef is the DEPLOY-PROV-4 / ADR-092 (issue #739)
 	// 400 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the supplied ref is not a valid commit SHA / branch /

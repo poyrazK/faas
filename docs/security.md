@@ -233,6 +233,22 @@ a suitable threshold.
 `failure_central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
+## Outbound connections and DNS
+
+Workloads reach the internet by name. Outbound TCP is allowed only to addresses
+the workload resolved through the platform's DNS resolver in the last 10 to 60
+minutes, depending on the record's TTL. To connect to a fixed IP address (for
+example a database without a hostname), add it to the app's egress allowlist.
+Lookups of known abuse infrastructure, such as mining pools, return NXDOMAIN.
+
+## Abuse tooling
+
+Every image build is scanned for abuse tooling before it runs. Images that
+carry a cryptocurrency miner, a mass port scanner or a flood tool fail to deploy
+with `image_abuse_detected`, and the error names the rule and file. Mining pool
+addresses and proxy or tunnel servers are recorded for review but do not block
+the deploy.
+
 ## Quarantine recovery
 
 When an enforce-policy app is parked after live security evidence regresses,
