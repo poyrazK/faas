@@ -5684,6 +5684,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lookedApp App
 		ok        bool
 	)
+	if h.pinHostTrafficPolicy(w, r, host, appHost) {
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
 	if h.matchAndSubstituteRoute(r, appHost, &app) {
 		goto haveApp
 	}
@@ -5697,6 +5701,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	if h.pinAppTrafficPolicy(w, r, &app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if revision := TrafficPolicyRevision(r.Context()); revision != "" {
+		rec.trafficPolicyRevision = revision
+		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", revision))
+	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
@@ -7420,6 +7432,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
+	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
+		requestLog = requestLog.With("traffic_policy_revision", revision)
+	}
 	if fields, ok := wire.FromContext(r.Context()); ok {
 		requestLog = wire.WithCorrelationFields(requestLog, fields)
 	} else if target.InstanceID != "" || target.DeploymentID != "" {
@@ -8061,11 +8076,12 @@ func (h *Handler) preInstantiateAppRoute(appID, routeLabel string) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status      int
-	wroteHeader bool
-	request     *http.Request
-	Bytes       int64
-	ContentType string
+	status                int
+	wroteHeader           bool
+	request               *http.Request
+	Bytes                 int64
+	ContentType           string
+	trafficPolicyRevision string
 
 	// headerOps (ADR-089 / issue #561 PR 4) is the per-request
 	// list of EdgeRuleHeaderOp mutations a kind=headers rule
@@ -8173,6 +8189,11 @@ func (s *statusRecorder) WriteHeader(code int) {
 			applyHeaderOp(s.Header(), op)
 		}
 		s.Header().Del(preAuthTargetHeader)
+		if s.trafficPolicyRevision != "" {
+			s.Header().Set(TrafficPolicyRevisionHeader, s.trafficPolicyRevision)
+		} else {
+			s.Header().Del(TrafficPolicyRevisionHeader)
+		}
 	}
 	s.ResponseWriter.WriteHeader(code)
 }

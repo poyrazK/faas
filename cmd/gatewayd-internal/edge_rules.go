@@ -314,6 +314,10 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, asyncErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
+		entry.PolicyRuleOwners = make(map[string]string, len(parseErrs))
+		for _, rule := range storeRules {
+			entry.PolicyRuleOwners[rule.ID] = rule.AccountID
+		}
 	}
 	// PR-B: surface per-rule compile errors to Prometheus so the
 	// §12 dashboard chip "edge rule compile errors" reflects every
@@ -368,6 +372,10 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		for range asyncErrs {
 			g.metrics.ObserveEdgeRuleCompileError("async")
 		}
+	}
+	entry.Host = host
+	if err := entry.SealPolicy(); err != nil {
+		return nil, err
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
 	return entry, nil
@@ -453,7 +461,7 @@ func (g *gatewaydEdgeRules) MatchRoute(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.Get(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleResolved { return e.Route })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -476,7 +484,7 @@ func (g *gatewaydEdgeRules) MatchRewrite(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRewrite(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleRewriteResolved { return e.Rewrite })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -497,7 +505,7 @@ func (g *gatewaydEdgeRules) MatchRedirect(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRedirect(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleRedirectResolved { return e.Redirect })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -518,7 +526,7 @@ func (g *gatewaydEdgeRules) MatchHeaders(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetHeaders(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleHeadersResolved { return e.Headers })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -541,7 +549,7 @@ func (g *gatewaydEdgeRules) MatchCORS(ctx context.Context, host, requestPath, me
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetCORS(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleCORSResolved { return e.CORS })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -566,7 +574,7 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetJWT(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleJWTResolved { return e.JWT })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -590,7 +598,7 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetIP(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleIPResolved { return e.IP })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -616,7 +624,7 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetValidate(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleValidateResolved { return e.Validate })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -643,7 +651,7 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetLimit(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleLimitResolved { return e.Limit })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -671,7 +679,7 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetMaintenance(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleMaintenanceResolved { return e.Maintenance })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -698,7 +706,7 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetGeo(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleGeoResolved { return e.Geo })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -727,7 +735,7 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetThrottle(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleThrottleResolved { return e.Throttle })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -756,7 +764,7 @@ func (g *gatewaydEdgeRules) MatchBudget(ctx context.Context, host, requestPath, 
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetBudget(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleBudgetResolved { return e.Budget })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -793,7 +801,7 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetCache(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleCacheResolved { return e.Cache })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -814,7 +822,7 @@ func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRespond(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleRespondResolved { return e.Respond })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -836,7 +844,7 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetAsync(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleAsyncResolved { return e.Async })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -864,8 +872,8 @@ func (g *gatewaydEdgeRules) Reset() {
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader
-// returned, at WARN so an operator can diagnose a malformed glob.
-// Errors are not surfaced to the customer (they see a clean 404).
+// returned, at WARN so an operator can diagnose a malformed glob. The public
+// snapshot handler refuses unavailable owner policy without exposing details.
 func (g *gatewaydEdgeRules) warnPathGlobErrs(host string, errs []gateway.PathGlobError) {
 	if g.log == nil || len(errs) == 0 {
 		return

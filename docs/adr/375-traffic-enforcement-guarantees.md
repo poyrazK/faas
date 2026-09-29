@@ -144,6 +144,25 @@ its private bridge socket directory, removes only confirmed dead sockets and
 refuses startup when an old socket still accepts connections. These process
 and restart fences require native Linux acceptance and leak evidence.
 
+## Effective request policy
+
+The public routing handler pins the entire compiled host policy before route
+substitution. The snapshot includes resolved external CORS presets and named
+environment policy, rather than only stored action JSON. A cache refresh does
+not change that request's rules during upload, wake, retry or forwarding.
+After owner resolution, the resolved app flags and plan bounds join the
+snapshot. A versioned digest identifies this effective input without exposing
+credentials or raw policy. Store failures and owner-specific compile failures
+refuse an unverified snapshot before customer authentication or guest work.
+Another account's broken free-form host match cannot block this tenant.
+Empty verified policies remain
+valid snapshots. Runtime response/span evidence records the digest.
+
+Ordinary policy updates fence new requests during convergence; an admitted
+request retains its snapshot. Emergency revocation needs an explicit live
+request fence and remains a required delivery item, along with preview
+agreement, declared internal-path coverage and update/recovery evidence.
+
 ## Delivery and verification
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.

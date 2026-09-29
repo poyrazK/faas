@@ -99,6 +99,7 @@ func TestRunWithDeps_ServesAndShutsDown(t *testing.T) {
 	deps.config = &Config{RateLimit: TOMLRateLimitConfig{Mode: "local"}}
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(&fakeEdgeRuleStore{}, nil, nil, nil)
 	deps.newSrv = func(addr string, h http.Handler) *http.Server {
 		return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	}

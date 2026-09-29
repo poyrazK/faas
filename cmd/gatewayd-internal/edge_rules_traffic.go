@@ -149,7 +149,7 @@ func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRetry(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleRetryResolved { return e.Retry })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -169,7 +169,7 @@ func (g *gatewaydEdgeRules) MatchCircuitBreaker(ctx context.Context, host, reque
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetCircuitBreaker(host)
+	rules, hit := cachedHostRules(g, ctx, host, func(e *gateway.HostEntry) []gateway.EdgeRuleCircuitBreakerResolved { return e.CircuitBreaker })
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {

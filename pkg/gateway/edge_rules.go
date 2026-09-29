@@ -420,6 +420,7 @@ type EdgeRuleCache struct {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
+	snapshot  *edgePolicySnapshot
 	Host      string
 	Route     []EdgeRuleResolved
 	Rewrite   []EdgeRuleRewriteResolved
@@ -491,10 +492,11 @@ type HostEntry struct {
 	// Retry and CircuitBreaker carry the ADR-201 subsets. Same
 	// kind-agnostic slot shape as every kind above; the cmd-side loader
 	// threads one slice per kind into the HostEntry.
-	Retry          []EdgeRuleRetryResolved
-	CircuitBreaker []EdgeRuleCircuitBreakerResolved
-	Async          []EdgeRuleAsyncResolved
-	PathGlobErrs   []PathGlobError
+	Retry            []EdgeRuleRetryResolved
+	CircuitBreaker   []EdgeRuleCircuitBreakerResolved
+	Async            []EdgeRuleAsyncResolved
+	PathGlobErrs     []PathGlobError
+	PolicyRuleOwners map[string]string
 }
 
 // NewEdgeRuleCache returns a cache holding up to `capacity` host

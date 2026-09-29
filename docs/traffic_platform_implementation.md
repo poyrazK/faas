@@ -92,3 +92,25 @@ has explicit bridge-group shutdown and a private socket directory. Linux
 parent-death/process-group tests were added but remain pending along with
 native VM lifecycle/restart/leak and load evidence. Full policy snapshot,
 nested deadline transport and release evidence are still outstanding.
+
+### Local verification, 2026-09-30
+
+The public handler now pins all compiled host-rule kinds before routing,
+including resolved presets and environment policy, and deep-copies app flags
+and plan inputs before admission. Cache refreshes do not replace the snapshot
+during wake/retry. Unverified loads and reported compile errors refuse a new
+snapshot; warm verified cache entries remain usable through store failures.
+A versioned effective fingerprint is protected at ordinary response commitment
+and reported in spans/logs. Full gateway (50.419 s) and internal gateway command
+(4.708 s) suites passed. Emergency live revocation, imported document/service
+policy coverage, simulator agreement, nested deadline transport and customer
+release/acceptance evidence remain outstanding; all six guarantees are still
+unchecked.
+
+The Linux bridge parent-death/process-group sources and their tests compiled
+as an isolated, source-identical Linux amd64 test binary. That was a compile
+check only; neither the tests nor native acceptance ran. The request snapshot
+microbenchmark measured 22.4 microseconds and 12.1 KB per request on this Mac.
+Owner-aware compile refusal was added to prevent another account's broken
+wildcard/preset rule from blocking an unrelated tenant.
+The repository-pinned linter passed for gateway and internal-gateway code.
