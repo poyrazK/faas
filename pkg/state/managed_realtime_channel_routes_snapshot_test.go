@@ -25,12 +25,12 @@ func TestMemStoreListsActiveNodesNeedingRouteSnapshots(t *testing.T) {
 		t.Fatalf("nodes needing snapshots = %v, want all active nodes %v", missing, activeNodes)
 	}
 	for _, node := range activeNodes {
-		current, err := store.ManagedRealtimeChannelRouteNodeSnapshotCurrent(ctx, node.ID)
+		fresh, err := store.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, node.ID)
 		if err != nil {
-			t.Fatalf("ManagedRealtimeChannelRouteNodeSnapshotCurrent(%s): %v", node.ID, err)
+			t.Fatalf("ManagedRealtimeChannelRouteNodeSnapshotFresh(%s): %v", node.ID, err)
 		}
-		if current {
-			t.Fatalf("node %s reported a current snapshot before bootstrap", node.ID)
+		if fresh {
+			t.Fatalf("node %s reported a fresh snapshot before bootstrap", node.ID)
 		}
 	}
 
@@ -42,9 +42,9 @@ func TestMemStoreListsActiveNodesNeedingRouteSnapshots(t *testing.T) {
 	if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, bootstrapped.ID, generation, nil); err != nil {
 		t.Fatalf("record empty snapshot for %s: %v", bootstrapped.ID, err)
 	}
-	current, err := store.ManagedRealtimeChannelRouteNodeSnapshotCurrent(ctx, bootstrapped.ID)
-	if err != nil || !current {
-		t.Fatalf("empty snapshot current = (%v, %v), want (true, nil)", current, err)
+	fresh, err := store.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, bootstrapped.ID)
+	if err != nil || !fresh {
+		t.Fatalf("empty snapshot fresh = (%v, %v), want (true, nil)", fresh, err)
 	}
 	missing, err = store.ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx)
 	if err != nil {
