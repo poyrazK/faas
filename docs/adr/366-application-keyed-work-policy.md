@@ -143,4 +143,11 @@ generation through the gateway result, and release reservations on retry,
 terminal outcome, and lease recovery. A late broker acknowledgement must not
 finish a newer claim. Replacing a pending broker record also needs a durable
 terminal disposition before acknowledging its source handle. Adding selector
-fields to a trigger alone would not enforce these transitions.
+fields to a trigger alone would not enforce these transitions. The adapter
+must also separate stable record identity from the current delivery handle:
+Kafka's current item identifier includes the changing high-water mark, SQS
+uses a receipt handle that changes on redelivery, and AMQP uses a
+connection-scoped delivery tag. Canonicalizing these identities requires a
+migration of existing receipts and an Ack path for already-terminal records;
+changing poller identifiers by itself can duplicate work or cause endless
+redelivery.
