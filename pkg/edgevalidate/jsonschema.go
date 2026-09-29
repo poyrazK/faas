@@ -34,9 +34,22 @@ type CompiledSchema struct {
 
 // schemaRefURLPattern matches any "$ref" or "$id" value that is a
 // URL (has a scheme). JSON Pointer refs (`#/definitions/...`) do
-// not match because they have no scheme. The apid-Validate path
-// uses a tighter regex; this is defence-in-depth on the compiler
-// side.
+// not match because they have no scheme. This is defence-in-depth
+// on the compiler side.
+//
+// Relationship to the apid-side gate (issue #850): apid's
+// pkg/api.edgeRuleValidateRefURLPattern is a STRICT SUPERSET of this
+// pattern — it matches every scheme this one does, plus the
+// protocol-relative `//host/x` form this one misses. That direction
+// is load-bearing, not incidental: pkg/gateway/handler.go:2163 maps
+// ErrSchemaExternalRef at request time to a 502 + ops alarm on the
+// stated assumption that apid-Validate already refused the rule. If
+// this pattern ever matches something apid accepts, every request to
+// that route 502s with a false "gateway dependency is broken" alarm.
+//
+// Widening this pattern therefore REQUIRES widening apid's.
+// TestAPIDRejectsEverythingCompileRejects (apid_parity_test.go) fails
+// if the two drift apart.
 var schemaRefURLPattern = regexp.MustCompile(`(?i)"\$(?:ref|id)"\s*:\s*"[a-z][a-z0-9+.-]*://`)
 
 // jsonschemaDraft2020 is the singleton Draft 2020-12 value.
