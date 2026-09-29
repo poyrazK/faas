@@ -4795,3 +4795,12 @@ WHERE LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
         EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
         * sqlc.arg(rps)::double precision)::bigint) >= 1
 RETURNING tokens;
+
+-- name: ReadTrafficSecurityEpochs :many
+WITH requested AS (
+    SELECT unnest(sqlc.arg(scope_kinds)::text[]) AS scope_kind,
+           unnest(sqlc.arg(scope_ids)::uuid[]) AS scope_id
+)
+SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
+FROM traffic_security_epochs e JOIN requested r
+    ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id;

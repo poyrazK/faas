@@ -11939,6 +11939,53 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
+WITH requested AS (
+    SELECT unnest($1::text[]) AS scope_kind,
+           unnest($2::uuid[]) AS scope_id
+)
+SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
+FROM traffic_security_epochs e JOIN requested r
+    ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id
+`
+
+type ReadTrafficSecurityEpochsParams struct {
+	ScopeKinds []string
+	ScopeIds   []pgtype.UUID
+}
+
+type ReadTrafficSecurityEpochsRow struct {
+	ScopeKind string
+	ScopeID   pgtype.UUID
+	Revision  int64
+	Revoked   bool
+}
+
+func (q *Queries) ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error) {
+	rows, err := db.Query(ctx, readTrafficSecurityEpochs, arg.ScopeKinds, arg.ScopeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadTrafficSecurityEpochsRow{}
+	for rows.Next() {
+		var i ReadTrafficSecurityEpochsRow
+		if err := rows.Scan(
+			&i.ScopeKind,
+			&i.ScopeID,
+			&i.Revision,
+			&i.Revoked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
 SELECT id, part_path
 FROM upload_sessions

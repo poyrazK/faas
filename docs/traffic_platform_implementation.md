@@ -186,3 +186,18 @@ not cancel its final buffered flush. Registry and reqbudget suites passed, and
 their pinned linter reported zero findings. Durable security-generation triggers,
 store reads and production public/service admission wiring are still pending;
 this primitive is not yet an active runtime guarantee.
+
+Durable security generations now have append-only Postgres triggers for account
+suspension/abuse holds, app deletion and deployment security quarantine. Release
+also advances the generation, and deletion retains UUID tombstones. Ordinary
+plan, traffic-weight and nonsecurity parking changes leave generations unchanged.
+The sqlc reader verifies the shared store without an allow-cache fallback; empty
+input verifies the migration at startup. Real Postgres tests passed for each
+transition, a missed revoke/release pair, replacement-backend tombstones,
+existing blocked-identity backfill, rollback and missing-migration refusal.
+Schema table/primary-key blocks match the real migrated database, sqlc
+regeneration is unchanged, and the static embedded migration checks passed.
+Production gateway/service enrollment remains pending.
+The Postgres acceptance package passed the pinned linter. State production code
+also passed with the unused check disabled because an existing helper is used
+only by tests; the full state-test lint compilation exhausted local disk space.

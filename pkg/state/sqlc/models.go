@@ -2334,6 +2334,15 @@ type TrafficRetryCounter struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type TrafficSecurityEpoch struct {
+	ScopeKind string
+	ScopeID   pgtype.UUID
+	Revision  int64
+	Revoked   bool
+	Reason    string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Trigger struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

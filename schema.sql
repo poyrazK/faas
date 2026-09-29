@@ -10860,3 +10860,20 @@ ALTER TABLE ONLY public.traffic_retry_counters
 
 ALTER TABLE ONLY public.traffic_retry_counters
     ADD CONSTRAINT traffic_retry_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+-- ADR-375 security-generation table; dump parity is verified independently
+-- of the repository's existing unrelated schema snapshot drift.
+CREATE TABLE public.traffic_security_epochs (
+    scope_kind text NOT NULL,
+    scope_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    revoked boolean NOT NULL,
+    reason text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT traffic_security_epochs_check CHECK (((revoked AND (reason = ANY (ARRAY['account_suspended'::text, 'account_abuse_hold'::text, 'app_deleted'::text, 'deployment_quarantined'::text, 'entity_deleted'::text]))) OR ((NOT revoked) AND (reason = 'released'::text)))),
+    CONSTRAINT traffic_security_epochs_revision_check CHECK ((revision > 0)),
+    CONSTRAINT traffic_security_epochs_scope_kind_check CHECK ((scope_kind = ANY (ARRAY['account'::text, 'app'::text, 'deployment'::text])))
+);
+
+ALTER TABLE ONLY public.traffic_security_epochs
+    ADD CONSTRAINT traffic_security_epochs_pkey PRIMARY KEY (scope_kind, scope_id);
