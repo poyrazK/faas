@@ -804,6 +804,7 @@ type MemStore struct {
 	projectsByAccountSlug                     map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo                     map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments                       map[string]ProjectEnvironment
+	projectEnvironmentPromotionWorkloadSpecs  map[string]ProjectEnvironmentPromotionWorkloadSpec
 	projectEnvironmentWorkloadSpecs           map[string]ProjectEnvironmentWorkloadSpec
 	projectEnvironmentWorkloadHeads           map[string]string
 	projectEnvironmentWorkloadDeploymentSpecs map[string]string
@@ -1307,6 +1308,7 @@ func NewMemStore() *MemStore {
 		projectsByAccountSlug:                     map[string]map[string]string{},
 		projectsByInstallRepo:                     map[installRepoKey]string{},
 		projectEnvironments:                       map[string]ProjectEnvironment{},
+		projectEnvironmentPromotionWorkloadSpecs:  map[string]ProjectEnvironmentPromotionWorkloadSpec{},
 		projectEnvironmentWorkloadSpecs:           map[string]ProjectEnvironmentWorkloadSpec{},
 		projectEnvironmentWorkloadHeads:           map[string]string{},
 		projectEnvironmentWorkloadDeploymentSpecs: map[string]string{},
@@ -5692,6 +5694,11 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			recordActivity = true
 		}
 	}
+	var syncErr error
+	a, syncErr = m.syncProductionWorkloadSpecLocked(a, p)
+	if syncErr != nil {
+		return App{}, syncErr
+	}
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
@@ -6483,15 +6490,15 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil)
+	created, _, err := m.createDeployment(d, nil, nil)
 	return created, err
 }
 
 func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity)
+	return m.createDeployment(d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6500,6 +6507,29 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	var prepared ProjectEnvironmentWorkloadSpec
+	var capture ProjectEnvironmentPromotionWorkloadSpec
+	if promotionInput != nil {
+		if existing, found := m.projectEnvironmentPromotionWorkloadSpecs[workloadSpecHeadKey(promotionInput.PromotionID, app.ID)]; found {
+			promotion := m.projectEnvironmentPromotions[promotionInput.PromotionID]
+			matched := false
+			for _, workload := range m.projectEnvironmentPromotionWorkloads[promotion.ID] {
+				matched = matched || workload.WorkloadSlug == app.Slug && workload.SourceDeploymentID == promotionInput.SourceDeploymentID
+			}
+			deployment, ok := m.deployments[existing.DeploymentID]
+			if !matched || !ok || promotion.AccountID != app.AccountID || promotion.ProjectID != app.ProjectID ||
+				deployment.Scope != d.Scope || (deployment.Status != DeployPending && deployment.Status != DeployLive) ||
+				existing.SourceHash != promotionInput.SourceHash || existing.PreviousHash != promotionInput.PreviousTargetHash {
+				return Deployment{}, 0, ErrConflict
+			}
+			return deployment, 0, nil
+		}
+		var err error
+		prepared, capture, err = m.preparePromotionWorkloadSpecLocked(app, d.Scope, *promotionInput)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
@@ -6629,6 +6659,18 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 				m.projectEnvironmentWorkloadDeploymentSpecs[d.ID] = specID
 			}
 		}
+	}
+	if prepared.ID != "" {
+		if capture.legacyPreviousSpec.ID != "" {
+			m.projectEnvironmentWorkloadSpecs[capture.legacyPreviousSpec.ID] = capture.legacyPreviousSpec
+			m.projectEnvironmentWorkloadDeploymentSpecs[capture.legacyPreviousDeploymentID] = capture.legacyPreviousSpec.ID
+			capture.legacyPreviousSpec = ProjectEnvironmentWorkloadSpec{}
+			capture.legacyPreviousDeploymentID = ""
+		}
+		m.projectEnvironmentWorkloadSpecs[prepared.ID] = prepared
+		m.projectEnvironmentWorkloadDeploymentSpecs[d.ID] = prepared.ID
+		capture.DeploymentID = d.ID
+		m.projectEnvironmentPromotionWorkloadSpecs[workloadSpecHeadKey(capture.PromotionID, app.ID)] = capture
 	}
 	var outboxID int64
 	if activity != nil {

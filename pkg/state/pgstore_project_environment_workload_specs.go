@@ -117,10 +117,15 @@ func putWorkloadSpecTx(ctx context.Context, tx pgx.Tx, environmentID, appID stri
 	if current.ID != "" && current.Hash == hash {
 		return current, nil
 	}
+	var revision int64
+	if err := tx.QueryRow(ctx, `select coalesce(max(revision), 0) + 1 from project_environment_workload_specs
+		where environment_id = $1 and app_id = $2`, environmentID, appID).Scan(&revision); err != nil {
+		return ProjectEnvironmentWorkloadSpec{}, mapErr(err)
+	}
 	id := uuid.NewString()
 	if _, err := tx.Exec(ctx, `insert into project_environment_workload_specs
 		(id, environment_id, app_id, revision, config_hash, settings) values ($1, $2, $3, $4, $5, $6)`,
-		id, environmentID, appID, expectedRevision+1, hash, raw); err != nil {
+		id, environmentID, appID, revision, hash, raw); err != nil {
 		return ProjectEnvironmentWorkloadSpec{}, mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `insert into project_environment_workload_heads (environment_id, app_id, spec_id)

@@ -3892,7 +3892,27 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
-	return updateApp(ctx, s.pool, id, p)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return App{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var found int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
+		return App{}, mapErr(err)
+	}
+	app, err := updateApp(ctx, tx, id, p)
+	if err != nil {
+		return App{}, err
+	}
+	app, err = syncProductionWorkloadSpecTx(ctx, tx, app, p)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, mapErr(err)
+	}
+	return app, nil
 }
 
 type appUpdateQueryRower interface {
@@ -6711,15 +6731,15 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
-	created, _, err := s.createDeployment(ctx, d, nil)
+	created, _, err := s.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
 func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return s.createDeployment(ctx, d, &activity)
+	return s.createDeployment(ctx, d, &activity, nil)
 }
 
-func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6729,6 +6749,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	if promotionInput != nil {
+		if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotionInput.PromotionID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if d.RolloutState == "" {
 		d.RolloutState = "pending"
 	}
@@ -6750,6 +6775,34 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+	if promotionInput != nil {
+		capture, err := scanPromotionWorkloadSpec(tx.QueryRow(ctx, promotionWorkloadSpecSelect+`
+			where promotion_id = $1 and app_id = $2`, promotionInput.PromotionID, d.AppID))
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, err
+		}
+		if capture.DeploymentID != "" {
+			var matched bool
+			if err := tx.QueryRow(ctx, `select exists (select 1 from project_environment_promotion_workloads w
+				join project_environment_promotions p on p.id = w.promotion_id
+				join apps a on a.slug = w.workload_slug and a.account_id = p.account_id and a.project_id = p.project_id
+				where p.id = $1 and a.id = $2 and w.source_deployment_id = $3)`, promotionInput.PromotionID, d.AppID, promotionInput.SourceDeploymentID).Scan(&matched); err != nil {
+				return Deployment{}, 0, mapErr(err)
+			}
+			existing, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, capture.DeploymentID))
+			if err != nil {
+				return Deployment{}, 0, err
+			}
+			if !matched || existing.Scope != d.Scope || (existing.Status != DeployPending && existing.Status != DeployLive) ||
+				capture.SourceHash != promotionInput.SourceHash || capture.PreviousHash != promotionInput.PreviousTargetHash {
+				return Deployment{}, 0, ErrConflict
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return Deployment{}, 0, mapErr(err)
+			}
+			return existing, 0, nil
+		}
 	}
 	// 2. Supersede an older pending row, if any. A live deployment remains
 	//    routable until MarkDeploymentLive atomically promotes its healthy
@@ -6936,14 +6989,20 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err != nil {
 		return Deployment{}, 0, err
 	}
-	// The parent app lock above also fences stage spec edits, so the settings
-	// pinned here are one immutable revision throughout the build pipeline.
-	if _, err := tx.Exec(ctx, `insert into project_environment_workload_deployment_specs (deployment_id, spec_id)
+	if promotionInput != nil {
+		if err := preparePromotionWorkloadSpecTx(ctx, tx, created, *promotionInput); err != nil {
+			return Deployment{}, 0, err
+		}
+	} else {
+		// The parent app lock above also fences stage spec edits, so the settings
+		// pinned here are one immutable revision throughout the build pipeline.
+		if _, err := tx.Exec(ctx, `insert into project_environment_workload_deployment_specs (deployment_id, spec_id)
 		select $1, h.spec_id from project_environment_workload_heads h
 		join project_environments e on e.id = h.environment_id
 		join apps a on a.id = h.app_id and a.project_id = e.project_id and a.account_id = e.account_id
 		where a.id = $2 and e.slug = $3`, created.ID, created.AppID, workloadEnvironmentSlug(created.Scope)); err != nil {
-		return Deployment{}, 0, mapErr(err)
+			return Deployment{}, 0, mapErr(err)
+		}
 	}
 	var outboxID int64
 	if activity != nil {

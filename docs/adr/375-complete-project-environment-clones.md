@@ -124,8 +124,9 @@ Legacy deployments without a pin retain the pre-existing App behavior.
 `GET/PATCH /v1/apps/{slug}?environment=staging` and the CLI's
 `app [scale] --environment staging` support desired configuration edits.
 Revision headers fence concurrent CLI edits, and direct app settings edits to
-protected environments are rejected. Ordinary production App settings remain
-the legacy authority until complete promotion supports their atomic cutover.
+protected environments are rejected. Production App fields remain a compatibility
+projection: workload configuration promotion updates that projection atomically,
+and ordinary App edits advance an existing production desired head.
 
 Remaining work includes a complete source inventory and consistent capture
 barrier, connecting the PostgreSQL and object copy workers to one durable clone,
@@ -152,3 +153,33 @@ fingerprints, desired edits during probes, and a source edit after qualification
 but before publication; the rejected publication leaves the target graph intact.
 API/CLI qualification checks and OpenAPI compliance pass. These checks do not
 establish full clone readiness or native VM lifecycle acceptance.
+
+### Workload configuration promotion (2026-09-29)
+
+Promotions with `sync_config` fingerprint the exact source deployment settings,
+the target desired configuration, and the configuration after target placement
+is preserved. These hashes participate in preview/approval identity; an unchanged
+artifact with changed settings is an update. Preparation inserts an immutable
+target revision and deployment pin without advancing its desired head. The prior
+head and fallback settings are persisted, and an unpinned legacy target deployment
+is frozen before the production App projection changes.
+
+Release activation switches the prepared heads and production projection in the
+same transaction as the graph and project configuration. Rollback restores the
+captured head or legacy fallback and projection in its graph transaction. Both
+operations compare the exact expected head and configuration hash. Ordinary App
+updates synchronize an existing production head; deployment pins stay immutable.
+Revisions are allocated from retained history, including prepared revisions, so
+rollback to a lower head does not reuse revision numbers. Preparation, publication,
+and rollback retries reuse durable identities. Target static egress and overflow
+placement are retained; these operations do not write managed data bindings.
+
+The focused MemStore and PostgreSQL contracts verify preparation isolation,
+configuration projection, retained legacy releases, retries, revision allocation,
+rollback, and refusal to overwrite concurrent production edits. The API covers a
+configuration-only promotion and rollback using the same artifact, with protected
+approval and qualification, plus reconstruction after cutover. The complete state
+package binary exceeded local disk capacity during concurrent unrelated builds;
+its existing stage test files were also run unchanged through a small temporary
+harness against the real stores. This is focused evidence, not full-suite or native
+VM acceptance. Remaining full-clone gaps listed above still apply.

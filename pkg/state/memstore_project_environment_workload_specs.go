@@ -80,7 +80,7 @@ func (m *MemStore) putWorkloadSpecLocked(env ProjectEnvironment, appID string, e
 	}
 	spec := ProjectEnvironmentWorkloadSpec{
 		ID: newID(), AccountID: env.AccountID, ProjectID: env.ProjectID, EnvironmentID: env.ID,
-		EnvironmentSlug: env.Slug, AppID: appID, Revision: expectedRevision + 1,
+		EnvironmentSlug: env.Slug, AppID: appID, Revision: m.nextWorkloadSpecRevisionLocked(env.ID, appID),
 		Hash: hash, Settings: copy, CreatedAt: time.Now().UTC(),
 	}
 	m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
@@ -137,6 +137,11 @@ func (m *MemStore) deleteEnvironmentWorkloadSpecsLocked(environmentID string) {
 		}
 		delete(m.projectEnvironmentWorkloadSpecs, id)
 		delete(m.projectEnvironmentWorkloadHeads, workloadSpecHeadKey(environmentID, spec.AppID))
+		for key, capture := range m.projectEnvironmentPromotionWorkloadSpecs {
+			if capture.PreparedSpecID == id {
+				delete(m.projectEnvironmentPromotionWorkloadSpecs, key)
+			}
+		}
 		for deploymentID, specID := range m.projectEnvironmentWorkloadDeploymentSpecs {
 			if specID == id {
 				delete(m.projectEnvironmentWorkloadDeploymentSpecs, deploymentID)

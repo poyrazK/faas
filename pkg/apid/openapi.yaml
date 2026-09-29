@@ -32471,6 +32471,9 @@ components:
       type: object
       required: [workload_slug, workload_name, kind]
       properties:
+        source_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        target_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        promoted_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         kind:

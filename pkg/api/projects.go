@@ -457,17 +457,20 @@ type ProjectEnvironmentConfigDiffResponse struct {
 // target environment release identity. Values are deployment metadata only;
 // the preview never exposes source bytes or secrets.
 type ProjectEnvironmentPromotionChange struct {
-	WorkloadSlug       string `json:"workload_slug"`
-	WorkloadName       string `json:"workload_name"`
-	Kind               string `json:"kind"`
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	TargetDeploymentID string `json:"target_deployment_id,omitempty"`
-	SourceBuildID      string `json:"source_build_id,omitempty"`
-	TargetBuildID      string `json:"target_build_id,omitempty"`
-	SourceRevision     string `json:"source_revision,omitempty"`
-	TargetRevision     string `json:"target_revision,omitempty"`
-	SourceRevisionKind string `json:"source_revision_kind,omitempty"`
-	TargetRevisionKind string `json:"target_revision_kind,omitempty"`
+	SourceWorkloadConfigHash   string `json:"source_workload_config_hash,omitempty"`
+	TargetWorkloadConfigHash   string `json:"target_workload_config_hash,omitempty"`
+	PromotedWorkloadConfigHash string `json:"promoted_workload_config_hash,omitempty"`
+	WorkloadSlug               string `json:"workload_slug"`
+	WorkloadName               string `json:"workload_name"`
+	Kind                       string `json:"kind"`
+	SourceDeploymentID         string `json:"source_deployment_id,omitempty"`
+	TargetDeploymentID         string `json:"target_deployment_id,omitempty"`
+	SourceBuildID              string `json:"source_build_id,omitempty"`
+	TargetBuildID              string `json:"target_build_id,omitempty"`
+	SourceRevision             string `json:"source_revision,omitempty"`
+	TargetRevision             string `json:"target_revision,omitempty"`
+	SourceRevisionKind         string `json:"source_revision_kind,omitempty"`
+	TargetRevisionKind         string `json:"target_revision_kind,omitempty"`
 }
 
 // ProjectEnvironmentPromotionPreviewResponse is a read-only promotion plan

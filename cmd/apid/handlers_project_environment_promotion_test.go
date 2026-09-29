@@ -773,6 +773,7 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	}
 }
 
+// adr: 375
 func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
@@ -802,7 +803,18 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	}
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+	app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousRAM := app.RAMMB
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.RAMMB, settings.StartCommand = 512, "serve stage tested"
+	stageSpec, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, 0, settings)
+	if err != nil {
 		t.Fatal(err)
 	}
 	createLive := func(environment, image, rootfs string) state.Deployment {
@@ -822,7 +834,7 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 		return deployment
 	}
 	sourceGraphDeployment := createLive("staging", "sha256:source-graph", "source-graph")
-	previousTarget := createLive("production", "sha256:production-old", "production-old")
+	previousTarget := createLive("production", "sha256:source-graph", "production-old")
 	sourceGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
 		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: sourceGraphDeployment.ID}})
 	if err != nil {
@@ -853,6 +865,10 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 		preview.ToReleaseSet == nil || preview.ToReleaseSet.ID != previousTargetGraph.ID || len(preview.Changes) != 1 ||
 		preview.Changes[0].SourceDeploymentID != sourceGraphDeployment.ID || preview.Changes[0].TargetDeploymentID != previousTarget.ID {
 		t.Fatalf("preview did not preserve graph members: %+v", preview)
+	}
+	if preview.Changes[0].Kind != "update" || preview.Changes[0].SourceWorkloadConfigHash != stageSpec.Hash ||
+		preview.Changes[0].SourceRevision != preview.Changes[0].TargetRevision {
+		t.Fatalf("configuration-only change was missed: %+v", preview.Changes[0])
 	}
 	wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
 	if err != nil || !wire.SyncConfig {
@@ -900,6 +916,21 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	if active.ID != promotion.TargetReleaseSetID || len(active.Members) != 1 || active.Members[0].DeploymentID != workloads[0].TargetDeploymentID {
 		t.Fatalf("atomic target graph=%+v promotion=%+v workload=%+v", active, promotion, workloads[0])
 	}
+	production, err := store.AppByID(ctx, app.ID)
+	if err != nil || production.RAMMB != 512 || production.StartCommand != "serve stage tested" {
+		t.Fatalf("promoted workload configuration=%+v, %v", production, err)
+	}
+	previousRuntime, err := state.AppForDeployment(ctx, store, previousTarget)
+	if err != nil || previousRuntime.RAMMB != previousRAM || previousRuntime.StartCommand == "serve stage tested" {
+		t.Fatalf("retained graph configuration changed: %+v, %v", previousRuntime, err)
+	}
+	resumePlan, resumeProblem := srv.buildProjectEnvironmentPromotionResumePlan(ctx, acct, promotion, workloads)
+	if resumeProblem != nil {
+		t.Fatalf("configuration cutover cannot resume: %v", resumeProblem)
+	}
+	if problem := validateProjectEnvironmentPromotionResume(wire, promotion, workloads, resumePlan); problem != nil {
+		t.Fatalf("captured configuration identity changed after cutover: %v", problem)
+	}
 
 	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
@@ -929,6 +960,10 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	releaseID, deploymentID, err := store.ResolveProjectRelease(ctx, app.ID, "production", "")
 	if err != nil || releaseID != active.ID || deploymentID != previousTarget.ID {
 		t.Fatalf("default production release after rollback=%q/%q err=%v", releaseID, deploymentID, err)
+	}
+	production, err = store.AppByID(ctx, app.ID)
+	if err != nil || production.RAMMB != previousRAM || production.StartCommand == "serve stage tested" {
+		t.Fatalf("workload configuration was not rolled back: %+v, %v", production, err)
 	}
 }
 
@@ -1092,12 +1127,16 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 		}
 		secretRevisionHashes[app.Slug] = hash
 	}
+	workloadHashes, _, err := store.ProjectEnvironmentWorkloadConfigHashes(ctx, acct.ID, project.ID, environment, releaseSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	qualification, err := store.CreateProjectEnvironmentQualification(context.Background(), acct.ID, project.ID, environment, releaseSetID, configurationVersion, configurationHash,
 		secretRevisionHashes,
 		[]state.ProjectEnvironmentQualificationCheck{
 			{Name: "health", Status: health, Results: resultsForStatus(health)},
 			{Name: "smoke", Status: smoke, Results: resultsForStatus(smoke)},
-		}, nil)
+		}, workloadHashes)
 	if err != nil {
 		t.Fatal(err)
 	}
