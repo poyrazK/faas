@@ -395,7 +395,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; \"shared\" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement)"},
-	{Name: "FAAS_PUBLIC_LISTEN_ADDR", Owners: []string{"gatewayd-public"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_PUBLIC_LISTEN_ADDR", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check"},
 	{Name: "FAAS_PUBLIC_STATUS_LAUNCH_AT", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "public-beta launch boundary rendered by the control-plane deployment"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
