@@ -67,6 +67,8 @@ create trigger managed_realtime_channel_route_targets_routes_trg
     for each row execute function managed_realtime_channel_route_targets_notify();
 
 drop trigger if exists managed_realtime_channel_route_targets_node_state_trg on managed_realtime_channel_route_node_state;
+drop trigger if exists managed_realtime_channel_route_targets_node_state_write_trg on managed_realtime_channel_route_node_state;
+drop trigger if exists managed_realtime_channel_route_targets_node_state_update_trg on managed_realtime_channel_route_node_state;
 create trigger managed_realtime_channel_route_targets_node_state_write_trg
     after insert or delete on managed_realtime_channel_route_node_state
     for each row execute function managed_realtime_channel_route_targets_notify();
@@ -78,6 +80,8 @@ create trigger managed_realtime_channel_route_targets_node_state_update_trg
     execute function managed_realtime_channel_route_targets_notify();
 
 drop trigger if exists managed_realtime_channel_route_targets_generation_trg on managed_realtime_channel_route_generation;
+drop trigger if exists managed_realtime_channel_route_targets_generation_write_trg on managed_realtime_channel_route_generation;
+drop trigger if exists managed_realtime_channel_route_targets_generation_update_trg on managed_realtime_channel_route_generation;
 create trigger managed_realtime_channel_route_targets_generation_write_trg
     after insert or delete on managed_realtime_channel_route_generation
     for each row execute function managed_realtime_channel_route_targets_notify();
@@ -88,6 +92,8 @@ create trigger managed_realtime_channel_route_targets_generation_update_trg
     execute function managed_realtime_channel_route_targets_notify();
 
 drop trigger if exists managed_realtime_channel_route_targets_overflow_trg on managed_realtime_channel_route_overflow;
+drop trigger if exists managed_realtime_channel_route_targets_overflow_write_trg on managed_realtime_channel_route_overflow;
+drop trigger if exists managed_realtime_channel_route_targets_overflow_update_trg on managed_realtime_channel_route_overflow;
 create trigger managed_realtime_channel_route_targets_overflow_write_trg
     after insert or delete on managed_realtime_channel_route_overflow
     for each row execute function managed_realtime_channel_route_targets_notify();
@@ -98,6 +104,8 @@ create trigger managed_realtime_channel_route_targets_overflow_update_trg
     execute function managed_realtime_channel_route_targets_notify();
 
 drop trigger if exists managed_realtime_channel_route_targets_overflow_channels_trg on managed_realtime_channel_route_overflow_channels;
+drop trigger if exists managed_realtime_channel_route_targets_overflow_channels_write_trg on managed_realtime_channel_route_overflow_channels;
+drop trigger if exists managed_realtime_channel_route_targets_overflow_channels_update_trg on managed_realtime_channel_route_overflow_channels;
 create trigger managed_realtime_channel_route_targets_overflow_channels_write_trg
     after insert or delete on managed_realtime_channel_route_overflow_channels
     for each row execute function managed_realtime_channel_route_targets_notify();
