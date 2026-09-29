@@ -4240,6 +4240,12 @@ const (
 	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
 	// keeps per app to seed new instances of that app.
 	DNSGatedEgressAppSeedMax = 4096
+	// ADR-369 egress flow log: rows are kept EgressFlowLogRetentionDays
+	// (long enough to answer a provider abuse report, which can arrive
+	// weeks later) and an operator lookup returns at most
+	// EgressFlowLogPageMax rows.
+	EgressFlowLogRetentionDays = 30
+	EgressFlowLogPageMax       = 1000
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,

@@ -1545,6 +1545,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		popInstance = netns.PopCountersInNetns
 	}
 	go runEgressDeniedPoll(ctx, mgr, ops, popInstance, interval, log)
+	// ADR-369: persist each instance's new egress destinations so an
+	// abuse report about this node's address can be traced to a tenant.
+	if flowStore, ok := store.(state.EgressFlowLogStore); ok && store != nil {
+		go runEgressFlowLog(ctx, mgr, flowStore, cfg.ComputeNode.NodeName, nil, ops, interval, log)
+	}
 
 	// CPU sample loop (issue #279 / PR-B): drives the cpustats
 	// cache at 250 ms cadence — half the schedd poller's

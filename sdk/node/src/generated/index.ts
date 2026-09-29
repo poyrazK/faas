@@ -354,6 +354,8 @@ export type { EdgeRuleSuggestion } from './models/EdgeRuleSuggestion.js';
 export type { EdgeRuleThrottleAction } from './models/EdgeRuleThrottleAction.js';
 export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js';
 export type { EgressCircuitBreakerPolicy } from './models/EgressCircuitBreakerPolicy.js';
+export type { EgressFlowLogEntry } from './models/EgressFlowLogEntry.js';
+export type { EgressFlowLogResponse } from './models/EgressFlowLogResponse.js';
 export type { EnableAlertPresetRequest } from './models/EnableAlertPresetRequest.js';
 export type { EnvDiffCell } from './models/EnvDiffCell.js';
 export type { EnvDiffKind } from './models/EnvDiffKind.js';

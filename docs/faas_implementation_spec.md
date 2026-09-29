@@ -1724,6 +1724,7 @@ Every catalog CIDR (spec §11) carries a stable nftables named counter (`drop_v4
 | Egress abuse enforcement (ADR-361) | `schedd_egress_abuse_recycles_total` | `app`, `reason` | instances schedd destroyed for reaching the plan's `EgressNewDestinationsPerMinute` (`fanout`) or `EgressFloodDropsPerMinute` (`flood`); any increase pages (`FaasTenantEgressAbuse`) |
 | Guest DNS blocklist (ADR-373) | `gatewayd_dns_blocked_total` | `category` | guest lookups the bridge resolver answered NXDOMAIN because the name is blocklisted; `FaasGuestDNSBlocked` warns |
 | Build-time abuse scan (ADR-368) | `imaged_abuse_scan_findings_total` | `category`, `action` | findings from the post-build signature scan; `action="block"` failed the deploy (`FaasImageAbuseBlocked` pages), `action="flag"` is for review |
+| Egress flow log (ADR-369) | `vmmd_egress_flow_log_rows_total` | — | new (destination, port) pairs recorded from each instance's `egress_flows` set; a flat line on a busy node means the log stopped |
 | Account abuse hold (ADR-361) | `schedd_account_abuse_holds_total` | `reason` | account abuse holds schedd placed (`egress_fanout`, `egress_flood`); any increase pages (`FaasAccountAbuseHold`) |
 | Per-netns nftables | (not exported) | — | per-VM cardinality is unbounded; available via `nft list counters` on the operator box for debugging |
 | OCI user-space dialer | `imaged_oci_egress_deny_total` | `cidr`, `family` | `pkg/oci/egress.go::EgressDenyHook` invoked from `EgressDialContext` on denial; `cmd/imaged/main.go` wires the hook |

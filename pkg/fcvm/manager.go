@@ -646,8 +646,9 @@ type Instance struct {
 // per-namespace egress counter poller. Keeping this separate from Instance
 // prevents the telemetry loop from depending on mutable runtime state.
 type LiveEgressInstance struct {
-	AppID string
-	Netns string
+	AppID     string
+	AccountID string
+	Netns     string
 }
 
 // SnapshotLiveEgress returns a point-in-time instance → app/netns map. The
@@ -657,7 +658,7 @@ func (m *Manager) SnapshotLiveEgress() map[string]LiveEgressInstance {
 	defer m.mu.Unlock()
 	out := make(map[string]LiveEgressInstance, len(m.live))
 	for instance, live := range m.live {
-		out[instance] = LiveEgressInstance{AppID: live.AppID, Netns: live.Net.Netns}
+		out[instance] = LiveEgressInstance{AppID: live.AppID, AccountID: live.AccountID, Netns: live.Net.Netns}
 	}
 	return out
 }

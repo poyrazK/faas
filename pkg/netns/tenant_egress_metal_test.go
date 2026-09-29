@@ -304,3 +304,23 @@ func TestMetalTenantEgressDNSGated(t *testing.T) {
 		t.Fatalf("TCP to a resolved address must pass: ok=%v reply=%q", ok, reply)
 	}
 }
+
+// TestMetalTenantEgressFlowsRecorded opens a real flow and reads it back
+// through the egress_flows set vmmd polls (ADR-369).
+func TestMetalTenantEgressFlowsRecorded(t *testing.T) {
+	topo := newEgressTopology(t, "flw", nil)
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {
+		t.Fatalf("TCP 443 must pass: ok=%v reply=%q", ok, reply)
+	}
+	flows, err := ListEgressFlowsInNetns(context.Background(), topo.inst)
+	if err != nil {
+		t.Fatalf("ListEgressFlowsInNetns: %v", err)
+	}
+	want := EgressFlow{Addr: netip.MustParseAddr("198.51.100.10"), Port: 443}
+	for _, f := range flows {
+		if f == want {
+			return
+		}
+	}
+	t.Fatalf("flows = %+v, want %+v", flows, want)
+}

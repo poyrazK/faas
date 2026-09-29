@@ -1221,6 +1221,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-369: egress flow log rows are kept api.EgressFlowLogRetentionDays.
+	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 
 	// ADR-127: per-request telemetry retention sweep. Runs on a
 	// shorter cadence (hourly default) than the usage_minutes

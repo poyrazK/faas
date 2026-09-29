@@ -209,3 +209,18 @@ gatewayd-internal journal. As an emergency measure, set
 `FAAS_EGRESS_DNS_GATING=off` in vmmd's environment on that node and restart it.
 New VMs are then created ungated; every other egress control stays in place.
 Revert once the hook is fixed.
+
+## Tracing a provider abuse report
+
+A provider or abuse desk usually reports "your address A contacted B at time T".
+The egress flow log (ADR-369) keeps 30 days of every destination and TCP port each
+tenant instance opened a flow to:
+
+```
+gregale admin egress-flows --remote <B> --from <T-15m> --to <T+15m>
+```
+
+Each row names the node, account, app and instance. Pick the rows whose node owns
+address A. Widen `--remote` to the reported CIDR if the report names a range.
+Then hold the account (`gregale admin abuse-hold place`) and reply to the report
+with the action taken.

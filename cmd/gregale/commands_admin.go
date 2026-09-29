@@ -24,8 +24,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdAdmin is the dispatcher for `gregale admin <subcommand>`. New
@@ -38,11 +41,12 @@ import (
 // the account uuid + cents positionals.
 func cmdAdmin(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits|abuse-hold>")
+		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits|abuse-hold|egress-flows>")
 		fmt.Fprintln(os.Stderr, "  gregale admin credit --reason <text> <account_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin consume-credits <invoice-id>")
 		fmt.Fprintln(os.Stderr, "  gregale admin abuse-hold <place|release> --note <text> <account_uuid>")
+		fmt.Fprintln(os.Stderr, "  gregale admin egress-flows [--remote ip|cidr] [--account id] [--from t] [--to t] [--limit n]")
 		PrintUsage(os.Stderr, "usage: gregale admin <subcommand>", "admin")
 		return 2
 	}
@@ -55,6 +59,8 @@ func cmdAdmin(args []string) int {
 		return cmdAdminConsumeCredits(args[1:])
 	case "abuse-hold":
 		return cmdAdminAbuseHold(args[1:])
+	case "egress-flows":
+		return cmdAdminEgressFlows(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregale: unknown admin subcommand %q\n", args[0])
 		return 2
@@ -300,6 +306,59 @@ func cmdAdminAbuseHold(args []string) int {
 		PrintOK(osStdout, "Released account %s; its apps wake on their next request", resp.AccountID)
 	default:
 		PrintOK(osStdout, "Account %s was not held", resp.AccountID)
+	}
+	return 0
+}
+
+// cmdAdminEgressFlows searches the ADR-369 egress flow log: which tenant
+// opened flows to an address in a window. Times are RFC 3339.
+func cmdAdminEgressFlows(args []string) int {
+	fs := newFlagSet("admin egress-flows", flag.ContinueOnError)
+	remote := fs.String("remote", "", "remote IP address or CIDR")
+	account := fs.String("account", "", "account id")
+	from := fs.String("from", "", "window start, RFC 3339 (default: 24h before --to)")
+	to := fs.String("to", "", "window end, RFC 3339 (default: now)")
+	limit := fs.Int("limit", 0, "maximum rows (default 200, max 1000)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	q := api.EgressFlowQuery{Remote: *remote, AccountID: *account, Limit: *limit}
+	for _, p := range []struct {
+		name, val string
+		dst       *time.Time
+	}{{"from", *from, &q.From}, {"to", *to, &q.To}} {
+		if p.val == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, p.val)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gregale: --%s must be an RFC 3339 time\n", p.name)
+			return 2
+		}
+		*p.dst = t
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ListEgressFlows(context.Background(), q)
+	if err != nil {
+		return printErr("Egress flow search failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	if len(resp.Flows) == 0 {
+		PrintOK(osStdout, "No egress flows match")
+		return 0
+	}
+	_, _ = fmt.Fprintf(osStdout, "%-20s  %-8s  %-32s  %-32s  %s\n", "OBSERVED", "NODE", "ACCOUNT", "APP", "REMOTE")
+	for _, f := range resp.Flows {
+		_, _ = fmt.Fprintf(osStdout, "%-20s  %-8s  %-32s  %-32s  %s:%d\n",
+			f.ObservedAt.UTC().Format("2006-01-02T15:04:05Z"), f.Node, f.AccountID, f.AppID, f.RemoteIP, f.RemotePort)
+	}
+	if resp.Truncated {
+		_, _ = fmt.Fprintln(osStdout, "(page limit reached; narrow the window or filter to see more)")
 	}
 	return 0
 }

@@ -1537,6 +1537,8 @@ type OpsMetrics struct {
 	// abuseScanFindings counts ADR-368 build-time abuse scan findings by
 	// category and action.
 	abuseScanFindings *prometheus.CounterVec
+	// egressFlowLogRows counts ADR-369 egress flow log rows written.
+	egressFlowLogRows prometheus.Counter
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -3576,6 +3578,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_abuse_scan_findings_total",
 		Help: "Build-time abuse signature scan findings (ADR-368), by category (miner, scanner, flood, proxy) and action (block fails the deploy, flag is for operator review). Emitted by imaged after each image build.",
 	}, []string{"category", "action"})
+	egressFlowLogRows := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_egress_flow_log_rows_total",
+		Help: "Egress flow log rows written (ADR-369): new (destination, port) pairs tenant guests opened flows to. A flat line on a busy node means the flow log stopped recording.",
+	})
 	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_account_abuse_holds_total",
 		Help: "ADR-361 account abuse holds placed, by reason (egress_fanout / egress_flood: the account's instances were recycled for egress abuse EgressFanoutHoldRecycles times within the hold window, the last one for that signal). A held account runs nothing until an operator releases it.",
@@ -3816,7 +3822,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, dnsBlocked, abuseScanFindings,
+		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, dnsBlocked, abuseScanFindings, egressFlowLogRows,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -5369,6 +5375,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		accountAbuseHolds:                                     accountAbuseHolds,
 		dnsBlocked:                                            dnsBlocked,
 		abuseScanFindings:                                     abuseScanFindings,
+		egressFlowLogRows:                                     egressFlowLogRows,
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
@@ -7553,6 +7560,14 @@ func (m *OpsMetrics) AbuseScanFinding(category, action string) prometheus.Counte
 		return nil
 	}
 	return m.abuseScanFindings.WithLabelValues(category, action)
+}
+
+// EgressFlowLogRows returns the ADR-369 egress flow log row counter.
+func (m *OpsMetrics) EgressFlowLogRows() prometheus.Counter {
+	if m == nil || m.egressFlowLogRows == nil {
+		return nil
+	}
+	return m.egressFlowLogRows
 }
 
 // AccountAbuseHold returns the ADR-361 account abuse hold counter.

@@ -364,7 +364,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "admin",
 		DocSlug:  "admin",
-		Short:    "Operator-only ops (admin credit|refund|consume-credits|abuse-hold)",
+		Short:    "Operator-only ops (admin credit|refund|consume-credits|abuse-hold|egress-flows)",
 		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "credit", Short: "Issue a billing credit", Flags: []cliFlag{
@@ -377,6 +377,13 @@ var cliCommands = []cliCommand{
 			{Name: "consume-credits", Short: "Consume credits against an invoice"},
 			{Name: "abuse-hold", Short: "Place or release an account abuse hold (place|release)", Flags: []cliFlag{
 				{Name: "note", Short: "audit note", Req: true, Value: "text"},
+			}},
+			{Name: "egress-flows", Short: "Search the egress flow log (which tenant connected where)", Flags: []cliFlag{
+				{Name: "remote", Short: "remote IP address or CIDR", Value: "ip|cidr"},
+				{Name: "account", Short: "account id", Value: "id"},
+				{Name: "from", Short: "window start (RFC 3339)", Value: "time"},
+				{Name: "to", Short: "window end (RFC 3339)", Value: "time"},
+				{Name: "limit", Short: "maximum rows", Value: "n"},
 			}},
 		},
 		Positionals: []string{"<uuid>", "<cents>"},

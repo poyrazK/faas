@@ -20247,6 +20247,38 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ─── ADR-369 egress flow log ──────────────────────────────────────────
+  # Operator-only lookup: which tenant connected to an address at a time.
+  /v1/admin/egress-flows:
+    get:
+      tags: [admin]
+      operationId: listEgressFlows
+      summary: Search the egress flow log (operator-only).
+      description: |
+        Destination addresses and TCP ports tenant guests opened new flows to,
+        newest first. Filter by remote address or CIDR, account, and a
+        [from, to) window of at most the 30-day retention. Defaults to the
+        last 24 hours and 200 rows.
+      parameters:
+        - { name: remote, in: query, required: false, schema: { type: string }, description: "Remote IP address or CIDR." }
+        - { name: account_id, in: query, required: false, schema: { type: string }, description: "Only flows from this account's instances." }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time }, description: "Window start (inclusive); defaults to 24 hours before to." }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time }, description: "Window end (exclusive); defaults to now." }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000 }, description: "Maximum rows; defaults to 200." }
+      responses:
+        '200':
+          description: Matching flow log rows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EgressFlowLogResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — reading the flow log needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -23663,6 +23695,29 @@ components:
             - $ref: '#/components/schemas/AccountAbuseHold'
             - type: "null"
         changed: { type: boolean }
+
+    EgressFlowLogEntry:
+      description: "A destination address and TCP port a tenant guest opened a new flow to (ADR-369)."
+      type: object
+      required: [observed_at, node, account_id, app_id, instance_id, remote_ip, remote_port]
+      properties:
+        observed_at: { type: string, format: date-time }
+        node: { type: string }
+        account_id: { type: string }
+        app_id: { type: string }
+        instance_id: { type: string }
+        remote_ip: { type: string }
+        remote_port: { type: integer, minimum: 0, maximum: 65535 }
+
+    EgressFlowLogResponse:
+      description: "Egress flow log rows, newest first. truncated means the page limit was reached."
+      type: object
+      required: [flows, truncated]
+      properties:
+        flows:
+          type: array
+          items: { $ref: '#/components/schemas/EgressFlowLogEntry' }
+        truncated: { type: boolean }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
