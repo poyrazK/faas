@@ -2736,6 +2736,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		dep = explicitDep
 	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		release()
+		return WakeResult{}, fmt.Errorf("sched: resolve deployment settings: %w", err)
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		release()
 		return WakeResult{}, err
@@ -5262,6 +5267,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return AppSpec{}, fmt.Errorf("sched: build app spec: workload settings: %w", err)
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	// Sealed env is filtered through dep.OverrideEnvSecrets
 	// (jsonb) when present, mirroring the Wake path at
@@ -5912,6 +5921,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
+	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return fmt.Errorf("sched: prime: load workload settings: %w", err)
 	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
@@ -6814,7 +6827,7 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 		signal := syscall.Signal(opts.Signal)
 		grace := opts.GraceSeconds
 		if signal == 0 || grace <= 0 {
-			if app, aerr := e.store.AppByID(ctx, ins.AppID); aerr == nil {
+			if app, aerr := state.AppForInstance(ctx, e.store, *ins); aerr == nil {
 				if signal == 0 {
 					signal = parseStopSignal(app.Manifest.StopSignal)
 				}
@@ -7337,9 +7350,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// with the app's current machine configuration. Retire the old VM instead;
 	// the next request cold-boots the current shape and produces a compatible
 	// snapshot on its next park.
-	app, err := e.store.AppByID(ctx, ins.AppID)
+	app, err := state.AppForInstance(ctx, e.store, ins)
 	if err != nil {
-		return fmt.Errorf("sched: park: load current app shape: %w", err)
+		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
 	if app.RAMMB != ins.RAMMB {
 		e.log.Info("sched: park: discard instance after RAM change",
@@ -7792,6 +7805,10 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{},
 			fmt.Errorf("sched: resolve app: live deployment: %w", err)
 	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, fmt.Errorf("sched: resolve workload settings: %w", err)
+	}
 	return app, acct, limits, dep, nil
 }
 
@@ -7799,6 +7816,10 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
+	}
+	app, err = state.ResolveAppForEnvironment(ctx, e.store, app, ScopeFrom(ctx))
+	if err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve environment settings: %w", err)
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {

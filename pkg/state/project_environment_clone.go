@@ -78,7 +78,8 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if !ok || project.AccountID != clone.AccountID {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrNotFound
 	}
-	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.SourceSlug); err != nil {
+	source, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.SourceSlug)
+	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.TargetSlug); err == nil {
@@ -145,6 +146,27 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if err := m.checkProjectCloneQuotaLocked(apps, clone.SourceSlug, clone.ManagedBindingsPrepared, limits); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	settings := make(map[string]ProjectEnvironmentWorkloadSettings, len(apps))
+	for appID := range apps {
+		var captured ProjectEnvironmentWorkloadSettings
+		if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)]; specID != "" {
+			spec := m.projectEnvironmentWorkloadSpecs[specID]
+			hash, hashErr := WorkloadSettingsHash(spec.Settings)
+			if hashErr != nil || hash != spec.Hash {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+			}
+			captured, err = cloneWorkloadSettings(spec.Settings)
+		} else {
+			captured, err = WorkloadSettingsFromApp(m.apps[appID])
+			if policy, found := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]; found {
+				captured.OnlyAllowDeclaredRoutes, captured.DeclaredRoutes = policy.OnlyAllowDeclaredRoutes, cloneDeclaredRoutes(policy.DeclaredRoutes)
+			}
+		}
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		settings[appID] = captured
+	}
 	now := time.Now().UTC()
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
@@ -152,6 +174,16 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		CreatedAt: now, UpdatedAt: now,
 	}
 	m.projectEnvironments[created.ID] = created
+	for appID, captured := range settings {
+		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
+		spec := ProjectEnvironmentWorkloadSpec{
+			ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
+			EnvironmentID: created.ID, EnvironmentSlug: created.Slug, AppID: appID,
+			Revision: 1, Hash: hash, Settings: captured, CreatedAt: now,
+		}
+		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(created.ID, appID)] = spec.ID
+	}
 	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt)
 	result.WorkloadsCopied = len(apps)
 	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)

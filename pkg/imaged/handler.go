@@ -1808,7 +1808,7 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if dep.Status != state.DeployPending {
 		return nil
 	}
-	app, err := h.store.AppByID(ctx, p.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
 	}
@@ -3155,7 +3155,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
 	}
@@ -3409,7 +3409,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 	if hostingReceiptEnabled {
 		var appErr error
-		hostingApp, appErr = h.store.AppByID(ctx, dep.AppID)
+		hostingApp, appErr = state.AppForDeployment(ctx, h.store, dep)
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
@@ -3766,7 +3766,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// while the snapshot_prime notifier fails, and the deployment
 	// row would otherwise be left in DeployBuilding indefinitely.
 	defer h.markFailedOnUnhandledError(ctx, dep.ID, &err)
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
 	}
@@ -4350,7 +4350,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load deployment: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}

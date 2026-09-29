@@ -3949,14 +3949,28 @@ paths:
       tags: [apps]
       operationId: getApp
       summary: Fetch one app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+          schema: { type: string }
       responses:
         '200':
           description: The app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload settings revision for an environment-scoped request.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the immutable desired configuration, present when a revision exists.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppResponse'
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -3964,6 +3978,17 @@ paths:
       tags: [apps]
       operationId: updateApp
       summary: Partial-update an app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+          schema: { type: string }
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         description: "Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest."
@@ -3975,6 +4000,13 @@ paths:
       responses:
         '200':
           description: The updated app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: New desired revision saved by an environment-scoped edit.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 identifying the desired configuration saved by this edit.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -3984,6 +4016,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/InvalidMinInstances' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:

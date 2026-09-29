@@ -104,3 +104,35 @@ production while production data was preserved; and roll back code and config.
 Mutation races, failed resource preparation, stale qualification, unsupported
 providers, and cleanup retries must fail closed. The native x86_64 KVM lane
 must exercise actual deployment, wake, and route behavior.
+
+## Implementation progress
+
+The complete command contract above is not available yet. Implemented building
+blocks are durable fenced clone operations, version-pinned S3/GCS manifests,
+verified resumable object copies, and immutable environment workload settings.
+The workload field registry assigns every `App` field a copy, remap, identity,
+or operational disposition; it does not yet cover every related resource table.
+
+The existing environment clone transaction now materializes independent desired
+workload settings. New deployments pin their settings in the deployment create
+transaction. Build/image processing, explicit scheduler admission, prime,
+migration, park, task execution, environment URLs, deployment previews and
+aliases resolve the pinned configuration. Declared-route edits advance the
+desired revision, and the gateway uses the route revision pinned to a deployment.
+Legacy deployments without a pin retain the pre-existing App behavior.
+
+`GET/PATCH /v1/apps/{slug}?environment=staging` and the CLI's
+`app [scale] --environment staging` support desired configuration edits.
+Revision headers fence concurrent CLI edits, and direct app settings edits to
+protected environments are rejected. Ordinary production App settings remain
+the legacy authority until complete promotion supports their atomic cutover.
+
+Remaining work includes a complete source inventory and consistent capture
+barrier, connecting the PostgreSQL and object copy workers to one durable clone,
+cloning and publishing the active deployment graph, environment ownership of
+the remaining policies/triggers/integrations, scope-specific capacity and
+reconciliation, source-manifest/reconcile writes, and qualification plus atomic
+promotion/rollback of the complete effective state. Production ingress must
+also exclude other scopes from ordinary weighted routing. Native x86_64 KVM
+acceptance remains required; the current local checks use store integration
+tests and scheduler/gateway fakes on macOS.

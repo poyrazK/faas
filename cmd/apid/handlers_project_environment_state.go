@@ -116,6 +116,17 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment routes")
 	}
+	if reader, ok := s.store.(state.ProjectEnvironmentWorkloadSpecReader); ok {
+		spec, err := reader.ProjectEnvironmentWorkloadSpec(ctx, accountID, app.ProjectID, scope, app.ID)
+		if err == nil {
+			routes = api.ProjectEnvironmentRoutePolicyResponse{
+				Ownership: "environment", OnlyAllowDeclaredRoutes: spec.Settings.OnlyAllowDeclaredRoutes,
+				DeclaredRoutes: projectEnvironmentDeclaredRoutes(spec.Settings.DeclaredRoutes),
+			}
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect desired workload routes")
+		}
+	}
 	policies := api.ProjectEnvironmentEdgePolicyResponse{Ownership: "application", Rules: []api.ProjectEnvironmentEdgeRuleResponse{}}
 	edgePolicy, err := s.store.GetProjectEnvironmentEdgePolicy(ctx, accountID, app.ID, scope)
 	if err == nil {

@@ -208,11 +208,13 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
 	fs := newFlagSet("app", flag.ContinueOnError)
+	environment := fs.String("environment", "", "read or edit this project environment's workload settings")
+	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
@@ -386,7 +388,7 @@ func cmdApp(args []string) int {
 		// allow-list to keep in sync.
 		var conflict string
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name != "concurrency" && conflict == "" {
+			if f.Name != "concurrency" && f.Name != "environment" && conflict == "" {
 				conflict = f.Name
 			}
 		})
@@ -402,7 +404,7 @@ func cmdApp(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		a, err := client.GetApp(context.Background(), slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(context.Background(), slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -449,7 +451,7 @@ func cmdApp(args []string) int {
 		req.MaxConcurrency = &v
 	}
 	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
-		policy, err := cliScalingPolicyPatchWithQueues(ctx, client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(ctx, environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -696,7 +698,7 @@ func cmdApp(args []string) int {
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
 		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
-		a, err := client.GetApp(ctx, slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -870,11 +872,13 @@ func cmdApp(args []string) int {
 		// Issue #1395 / A4: show a best-effort wake-tier recommendation
 		// only for apps with enough recent wake history. JSON output stays
 		// a stable AppResponse payload, so this is text-mode only.
-		renderWakeRecommendation(ctx, client, slug, a)
+		if *environment == "" {
+			renderWakeRecommendation(ctx, client, slug, a)
+		}
 		return 0
 	}
 
-	updated, err := client.UpdateApp(ctx, slug, req)
+	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
 	}

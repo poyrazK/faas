@@ -1412,6 +1412,67 @@ func (c *Client) UpdateApp(ctx context.Context, slug string, req UpdateAppReques
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug, req, &out)
 }
 
+func (c *Client) GetAppInEnvironment(ctx context.Context, slug, environment string) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, fmt.Errorf("invalid project environment")
+	}
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), nil, &out)
+}
+
+// GetAppInEnvironmentRevision returns the revision observed with the settings.
+// Callers merging nested configuration should pass it to the guarded update.
+func (c *Client) GetAppInEnvironmentRevision(ctx context.Context, slug, environment string) (AppResponse, int64, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, 0, fmt.Errorf("invalid project environment")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), nil)
+	if err != nil {
+		return out, 0, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "application/json")
+	var revision int64
+	var revisionErr error
+	err = c.doReqWithSuccess(c.http, req, &out, func(response *http.Response) bool {
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return false
+		}
+		revision, revisionErr = strconv.ParseInt(response.Header.Get("X-Gregale-Workload-Revision"), 10, 64)
+		if revisionErr == nil && revision < 0 {
+			revisionErr = fmt.Errorf("negative workload revision")
+		}
+		return true
+	})
+	if err != nil {
+		return out, 0, err
+	}
+	if revisionErr != nil {
+		return out, 0, fmt.Errorf("API did not return a valid workload revision: %w", revisionErr)
+	}
+	return out, revision, nil
+}
+
+func (c *Client) UpdateAppInEnvironment(ctx context.Context, slug, environment string, req UpdateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, fmt.Errorf("invalid project environment")
+	}
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), req, &out)
+}
+
+func (c *Client) UpdateAppInEnvironmentAtRevision(ctx context.Context, slug, environment string, expectedRevision int64, req UpdateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) || expectedRevision < 0 {
+		return out, fmt.Errorf("invalid project environment or workload revision")
+	}
+	headers := http.Header{"If-Workload-Revision": []string{strconv.FormatInt(expectedRevision, 10)}}
+	return out, c.doWithHeaders(ctx, "PATCH", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), req, &out, headers)
+}
+
 // RenameApp swaps an app's slug atomically (issue #63).
 func (c *Client) RenameApp(ctx context.Context, oldSlug, newSlug string) (AppResponse, error) {
 	var out AppResponse

@@ -6936,6 +6936,15 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err != nil {
 		return Deployment{}, 0, err
 	}
+	// The parent app lock above also fences stage spec edits, so the settings
+	// pinned here are one immutable revision throughout the build pipeline.
+	if _, err := tx.Exec(ctx, `insert into project_environment_workload_deployment_specs (deployment_id, spec_id)
+		select $1, h.spec_id from project_environment_workload_heads h
+		join project_environments e on e.id = h.environment_id
+		join apps a on a.id = h.app_id and a.project_id = e.project_id and a.account_id = e.account_id
+		where a.id = $2 and e.slug = $3`, created.ID, created.AppID, workloadEnvironmentSlug(created.Scope)); err != nil {
+		return Deployment{}, 0, mapErr(err)
+	}
 	var outboxID int64
 	if activity != nil {
 		deploymentID, err := uuid.Parse(created.ID)

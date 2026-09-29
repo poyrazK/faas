@@ -38,6 +38,9 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if err := copyProjectEnvironmentWorkloadSpecs(ctx, tx, clone, created); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	result, err := copyProjectEnvironmentRows(ctx, tx, clone)
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err

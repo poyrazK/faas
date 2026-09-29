@@ -527,12 +527,15 @@ var cliCommands = []cliCommand{
 		Short:   "Get/update one app or run a deployment-attached command",
 		Examples: []string{
 			"gregale app my-api --maintenance",
+			"gregale app my-api --environment staging --ram 512",
 			"gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --route-metrics",
 			"gregale app my-api --consumer-auth-mode required --json",
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
-			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
+			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU", Flags: []cliFlag{
+				{Name: "environment", Short: "edit desired workload settings in a project environment", Value: "SLUG"},
+			}},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
 			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
@@ -556,6 +559,7 @@ var cliCommands = []cliCommand{
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
+			{Name: "environment", Short: "read or edit desired workload settings in a project environment", Value: "SLUG"},
 			{Name: "visibility", Short: "set public edge exposure", Value: "public|internal", ClosedSet: []string{"public", "internal"}},
 			{Name: "profile", Short: "set a named RAM/CPU profile", Value: "micro|small|medium|large|xlarge"},
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},

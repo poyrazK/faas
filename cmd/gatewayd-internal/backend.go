@@ -176,8 +176,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
-		api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID {
 		return gateway.App{}, false, nil
 	}
 	// Headers policies may carry security headers. A failed authoritative
@@ -192,6 +191,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
@@ -264,9 +266,6 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
 	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -277,9 +276,12 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
 		return gateway.App{}, false, nil
 	}
-	resolved, found, err := r.toApp(ctx, app)
+	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	if deployment.Scope != "default" {
@@ -300,9 +302,6 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
 	deployment, err := r.store.DeploymentByRevision(ctx, app.ID, revision)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -313,9 +312,12 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	if deployment.AppID != app.ID || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
 	}
-	resolved, ok, err := r.toApp(ctx, app)
+	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !ok {
 		return gateway.App{}, ok, err
+	}
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = deployment.Scope
@@ -523,6 +525,13 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 }
 
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
+	if exact != nil {
+		resolved, err := state.ResolveAppForDeployment(ctx, r.store, app, *exact)
+		if err != nil {
+			return gateway.App{}, false, err
+		}
+		app = resolved
+	}
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
 	}
