@@ -722,6 +722,12 @@
       - egress.crt
   register: faas_pki_leaf_stat
   failed_when: not faas_pki_leaf_stat.stat.exists
+  # A split-box control plane does not run gatewayd-internal, and
+  # `gregalectl pki init --box-role control-plane` (pki.RolesForBox) does not
+  # issue the egress server leaf there. Only single-box hosts carry it.
+  when: >-
+    item.0 != 'egress'
+    or (faas_box_role | default('single-box')) != 'control-plane'
 
 # The PKI initializer intentionally creates private keys root-only. The
 # control-plane daemons run as dedicated faas-* users, so the two schedd
