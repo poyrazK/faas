@@ -337,8 +337,11 @@ cursor returns `resync_required` with `oldest_sequence` and `latest_sequence`
 and leaves the channel unsubscribed. While connected, realtimed polls the
 durable log every five seconds; retained writes may therefore arrive with
 that delay. The preview caps a node at 256 v2 subscriptions and a connection
-at eight. If history becomes unavailable, the v2 connection closes with a
-retryable reason rather than silently switching to live-only delivery.
+at eight. If retention advances past a connected subscriber, realtimed sends
+`resync_required` and removes that channel subscription. A history-reader
+failure closes the v2 connection with a retryable reason. If its output queue
+fills before it can send a control frame, realtimed closes the connection so
+the client can reconnect from its saved cursor.
 The [SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
 persists a processed cursor, acknowledges in order, and reconnects from that
 cursor. Server-side sockets add an OIDC bearer header. Browser sockets use

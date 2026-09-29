@@ -77,7 +77,7 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
-			_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
 			continue
 		}
 		c.mu.Lock()
@@ -91,7 +91,7 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		case "unsubscribe":
 			m.resumeUnsubscribe(ctx, c, frame.Channel)
 		default:
-			_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
 		}
 	}
 }
@@ -110,7 +110,7 @@ func (m *Manager) reserveResume() bool {
 
 func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resumeClientFrame) {
 	if !validChannel(frame.Channel) || frame.After < 0 || frame.Sequence != 0 {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_subscription"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_subscription"})
 		return
 	}
 	c.mu.RLock()
@@ -118,7 +118,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	count := len(c.resumeSubs)
 	c.mu.RUnlock()
 	if exists || count >= maxResumePerConnection || !m.reserveResume() {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
 		return
 	}
 	release := true
@@ -139,18 +139,18 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	allowed, err := authorizer.AuthorizeChannel(authCtx, event)
 	cancel()
 	if err != nil || !allowed {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_authorized"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_authorized"})
 		return
 	}
 	readCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
 	page, err := m.cfg.HistoryReader.ReadChannelHistory(readCtx, c.info.EndpointID, frame.Channel, frame.After, resumeHistoryPageSize)
 	cancel()
 	if err != nil {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "history_read_failed"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "history_read_failed"})
 		return
 	}
 	if page.HistoryUnavailable {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "resync_required", Channel: frame.Channel,
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "resync_required", Channel: frame.Channel,
 			OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence})
 		return
 	}
@@ -163,6 +163,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	if err := m.queueResume(ctx, c, resumeServerFrame{Type: "subscribed", Channel: frame.Channel,
 		Sequence: frame.After, OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence}); err != nil {
 		m.removeResumeSubscription(c, frame.Channel, subscription)
+		m.closeResumeOnQueueFull(c, err)
 		return
 	}
 	release = false
@@ -179,7 +180,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 			return
 		}
 		if page.HistoryUnavailable {
-			_ = m.queueResume(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
 				OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence})
 			return
 		}
@@ -192,7 +193,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 			lastSent := subscription.lastSent
 			if message.Sequence != lastSent+1 {
 				c.mu.Unlock()
-				_ = m.queueResume(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
+				m.queueResumeControl(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
 					OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence})
 				return
 			}
@@ -212,7 +213,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 		lastSent := subscription.lastSent
 		c.mu.RUnlock()
 		if len(page.Messages) == 0 && lastSent < page.LatestSequence {
-			_ = m.queueResume(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "resync_required", Channel: channel,
 				OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence})
 			return
 		}
@@ -229,7 +230,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 		next, err := m.cfg.HistoryReader.ReadChannelHistory(readCtx, c.info.EndpointID, channel, lastSent, resumeHistoryPageSize)
 		cancel()
 		if err != nil {
-			_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "history_read_failed"})
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "history_read_failed"})
 			_ = c.close(websocket.CloseTryAgainLater, "resume history unavailable")
 			return
 		}
@@ -252,12 +253,12 @@ func (m *Manager) resumeAck(ctx context.Context, c *connection, frame resumeClie
 	subscription := c.resumeSubs[frame.Channel]
 	if subscription == nil || frame.Sequence < subscription.lastAck || frame.Sequence > subscription.lastSent || frame.After != 0 {
 		c.mu.Unlock()
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_ack"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_ack"})
 		return
 	}
 	subscription.lastAck = frame.Sequence
 	c.mu.Unlock()
-	_ = m.queueResume(ctx, c, resumeServerFrame{Type: "acknowledged", Channel: frame.Channel, Sequence: frame.Sequence})
+	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "acknowledged", Channel: frame.Channel, Sequence: frame.Sequence})
 }
 
 func (m *Manager) resumeUnsubscribe(ctx context.Context, c *connection, channel string) {
@@ -265,11 +266,24 @@ func (m *Manager) resumeUnsubscribe(ctx context.Context, c *connection, channel 
 	subscription := c.resumeSubs[channel]
 	c.mu.RUnlock()
 	if subscription == nil {
-		_ = m.queueResume(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "not_subscribed"})
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "not_subscribed"})
 		return
 	}
 	m.removeResumeSubscription(c, channel, subscription)
-	_ = m.queueResume(ctx, c, resumeServerFrame{Type: "unsubscribed", Channel: channel})
+	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "unsubscribed", Channel: channel})
+}
+
+// Control frames must either be queued or end the connection. Otherwise a
+// slow client could miss a resynchronization signal and wait indefinitely on
+// a channel that was already removed.
+func (m *Manager) queueResumeControl(ctx context.Context, c *connection, frame resumeServerFrame) {
+	m.closeResumeOnQueueFull(c, m.queueResume(ctx, c, frame))
+}
+
+func (m *Manager) closeResumeOnQueueFull(c *connection, err error) {
+	if errors.Is(err, ErrOutboundQueueFull) {
+		_ = c.close(websocket.CloseTryAgainLater, "resume output queue full")
+	}
 }
 
 func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeServerFrame) error {
