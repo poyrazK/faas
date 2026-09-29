@@ -87,17 +87,18 @@ type CreateAppRequest struct {
 	IdleTimeoutS          int                                 `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
 	// request-driven default; service_replicas is valid only for service mode.
-	ExecutionMode    string                `json:"execution_mode,omitempty"`
-	RestartPolicy    string                `json:"restart_policy,omitempty"`
-	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
-	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                   `json:"max_retries,omitempty"`
-	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
-	ServiceReplicas  *ServiceReplicas      `json:"service_replicas,omitempty"`
-	HealthPath       string                `json:"health_path,omitempty"`
-	HealthPathWakes  bool                  `json:"health_path_wakes,omitempty"`
-	SessionAffinity  *bool                 `json:"session_affinity,omitempty"`
+	ExecutionMode          string                `json:"execution_mode,omitempty"`
+	RestartPolicy          string                `json:"restart_policy,omitempty"`
+	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
+	MaxRetries             int                   `json:"max_retries,omitempty"`
+	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
+	ServiceReplicas        *ServiceReplicas      `json:"service_replicas,omitempty"`
+	HealthPath             string                `json:"health_path,omitempty"`
+	HealthPathWakes        bool                  `json:"health_path_wakes,omitempty"`
+	SessionAffinity        *bool                 `json:"session_affinity,omitempty"`
+	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -512,8 +513,8 @@ type AppResponse struct {
 	// ConsumerAuthMode is the app's end-customer credential policy:
 	// "optional" accepts anonymous requests and "required" mandates
 	// a valid consumer key.
-	ConsumerAuthMode string `json:"consumer_auth_mode"`
-	PlatformTenantRequired bool `json:"platform_tenant_required"`
+	ConsumerAuthMode       string `json:"consumer_auth_mode"`
+	PlatformTenantRequired bool   `json:"platform_tenant_required"`
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth configuration. Mode is the closed
 	// enum {open, bearer, basic}; HasBasicCreds is true

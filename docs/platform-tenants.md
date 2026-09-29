@@ -274,7 +274,13 @@ On requests authenticated with a linked consumer key, or anonymous requests rout
 
 ## Require customer identity on an app
 
-Enable the app ingress policy after linking your customer identities:
+Enable the app ingress policy when creating or deploying the app, so it is active from the first request:
+
+```sh
+gregale deploy --path . --app --name my-api --platform-tenant-required --no-require-authn
+```
+
+The equivalent create API request is `POST /v1/apps` with `{"slug":"my-api","platform_tenant_required":true,"require_authn":false}`. On Pro and Scale, the CLI also opens the separate public-auth gate when `--no-require-authn` is specified. The tenant policy continues to reject traffic without verified customer identity. For an existing app, enable it after linking your customer identities:
 
 ```sh
 gregale app my-api --platform-tenant-required

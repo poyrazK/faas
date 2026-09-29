@@ -2521,6 +2521,34 @@ func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
 // TestCreateOrFetchApp_409SameAccount_NoFlagsNoPATCH pins that the
 // helper does NOT issue an UpdateApp PATCH when neither --require-authn
 // nor --app-protocol was set (preserve the previous no-op behaviour).
+func TestCreateOrFetchApp_ExistingTenantPolicyPATCH(t *testing.T) {
+	var patched *bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
+		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodPatch:
+			var body api.UpdateAppRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update: %v", err)
+			}
+			patched = body.PlatformTenantRequired
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_live_x")
+	required := true
+	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing", PlatformTenantRequired: &required}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if patched == nil || !*patched {
+		t.Fatalf("PATCH tenant policy = %v, want true", patched)
+	}
+}
+
 func TestCreateOrFetchApp_409SameAccount_NoFlagsNoPATCH(t *testing.T) {
 	var sawPatch bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

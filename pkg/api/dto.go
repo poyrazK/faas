@@ -487,6 +487,9 @@ type CreateAppRequest struct {
 	// Free customer who is about to migrate to Hobby and wants to test
 	// the path ahead of plan upgrade).
 	RequireAuthn *bool `json:"require_authn,omitempty"`
+	// PlatformTenantRequired requires verified customer identity from the first request.
+	// Omitted and false default to the existing open tenant policy.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// WarmSnapshotMinRequests overrides the per-app request-count
 	// threshold for warm-tier capture at creation time. nil → plan
 	// default (5 on Pro/Scale; 0 on Free/Hobby). Range [1, 100].

@@ -1063,7 +1063,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"require-authn", "no-require-authn", "app-protocol",
+		"require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -1203,7 +1203,7 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 	allowed := map[string]struct{}{
 		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
 		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
-		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "app-protocol": {},
+		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "platform-tenant-required": {}, "no-platform-tenant-required": {}, "app-protocol": {},
 		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
 		"json": {},
 	}
@@ -1264,11 +1264,11 @@ func configureExistingApp(ctx context.Context, client *Client, existing api.AppR
 		problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
 		return &api.APIError{Problem: *problem}
 	}
-	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
+	if requireAuthnPtr == nil && req.PlatformTenantRequired == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
 		req.ExecutionMode == "" && req.RestartPolicy == "" && req.StartupDeadlineS == 0 && req.MaxRetries == 0 && req.ServiceReplicas == nil {
 		return nil
 	}
-	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
+	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PlatformTenantRequired: req.PlatformTenantRequired, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
 	if req.ExecutionMode != "" {
 		value := req.ExecutionMode
 		upd.ExecutionMode = &value
@@ -2248,6 +2248,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
+	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// ADR-124: per-app wire-protocol selector (PATCH path).
 	// Same single-string flag shape as the CREATE path above.
 	// Empty value = no change (the Set bit in UpdateAppParams
@@ -2352,7 +2354,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--platform-tenant-required|--no-platform-tenant-required] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2487,6 +2489,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
 	}
+	if *platformTenantRequired && *noPlatformTenantRequired {
+		return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required are mutually exclusive"))
+	}
+	if *diff && (explicit["platform-tenant-required"] || explicit["no-platform-tenant-required"]) {
+		return printErr("Invalid flags", fmt.Errorf("platform tenant policy flags cannot be combined with --dry-run or --diff"))
+	}
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
@@ -2503,7 +2511,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2638,7 +2646,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// overrides here instead of silently dropping them from both
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
-			"vcpu", "profile", "require-authn", "no-require-authn",
+			"vcpu", "profile", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required",
 			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
@@ -2683,6 +2691,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		v := false
 		requireAuthnPtr = &v
 		publicAuthPtr = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+	}
+	var platformTenantRequiredPtr *bool
+	switch {
+	case explicit["platform-tenant-required"]:
+		v := true
+		platformTenantRequiredPtr = &v
+	case explicit["no-platform-tenant-required"]:
+		v := false
+		platformTenantRequiredPtr = &v
 	}
 	// ADR-124: per-app wire-protocol selector (deploy path).
 	// Single-string flag (closed set); empty value = omit so
@@ -2743,6 +2760,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if platformTenantRequiredPtr != nil {
+			return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required cannot be combined with --github"))
+		}
 		if *dryRun {
 			return printErr("Invalid flags", fmt.Errorf("--dry-run cannot be combined with --github"))
 		}
@@ -3057,6 +3077,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// creation so an unrelated working tree cannot affect create-only latency.
 	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
@@ -3717,9 +3738,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if app, readErr := client.GetApp(ctx, slug); readErr == nil {
 			resolvedApp = app
 		}
+		if platformTenantRequiredPtr != nil {
+			if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{PlatformTenantRequired: platformTenantRequiredPtr}); err != nil {
+				return printErr("Could not update app tenant policy", err)
+			}
+		}
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		if resolvedSimplePlan != nil {
 			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)
 		}

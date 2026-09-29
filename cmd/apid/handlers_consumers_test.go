@@ -198,3 +198,34 @@ func TestUpdateAppPlatformTenantRequiredFreePlanGate(t *testing.T) {
 	rec := e.do(t, http.MethodPatch, "/v1/apps/platform-app-free", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
 }
+
+func TestCreateAppPlatformTenantRequired(t *testing.T) {
+	required := true
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: "tenant-from-start", PlatformTenantRequired: &required,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create app: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	if !app.PlatformTenantRequired {
+		t.Fatalf("create response omitted tenant policy: %+v", app)
+	}
+	read := e.do(t, http.MethodGet, "/v1/apps/tenant-from-start", nil, nil)
+	if err := json.Unmarshal(read.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	if !app.PlatformTenantRequired {
+		t.Fatal("tenant policy was not persisted")
+	}
+
+	free := setup(t, api.PlanFree)
+	denied := free.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: "tenant-free", PlatformTenantRequired: &required,
+	}, nil)
+	assertProblem(t, denied, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
+}

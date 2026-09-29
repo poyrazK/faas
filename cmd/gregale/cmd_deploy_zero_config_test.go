@@ -478,7 +478,7 @@ func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	if code := cmdDeployTarball([]string{
-		"--create-only", "--function", "--runtime", "node22", "--name", "explicit-reservation",
+		"--create-only", "--function", "--runtime", "node22", "--name", "explicit-reservation", "--platform-tenant-required",
 	}); code != 0 {
 		t.Fatalf("create-only exit = %d, want 0", code)
 	}
@@ -487,6 +487,9 @@ func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	}
 	if createReq.Type != "function" || createReq.Runtime != runtimeNode22 {
 		t.Fatalf("CreateApp shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeNode22)
+	}
+	if createReq.PlatformTenantRequired == nil || !*createReq.PlatformTenantRequired {
+		t.Fatalf("CreateApp tenant policy = %v, want true", createReq.PlatformTenantRequired)
 	}
 }
 

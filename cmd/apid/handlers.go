@@ -214,15 +214,16 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
-		"app_id":           created.ID,
-		"slug":             created.Slug,
-		"type":             string(created.Type),
-		"ram_mb":           created.RAMMB,
-		"cpu_millicores":   created.CPUMillicores,
-		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
-		"max_concurrency":  created.MaxConcurrency,
-		"runtime":          created.Runtime,
-		"visibility":       string(created.Visibility),
+		"app_id":                   created.ID,
+		"slug":                     created.Slug,
+		"type":                     string(created.Type),
+		"ram_mb":                   created.RAMMB,
+		"cpu_millicores":           created.CPUMillicores,
+		"resource_profile":         api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":          created.MaxConcurrency,
+		"runtime":                  created.Runtime,
+		"visibility":               string(created.Visibility),
+		"platform_tenant_required": created.PlatformTenantRequired,
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
@@ -424,6 +425,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			"Per-app authentication is not allowed on this plan",
 			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
 	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return state.App{}, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
+	}
 	requireAuthn := acct.Plan.RequireAuthnDefault()
 	if req.RequireAuthn != nil {
 		requireAuthn = *req.RequireAuthn
@@ -556,8 +560,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// write. State layer is the canonical source
 		// (apps.require_authn + apps.public_auth_mode columns);
 		// the DTO surfaces the same values.
-		RequireAuthn:   requireAuthn,
-		PublicAuthMode: publicAuthMode,
+		RequireAuthn:           requireAuthn,
+		PublicAuthMode:         publicAuthMode,
+		PlatformTenantRequired: req.PlatformTenantRequired != nil && *req.PlatformTenantRequired,
 		// Coerce to the plan minimums when the request asked for a
 		// warm config but the plan says warm-snapshot is off: the
 		// store ignores them anyway (the cold-boot path doesn't
