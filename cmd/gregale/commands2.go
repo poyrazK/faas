@@ -2701,6 +2701,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		v := !*noPlatformTenantRequired
 		platformTenantRequiredPtr = &v
 	}
+	// This starter depends on gateway-verified customer context. Set the
+	// create/update intent before the app can receive its first request.
+	if *templateName == "customer-platform" && platformTenantRequiredPtr == nil {
+		v := true
+		platformTenantRequiredPtr = &v
+	}
 	// ADR-124: per-app wire-protocol selector (deploy path).
 	// Single-string flag (closed set); empty value = omit so
 	// the per-plan default applies server-side. The

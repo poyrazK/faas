@@ -254,7 +254,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 
 func docsURLForTemplate(name string) string {
 	switch name {
-	case "hello-node", "hello-python", "hello-go":
+	case "hello-node", "hello-python", "hello-go", "customer-platform":
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
 		return functionsDocsURL
@@ -318,6 +318,7 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
 		"rest-api-postgres":  []string{"DATABASE_URL"},
 		"secret-reload-node": []string{"DATABASE_URL"},
+		"customer-platform":  []string{"DATABASE_URL"},
 		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
@@ -350,6 +351,19 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "customer-platform":
+		return []string{
+			"Use a PostgreSQL role without superuser or BYPASSRLS privileges.",
+			"Create a 0600 secrets file outside this directory containing DATABASE_URL=...",
+			"Reserve the app before configuring database network access:",
+			"  gregale deploy --create-only --template customer-platform --name <slug>",
+			"For remote PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"First deploy (Hobby or above):",
+			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn --secrets-file <secrets-file>",
+			"The Procfile release command installs the tenant-scoped document schema.",
+			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
+			"Read README.md for credential issuance, rotation, usage, and suspension.",
+		}
 	case "s3-uploader":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",

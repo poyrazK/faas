@@ -95,7 +95,7 @@ func TestPlatformTenantAPIToGatewayIdentityLifecycle(t *testing.T) {
 // These adapters project persisted intent and credentials using the gateway's
 // public interfaces, including the store's tenant suspension checks.
 type tenantIngressBackend struct {
-	store   *state.MemStore
+	store   state.Store
 	slug    string
 	address string
 }
@@ -129,10 +129,10 @@ func (*tenantIngressBackend) ScheduleMirror(context.Context, string, string, str
 	return "", "", errors.New("unexpected mirror scheduling")
 }
 
-type tenantIngressConsumerStore struct{ *state.MemStore }
+type tenantIngressConsumerStore struct{ state.Store }
 
 func (s tenantIngressConsumerStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (gateway.ConsumerAuthKey, error) {
-	key, err := s.MemStore.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)
+	key, err := s.Store.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)
 	if errors.Is(err, state.ErrNotFound) {
 		err = gateway.ErrConsumerAuthNotFound
 	}
@@ -140,7 +140,7 @@ func (s tenantIngressConsumerStore) ConsumerKeyByAppAndPrefix(ctx context.Contex
 		Prefix: key.Prefix, Hash: key.Hash, Scopes: key.Scopes, ExpiresAt: key.ExpiresAt, RevokedAt: key.RevokedAt}, err
 }
 func (s tenantIngressConsumerStore) GetAPIConsumerByID(ctx context.Context, accountID, id string) (gateway.ConsumerAuthConsumer, error) {
-	c, err := s.MemStore.GetAPIConsumerByID(ctx, accountID, id)
+	c, err := s.Store.GetAPIConsumerByID(ctx, accountID, id)
 	if errors.Is(err, state.ErrNotFound) {
 		err = gateway.ErrConsumerAuthNotFound
 	}

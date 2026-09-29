@@ -1,0 +1,179 @@
+# customer-platform
+
+A Node.js + PostgreSQL starter for serving multiple customers on Gregale.
+It includes tenant-scoped document CRUD and local operator tools for onboarding,
+credential issuance and rotation, usage, suspension, and resumption. Requires
+Node.js 22+ and a Gregale Hobby or higher account for tenant ingress. A remote
+database on the conventional TCP port 5432 requires Pro/Scale egress configuration.
+
+## Deploy
+
+```sh
+gregale init --template customer-platform --path customer-platform
+cd customer-platform
+```
+
+Create a PostgreSQL database and a login role without `SUPERUSER` or `BYPASSRLS`.
+The role must own the `public.customer_documents` table (or have permission to
+create it). Use a dedicated application database. Create a secrets file outside
+the source directory, containing the database URL, then restrict its permissions:
+
+```sh
+chmod 600 ../customer-platform.secrets
+# File contents: DATABASE_URL=postgres://user:password@host:5432/database?sslmode=require
+# Reserve before configuring outbound access to a remote database on port 5432.
+gregale deploy --create-only --template customer-platform --name <slug>
+gregale app <slug> egress-ports add 5432
+gregale deploy --template customer-platform --name <slug> \
+  --secrets-file ../customer-platform.secrets
+```
+
+Template deployment enables `platform_tenant_required` from app creation.
+The `Procfile` release command runs the idempotent schema migration before
+activation; failure prevents activation. After editing your local scaffold, deploy
+that source with explicit ingress settings:
+
+```sh
+gregale deploy --name <slug> --platform-tenant-required --no-require-authn \
+  --secrets-file ../customer-platform.secrets
+```
+
+`--no-require-authn` selects the open account-auth mode; verified customer identity
+is still required by the independent tenant policy. If your existing app has
+another account-auth policy, configure it before onboarding. Use `/healthz` as
+the health path; `/` also provides a database liveness response for rollout probes.
+Both contain no customer data. Configure the database's network access and
+Gregale's egress policy for your database host and port. Extra TCP ports are a
+Pro/Scale feature; a database reachable only on an extra port may require that plan.
+Use TLS with certificate verification for remote databases.
+
+After the app exists, `gregale secrets set --app <slug> DATABASE_URL=...` updates
+its configuration. Start a new deployment after changing the database credential;
+this starter reads it at process startup.
+
+## Onboard and issue a customer key
+
+Run `tools/customer.js` on your operator machine. It uses the existing Gregale
+REST API. Set `FAAS_TOKEN` to your account-owner credential using your secret
+manager or CLI environment; optionally set `FAAS_API` (default
+`https://api.gregale.dev`). **Never put the owner token in the app's secrets.**
+Owner API scopes, MFA requirements, and quotas still apply.
+
+```sh
+node tools/customer.js onboard <slug> customer-42 "Customer 42"
+```
+
+The receipt contains `tenant_id` and `consumers[0].id`. Keep the external reference
+stable (for example, your billing system's customer ID). Repeating identical
+onboarding returns the same identities; it never silently resumes a suspended
+customer.
+
+```sh
+# Create this private directory outside the source checkout.
+mkdir -p ../customer-credentials
+chmod 700 ../customer-credentials
+node tools/customer.js issue <tenant-id> <consumer-id> customer-42-v1 \
+  ../customer-credentials/customer-42-v1.json
+```
+
+The tool generates a `ck_` key, exclusively creates a mode-0600 journal, and
+flushes it to disk **before** submitting the prefix and SHA-256 digest to Gregale.
+The API receipt printed to stdout contains metadata and key IDs, never plaintext.
+The journal's `plaintext` field is the customer's bearer key. Transfer it through
+your customer secret-delivery channel. Store journals securely outside source
+archives, image build contexts, and version control; Gregale cannot recover keys.
+The Dockerfile copies only `app/` into the guest, excluding the owner tools.
+
+If the API response is lost or the request fails, replay the same journal:
+
+```sh
+node tools/customer.js retry ../customer-credentials/customer-42-v1.json
+```
+
+Retry reuses the same credential material and returns the same key ID. An issue
+command refuses an existing journal path. A journal is bound to the API origin;
+changing credentials to another Gregale account will fail ownership checks.
+
+## Customer API
+
+Send the customer's key as `Authorization: Bearer <customer-key>` to
+`https://<slug>.gregale.dev`:
+
+| Method | Path | Body / result |
+| --- | --- | --- |
+| POST | `/documents` | `{"title":"Welcome","content":"Private customer data"}`; returns a document ID |
+| GET | `/documents` | Latest 100 documents for this customer |
+| GET | `/documents/<id>` | A document for this customer |
+| PUT | `/documents/<id>` | Full replacement of title and content |
+| DELETE | `/documents/<id>` | Deletes a document for this customer |
+
+Foreign and missing IDs both return 404. Request bodies cannot select a tenant;
+query parameters are rejected. Responses use `Cache-Control: no-store`. The
+sample operator tools issue `write` scope, which allows all app methods; use
+Gregale's credential API to issue narrower `read` keys when appropriate.
+
+## Rotate, inspect usage, and suspend
+
+```sh
+node tools/customer.js rotate <tenant-id> <consumer-id> customer-42-v2 <old-key-id> \
+  ../customer-credentials/customer-42-v2.json
+node tools/customer.js usage <tenant-id> 2026-09-01T00:00:00Z 2026-10-01T00:00:00Z
+node tools/customer.js suspend <tenant-id>
+node tools/customer.js resume <tenant-id>
+```
+
+Rotation atomically creates the new key and revokes the selected old key. Prepare
+the customer for the switch before rotating; use separate issue and revoke
+operations if you need an overlap window. Retry a rotation with its new journal
+after a lost response. Suspension blocks the tenant's credentials at the gateway.
+Resumption restores active credentials; revoked keys remain revoked. Usage comes
+from Gregale's attributed request counters and may lag while its outbox drains;
+this starter does not invent counters or turn them into invoices.
+
+## Isolation contract and extension points
+
+The app trusts `X-Faas-Platform-Tenant-Id` only on Gregale's private guest listener.
+The gateway strips caller-supplied values and supplies verified identity. Never
+expose this listener directly to the Internet. UUID validation checks the header's
+shape; it is not standalone authentication. Local tests supply headers through a
+trusted test seam. To use another proxy, add its authenticated identity verifier.
+
+Every query includes `tenant_id`. PostgreSQL additionally enables and forces
+row-level security, using transaction-local tenant context on one checked-out
+connection. Commit/rollback clears context before returning the connection to the
+pool. Startup rejects superuser/BYPASSRLS credentials and missing forced RLS.
+See [PostgreSQL row security](https://www.postgresql.org/docs/16/ddl-rowsecurity.html)
+and [node-postgres transaction guidance](https://node-postgres.com/features/transactions).
+
+Extend the same pattern to every new customer-owned table, join, cache key, object
+storage prefix, and background job. Carry verified identity into jobs when you
+enqueue them; workers must derive their database scope from that trusted job
+record. Add user roles within each customer before exposing team administration.
+The database owner can alter policies; use a separate migration role and a runtime
+role with only SELECT/INSERT/UPDATE/DELETE privileges when hardening the deployment.
+For that setup, run migrations from your trusted deployment pipeline with the
+migration role and remove the `Procfile` release entry; the guest keeps only the
+runtime credential.
+Keep owner APIs on your control plane. This sample does not implement customer
+login, payments, hostname provisioning, or a customer-facing administration UI.
+
+## Run and test locally
+
+```sh
+npm ci --ignore-scripts
+# Set DATABASE_URL to a disposable database using the non-superuser role.
+npm run migrate
+HOST=127.0.0.1 npm start
+npm test
+# Uses a disposable database; this explicit gate fails if no URL is supplied.
+CUSTOMER_DATABASE_URL="$DATABASE_URL" npm run test:postgres
+```
+
+The dependency-free tests cover tenant-scoped HTTP CRUD, invalid input, private
+journals, hash-only API calls, and lost-response recovery. PostgreSQL tests prove
+forced RLS, forbidden cross-tenant writes, and connection reuse after commit and
+rollback. The Gregale repository's `make test-customer-platform` gate runs this
+starter behind the actual gateway and PostgreSQL-backed owner API: two customers,
+forged tenant headers, denied cross-customer reads/writes, atomic rotation,
+suspension, resumption, and usage lookup. It requires disposable `DATABASE_URL`
+and `CUSTOMER_DATABASE_URL` databases; no KVM is needed.

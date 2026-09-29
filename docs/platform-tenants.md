@@ -2,6 +2,23 @@
 
 A platform tenant represents one of your customers across multiple Gregale apps. It complements the app-local API consumer and tenant-surface resources; it does not replace either one.
 
+## Start a customer platform
+
+`gregale init --template customer-platform --path customer-platform` scaffolds a
+Node.js + PostgreSQL document API and local owner tools for customer onboarding,
+hash-only credential issuance/rotation, usage lookup, suspension, and resumption.
+Template deployment enables verified tenant ingress before serving traffic; the
+app scopes every document query by tenant and uses forced PostgreSQL row security
+with transaction-local context. Owner credentials remain on the operator machine.
+See the [starter README](../cmd/gregale/templates/customer-platform/README.md) for
+deployment, the database role contract, retry-safe key journals, and extension points.
+
+Run `make test-customer-platform` with disposable `DATABASE_URL` and
+`CUSTOMER_DATABASE_URL` databases to exercise the real PostgreSQL-backed API,
+gateway, and Node app with two customers. The gate covers forged headers,
+cross-customer CRUD denial, credential replay and rotation, suspension, and
+resumption. It does not require KVM or claim VM deployment acceptance.
+
 Create the account-level identity once:
 
 ```http

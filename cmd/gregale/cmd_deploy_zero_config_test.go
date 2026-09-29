@@ -493,6 +493,43 @@ func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	}
 }
 
+func TestDeployCustomerPlatformDefaultIngress(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  bool
+	}{
+		{name: "template default", want: true},
+		{name: "explicit disable", flags: []string{"--no-platform-tenant-required"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withCwd(t, t.TempDir())
+			var createReq api.CreateAppRequest
+			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+					z.gotCalls["create"]++
+					if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+						t.Error(err)
+					}
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "platform-starter"})
+				default:
+					http.Error(w, "not found", http.StatusNotFound)
+				}
+			})
+			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			args := append([]string{"--create-only", "--template", "customer-platform", "--name", "platform-starter"}, tc.flags...)
+			if code := cmdDeployTarball(args); code != 0 {
+				t.Fatalf("deploy exit = %d", code)
+			}
+			if stub.gotCalls["create"] != 1 || createReq.PlatformTenantRequired == nil || *createReq.PlatformTenantRequired != tc.want {
+				t.Fatalf("create calls=%d policy=%v", stub.gotCalls["create"], createReq.PlatformTenantRequired)
+			}
+		})
+	}
+}
+
 func TestDeployCreateOnlyRejectsPreview(t *testing.T) {
 	if code := cmdDeployTarball([]string{"--create-only", "--dry-run", "--name", "reserved"}); code != 1 {
 		t.Fatalf("create-only + dry-run exit = %d, want 1", code)

@@ -42,6 +42,10 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 
 .DEFAULT_GOAL := help
 
+.PHONY: test-customer-platform
+test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
+	@GO="$(GO)" sh scripts/test-customer-platform.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \

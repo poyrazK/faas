@@ -55,6 +55,14 @@ func TestSecretReloadNodeStarterHelper(t *testing.T) {
 	runNodeStarterTests(t, "secret-reload-node", "secret-reload.test.js")
 }
 
+func TestCustomerPlatformStarterHTTPIsolation(t *testing.T) {
+	runNodeStarterTests(t, "customer-platform", "test/http.test.js")
+}
+
+func TestCustomerPlatformStarterCredentialRecovery(t *testing.T) {
+	runNodeStarterTests(t, "customer-platform", "test/client.test.js")
+}
+
 func TestSecretReloadNodeStarterOptsIntoSIGHUP(t *testing.T) {
 	dir, cleanup, err := MaterializeForTest("secret-reload-node")
 	if err != nil {
