@@ -310,7 +310,7 @@ func cmdAdminAbuseHold(args []string) int {
 	return 0
 }
 
-// cmdAdminEgressFlows searches the ADR-369 egress flow log: which tenant
+// cmdAdminEgressFlows searches the ADR-371 egress flow log: which tenant
 // opened flows to an address in a window. Times are RFC 3339.
 func cmdAdminEgressFlows(args []string) int {
 	fs := newFlagSet("admin egress-flows", flag.ContinueOnError)

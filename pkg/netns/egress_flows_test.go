@@ -1,4 +1,4 @@
-// adr: 369 — egress flow log capture.
+// adr: 371 — egress flow log capture.
 package netns
 
 import (
@@ -34,7 +34,7 @@ func TestParseEgressFlowSet(t *testing.T) {
 	}
 }
 
-// ADR-369: the flow set is declared in both families and recorded after
+// ADR-371: the flow set is declared in both families and recorded after
 // the non-TCP drop and before the allowlist accept.
 func TestTenantEgressFlowRecordRule(t *testing.T) {
 	c := egressTestConfig()

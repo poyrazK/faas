@@ -16,7 +16,7 @@ const (
 	egressFlowDefaultLimit  = 200
 )
 
-// listEgressFlows is GET /v1/admin/egress-flows (ADR-369): the egress flow
+// listEgressFlows is GET /v1/admin/egress-flows (ADR-371): the egress flow
 // log filtered by remote address or CIDR (remote), account (account_id)
 // and a [from, to) window, newest first. It answers "which tenant
 // connected to <ip> at <time>" when a provider reports traffic from the

@@ -16,7 +16,7 @@ import (
 type listEgressFlowsFunc func(context.Context, string) ([]netns.EgressFlow, error)
 
 // egressFlowLogger turns each instance's egress_flows nft set into egress
-// flow log rows (ADR-369). A row is written the first poll a (destination,
+// flow log rows (ADR-371). A row is written the first poll a (destination,
 // port) pair is present; the pair is written again only after it expired
 // from the set, i.e. after 10 minutes without a new flow to it.
 type egressFlowLogger struct {

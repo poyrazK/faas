@@ -20247,7 +20247,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  # ─── ADR-369 egress flow log ──────────────────────────────────────────
+  # ─── ADR-371 egress flow log ──────────────────────────────────────────
   # Operator-only lookup: which tenant connected to an address at a time.
   /v1/admin/egress-flows:
     get:
@@ -23697,7 +23697,7 @@ components:
         changed: { type: boolean }
 
     EgressFlowLogEntry:
-      description: "A destination address and TCP port a tenant guest opened a new flow to (ADR-369)."
+      description: "A destination address and TCP port a tenant guest opened a new flow to (ADR-371)."
       type: object
       required: [observed_at, node, account_id, app_id, instance_id, remote_ip, remote_port]
       properties:

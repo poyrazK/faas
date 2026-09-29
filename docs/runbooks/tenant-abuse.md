@@ -213,7 +213,7 @@ Revert once the hook is fixed.
 ## Tracing a provider abuse report
 
 A provider or abuse desk usually reports "your address A contacted B at time T".
-The egress flow log (ADR-369) keeps 30 days of every destination and TCP port each
+The egress flow log (ADR-371) keeps 30 days of every destination and TCP port each
 tenant instance opened a flow to:
 
 ```

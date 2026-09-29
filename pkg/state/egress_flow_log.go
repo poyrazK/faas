@@ -9,7 +9,7 @@ import (
 )
 
 // EgressFlowRecord is one destination address and TCP port a tenant guest
-// opened a new flow to (ADR-369).
+// opened a new flow to (ADR-371).
 type EgressFlowRecord struct {
 	ObservedAt time.Time
 	NodeName   string

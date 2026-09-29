@@ -173,7 +173,7 @@ type MemStore struct {
 	outboundAppBindings       map[string]OutboundAppBinding
 	outboundCredentials       map[string][]byte
 	mu                        sync.Mutex
-	// egressFlows is the ADR-369 egress flow log.
+	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
 	freeQuotaSuspended        map[string]bool

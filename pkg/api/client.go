@@ -4869,7 +4869,7 @@ type EgressFlowQuery struct {
 	Limit     int
 }
 
-// ListEgressFlows searches the ADR-369 egress flow log via
+// ListEgressFlows searches the ADR-371 egress flow log via
 // GET /v1/admin/egress-flows. Operator-only.
 func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (EgressFlowLogResponse, error) {
 	v := url.Values{}

@@ -508,7 +508,7 @@ func RetentionLoopDeploymentAudit(ctx context.Context, db retentionExecer, inter
 	}
 }
 
-// retentionEgressFlowLogBatchSQL deletes one batch of ADR-369 egress flow
+// retentionEgressFlowLogBatchSQL deletes one batch of ADR-371 egress flow
 // log rows older than the retention window.
 const retentionEgressFlowLogBatchSQL = `DELETE FROM egress_flow_log
                                         WHERE ctid IN (

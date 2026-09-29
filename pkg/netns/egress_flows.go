@@ -7,7 +7,7 @@ import (
 )
 
 // EgressFlow is one destination address and TCP port a guest opened a new
-// flow to within EgressFlowTimeout (ADR-369).
+// flow to within EgressFlowTimeout (ADR-371).
 type EgressFlow struct {
 	Addr netip.Addr
 	Port uint16

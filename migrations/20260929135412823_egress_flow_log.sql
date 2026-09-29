@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- ADR-369: every destination address and TCP port a tenant guest opened a
+-- ADR-371: every destination address and TCP port a tenant guest opened a
 -- new flow to, recorded by vmmd from the per-instance egress_flows nft set.
 -- It answers "which tenant connected to <ip> at <time>" when an upstream
 -- provider or abuse desk reports traffic from the platform's egress

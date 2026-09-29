@@ -815,7 +815,7 @@ var methodRouteMap = map[string]string{
 	// idempotency key; the SDK follows the operator mental model rather than
 	// the generated PostAdminAccountsIdRefunds name.
 	"POST /v1/admin/accounts/{id}/refunds": "RefundAccount",
-	// ADR-369 egress flow log lookup; the hyphenated path follows the
+	// ADR-371 egress flow log lookup; the hyphenated path follows the
 	// operationId listEgressFlows.
 	"GET /v1/admin/egress-flows": "ListEgressFlows",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes

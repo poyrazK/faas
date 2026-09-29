@@ -798,7 +798,7 @@ const (
 	EgressResolvedSet       = "egress_resolved"
 	EgressUnresolvedCounter = "faas_egress_unresolved"
 	// EgressFlowSet records every destination address and TCP port the
-	// guest opened a new flow to, after the rate limits (ADR-369). vmmd
+	// guest opened a new flow to, after the rate limits (ADR-371). vmmd
 	// lists it each poll and persists the new entries to the egress flow
 	// log, so an abuse report about the platform's egress address can be
 	// traced to one instance. Entries refresh on every new flow and expire
@@ -965,7 +965,7 @@ func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration)
 }
 
 // egressFlowRule records the destination and port of a guest-originated TCP
-// new flow (ADR-369). It runs after the rate limits and the non-TCP drop, so
+// new flow (ADR-371). It runs after the rate limits and the non-TCP drop, so
 // it sees TCP flows that were not rate-limited; the port policy may still
 // drop some of them.
 func (c Config) egressFlowRule(nft func(...string) []string, family string) []string {

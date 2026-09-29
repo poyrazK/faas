@@ -306,7 +306,7 @@ func TestMetalTenantEgressDNSGated(t *testing.T) {
 }
 
 // TestMetalTenantEgressFlowsRecorded opens a real flow and reads it back
-// through the egress_flows set vmmd polls (ADR-369).
+// through the egress_flows set vmmd polls (ADR-371).
 func TestMetalTenantEgressFlowsRecorded(t *testing.T) {
 	topo := newEgressTopology(t, "flw", nil)
 	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {

@@ -10,7 +10,7 @@ import (
 )
 
 // ListEgressFlowsInNetns lists one instance namespace's egress_flows sets
-// (ip and ip6). A namespace created before ADR-369 has no such set; that
+// (ip and ip6). A namespace created before ADR-371 has no such set; that
 // reads as no flows rather than an error, so pre-upgrade instances do not
 // spam the poll log until they are recycled.
 func ListEgressFlowsInNetns(ctx context.Context, netnsName string) ([]EgressFlow, error) {

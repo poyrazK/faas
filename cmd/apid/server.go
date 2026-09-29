@@ -2538,7 +2538,7 @@ func (s *server) handler() http.Handler {
 	// step-up elsewhere (ADR-091 §"Two-layer gate confirmed").
 	// All five routes are GETs; no s.idempotent wrapper needed
 	// (matches /v1/compute-nodes read precedent).
-	// ADR-369: which tenant connected to an address at a time. Operator-only
+	// ADR-371: which tenant connected to an address at a time. Operator-only
 	// read of the egress flow log.
 	mux.HandleFunc("GET /v1/admin/egress-flows",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listEgressFlows)))))

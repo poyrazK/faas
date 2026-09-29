@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A destination address and TCP port a tenant guest opened a new flow to (ADR-369).
+ * A destination address and TCP port a tenant guest opened a new flow to (ADR-371).
  */
 export type EgressFlowLogEntry = {
   observed_at: string;

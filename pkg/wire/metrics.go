@@ -1537,7 +1537,7 @@ type OpsMetrics struct {
 	// abuseScanFindings counts ADR-368 build-time abuse scan findings by
 	// category and action.
 	abuseScanFindings *prometheus.CounterVec
-	// egressFlowLogRows counts ADR-369 egress flow log rows written.
+	// egressFlowLogRows counts ADR-371 egress flow log rows written.
 	egressFlowLogRows prometheus.Counter
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
@@ -3580,7 +3580,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"category", "action"})
 	egressFlowLogRows := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_egress_flow_log_rows_total",
-		Help: "Egress flow log rows written (ADR-369): new (destination, port) pairs tenant guests opened flows to. A flat line on a busy node means the flow log stopped recording.",
+		Help: "Egress flow log rows written (ADR-371): new (destination, port) pairs tenant guests opened flows to. A flat line on a busy node means the flow log stopped recording.",
 	})
 	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_account_abuse_holds_total",
@@ -7562,7 +7562,7 @@ func (m *OpsMetrics) AbuseScanFinding(category, action string) prometheus.Counte
 	return m.abuseScanFindings.WithLabelValues(category, action)
 }
 
-// EgressFlowLogRows returns the ADR-369 egress flow log row counter.
+// EgressFlowLogRows returns the ADR-371 egress flow log row counter.
 func (m *OpsMetrics) EgressFlowLogRows() prometheus.Counter {
 	if m == nil || m.egressFlowLogRows == nil {
 		return nil

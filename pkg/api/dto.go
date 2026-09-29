@@ -11481,7 +11481,7 @@ type CustomMetricListResponse struct {
 	MaxMetrics int                    `json:"max_metrics"`
 }
 
-// EgressFlowLogEntry is one ADR-369 egress flow log row: a destination
+// EgressFlowLogEntry is one ADR-371 egress flow log row: a destination
 // address and TCP port a tenant guest opened a new flow to.
 type EgressFlowLogEntry struct {
 	ObservedAt time.Time `json:"observed_at"`

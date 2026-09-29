@@ -1,4 +1,4 @@
-# ADR-369 · Egress flow log for abuse attribution
+# ADR-371 · Egress flow log for abuse attribution
 
 - **Status:** accepted
 - **Date:** 2026-09-29
