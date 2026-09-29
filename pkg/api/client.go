@@ -5142,6 +5142,13 @@ func (c *Client) ListOrgApps(ctx context.Context, slug string) (OrgAppListRespon
 	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/apps", nil, &out)
 }
 
+// CreateOrgAppDeployment starts an image deployment for an app attributed to
+// the selected workspace. The app creator remains the billing/quota identity.
+func (c *Client) CreateOrgAppDeployment(ctx context.Context, orgSlug, appSlug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "POST", "/v1/orgs/"+orgSlug+"/apps/"+appSlug+"/deployments", req, &out)
+}
+
 // PatchOrg applies a partial update to the org (name and/or plan).
 // Authz routing:
 //   - Name → org.manage_billing (owner + billing)

@@ -91,6 +91,11 @@ var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
 		state.OrgRoleAdmin:     true,
 		state.OrgRoleDeveloper: true,
 	},
+	OrgActionDeployApp: {
+		state.OrgRoleOwner:     true,
+		state.OrgRoleAdmin:     true,
+		state.OrgRoleDeveloper: true,
+	},
 }
 
 // AuthorizeOrgAction returns nil if the active-org principal on ctx

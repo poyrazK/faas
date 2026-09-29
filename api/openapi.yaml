@@ -20568,6 +20568,45 @@ paths:
         '422': { $ref: '#/components/responses/InvalidCPURAMPair' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/apps/{app_slug}/deployments:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - $ref: '#/components/parameters/OrgAppSlug'
+    post:
+      tags: [deployments]
+      operationId: createOrgAppDeployment
+      summary: Deploy a digest-pinned image to a workspace app.
+      description: |
+        Creates an image deployment for an existing app whose persisted
+        `org_id` matches this workspace. Owners, admins, and developers may
+        deploy (`org.deploy_app`); viewers and billing members are read-only.
+        This workspace route accepts JSON image requests only, and `image`
+        must be digest-pinned. The app creator remains the plan and deployment
+        quota identity; the authenticated workspace member is recorded as the
+        deployment actor. Other app-specific APIs remain creator-scoped.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Digest-pinned OCI image deployment request.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDeploymentRequest' }
+      responses:
+        '202':
+          description: The image deployment accepted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403':
+          description: Caller is not verified or lacks `org.deploy_app`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/members:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -21243,6 +21282,12 @@ components:
         and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
         in `pkg/api/errors.go` exactly so the spec drift gate
         (`make spec-check`) stays green.
+    OrgAppSlug:
+      name: app_slug
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+      description: Target app slug. It must resolve to an active application assigned to the organization named by the adjacent `slug` parameter.
     OrgAccountID:
       name: user_id
       in: path

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -598,26 +599,78 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		s.createDeploymentMultipart(w, r, acct, app, false)
 		return
 	}
+	s.createImageDeployment(w, r, acct, acct, app, limits)
+}
+
+// createOrgDeployment is the workspace-authorized image-only deployment
+// entrypoint. The persisted app org is checked independently of the active
+// org hint; the app creator remains the plan/quota owner while the caller is
+// stamped as the deployment actor.
+func (s *server) createOrgDeployment(w http.ResponseWriter, r *http.Request, actor state.Account) {
+	if !s.requireOrgAction(w, r, authz.OrgActionDeployApp) {
+		return
+	}
+	mem, ok := s.requireMembership(w, r)
+	if !ok {
+		return
+	}
+	org, err := s.store.OrgBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such app")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load workspace"))
+		return
+	}
+	if org.ID != mem.OrgID {
+		s.notFound(w, "no such app")
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		api.WriteProblem(w, api.ErrValidation("workspace deployments currently accept JSON image references only"))
+		return
+	}
+	app, err := s.store.AppBySlug(r.Context(), r.PathValue("app_slug"))
+	if err != nil || app.OrgID == "" || app.OrgID != org.ID {
+		s.notFound(w, "no such app")
+		return
+	}
+	owner, err := s.store.AccountByID(r.Context(), app.AccountID)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such app")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load app owner"))
+		return
+	}
+	s.createImageDeployment(w, r, actor, owner, app, api.MustLimitsFor(owner.Plan))
+}
+
+// createImageDeployment shares image validation and persistence while
+// keeping the caller distinct from the app's plan/quota account.
+func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, actor, owner state.Account, app state.App, limits api.Limits) {
 	var req api.CreateDeploymentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
+	if p := s.applyDeploymentEnvironment(r.Context(), owner, app, &req); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	if len(req.Workflows) > 0 {
-		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, owner.Plan); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
 	}
-	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
+	if p := validateDeploymentTrafficOptions(&req, owner.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
-	if p := validateDeploymentRollbackOptions(&req, acct.Plan); p != nil {
+	if p := validateDeploymentRollbackOptions(&req, owner.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -629,7 +682,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// Pre-CreateDeployment validation gates (#472 / #460 / #463).
 	// Gate order matters (signature → override → sidecar); each
 	// helper short-circuits only on its own failure.
-	if p := enforceSignatureGate(r.Context(), s, acct, app, &req); p != nil {
+	if p := enforceSignatureGate(r.Context(), s, owner, app, &req); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -637,12 +690,12 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	overrides, p := validateOverrides(&req, limits, acct.Plan)
+	overrides, p := validateOverrides(&req, limits, owner.Plan)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
-	if p := s.validateAndPlanSidecars(&req, acct, limits); p != nil {
+	if p := s.validateAndPlanSidecars(&req, owner, limits); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -676,7 +729,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
+	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, owner.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
 		return
@@ -697,11 +750,11 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// server-resolved and never client-supplied; the
 	// closed-set CHECK on deployed_via (migration 00303) rejects
 	// any out-of-set value the helper chain might emit.
-	stampDeploymentActor(&dep, acct, r)
-	if !s.admitAccountDeploy(w, r, acct) {
+	stampDeploymentActor(&dep, actor, r)
+	if !s.admitAccountDeploy(w, r, owner) {
 		return
 	}
-	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
+	activity := s.newDeploymentActivity(r.Context(), r, actor, app, map[string]any{
 		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
 	})
 	var d state.Deployment
@@ -737,7 +790,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
-	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
+	notifyAndAuditDeployment(r, s, owner, actor, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 
