@@ -156,6 +156,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The bundle manifest records each file's mode. The fleet runner's
+          # service runs with UMask=0077, while the control plane extracts
+          # release.tar.gz as root with the archive's modes; use the hosted
+          # runner's umask so both sides agree (bin/apid 0755, not 0700).
+          umask 0022
           CANONICAL_ROOT="$RUNNER_TEMP/gregale-canonical"
           mkdir -p "$CANONICAL_ROOT"
           # GitHub's by-tag response can lag asset uploads while the by-ID
@@ -293,6 +298,8 @@ jobs:
       - name: Build immutable release bundle
         run: |
           set -euo pipefail
+          # Same umask as the canonical download step: see there.
+          umask 0022
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
           mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/optional-systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
           PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"

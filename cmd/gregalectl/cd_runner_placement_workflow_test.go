@@ -153,3 +153,24 @@ func TestFleetRunnerJobsInstallPythonToolsInAVenv(t *testing.T) {
 		t.Error("github_actions_runner does not install python3-venv")
 	}
 }
+
+// deployctl verifies every bundle file's mode against the manifest built on
+// the runner. The fleet runner's service umask is 0077, so without an
+// explicit umask the runner recorded bin/apid as 0700 while the control
+// plane unpacked it as 0755, and activation failed on production-us.
+func TestCDControlPlaneBundleStepsPinTheUmask(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	for _, step := range []string{"Download and verify canonical release", "Build immutable release bundle"} {
+		start := strings.Index(workflow, "      - name: "+step+"\n")
+		if start < 0 {
+			t.Fatalf("cd-controlplane lost step %q", step)
+		}
+		body := workflow[start+1:]
+		if next := strings.Index(body, "\n      - name: "); next >= 0 {
+			body = body[:next]
+		}
+		if !strings.Contains(body, "\n          umask 0022\n") {
+			t.Errorf("step %q builds bundle content without pinning umask 0022", step)
+		}
+	}
+}
