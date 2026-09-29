@@ -300,7 +300,7 @@ func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName s
 		  where t.app_id=$1 and tr.work_policy_name=$2 and tr.work_key_digest=$3
 		    and tr.state in ('pending','retry','claimed')
 		) work order by work_sequence limit 1`, appID, policyName, digest).Scan(&oldestID, &oldestState, &due); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			if commitErr := commitExpiry(); commitErr != nil {
 				return commitErr
 			}
