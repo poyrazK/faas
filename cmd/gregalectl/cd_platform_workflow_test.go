@@ -130,8 +130,10 @@ func TestCDPlatformSerializesProductionAcrossReleaseTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(body)
-	if !strings.Contains(workflow, "group: production-platform-rollout") || !strings.Contains(workflow, "cancel-in-progress: false") {
-		t.Fatal("platform workflow must serialize every production rollout without cancelling an active deployment")
+	// One lock per fleet: deploy_environment=production keeps the historical
+	// production-platform-rollout key, and no release tag appears in it.
+	if !strings.Contains(workflow, "group: ${{ inputs.deploy_environment }}-platform-rollout") || !strings.Contains(workflow, "cancel-in-progress: false") {
+		t.Fatal("platform workflow must serialize every rollout of a fleet without cancelling an active deployment")
 	}
 	if strings.Contains(workflow, "group: cd-platform-${{ inputs.release_tag }}") {
 		t.Fatal("platform rollout lock must not allow different release tags to overlap")
