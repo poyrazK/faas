@@ -54,7 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 346 | [Customer after-restore readiness hook](346-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
+| 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
 | 344 | [Atomic usage statement webhook production](344-usage-statement-webhook-outbox.md) | accepted | Commit the finalized statement and webhook event together, then relay to the delivery ledger with event/subscription dedupe; extends ADR-076 |
 | 343 | [Durable app wake webhook completion](343-app-wake-webhook-completion.md) | accepted | Track parked-to-active wakes until a ready instance exists, recover app.woken in schedd, and supersede pending wakes when park wins |
 | 342 | [Durable app park webhook completion](342-app-park-webhook-completion.md) | accepted | Track park transitions through instance drain, recover completion in schedd, then enqueue `app.parked` through ADR-344's outbox |

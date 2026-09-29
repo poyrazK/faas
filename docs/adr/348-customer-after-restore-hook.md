@@ -1,4 +1,4 @@
-# ADR-346 · Customer after-restore readiness hook
+# ADR-348 · Customer after-restore readiness hook
 
 - **Status:** accepted
 - **Date:** 2026-09-28
