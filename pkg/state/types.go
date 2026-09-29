@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -535,15 +536,67 @@ type Account struct {
 	BusinessName   string
 	BillingAddress string
 	TaxID          string
+	// AbuseHoldAt / AbuseHoldReason are the ADR-361 account-wide abuse
+	// hold, set by schedd on repeated egress fan-out or by an operator.
+	// They are separate from Status so the billing lifecycle never sees the
+	// hold and a release restores exactly the prior state. Both are unset
+	// when the account is not held.
+	AbuseHoldAt     *time.Time
+	AbuseHoldReason string
 }
 
-// Active reports whether the account may deploy (not suspended/deleted).
-func (a Account) Active() bool { return a.Status == AccountActive || a.Status == AccountPastDue }
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// CHECK accepts exactly these.
+const (
+	AccountAbuseHoldEgressFanout = "egress_fanout"
+	AccountAbuseHoldOperator     = "operator"
+)
+
+// AbuseHeld reports whether the account is under an ADR-361 abuse hold.
+func (a Account) AbuseHeld() bool { return a.AbuseHoldAt != nil }
+
+// Active reports whether the account may run workloads (not suspended,
+// deleted or abuse-held).
+func (a Account) Active() bool {
+	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
+}
 
 // MayDeploy reports whether the account may start new deployments. A
 // past_due account keeps serving during its grace period but cannot deploy
-// (spec §4.7), and a suspended or deleted_pending account cannot either.
-func (a Account) MayDeploy() bool { return a.Status == AccountActive }
+// (spec §4.7), and a suspended, deleted_pending or abuse-held account
+// cannot either.
+func (a Account) MayDeploy() bool { return a.Status == AccountActive && !a.AbuseHeld() }
+
+// InactiveProblem is the customer-facing problem for an account that may not
+// run workloads: the abuse hold when one is set, otherwise the billing
+// suspension.
+func (a Account) InactiveProblem() *api.Problem {
+	if a.AbuseHeld() {
+		return api.ErrAccountAbuseHold()
+	}
+	return api.ErrAccountSuspended()
+}
+
+// DeployBlockedProblem is the customer-facing problem for an account that may
+// not deploy: the abuse hold when one is set, otherwise the billing block.
+func (a Account) DeployBlockedProblem() *api.Problem {
+	if a.AbuseHeld() {
+		return api.ErrAccountAbuseHold()
+	}
+	return api.ErrDeploysBlocked()
+}
+
+// AccountAbuseHoldStore places and releases the ADR-361 account abuse hold.
+// Both PgStore and MemStore implement it; callers type-assert so test
+// stores that do not embed either keep compiling.
+type AccountAbuseHoldStore interface {
+	// SetAccountAbuseHold holds the account unless it already is. placed
+	// reports whether this call placed the hold.
+	SetAccountAbuseHold(ctx context.Context, accountID, reason string, at time.Time) (placed bool, err error)
+	// ReleaseAccountAbuseHold clears the hold. released reports whether one
+	// was set.
+	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
+}
 
 // EmailVerified reports whether the account has proved control of its email.
 func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }

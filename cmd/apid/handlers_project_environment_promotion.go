@@ -591,7 +591,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 	// admitted while the account was active (above) stays allowed so a
 	// half-applied release graph can still converge.
 	if !acct.MayDeploy() {
-		api.WriteProblem(w, api.ErrDeploysBlocked())
+		api.WriteProblem(w, acct.DeployBlockedProblem())
 		return
 	}
 	plan, problem := s.buildProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig)

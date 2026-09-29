@@ -580,6 +580,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:                string(acct.Status),
+		AccountAbuseHeld:             acct.AbuseHeld(),
 		Type:                         gateway.AppType(app.Type),
 		Plan:                         acct.Plan,
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),

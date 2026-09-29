@@ -186,7 +186,7 @@ func (s *PgStore) DrainReadyAppWakeTransitions(ctx context.Context, limit int) (
 		         left join accounts ac on ac.id = a.account_id
 		        where stale.completed_at is null and stale.superseded_at is null
 		          and (a.id is null or a.status <> $1 or a.wake_transition_id is distinct from stale.id
-		               or ac.status not in ('active', 'past_due'))
+		               or ac.status not in ('active', 'past_due') or ac.abuse_hold_at is not null)
 	        order by stale.requested_at, stale.id
 	        for update of stale skip locked
 	        limit $2
@@ -198,7 +198,7 @@ func (s *PgStore) DrainReadyAppWakeTransitions(ctx context.Context, limit int) (
 		select t.id::text, i.id::text, i.wake_id::text
 		  from app_wake_transitions t
 		  join apps a on a.id = t.app_id
-		  join accounts ac on ac.id = a.account_id and ac.status in ('active', 'past_due')
+		  join accounts ac on ac.id = a.account_id and ac.status in ('active', 'past_due') and ac.abuse_hold_at is null
 		  join lateral (
 		       select ready.id, ready.wake_id
 		         from instances ready
@@ -251,7 +251,7 @@ func completeReadyAppWakeTransitionTx(ctx context.Context, tx pgx.Tx, transition
 	err := tx.QueryRow(ctx, `
 		select a.id::text, a.account_id::text, a.slug
 		  from apps a
-		  join accounts ac on ac.id = a.account_id and ac.status in ('active', 'past_due')
+		  join accounts ac on ac.id = a.account_id and ac.status in ('active', 'past_due') and ac.abuse_hold_at is null
 		  join app_wake_transitions t on t.app_id = a.id
 		 where t.id = $1::uuid and t.completed_at is null and t.superseded_at is null
 		   and a.status = $2 and a.wake_transition_id = t.id

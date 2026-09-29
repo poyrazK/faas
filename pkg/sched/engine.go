@@ -744,6 +744,13 @@ type Engine struct {
 	// to fast-forward the CapacityFreshness budget without sleeping.
 	now func() time.Time
 
+	// egressFanoutRecycles is each account's recent ADR-361 fan-out
+	// recycle times, for the escalation to the account abuse hold. It is
+	// per schedd and in memory: a restart forgets it, which costs at most
+	// one more recycle before the hold.
+	egressFanoutMu       sync.Mutex
+	egressFanoutRecycles map[string][]time.Time
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -2253,7 +2260,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 		if latestApp.Status != state.AppActive || !latestAccount.Active() {
 			_, parkErr := e.ParkApp(context.WithoutCancel(leaderCtx), appID)
 			if !latestAccount.Active() {
-				out.Err = errors.Join(ErrPermanentWake, api.ErrAccountSuspended(), parkErr)
+				out.Err = errors.Join(ErrPermanentWake, latestAccount.InactiveProblem(), parkErr)
 			} else {
 				out.Err = errors.Join(ErrPermanentWake, api.NewProblem(http.StatusConflict, api.CodeConflict,
 					"App was parked during wake", "the newer park request took precedence"), parkErr)
@@ -6346,7 +6353,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended {
+	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
 		return 0, nil
 	}
 
@@ -6366,7 +6373,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended {
+	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
 		return 0, nil
 	}
 
@@ -6411,6 +6418,18 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				}
 				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
 					errs = append(errs, fmt.Errorf("instance %s: destroy worker/job: %w", fresh.ID, destroyErr))
+					continue
+				}
+				e.ledger.Release(fresh.ID)
+				e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+				acted++
+				continue
+			}
+			if account.AbuseHeld() {
+				// ADR-361: never snapshot a guest from an abuse-held
+				// account; a release would restore the offending process.
+				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
+					errs = append(errs, fmt.Errorf("instance %s: destroy abuse-held VM: %w", fresh.ID, destroyErr))
 					continue
 				}
 				e.ledger.Release(fresh.ID)
@@ -6686,10 +6705,23 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 // init snapshot predates traffic and is kept. The next request cold-starts
 // or restores a clean instance, which is recycled again if the behaviour
 // comes from the app itself.
+//
+// A repeat on the same account within the hold window escalates to the
+// account abuse hold (see escalateEgressFanout).
 func (e *Engine) RecycleForEgressFanout(ctx context.Context, instanceID string, perMinute, limit int64) error {
+	appID, err := e.recycleForEgressFanout(ctx, instanceID, perMinute, limit)
+	if err != nil || appID == "" {
+		return err
+	}
+	// The app lock is released: a hold parks every app of the account,
+	// including this one.
+	return e.escalateEgressFanout(ctx, appID, perMinute, limit)
+}
+
+func (e *Engine) recycleForEgressFanout(ctx context.Context, instanceID string, perMinute, limit int64) (string, error) {
 	ins, err := e.lockedRunning(ctx, instanceID)
 	if err != nil || ins == nil {
-		return err
+		return "", err
 	}
 	defer e.unlockApp(ins.AppID)
 
@@ -6701,7 +6733,7 @@ func (e *Engine) RecycleForEgressFanout(ctx context.Context, instanceID string, 
 
 	e.ledger.Release(instanceID)
 	if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, instanceID, DestroyTimeout); err != nil {
-		return fmt.Errorf("sched: egress fan-out: destroy %s: %w", instanceID, err)
+		return "", fmt.Errorf("sched: egress fan-out: destroy %s: %w", instanceID, err)
 	}
 	e.log.Warn("egress fan-out: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
 		"new_destinations_per_min", perMinute, "limit", limit)
@@ -6713,7 +6745,7 @@ func (e *Engine) RecycleForEgressFanout(ctx context.Context, instanceID string, 
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
-	return nil
+	return ins.AppID, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the engine-side
@@ -7765,7 +7797,7 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: account: %w", err)
 	}
 	if !acct.Active() {
-		return state.App{}, state.Account{}, api.Limits{}, errors.Join(ErrPermanentWake, api.ErrAccountSuspended())
+		return state.App{}, state.Account{}, api.Limits{}, errors.Join(ErrPermanentWake, acct.InactiveProblem())
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {

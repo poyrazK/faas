@@ -922,7 +922,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// applies to every other deploy path (spec §4.7: past_due and
 		// later cannot deploy).
 		if !acct.MayDeploy() {
-			res.Error = "deploys are blocked until the outstanding payment is resolved"
+			res.Error = acct.DeployBlockedProblem().Detail
 			out = append(out, res)
 			continue
 		}

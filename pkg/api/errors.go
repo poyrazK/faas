@@ -497,6 +497,9 @@ const (
 	CodeStageReadinessFailed         = "stage_readiness_failed"
 	CodeQuotaExhausted               = "quota_exhausted"
 	CodeBillingPastDue               = "billing_past_due"
+	// CodeAccountAbuseHold (ADR-361) is returned while an account is under
+	// an operator-review abuse hold.
+	CodeAccountAbuseHold = "account_abuse_hold"
 	// CodeBillingNotImplemented is returned when the selected
 	// billing provider (FAAS_BILLING_PROVIDER) does not implement the
 	// requested method (issue #279: Paddle's Refund). Distinct from
@@ -1836,7 +1839,8 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
+		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
@@ -2591,6 +2595,16 @@ func ErrAccountSuspended() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
 		"Account suspended", "resolve billing to continue: "+dashboardBillingURL).
 		WithDocs(docsBase + "/billing")
+}
+
+// ErrAccountAbuseHold (ADR-361) is returned for any workload or deploy on an
+// account held for operator review after its guests' outbound traffic looked
+// like scanning or abuse. Only an operator can release it.
+func ErrAccountAbuseHold() *Problem {
+	return NewProblem(http.StatusForbidden, CodeAccountAbuseHold,
+		"Account on hold",
+		"outbound traffic from this account's workloads matched a scanning or abuse pattern; the account is held for review. Contact support to have it released.").
+		WithDocs(docsBase + "/apps#egress-limits")
 }
 
 // ErrDeploysBlocked is returned when an account that may not deploy (spec

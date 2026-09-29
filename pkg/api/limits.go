@@ -4189,6 +4189,12 @@ const (
 	// is already over by the time the trigger fires.
 	ScaleUpDecisionIntervalSeconds = 1
 	ScaleUpWindowSeconds           = 5
+	// ADR-361 decision 6: the EgressFanoutHoldRecycles-th egress fan-out
+	// recycle on one account within EgressFanoutHoldWindowSeconds places
+	// the account abuse hold. One recycle can be a compromised instance
+	// that a clean restart fixes; a repeat means the account's own code.
+	EgressFanoutHoldRecycles      = 2
+	EgressFanoutHoldWindowSeconds = 3600
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,

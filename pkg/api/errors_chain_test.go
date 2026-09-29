@@ -117,6 +117,7 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 		"plan_egress_ports_not_allowed": http.StatusForbidden,
 		"egress_ports_too_many":         http.StatusBadRequest,
 		"invalid_egress_port":           http.StatusBadRequest,
+		"account_abuse_hold":            http.StatusForbidden,
 	}
 	for code, want := range cases {
 		if got := StatusForCode(code); got != want {

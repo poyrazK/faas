@@ -910,6 +910,13 @@ Two new event kinds land in the existing append-only `events` table:
 
 Both rows are observational — the actual state changes (Stripe `Refund`, `account_credits` insert, `credit_ledger` insert) are the source of truth.
 
+#### 5.8 Audit events — account abuse hold (ADR-361)
+
+- **`accounts.abuse_hold`** — emitted by `schedd` when a repeated egress fan-out recycle places the hold. `subject` = the held account; `data` carries the app, observed rate, ceiling and escalation window.
+- **`account.abuse_hold_placed`** / **`account.abuse_hold_released`** — emitted by `apid` on `POST` / `DELETE /v1/admin/accounts/{id}/abuse-hold` when the hold changed. `subject` = the target account; `data` carries the operator and their note.
+
+The source of truth is `accounts.abuse_hold_at` / `abuse_hold_reason`.
+
 ---
 
 ## 6. Deployment and instance lifecycle
@@ -1715,6 +1722,7 @@ Every catalog CIDR (spec §11) carries a stable nftables named counter (`drop_v4
 | Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, `allowlist`, `port_policy`, or `rate_limit` (ADR-361) |
 | Per-app destination fan-out (ADR-361) | `vmmd_egress_new_destinations_total` | `app` | same poller; destination addresses a guest contacted that it had not contacted in the previous 10 minutes (`faas_egress_new_dst`) |
 | Fan-out enforcement (ADR-361) | `schedd_egress_fanout_recycles_total` | `app` | instances schedd destroyed for reaching the plan's `EgressNewDestinationsPerMinute`; any increase pages (`FaasTenantEgressFanout`) |
+| Account abuse hold (ADR-361) | `schedd_account_abuse_holds_total` | `reason` | account abuse holds schedd placed (`egress_fanout`); any increase pages (`FaasAccountAbuseHold`) |
 | Per-netns nftables | (not exported) | — | per-VM cardinality is unbounded; available via `nft list counters` on the operator box for debugging |
 | OCI user-space dialer | `imaged_oci_egress_deny_total` | `cidr`, `family` | `pkg/oci/egress.go::EgressDenyHook` invoked from `EgressDialContext` on denial; `cmd/imaged/main.go` wires the hook |
 

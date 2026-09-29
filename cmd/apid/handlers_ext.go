@@ -2486,7 +2486,7 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 // wakeApp unparks an evicted_cold app.
 func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !acct.Active() {
-		api.WriteProblem(w, api.ErrAccountSuspended())
+		api.WriteProblem(w, acct.InactiveProblem())
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))

@@ -3445,6 +3445,26 @@ type CapabilitiesResponse struct {
 	Capabilities    []CapabilityStatus `json:"capabilities"`
 }
 
+// AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
+type AccountAbuseHold struct {
+	Reason string    `json:"reason"`
+	HeldAt time.Time `json:"held_at"`
+}
+
+// AccountAbuseHoldAction is the operator's audit note for placing or
+// releasing an ADR-361 account abuse hold.
+type AccountAbuseHoldAction struct {
+	Note string `json:"note"`
+}
+
+// AccountAbuseHoldActionResponse reports an account's abuse hold after an
+// operator action. Changed is false when the action was a no-op.
+type AccountAbuseHoldActionResponse struct {
+	AccountID string            `json:"account_id"`
+	AbuseHold *AccountAbuseHold `json:"abuse_hold"`
+	Changed   bool              `json:"changed"`
+}
+
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
 // deployed-app and developer-environment caps) so the dashboard /account
@@ -3453,9 +3473,12 @@ type CapabilitiesResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
+	// AbuseHold is present while the account is on an ADR-361 abuse hold:
+	// nothing runs or deploys until an operator releases it.
+	AbuseHold     *AccountAbuseHold `json:"abuse_hold,omitempty"`
+	ID            string            `json:"id"`
+	Email         string            `json:"email"`
+	EmailVerified bool              `json:"email_verified"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`

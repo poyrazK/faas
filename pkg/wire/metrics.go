@@ -1529,6 +1529,9 @@ type OpsMetrics struct {
 	// egressFanoutRecycles counts schedd recycling an instance for
 	// exceeding its plan's fan-out ceiling (ADR-361 decision 6).
 	egressFanoutRecycles *prometheus.CounterVec
+	// accountAbuseHolds counts ADR-361 account abuse holds placed, by
+	// reason.
+	accountAbuseHolds *prometheus.CounterVec
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -3560,6 +3563,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_egress_fanout_recycles_total",
 		Help: "Instances schedd destroyed because their guest contacted at least the plan's EgressNewDestinationsPerMinute new destinations in one minute (ADR-361 decision 6), per app. Any increase is a potential abuse report against the platform's egress address and pages the operator.",
 	}, []string{"app"})
+	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_account_abuse_holds_total",
+		Help: "ADR-361 account abuse holds placed, by reason (egress_fanout: the account's instances were recycled for egress fan-out EgressFanoutHoldRecycles times within the hold window). A held account runs nothing until an operator releases it.",
+	}, []string{"reason"})
 	// Issue #300: per-tenant RPS gauge. Sampled 5s by the daemon's
 	// topNSampler goroutine (cmd/apid/topn.go). Bounded at
 	// topAccountSetCap (1000) + "other" via topAccountSet — see
@@ -3796,7 +3803,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied, egressNewDestinations, egressFanoutRecycles,
+		egressDeny, egressDenied, egressNewDestinations, egressFanoutRecycles, accountAbuseHolds,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -5027,6 +5034,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	egressNewDestinations.WithLabelValues("")
 	egressFanoutRecycles.WithLabelValues("")
+	accountAbuseHolds.WithLabelValues("egress_fanout")
 	// PR-E: pre-instantiate the imaged-side mirror counter
 	// (oci_egress_deny_total) with the catalog entries. The OCI-only
 	// extras (loopback / 0.0.0.0/8 / IETF-assigned / benchmarking /
@@ -5337,6 +5345,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		egressDenied:                                          egressDenied,
 		egressNewDestinations:                                 egressNewDestinations,
 		egressFanoutRecycles:                                  egressFanoutRecycles,
+		accountAbuseHolds:                                     accountAbuseHolds,
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
@@ -7504,6 +7513,14 @@ func (m *OpsMetrics) EgressFanoutRecycled(app string) prometheus.Counter {
 		return nil
 	}
 	return m.egressFanoutRecycles.WithLabelValues(app)
+}
+
+// AccountAbuseHold returns the ADR-361 account abuse hold counter.
+func (m *OpsMetrics) AccountAbuseHold(reason string) prometheus.Counter {
+	if m == nil || m.accountAbuseHolds == nil {
+		return nil
+	}
+	return m.accountAbuseHolds.WithLabelValues(reason)
 }
 
 // EgressDeniedSeries returns the aggregate C1 series for diagnostics.

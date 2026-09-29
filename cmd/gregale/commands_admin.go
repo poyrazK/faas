@@ -38,10 +38,11 @@ import (
 // the account uuid + cents positionals.
 func cmdAdmin(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits>")
+		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits|abuse-hold>")
 		fmt.Fprintln(os.Stderr, "  gregale admin credit --reason <text> <account_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin consume-credits <invoice-id>")
+		fmt.Fprintln(os.Stderr, "  gregale admin abuse-hold <place|release> --note <text> <account_uuid>")
 		PrintUsage(os.Stderr, "usage: gregale admin <subcommand>", "admin")
 		return 2
 	}
@@ -52,6 +53,8 @@ func cmdAdmin(args []string) int {
 		return cmdAdminRefund(args[1:])
 	case "consume-credits":
 		return cmdAdminConsumeCredits(args[1:])
+	case "abuse-hold":
+		return cmdAdminAbuseHold(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregale: unknown admin subcommand %q\n", args[0])
 		return 2
@@ -241,5 +244,58 @@ func cmdAdminConsumeCredits(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Consumed credits on invoice %s: %d cents consumed (%d remaining).", resp.InvoiceID, resp.ConsumedCents, resp.RemainingCreditsCents)
+	return 0
+}
+
+// cmdAdminAbuseHold places or releases an ADR-361 account abuse hold. A held
+// account runs and deploys nothing; schedd places egress_fanout holds on its
+// own, and an operator releases them after review.
+func cmdAdminAbuseHold(args []string) int {
+	const usage = "usage: gregale admin abuse-hold <place|release> --note <text> <account_uuid>"
+	if len(args) == 0 || (args[0] != "place" && args[0] != "release") {
+		fmt.Fprintln(os.Stderr, usage)
+		return 2
+	}
+	place := args[0] == "place"
+	fs := newFlagSet("admin abuse-hold "+args[0], flag.ContinueOnError)
+	note := fs.String("note", "", "audit note (required, 3..500 chars)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, usage)
+		return 2
+	}
+	accountUUID, err := uuid.Parse(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregale: account must be a UUID")
+		return 2
+	}
+	if n := len(*note); n < 3 || n > 500 {
+		fmt.Fprintln(os.Stderr, "gregale: --note is required (3..500 chars)")
+		return 2
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ChangeAccountAbuseHold(context.Background(), accountUUID.String(), place, *note)
+	if err != nil {
+		return printErr("Abuse hold change failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	switch {
+	case resp.AbuseHold != nil && resp.Changed:
+		PrintOK(osStdout, "Held account %s (%s)", resp.AccountID, resp.AbuseHold.Reason)
+	case resp.AbuseHold != nil:
+		PrintOK(osStdout, "Account %s was already held (%s since %s)", resp.AccountID, resp.AbuseHold.Reason,
+			resp.AbuseHold.HeldAt.Format("2006-01-02T15:04:05Z07:00"))
+	case resp.Changed:
+		PrintOK(osStdout, "Released account %s; its apps wake on their next request", resp.AccountID)
+	default:
+		PrintOK(osStdout, "Account %s was not held", resp.AccountID)
+	}
 	return 0
 }

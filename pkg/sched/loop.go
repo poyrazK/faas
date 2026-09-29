@@ -2312,7 +2312,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
-				mustPark = account.Status == state.AccountSuspended
+				mustPark = account.Status == state.AccountSuspended || account.AbuseHeld()
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}

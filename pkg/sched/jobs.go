@@ -123,7 +123,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob resolve account: %w", err)
 	}
 	if !account.Active() {
-		return JobWakeResult{}, errors.Join(ErrPermanentWake, api.ErrAccountSuspended())
+		return JobWakeResult{}, errors.Join(ErrPermanentWake, account.InactiveProblem())
 	}
 	plan := account.Plan
 	if plan == api.PlanFree {

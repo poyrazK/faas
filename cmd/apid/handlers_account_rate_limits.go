@@ -65,7 +65,7 @@ func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct
 	// past_due (its apps keep serving), and nothing else refused a
 	// deploy, so a customer who stopped paying could keep deploying.
 	if !acct.MayDeploy() {
-		api.WriteProblem(w, api.ErrDeploysBlocked())
+		api.WriteProblem(w, acct.DeployBlockedProblem())
 		return false
 	}
 	// Every deploy route also wraps requireVerifiedEmail; this keeps

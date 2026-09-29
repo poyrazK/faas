@@ -1743,6 +1743,19 @@ groups:
           description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m because the guest contacted at least its plan's EgressNewDestinationsPerMinute new destinations in one minute. Treat it as a likely scan or abuse from the node's egress address until reviewed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressFanout.md"
 
+      # ADR-361: schedd held an account after repeated egress fan-out. The
+      # account runs nothing until an operator reviews and releases it.
+      - alert: FaasAccountAbuseHold
+        expr: sum by (reason) (increase(schedd_account_abuse_holds_total[15m])) > 0
+        labels:
+          severity: page
+          component: schedd
+          family: tenant_abuse
+        annotations:
+          summary: "Account abuse hold placed ({{ $labels.reason }})"
+          description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress before releasing it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressFanout.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Daemon liveness — every scrape target should be up.
       # 2m is tight: a single scrape miss (15s) does not trip it; a

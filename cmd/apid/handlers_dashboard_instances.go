@@ -227,7 +227,7 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionParked, "")
 	case "wake":
 		if !acct.Active() {
-			api.WriteProblem(w, api.ErrAccountSuspended())
+			api.WriteProblem(w, acct.InactiveProblem())
 			return
 		}
 		if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {

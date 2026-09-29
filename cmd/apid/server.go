@@ -2473,6 +2473,12 @@ func (s *server) handler() http.Handler {
 	// account through the local invoice projection before calling the provider.
 	mux.HandleFunc("POST /v1/admin/accounts/{id}/refunds",
 		s.authLimited(s.requireAdminMutation(s.refundAccount)))
+	// ADR-361 account abuse hold: an operator places or releases it after
+	// reviewing egress abuse. schedd places egress_fanout holds itself.
+	mux.HandleFunc("POST /v1/admin/accounts/{id}/abuse-hold",
+		s.authLimited(s.requireAdminMutation(s.placeAccountAbuseHold)))
+	mux.HandleFunc("DELETE /v1/admin/accounts/{id}/abuse-hold",
+		s.authLimited(s.requireAdminMutation(s.releaseAccountAbuseHold)))
 
 	// PR-D / ADR-012 §7 amendment: per-tenant GitHub App webhook
 	// secret rotation. Same two-layer gate as issueCredit (scope +

@@ -103,6 +103,10 @@ type App struct {
 	// test fixtures as active; production always populates it. Suspended and
 	// deleted_pending accounts fail at the gateway before auth, wake, or proxy.
 	AccountStatus string
+	// AccountAbuseHeld is the ADR-361 account abuse hold. A held account fails
+	// at the gateway like a suspended one, so traffic never queues doomed
+	// wakes.
+	AccountAbuseHeld bool
 	// Type is populated from apps.type. Empty is treated as the legacy
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
@@ -5689,6 +5693,11 @@ haveApp:
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
 	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	if app.AccountAbuseHeld {
+		api.WriteProblem(w, api.ErrAccountAbuseHold())
+		h.observe(r, rec.status, app.ID, "", false, Target{})
+		return
+	}
 	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})

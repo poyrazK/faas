@@ -19947,6 +19947,64 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── ADR-361 account abuse hold ────────────────────────────────────────
+  # schedd places egress_fanout holds itself on repeated egress fan-out;
+  # an operator places or releases a hold after review. While held, the
+  # account runs and deploys nothing. Same operator gate as refunds.
+  /v1/admin/accounts/{id}/abuse-hold:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Account UUID whose abuse hold changes.
+    post:
+      tags: [admin]
+      operationId: placeAccountAbuseHold
+      summary: Place an abuse hold on an account (operator-only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountAbuseHoldAction' }
+      responses:
+        '200':
+          description: The account's hold after the action. `changed` is false when a hold was already in place.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountAbuseHoldActionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — placing a hold needs an operator session with MFA and recent step-up.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [admin]
+      operationId: releaseAccountAbuseHold
+      summary: Release an account's abuse hold (operator-only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountAbuseHoldAction' }
+      responses:
+        '200':
+          description: The account's hold after the action. `changed` is false when no hold was set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountAbuseHoldActionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — releasing a hold needs an operator session with MFA and recent step-up.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -23334,6 +23392,35 @@ components:
         business_name: { type: string, maxLength: 256, description: "Legal business name used on future invoices." }
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
+        abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
+
+    AccountAbuseHold:
+      description: "Present while the account is on an abuse hold (ADR-361): outbound traffic from its workloads matched a scanning or abuse pattern, so nothing runs or deploys until an operator releases it."
+      type: object
+      required: [reason, held_at]
+      properties:
+        reason: { type: string, enum: [egress_fanout, operator] }
+        held_at: { type: string, format: date-time }
+
+    AccountAbuseHoldAction:
+      description: "Operator note recorded in the audit log for an abuse-hold change (ADR-361)."
+      type: object
+      required: [note]
+      properties:
+        note: { type: string, minLength: 3, maxLength: 500 }
+
+    AccountAbuseHoldActionResponse:
+      description: "An account's abuse hold after an operator action."
+      type: object
+      required: [account_id, abuse_hold, changed]
+      properties:
+        account_id: { type: string, format: uuid }
+        abuse_hold:
+          description: "The hold after the action; null when the account is not held."
+          oneOf:
+            - $ref: '#/components/schemas/AccountAbuseHold'
+            - type: "null"
+        changed: { type: boolean }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."

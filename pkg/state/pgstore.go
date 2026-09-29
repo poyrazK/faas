@@ -295,7 +295,7 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 		           deletion_requested_at, last_quota_warning_at, past_due_at,
 		           mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash,
 		           mfa_required, egress_allowlist_extra, email_verified_at,
-		           coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'')`,
+		           coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'')`,
 		params.Email, string(params.Plan), params.RequireEmailVerification).Scan)
 	if err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
@@ -337,7 +337,7 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'') from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'') from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
@@ -360,7 +360,7 @@ func (s *PgStore) AccountsByIDs(ctx context.Context, ids []string) (map[string]A
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'') from accounts where id = any($1::uuid[])`, ids)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'') from accounts where id = any($1::uuid[])`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("state: accounts by IDs: %w", err)
 	}
@@ -380,13 +380,13 @@ func (s *PgStore) AccountsByIDs(ctx context.Context, ids []string) (map[string]A
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'') from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'') from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra, a.email_verified_at, coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,'')
+		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra, a.email_verified_at, coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,''), a.abuse_hold_at, coalesce(a.abuse_hold_reason,'')
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -1176,7 +1176,7 @@ func (s *PgStore) UpdateAccountBillingInfo(ctx context.Context, id, businessName
 		           deletion_requested_at, last_quota_warning_at, past_due_at,
 		           mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash,
 		           mfa_required, egress_allowlist_extra, email_verified_at,
-		           coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'')`,
+		           coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'')`,
 		id, businessName, billingAddress, taxID)
 	return scanAccount(row)
 }
@@ -1299,7 +1299,7 @@ func Sha256Equal(a, b []byte) bool {
 // map.
 func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'')
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'')
 		 from accounts where provider_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
@@ -1352,7 +1352,7 @@ func (s *PgStore) AccountByBillingCustomerID(ctx context.Context, provider, cust
 		        a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted,
 		        a.mfa_recovery_codes_hash, a.mfa_required,
 		        a.egress_allowlist_extra, a.email_verified_at,
-		        coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,'')
+		        coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,''), a.abuse_hold_at, coalesce(a.abuse_hold_reason,'')
 		   from accounts a
 		   join billing_identities bi on bi.account_id = a.id
 		  where bi.provider = $1 and bi.customer_id = $2`, provider, customerID)
@@ -1363,7 +1363,7 @@ func (s *PgStore) AccountByBillingCustomerID(ctx context.Context, provider, cust
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'')
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'')
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
@@ -1408,7 +1408,7 @@ func scanAccountCols(scan func(...any) error) (Account, error) {
 	var planStr, statusStr string
 	var deletionAt, lastWarnAt, pastDueAt *time.Time
 	var mfaEnrolledAt, emailVerifiedAt *time.Time
-	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.ProviderCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt, &mfaEnrolledAt, &a.MFASecretEncrypted, &a.MFARecoveryCodesHash, &a.MFARequired, &a.EgressAllowlistExtra, &emailVerifiedAt, &a.BusinessName, &a.BillingAddress, &a.TaxID); err != nil {
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.ProviderCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt, &mfaEnrolledAt, &a.MFASecretEncrypted, &a.MFARecoveryCodesHash, &a.MFARequired, &a.EgressAllowlistExtra, &emailVerifiedAt, &a.BusinessName, &a.BillingAddress, &a.TaxID, &a.AbuseHoldAt, &a.AbuseHoldReason); err != nil {
 		return Account{}, err
 	}
 	a.Plan = api.Plan(planStr)

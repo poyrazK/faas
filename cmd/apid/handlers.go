@@ -1199,6 +1199,13 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 // GitHubInstall is best-effort: expose the durable installation id when the
 // account has completed the GitHub App handshake; omit it on a miss or
 // transient read failure so account reads still succeed.
+func accountAbuseHoldView(acct state.Account) *api.AccountAbuseHold {
+	if !acct.AbuseHeld() {
+		return nil
+	}
+	return &api.AccountAbuseHold{Reason: acct.AbuseHoldReason, HeldAt: *acct.AbuseHoldAt}
+}
+
 func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
@@ -1210,6 +1217,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		BusinessName:   acct.BusinessName,
 		BillingAddress: acct.BillingAddress,
 		TaxID:          acct.TaxID,
+		AbuseHold:      accountAbuseHoldView(acct),
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,

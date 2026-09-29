@@ -336,7 +336,7 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !acct.Active() {
-		api.WriteProblem(w, api.ErrAccountSuspended())
+		api.WriteProblem(w, acct.InactiveProblem())
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
