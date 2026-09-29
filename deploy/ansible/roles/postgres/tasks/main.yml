@@ -15,6 +15,8 @@
       - postgresql
       - postgresql-contrib
       - libpq-dev
+      # community.postgresql modules import psycopg2 on the target host.
+      - python3-psycopg2
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -116,24 +118,18 @@
     group: faas
     mode: "0750"
 
+# These must fail loudly. They used to run with failed_when: false and a
+# psql fallback gated on `pg_role is failed`, which the override made
+# unreachable: on a fresh host without psycopg2 both the role and the
+# database silently did not exist while the play reported ok.
 - name: postgres — create postgres role `faas`
   community.postgresql.postgresql_user:
     name: faas
-    db: faas
     password: "{{ faas_postgres_password | default(omit) }}"
-    priv: ALL
+    role_attr_flags: LOGIN
     state: present
   become: true
   become_user: postgres
-  register: pg_role
-  failed_when: false  # pg module may be missing in M0; manual `createuser` fallback below
-
-- name: "postgres — fallback: create role via psql if pg_user module unavailable"
-  ansible.builtin.command: >
-    sudo -u postgres psql -c "CREATE ROLE faas LOGIN INHERIT;"
-  changed_when: false
-  failed_when: false
-  when: pg_role is failed
 
 - name: postgres — require a password for split-box database clients
   ansible.builtin.assert:
@@ -147,10 +143,12 @@
   when: (faas_postgres_allowed_cidrs | default([]) | length) > 0
 
 - name: postgres — create database `faas`
-  ansible.builtin.command: >
-    sudo -u postgres psql -c "CREATE DATABASE faas OWNER faas;"
-  changed_when: false
-  failed_when: false
+  community.postgresql.postgresql_db:
+    name: faas
+    owner: faas
+    state: present
+  become: true
+  become_user: postgres
 
 - name: postgres — make /run/postgresql writable for faas (peer auth)
   ansible.builtin.file:

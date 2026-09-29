@@ -82,7 +82,6 @@
     regexp: "^\\s*#?\\s*max_connections\\s*="
     line: "max_connections = {{ postgres_capacity_max_connections | int }}"
     create: false
-  notify: restart postgresql for capacity
 
 - name: postgres capacity — reserve operator connections
   ansible.builtin.lineinfile:
@@ -91,10 +90,45 @@
     line: >-
       superuser_reserved_connections = {{ faas_postgres_superuser_reserved_connections | int }}
     create: false
-  notify: restart postgresql for capacity
 
-- name: postgres capacity — activate postmaster settings before node admission
+- name: postgres capacity — flush pending handlers before node admission
   ansible.builtin.meta: flush_handlers
+
+- name: postgres capacity — derive the live postmaster target
+  ansible.builtin.set_fact:
+    postgres_capacity_live_target: >-
+      {{ (postgres_capacity_max_connections | int | string) + ':'
+      + (faas_postgres_superuser_reserved_connections | int | string) }}
+
+# max_connections and superuser_reserved_connections only change on a
+# postmaster restart. Decide from the running server, not from whether this
+# run edited postgresql.conf: a run that wrote the file and then failed before
+# a handler flush would otherwise leave every later run with an unchanged
+# file, no restart, and a failed admission check.
+- name: postgres capacity — read running postmaster settings
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - postgres
+      - -c
+      - >-
+        select current_setting('max_connections') || ':' ||
+        current_setting('superuser_reserved_connections')
+  register: postgres_capacity_running
+  changed_when: false
+
+- name: postgres capacity — restart postgresql to activate postmaster settings
+  become: true
+  ansible.builtin.service:
+    name: "postgresql@{{ postgres_capacity_major_version }}-main.service"
+    state: restarted
+  when: (postgres_capacity_running.stdout | trim) != postgres_capacity_live_target
 
 - name: postgres capacity — read live postmaster settings
   become: true
@@ -120,10 +154,7 @@
 - name: postgres capacity — verify live ordinary-client capacity
   ansible.builtin.assert:
     that:
-      - >-
-        (postgres_capacity_live.stdout | trim)
-        == ((postgres_capacity_max_connections | int | string)
-        + ':' + (faas_postgres_superuser_reserved_connections | int | string))
+      - (postgres_capacity_live.stdout | trim) == postgres_capacity_live_target
     fail_msg: >-
       PostgreSQL restarted without the requested max/reserved connection
       settings; refusing to admit another compute node.
