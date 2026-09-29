@@ -187,7 +187,9 @@ cgroups:
 
 pki:
   root_dir: /etc/faas/tls
-  ca_fingerprint: ceda4ea9662ceb9ef4c744d6dad7ed04591c6108d7de75f340614de02567162c
+  # gregale-prod control-plane CA (fsn-1, `gregalectl pki init --box-role
+  # control-plane`, 2026-09-29, expires 2031-09-28).
+  ca_fingerprint: d36abbb9a533ed187f1ab6613df7cc0a1e459572f7c9a881f13673e335236ecb
   allowed_sans:
     - schedd.faas
     - vmmd.faas
