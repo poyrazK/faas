@@ -1532,6 +1532,8 @@ type OpsMetrics struct {
 	// accountAbuseHolds counts ADR-361 account abuse holds placed, by
 	// reason.
 	accountAbuseHolds *prometheus.CounterVec
+	// dnsBlocked counts ADR-370 guest DNS lookups refused by the blocklist.
+	dnsBlocked *prometheus.CounterVec
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -3563,6 +3565,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_egress_abuse_recycles_total",
 		Help: "Instances schedd destroyed for reaching an ADR-361 egress abuse ceiling, per app and reason: fanout (at least the plan's EgressNewDestinationsPerMinute new destinations in one minute) or flood (at least EgressFloodDropsPerMinute new flows dropped against single destinations in one minute). Any increase is a potential abuse report against the platform's egress address and pages the operator.",
 	}, []string{"app", "reason"})
+	dnsBlocked := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_dns_blocked_total",
+		Help: "Guest DNS lookups the bridge resolver refused with NXDOMAIN because the name is on the ADR-370 blocklist, by category (miner for the built-in mining pool list, or the operator file's category). The log line names the calling app.",
+	}, []string{"category"})
 	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_account_abuse_holds_total",
 		Help: "ADR-361 account abuse holds placed, by reason (egress_fanout / egress_flood: the account's instances were recycled for egress abuse EgressFanoutHoldRecycles times within the hold window, the last one for that signal). A held account runs nothing until an operator releases it.",
@@ -3803,7 +3809,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds,
+		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, dnsBlocked,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -5037,6 +5043,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	egressAbuseRecycles.WithLabelValues("", "flood")
 	accountAbuseHolds.WithLabelValues("egress_fanout")
 	accountAbuseHolds.WithLabelValues("egress_flood")
+	dnsBlocked.WithLabelValues("miner")
 	// PR-E: pre-instantiate the imaged-side mirror counter
 	// (oci_egress_deny_total) with the catalog entries. The OCI-only
 	// extras (loopback / 0.0.0.0/8 / IETF-assigned / benchmarking /
@@ -5348,6 +5355,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		egressNewDestinations:                                 egressNewDestinations,
 		egressAbuseRecycles:                                   egressAbuseRecycles,
 		accountAbuseHolds:                                     accountAbuseHolds,
+		dnsBlocked:                                            dnsBlocked,
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
@@ -7516,6 +7524,14 @@ func (m *OpsMetrics) EgressAbuseRecycled(app, reason string) prometheus.Counter 
 		return nil
 	}
 	return m.egressAbuseRecycles.WithLabelValues(app, reason)
+}
+
+// DNSBlocked returns the ADR-370 blocked guest DNS lookup counter.
+func (m *OpsMetrics) DNSBlocked(category string) prometheus.Counter {
+	if m == nil || m.dnsBlocked == nil {
+		return nil
+	}
+	return m.dnsBlocked.WithLabelValues(category)
 }
 
 // AccountAbuseHold returns the ADR-361 account abuse hold counter.

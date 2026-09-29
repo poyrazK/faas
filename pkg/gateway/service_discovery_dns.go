@@ -33,6 +33,43 @@ type ServiceDiscoveryDNSHandler struct {
 	log           *slog.Logger
 	resolveCaller ServiceProxyCallerResolver
 	allowAlias    ServiceAliasAllowed
+	blocklist     *DNSBlocklist
+	onBlocked     func(category string)
+}
+
+// WithBlocklist makes the resolver answer NXDOMAIN for names on the ADR-370
+// blocklist instead of forwarding them. onBlocked, if set, is called once
+// per refused query with the matched category.
+func (h *ServiceDiscoveryDNSHandler) WithBlocklist(b *DNSBlocklist, onBlocked func(category string)) *ServiceDiscoveryDNSHandler {
+	h.blocklist, h.onBlocked = b, onBlocked
+	return h
+}
+
+// refuseBlocked answers NXDOMAIN when any question names a blocked domain.
+// The caller is resolved for the log only, so abuse can be attributed.
+func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dns.Msg) bool {
+	for _, question := range req.Question {
+		category, blocked := h.blocklist.Match(question.Name)
+		if !blocked {
+			continue
+		}
+		caller, remote := "", ""
+		if addr := w.RemoteAddr(); addr != nil {
+			remote = addr.String()
+		}
+		if h.resolveCaller != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
+			caller, _ = h.resolveCaller(ctx, remote)
+			cancel()
+		}
+		h.log.Warn("guest DNS lookup blocked", "name", question.Name, "category", category, "app", caller, "remote", remote)
+		if h.onBlocked != nil {
+			h.onBlocked(category)
+		}
+		h.writeRcode(w, req, dns.RcodeNameError)
+		return true
+	}
+	return false
 }
 
 // NewServiceDiscoveryDNSHandler constructs a resolver for a private bridge
@@ -77,6 +114,9 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 			msg.SetRcode(req, dns.RcodeFormatError)
 			_ = w.WriteMsg(msg)
 		}
+		return
+	}
+	if h.refuseBlocked(w, req) {
 		return
 	}
 	private := false

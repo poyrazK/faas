@@ -181,3 +181,16 @@ curl -fsS --data-urlencode "query=sum(rate(apid_request_total{account_id=\"${ACC
 A sustained recovery (no further `FaasTenantAbuse` fires for
 24h) closes the incident; the silence expires on its own and
 the gauge surfaces the customer at their normal rps position.
+
+## Blocked guest DNS lookups (FaasGuestDNSBlocked)
+
+The bridge resolver refused a lookup of a blocklisted name (ADR-370). Find the
+calling app in the gatewayd-internal journal:
+
+```
+journalctl -u faas-gatewayd-internal | grep 'guest DNS lookup blocked'
+```
+
+A `miner` hit is a mining pool: the app is trying to mine. An operator-feed hit
+carries the feed's category. Review the app and, for mining or C2, hold the
+account (`gregale admin abuse-hold place`).
