@@ -14,7 +14,7 @@ import (
 func TestDestroyDevSessionEmptiesAndDeletesAttachedBucket(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	setS3Flag(t, e, true)
-	provider := &fakeObjectProvider{objects: map[string]bool{"reports/result.csv": true}}
+	provider := &fakeObjectProvider{objects: map[string][]byte{"reports/result.csv": []byte("csv")}}
 	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
 	const workspaceID = "22222222222222222222222222222222"
 	created := e.do(t, http.MethodPut, "/v1/dev/sessions/export-api", api.UpsertDevSessionRequest{WorkspaceID: workspaceID}, nil)
@@ -44,7 +44,7 @@ func TestDestroyDevSessionEmptiesAndDeletesAttachedBucket(t *testing.T) {
 	}
 
 	// The lease janitor must reach the same cleanup when the CLI vanishes.
-	provider.objects["reports/after-crash.csv"] = true
+	provider.objects["reports/after-crash.csv"] = []byte("csv")
 	const lostWorkspaceID = "33333333333333333333333333333333"
 	created = e.do(t, http.MethodPut, "/v1/dev/sessions/export-api", api.UpsertDevSessionRequest{WorkspaceID: lostWorkspaceID}, nil)
 	if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &session) != nil {

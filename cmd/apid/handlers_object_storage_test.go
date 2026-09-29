@@ -28,7 +28,6 @@ type fakeObjectProvider struct {
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
 	multipartAborted     []string
-	objects              map[string]bool
 }
 
 func (p *fakeObjectProvider) ReadObject(_ context.Context, b, key string) (io.ReadCloser, error) {
@@ -55,9 +54,9 @@ func (p *fakeObjectProvider) ListObjects(_ context.Context, b, prefix, cursor st
 	p.accessed = append(p.accessed, b)
 	if p.objects != nil {
 		items := make([]objectstorage.Object, 0, len(p.objects))
-		for key := range p.objects {
+		for key, data := range p.objects {
 			if strings.HasPrefix(key, prefix) {
-				items = append(items, objectstorage.Object{Key: key, Size: 3})
+				items = append(items, objectstorage.Object{Key: key, Size: int64(len(data))})
 			}
 		}
 		return objectstorage.ObjectPage{Items: items}, nil
