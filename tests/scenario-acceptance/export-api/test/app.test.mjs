@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import http from "node:http";
 import { test } from "node:test";
 import { createExportAPI } from "../server.js";
@@ -19,7 +19,7 @@ test("export crosses gateway, worker, object store and retrying notification", a
     put: async (key, value) => { objects.set(key, value); },
   };
   const sinkURL = await listen(t, createDeliverySink({ failFirst: 1, token: "fixture-token" }));
-  const workerURL = await listen(t, createWorker({ store, notificationURL: `${sinkURL}/deliver`, runID: "simulated-run", failFirstProcess: true }));
+  const workerURL = await listen(t, createWorker({ store, notificationURL: `${sinkURL}/deliver`, runID: "simulated-run", workerToken: "simulated-secret", failFirstProcess: true }));
   const queued = new Map();
   const pending = [];
   const ingressURL = await listen(t, http.createServer(async (request, response) => {
@@ -35,7 +35,7 @@ test("export crosses gateway, worker, object store and retrying notification", a
           for (let attempt = 1; attempt <= 3; attempt++) {
             const result = await fetch(`${workerURL}/process`, {
               method: "POST", body: Buffer.concat(chunks),
-              headers: { "content-type": "application/json", "x-owner-digest": request.headers["x-owner-digest"] },
+              headers: { "content-type": "application/json", "x-owner-digest": request.headers["x-owner-digest"], "x-worker-test-token": request.headers["x-worker-test-token"] },
             });
             invocation.attempts = attempt;
             if (result.ok) {
@@ -50,12 +50,12 @@ test("export crosses gateway, worker, object store and retrying notification", a
       return response.end(JSON.stringify({ id: queued.get(key).id }));
     }
     const result = await fetch(`${workerURL}${path}`, {
-      method: request.method, headers: { "x-owner-digest": request.headers["x-owner-digest"] },
+      method: request.method, headers: { "x-owner-digest": request.headers["x-owner-digest"], "x-worker-test-token": request.headers["x-worker-test-token"] },
     });
     response.writeHead(result.status, { "content-type": "application/json" });
     response.end(await result.text());
   }));
-  const appURL = await listen(t, createExportAPI({ workerURL: ingressURL }));
+  const appURL = await listen(t, createExportAPI({ workerURL: ingressURL, workerToken: "simulated-secret" }));
   const headers = (key) => ({ Authorization: `Bearer ${key}`, "Content-Type": "application/json" });
   const body = JSON.stringify({ idempotency_key: "same-input", report: "Customer A report" });
   const submit = () => fetch(`${appURL}/exports`, { method: "POST", headers: headers("customer-a-key"), body });
@@ -78,6 +78,8 @@ test("export crosses gateway, worker, object store and retrying notification", a
   assert.deepEqual(await owned.json(), { id: created.id, report: "Customer A report", run_id: "simulated-run" });
   assert.equal((await fetch(`${appURL}/exports/${created.id}`, { headers: headers("customer-b-key") })).status, 403);
   assert.equal((await fetch(`${appURL}/exports/${created.id}`)).status, 401);
+  const owner = createHash("sha256").update("customer-a-key").digest("hex");
+  assert.equal((await fetch(`${workerURL}/result/${created.id}`, { headers: { "x-owner-digest": owner } })).status, 401);
 
   const evidence = await fetch(`${sinkURL}/__gregale_test__/attempts`, {
     headers: { Authorization: "Bearer fixture-token" },

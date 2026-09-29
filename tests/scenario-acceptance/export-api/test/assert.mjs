@@ -26,6 +26,10 @@ const forbidden = await fetch(`${url}/exports/${id}`, { headers: headers(b) });
 assert.equal(forbidden.status, 403);
 const anonymous = await fetch(`${url}/exports/${id}`);
 assert.equal(anonymous.status, 401);
+const directWorker = await fetch(`${process.env.GREGALE_TEST_SERVICE_WORKER_URL}/result/${id}`, {
+  headers: { "x-owner-digest": owner },
+});
+assert.equal(directWorker.status, 401);
 
 const sink = await fetch(`${process.env.GREGALE_TEST_SERVICE_NOTIFICATIONS_URL}/__gregale_test__/attempts`, {
   headers: { Authorization: `Bearer ${process.env.GREGALE_TEST_SINK_NOTIFICATIONS_TOKEN}` },

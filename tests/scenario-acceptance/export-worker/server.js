@@ -7,10 +7,11 @@ const send = (response, status, body) => {
   response.end(JSON.stringify(body));
 };
 
-export function createWorker({ store, notificationURL, runID, request = fetch, failFirstProcess = false } = {}) {
+export function createWorker({ store, notificationURL, runID, workerToken = process.env.WORKER_TEST_TOKEN, request = fetch, failFirstProcess = false } = {}) {
   return http.createServer(async (incoming, outgoing) => {
     const path = new URL(incoming.url, "http://localhost").pathname;
     if (incoming.method === "GET" && path === "/") return send(outgoing, 200, { ready: true });
+    if (!workerToken || incoming.headers["x-worker-test-token"] !== workerToken) return send(outgoing, 401, { error: "unauthorized_worker_request" });
     const owner = incoming.headers["x-owner-digest"];
     if (typeof owner !== "string" || !/^[a-f0-9]{64}$/.test(owner)) return send(outgoing, 401, { error: "unauthorized" });
     try {
@@ -88,6 +89,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     },
   };
   createWorker({ store, notificationURL: process.env.NOTIFICATION_URL, runID: process.env.TEST_RUN_ID,
+    workerToken: process.env.WORKER_TEST_TOKEN,
     failFirstProcess: process.env.FAIL_FIRST_PROCESS === "1" })
     .listen(Number(process.env.PORT ?? "8080"), "0.0.0.0");
 }

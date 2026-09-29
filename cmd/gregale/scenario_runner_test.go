@@ -174,14 +174,14 @@ func TestProvisionTestConsumersReturnsShortLivedCredentialsAndPartialCleanupIDs(
 }
 
 func TestExpandTestSecretValue(t *testing.T) {
-	got, err := expandTestSecretValue("${service.notifications.url}/deliver?run=${run.id}&bucket=${bucket.exports.name}",
+	got, err := expandTestSecretValue("${service.notifications.url}/deliver?run=${run.id}&bucket=${bucket.exports.name}&secret=${run.secret}",
 		map[string]string{"notifications": "https://sink.example"}, map[string]string{"notifications": "sink-app"},
-		map[string]testBucketRef{"exports": {Name: "exports-123"}}, "run-123")
-	if err != nil || got != "https://sink.example/deliver?run=run-123&bucket=exports-123" {
+		map[string]testBucketRef{"exports": {Name: "exports-123"}}, "run-123", "secret-456")
+	if err != nil || got != "https://sink.example/deliver?run=run-123&bucket=exports-123&secret=secret-456" {
 		t.Fatalf("expanded = (%q, %v)", got, err)
 	}
 	for _, value := range []string{"${service.unknown.url}", "${bucket.unknown.name}", "${run.id", "${service.notifications.secret}"} {
-		if _, err := expandTestSecretValue(value, map[string]string{"notifications": "https://sink.example"}, nil, nil, "run-123"); err == nil {
+		if _, err := expandTestSecretValue(value, map[string]string{"notifications": "https://sink.example"}, nil, nil, "run-123", "secret-456"); err == nil {
 			t.Errorf("reference %q was accepted", value)
 		}
 	}

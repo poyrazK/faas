@@ -7,7 +7,7 @@ const send = (response, status, body) => {
   response.end(JSON.stringify(body));
 };
 
-export function createExportAPI({ workerURL = process.env.WORKER_URL, request = fetch } = {}) {
+export function createExportAPI({ workerURL = process.env.WORKER_URL, workerToken = process.env.WORKER_TEST_TOKEN, request = fetch } = {}) {
   return http.createServer(async (incoming, outgoing) => {
     const path = new URL(incoming.url, "http://localhost").pathname;
     if (incoming.method === "GET" && path === "/") return send(outgoing, 200, { ready: true });
@@ -38,6 +38,7 @@ export function createExportAPI({ workerURL = process.env.WORKER_URL, request = 
       const result = await request(`${workerURL}${target}`, {
         method: incoming.method,
         headers: { "content-type": "application/json", "x-owner-digest": owner,
+          "x-worker-test-token": workerToken,
           ...(id && { "idempotency-key": id }) },
         body: body && JSON.stringify(body),
       });

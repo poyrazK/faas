@@ -8,9 +8,9 @@ invocation to complete before application assertions. It asserts customer
 ownership, forbidden cross-customer reads, duplicate suppression, and a
 503 followed by a successful delivery. The worker deliberately returns 503 on
 its first attempt and persists a marker in the isolated bucket; the platform
-must retry the same invocation before it can complete. The real VM runner
-also checks warm,
-cold, and restored evidence for every workload.
+must retry the same invocation before it can complete. Assertions reject a
+direct worker request without the per-run shared secret. The real VM runner
+also checks warm, cold, and restored evidence for every workload.
 
 Run the fast local simulation from the repository root. It starts the app and
 delivery sink as local HTTP servers and checks the retry and recorded payload:

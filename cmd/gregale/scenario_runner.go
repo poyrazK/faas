@@ -541,14 +541,14 @@ func validateTestSecrets(workload string, secrets map[string]string, scenario te
 		if api.ValidateSecretKey(key) != nil {
 			return fmt.Errorf("workload %q has invalid secret key %q", workload, key)
 		}
-		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef"); err != nil {
+		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret"); err != nil {
 			return fmt.Errorf("workload %q secret %q: %w", workload, key, err)
 		}
 	}
 	return nil
 }
 
-func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID string) (string, error) {
+func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string) (string, error) {
 	var expansionErr error
 	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
 		if expansionErr != nil {
@@ -560,6 +560,8 @@ func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]st
 		switch {
 		case len(parts) == 2 && parts[0] == "run" && parts[1] == "id":
 			replacement, ok = runID, true
+		case len(parts) == 2 && parts[0] == "run" && parts[1] == "secret":
+			replacement, ok = runSecret, true
 		case len(parts) == 3 && parts[0] == "service" && parts[2] == "url":
 			replacement, ok = serviceURLs[parts[1]]
 		case len(parts) == 3 && parts[0] == "service" && parts[2] == "slug":
@@ -701,6 +703,12 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	receipt.RunID = hex.EncodeToString(random)
+	runSecretBytes := make([]byte, 32)
+	if _, err := rand.Read(runSecretBytes); err != nil {
+		receipt.Error = fmt.Sprintf("create test run secret: %v", err)
+		return
+	}
+	runSecret := hex.EncodeToString(runSecretBytes)
 	timeout := 15 * time.Minute
 	if scenario.Timeout != "" {
 		timeout, _ = time.ParseDuration(scenario.Timeout)
@@ -905,7 +913,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID)
+			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID, runSecret)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("resolve secret %s for %s: %v", key, workload.name, err)
 				return

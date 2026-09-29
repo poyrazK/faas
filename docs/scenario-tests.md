@@ -24,6 +24,7 @@ scenarios:
     source: ./gateway
     secrets:
       WORKER_URL: ${service.worker.url}
+      WORKER_TEST_TOKEN: ${run.secret}
     consumer_auth_mode: required
     consumers:
       - name: customer-a
@@ -37,6 +38,7 @@ scenarios:
             methods: [POST]
         secrets:
           NOTIFICATION_URL: ${service.notifications.url}/deliver
+          WORKER_TEST_TOKEN: ${run.secret}
       notifications:
         fixture: delivery-sink
         fail_first: 1
@@ -156,7 +158,9 @@ it. The worker URL in a sibling secret then reaches a durable HTTP 202 queue
 entry before the worker processes the request.
 The runner sets per-workload `secrets` on these expiring apps before deploying.
 Values can reference `${service.NAME.url}`, `${service.NAME.slug}`,
-`${bucket.NAME.name}`, or `${run.id}`. The example gives the worker a test
+`${bucket.NAME.name}`, `${run.id}`, or `${run.secret}`. The latter is a fresh
+256-bit secret shared only with workloads that declare it, omitted from reports
+and local command environments. The example gives the worker a test
 notification endpoint. The built-in `delivery-sink` is deployed as another
 real workload. `fail_first: 1` makes its first `POST /deliver` return 503 and
 later deliveries return 200. The assertion command can inspect the sink's
