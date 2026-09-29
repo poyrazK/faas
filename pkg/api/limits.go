@@ -497,6 +497,12 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
+	// guest may open new outbound flows (ADR-361). Excess new flows are
+	// dropped in the per-instance forward chain and counted in
+	// faas_egress_rate. Bounds scanning on the permitted web ports.
+	EgressNewConnPerSecond int
+	EgressNewConnBurst     int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
@@ -1795,20 +1801,22 @@ var planLimits = map[Plan]Limits{
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
 		// alignment comment; the value was 256 before this audit too.
-		AppLayerMaxMB:         256,
-		SourceTarballMaxMB:    100,
-		VCPU:                  2,
-		IdleTimeoutS:          60,
-		CertExpiryWarningDays: 30,
-		IncludedGBHours:       5,
-		PriceMillicents:       0,
-		RateLimitRPS:          5,
-		RateLimitBurst:        20,
-		EgressMbit:            10,
-		SecretCountMax:        8,
-		SecretValueMaxBytes:   4 * 1024,
-		EnvVarsMax:            16,
-		EnvValueMaxBytes:      4 * 1024,
+		AppLayerMaxMB:          256,
+		SourceTarballMaxMB:     100,
+		VCPU:                   2,
+		IdleTimeoutS:           60,
+		CertExpiryWarningDays:  30,
+		IncludedGBHours:        5,
+		PriceMillicents:        0,
+		RateLimitRPS:           5,
+		RateLimitBurst:         20,
+		EgressMbit:             10,
+		EgressNewConnPerSecond: 10,
+		EgressNewConnBurst:     40,
+		SecretCountMax:         8,
+		SecretValueMaxBytes:    4 * 1024,
+		EnvVarsMax:             16,
+		EnvValueMaxBytes:       4 * 1024,
 		// TrustedSignerCountMax: Free keeps the open-deploy posture;
 		// signature enforcement is a regulated-workload feature that
 		// Free never needs (issue #472 / ADR-054).
@@ -2178,14 +2186,16 @@ var planLimits = map[Plan]Limits{
 		PriceMillicents:       900_000, // €9.00
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
-		ConcurrencyPerVMBound: 5,
-		RateLimitRPS:          20,
-		RateLimitBurst:        100,
-		EgressMbit:            25,
-		SecretCountMax:        25,
-		SecretValueMaxBytes:   8 * 1024,
-		EnvVarsMax:            32,
-		EnvValueMaxBytes:      8 * 1024,
+		ConcurrencyPerVMBound:  5,
+		RateLimitRPS:           20,
+		RateLimitBurst:         100,
+		EgressMbit:             25,
+		EgressNewConnPerSecond: 20,
+		EgressNewConnBurst:     80,
+		SecretCountMax:         25,
+		SecretValueMaxBytes:    8 * 1024,
+		EnvVarsMax:             32,
+		EnvValueMaxBytes:       8 * 1024,
 		// TrustedSignerCountMax: Hobby is the lowest paid tier; the
 		// 4-publisher cap covers a hobbyist running a single CI
 		// (GitHub Actions) + a backup CI (Codeberg) + a personal
@@ -2580,14 +2590,16 @@ var planLimits = map[Plan]Limits{
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
 		// service handling fan-out from a single client request).
-		ConcurrencyPerVMBound: 25,
-		RateLimitRPS:          100,
-		RateLimitBurst:        500,
-		EgressMbit:            100,
-		SecretCountMax:        50,
-		SecretValueMaxBytes:   16 * 1024,
-		EnvVarsMax:            64,
-		EnvValueMaxBytes:      16 * 1024,
+		ConcurrencyPerVMBound:  25,
+		RateLimitRPS:           100,
+		RateLimitBurst:         500,
+		EgressMbit:             100,
+		EgressNewConnPerSecond: 50,
+		EgressNewConnBurst:     200,
+		SecretCountMax:         50,
+		SecretValueMaxBytes:    16 * 1024,
+		EnvVarsMax:             64,
+		EnvValueMaxBytes:       16 * 1024,
 		// Issue #461: Pro = 5 — multi-region + CI shapes.
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
@@ -2944,14 +2956,16 @@ var planLimits = map[Plan]Limits{
 		// per VM is comfortably reachable at Scale's 1024 MB RAM
 		// for a typical Node.js / Go service; a sync-subprocess
 		// Python customer would saturate before hitting this cap.
-		ConcurrencyPerVMBound: 80,
-		RateLimitRPS:          500,
-		RateLimitBurst:        2000,
-		EgressMbit:            250,
-		SecretCountMax:        100,
-		SecretValueMaxBytes:   32 * 1024,
-		EnvVarsMax:            256,
-		EnvValueMaxBytes:      32 * 1024,
+		ConcurrencyPerVMBound:  80,
+		RateLimitRPS:           500,
+		RateLimitBurst:         2000,
+		EgressMbit:             250,
+		EgressNewConnPerSecond: 100,
+		EgressNewConnBurst:     400,
+		SecretCountMax:         100,
+		SecretValueMaxBytes:    32 * 1024,
+		EnvVarsMax:             256,
+		EnvValueMaxBytes:       32 * 1024,
 		// Issue #461: Scale = 20 — broad fan-out for SaaS-scale apps.
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
@@ -7525,3 +7539,10 @@ const (
 	// tenant slice, so it is reserved rather than admitted.
 	BuilderSlotReserveMB = 2_048
 )
+
+// TenantEgressBasePorts are the TCP destination ports every guest may open
+// connections to (ADR-361, spec §11). Everything else a guest originates is
+// dropped in its forward chain, except platform services on the bridge and
+// DNS, which is pinned to the bridge resolver. Returned fresh so callers can
+// extend it with an app's declared ports without sharing state.
+func TenantEgressBasePorts() []uint16 { return []uint16{80, 443} }

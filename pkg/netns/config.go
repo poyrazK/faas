@@ -3,6 +3,7 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -184,6 +185,19 @@ type Config struct {
 	// is already there, instead of having to create the set, the counter and
 	// the rule inside a latency-sensitive transition.
 	EgressCircuitEnabled bool
+	// EgressPorts is the set of TCP destination ports the guest may open
+	// connections to (ADR-361): api.TenantEgressBasePorts plus any ports
+	// the app declares. Everything else the guest originates is dropped,
+	// except platform services on the bridge, DNS (pinned to the bridge
+	// resolver) and ADR-031 allowlisted destinations. Rendered into the
+	// named nft set egress_ports. An empty set blocks all such TCP, so a
+	// caller that forgets to populate it fails closed rather than open.
+	EgressPorts []uint16
+	// EgressConnRate / EgressConnBurst cap the new flows a guest may open
+	// per second (ADR-361, per plan in pkg/api/limits.go). Zero disables
+	// the limit.
+	EgressConnRate  int
+	EgressConnBurst int
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -460,6 +474,7 @@ func (c Config) NftCommands() [][]string {
 	// rule per port), while allowlist is the explicit terminal drop used when
 	// an app has a non-empty egress allowlist.
 	add("add", "counter", "ip", "faas", EgressDenyCounterSMTP, "{}")
+	cmds = append(cmds, c.egressPolicyObjects(nft, "ip")...)
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "counter", "ip", "faas", EgressDenyCounterAllowlist, "{}")
 	}
@@ -482,6 +497,7 @@ func (c Config) NftCommands() [][]string {
 	cmds = append(cmds, c.appPortDNATRules(nft)...)
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
+	cmds = append(cmds, c.GuestDNSPinCommands(nft)...)
 	if c.privateNetworkEnabled() {
 		// Replies and guest-originated private traffic must carry the
 		// stable member address on the gpn bridge. This is what makes the
@@ -615,6 +631,10 @@ func (c Config) NftCommands() [][]string {
 			"iifname", c.Tap, "ip", "daddr", e.Prefix.String(),
 			"counter", "name", e.CounterName, "drop")
 	}
+	// ADR-361: guest-originated new flows over the plan's rate drop, and
+	// anything that is not TCP drops, before any accept below.
+	cmds = append(cmds, c.egressRateRule(nft, "ip")...)
+	cmds = append(cmds, c.egressNonTCPRule(nft, "ip"))
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
 	// lateral-movement deny but BEFORE the SMTP drop so explicitly
 	// allowlisted destinations can use submission ports 465/587.
@@ -637,6 +657,10 @@ func (c Config) NftCommands() [][]string {
 	// allowlisted destinations while port 25 still drops.
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
+	// ADR-361 port policy: everything not accepted above must be TCP to an
+	// egress_ports port. Allowlisted destinations were accepted above and
+	// keep ADR-031's any-port-but-25 semantics.
+	cmds = append(cmds, c.egressPortRule(nft, "ip"))
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
@@ -648,6 +672,7 @@ func (c Config) NftCommands() [][]string {
 	// per-netns `inet faas` table is a follow-up if we want to collapse the
 	// two; see ADR-023 "rejected alternatives" for the trade-off.
 	add("add", "table", "ip6", "faas")
+	cmds = append(cmds, c.egressPolicyObjects(nft, "ip6")...)
 	// Same counter object for the v6 chain — faas_cap is scoped per table,
 	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
 	if c.ConntrackCap > 0 {
@@ -701,14 +726,105 @@ func (c Config) NftCommands() [][]string {
 	// a v4-only allowlist returns nil here — v6 stays at
 	// chain-policy drop (because forwardChainPolicy flips when the
 	// single field is non-empty), with no per-chain accept rule.
+	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
+	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	cmds = append(cmds, c.egressPortRule(nft, "ip6"))
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
 	return cmds
+}
+
+// Counter and set names for the ADR-361 tenant egress policy.
+const (
+	EgressDenyCounterPolicy = "faas_egress_denied"
+	EgressDenyCounterRate   = "faas_egress_rate"
+	EgressPortsSet          = "egress_ports"
+	guestDNSChain           = "guest_dns"
+)
+
+// egressPolicyObjects declares the policy counters and the egress_ports set
+// (with its elements) in one family's faas table. Counters must exist
+// before the rules that name them.
+func (c Config) egressPolicyObjects(nft func(...string) []string, family string) [][]string {
+	cmds := [][]string{
+		nft("add", "counter", family, "faas", EgressDenyCounterPolicy, "{}"),
+		nft("add", "set", family, "faas", EgressPortsSet, "{", "type", "inet_service", ";", "}"),
+	}
+	if c.EgressConnRate > 0 {
+		cmds = append(cmds, nft("add", "counter", family, "faas", EgressDenyCounterRate, "{}"))
+	}
+	if elems := c.EgressPortElements(); elems != "" {
+		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
+	}
+	return cmds
+}
+
+// EgressPortElements renders EgressPorts as a sorted, de-duplicated,
+// comma-joined nft element list, or "" when there are none. Port 0 is
+// skipped.
+func (c Config) EgressPortElements() string {
+	seen := make(map[uint16]bool, len(c.EgressPorts))
+	ports := make([]int, 0, len(c.EgressPorts))
+	for _, p := range c.EgressPorts {
+		if p == 0 || seen[p] {
+			continue
+		}
+		seen[p] = true
+		ports = append(ports, int(p))
+	}
+	sort.Ints(ports)
+	out := make([]string, len(ports))
+	for i, p := range ports {
+		out[i] = strconv.Itoa(p)
+	}
+	return strings.Join(out, ",")
+}
+
+// egressRateRule drops guest-originated new flows over EgressConnRate.
+func (c Config) egressRateRule(nft func(...string) []string, family string) [][]string {
+	if c.EgressConnRate <= 0 {
+		return nil
+	}
+	burst := max(c.EgressConnBurst, c.EgressConnRate)
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"ct", "state", "new", "limit", "rate", "over", fmt.Sprintf("%d/second", c.EgressConnRate),
+		"burst", strconv.Itoa(burst), "packets", "counter", "name", EgressDenyCounterRate, "drop")}
+}
+
+// egressNonTCPRule drops guest-originated traffic that is not TCP. Earlier
+// rules have already accepted established flows, bridge services, pinned
+// DNS and private networking.
+func (c Config) egressNonTCPRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"meta", "l4proto", "!=", "tcp", "counter", "name", EgressDenyCounterPolicy, "drop")
+}
+
+// egressPortRule drops guest-originated TCP to any port outside egress_ports.
+func (c Config) egressPortRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"tcp", "dport", "!=", "@"+EgressPortsSet, "counter", "name", EgressDenyCounterPolicy, "drop")
+}
+
+// GuestDNSPinCommands redirects every DNS query the guest sends, to any
+// destination, to the bridge resolver (ADR-361, ADR-170). It is its own nat
+// chain so RetargetAppPortCommands, which flushes prerouting, never removes
+// it.
+func (c Config) GuestDNSPinCommands(nft func(...string) []string) [][]string {
+	if !c.HostBridgeIP.IsValid() || !c.HostBridgeIP.Is4() {
+		return nil
+	}
+	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, ServiceDiscoveryDNSPort)
+	port := strconv.Itoa(ServiceDiscoveryDNSPort)
+	return [][]string{
+		nft("add", "chain", "ip", "faas", guestDNSChain, "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),
+		nft("add", "rule", "ip", "faas", guestDNSChain, "iifname", c.Tap, "udp", "dport", port, "dnat", "to", target),
+		nft("add", "rule", "ip", "faas", guestDNSChain, "iifname", c.Tap, "tcp", "dport", port, "dnat", "to", target),
+	}
 }
 
 // PrivateNetworkNftCommands returns the additive rules needed when a live

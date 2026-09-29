@@ -3821,6 +3821,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
 	nc.ConntrackCap = m.conntrackCap
+	// ADR-361: default-deny guest egress (base ports + per-plan rate).
+	if !req.ExecutionOnly {
+		applyTenantEgressPolicy(&nc, req.Plan)
+	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
 	// stringly-typed addresses. apid's PATCH handler already

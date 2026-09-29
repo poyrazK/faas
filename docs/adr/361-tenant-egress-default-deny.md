@@ -1,0 +1,26 @@
+# ADR-361 · Tenant egress is default-deny: web ports, pinned DNS, per-VM rate limits
+
+- **Status:** accepted
+- **Date:** 2026-09-29
+- **Amends:** spec §11 tenant egress bullet. ADR-031 allowlist semantics are kept (see Consequences).
+- **Context:** On 2026-09-24 Google suspended the production project for traffic that was "seriously impacting the service of other users", and the operators traced it to workloads running inside the platform. Spec §11 already described tenant egress as "default-allow TCP 80/443/53 + UDP 53", but the per-instance forward chain (`pkg/netns/config.go` `NftCommands`) had `policy accept`. It dropped only SMTP (25/465/587) and the lateral-movement ranges. Every other TCP port, all UDP and ICMP left through the node's shared NAT IP. There was no new-connection rate limit, only a 4,096 concurrent-connection cap. With the kernel's 120 s SYN timeout that still allows ~34 new flows/s per VM indefinitely. Guests could also resolve through any public resolver. Scanning, UDP floods and mining on stratum ports were all possible from any Free-plan VM.
+- **Decision:**
+  1. **Default-deny for guest-originated traffic.** Every packet entering a per-instance netns from `tap0` that is not already accepted by an earlier rule (established flows, the bridge service proxy and resolver, operator exceptions, private networking, ADR-031 allowlisted destinations) must be TCP to a port in the instance's `egress_ports` nft set. Anything else is counted in `faas_egress_denied` and dropped: other TCP ports, all non-DNS UDP (including QUIC; clients fall back to TCP 443), and guest-originated ICMP. The rules match `iifname tap0` only, so gateway and private-network ingress are unchanged. IPv4 and IPv6 chains carry the same rules. The chain policy is not changed.
+  2. **Base ports** are TCP 80 and 443 for every plan (`api.TenantEgressBasePorts`). The lateral-movement deny set still runs first, so private, link-local and metadata ranges stay unreachable on every port.
+  3. **Pinned DNS.** All guest DNS (UDP and TCP 53, any destination) is DNAT'd to the node's bridge resolver (ADR-170), which answers `*.svc.gregale` and forwards other names upstream. It lives in a dedicated `guest_dns` NAT chain, so the app-port retarget (ADR-149, which flushes `prerouting`) never removes it. Images with their own `resolv.conf` keep working, and builder VMs' `1.1.1.1` fallback is redirected. DNS-over-TLS (853) is dropped by the port policy. DNS-over-HTTPS on 443 cannot be told apart and is accepted.
+  4. **Per-VM new-connection rate limit.** Guest-originated new flows over the plan's rate are counted in `faas_egress_rate` and dropped. Rates and bursts are per plan in `pkg/api/limits.go` (`EgressNewConnPerSecond` / `EgressNewConnBurst`): Free 10/s burst 40, Hobby 20/80, Pro 50/200, Scale 100/400. The limit applies before the port policy, so blocked attempts count against it too.
+  5. **Extra ports** (Pro and Scale; follow-up PR): an app may declare additional TCP ports, for example a managed database, up to a per-plan cap. SMTP, remote-admin/lateral and well-known mining ports are never allowed. They are added to the same named set, so changes apply to live instances and to prepared networks with one atomic `nft -f`.
+  6. **Detection and kill switch** (follow-up PR): a dynamic per-instance destination set lets vmmd measure distinct destinations per minute, alongside the two drop counters. Above a threshold the instance is stopped and the app is held for operator review. The mechanics are recorded in an amendment when they land.
+  7. **Builders** get the same policy: build steps run tenant code. npm, PyPI, Go modules and apt all work over 80/443.
+  8. **No flag.** Enforcement is always on. A default-off security control is the state that caused the suspension.
+- **Consequences:**
+  - Apps that talk to databases or brokers on other ports (5432, 6379, 27017, 8883) fail until they declare extra ports, which is Pro/Scale only.
+  - Guest `ping` fails.
+  - ADR-031 allowlisted destinations keep their semantics: any TCP port except 25, so submission ports 465/587 reach an explicitly allowlisted mail provider. They are now rate-limited and TCP-only like everything else. The allowlist rule and its live patch are unchanged. Rule order for guest traffic, after the lateral-movement deny: rate limit, non-TCP drop, allowlist accept, SMTP drop, port policy drop, allowlist terminal drop.
+  - Prepared networks carry the plan's rate limit in their policy, at the same per-plan granularity as the existing egress rate.
+  - Existing instances pick the rules up on their next wake; a release drain re-renders every instance.
+- **Rejected alternatives:**
+  - Flipping the forward chain to `policy drop`. The chain also carries gateway and private-network ingress, which would each need explicit accepts.
+  - Host-namespace filtering. Per-plan and per-app policy already lives in the per-instance chain.
+  - Proxy-only egress. It breaks raw TCP clients and TLS pinning.
+  - A feature flag.

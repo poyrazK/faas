@@ -25,6 +25,10 @@ type preparedNetworkPolicy struct {
 	egressMbit   int
 	conntrackCap int64
 	baseIP       netip.Addr
+	// ADR-361 per-plan new-connection limit, at the same per-plan
+	// granularity as egressMbit.
+	egressConnRate  int
+	egressConnBurst int
 }
 
 type preparedNetworkEntry struct {
@@ -108,7 +112,10 @@ func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) 
 		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
 	}
-	return preparedNetworkPolicy{req.EgressMbit, m.conntrackCap, hostIPForSlot(0)}, true
+	var egress netns.Config
+	applyTenantEgressPolicy(&egress, req.Plan)
+	return preparedNetworkPolicy{egressMbit: req.EgressMbit, conntrackCap: m.conntrackCap, baseIP: hostIPForSlot(0),
+		egressConnRate: egress.EgressConnRate, egressConnBurst: egress.EgressConnBurst}, true
 }
 
 func (p *preparedNetworkPool) observe(policy preparedNetworkPolicy) {
@@ -222,6 +229,8 @@ func (p *preparedNetworkPool) fill() {
 		}
 		nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 		nc.TapUID, nc.EgressMbit, nc.ConntrackCap = lease.UID, policy.egressMbit, policy.conntrackCap
+		nc.EgressPorts = api.TenantEgressBasePorts()
+		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		err = p.m.setupNetwork(ctx, nc)
@@ -327,4 +336,15 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 	}
 	prepared.GuestAppPort = requested.GuestAppPort
 	return reflect.DeepEqual(prepared, requested)
+}
+
+// applyTenantEgressPolicy sets the ADR-361 guest egress policy on a tenant
+// network plan: the base TCP ports every plan may reach and the plan's
+// new-connection rate limit. An unknown plan keeps a zero rate (no limit)
+// but still gets the port policy; Wake rejects invalid plans before this.
+func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan) {
+	nc.EgressPorts = api.TenantEgressBasePorts()
+	if lim, ok := api.LimitsFor(plan); ok {
+		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
+	}
 }

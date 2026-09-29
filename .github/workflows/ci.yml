@@ -315,6 +315,18 @@ jobs:
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
         run: make egress-check
 
+      # ADR-361: the per-instance tenant egress policy on a real kernel. The
+      # rendered ruleset is loaded into throwaway namespaces and real packets
+      # prove web ports pass, other TCP/UDP drop, DNS is pinned to the bridge
+      # resolver and the per-VM rate limit fires. Needs root for netns, not
+      # KVM, so it runs on the hosted runner.
+      - name: netns egress policy (real nft, root)
+        run: |
+          set -euo pipefail
+          go test -c -tags metal -o "$RUNNER_TEMP/netns.test" ./pkg/netns
+          sudo "$RUNNER_TEMP/netns.test" -test.count=1 -test.v \
+            -test.run '^TestMetal(TenantEgress|AllowlistRuleInstalled|AllowlistV6RuleInstalled|AllowlistSkippedWhenEmpty|HostPolicyStaticEgressIPRules)'
+
       - name: systemd hardening gate
         run: make systemd-hardening-check
 
