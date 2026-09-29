@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,5 +157,17 @@ paths:
 	}
 	if code := cmdTestInit([]string{"--from", specPath, "--project", "demo-api", "--output", manifestPath}); code == 0 {
 		t.Fatal("test init overwrote an existing manifest")
+	}
+}
+
+func TestOpenAPITestScaffoldCapsManifestSteps(t *testing.T) {
+	var document strings.Builder
+	document.WriteString("openapi: 3.1.0\npaths:\n")
+	for i := 0; i < 101; i++ {
+		_, _ = fmt.Fprintf(&document, "  /route-%03d:\n    get:\n      responses: {'200': {description: OK}}\n", i)
+	}
+	steps, skipped, err := scaffoldTestHTTPRequests([]byte(document.String()))
+	if err != nil || len(steps) != 100 || skipped != 1 {
+		t.Fatalf("large scaffold = (%d steps, %d skipped, %v)", len(steps), skipped, err)
 	}
 }

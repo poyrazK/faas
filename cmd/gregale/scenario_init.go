@@ -123,6 +123,10 @@ func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {
 				skipped++
 				continue
 			}
+			if len(steps) >= 100 {
+				skipped++
+				continue
+			}
 			name := sanitizeSlug("get-" + strings.ReplaceAll(strings.Trim(path, "/"), "/", "-"))
 			if usedNames[name] {
 				for suffix := 2; ; suffix++ {
