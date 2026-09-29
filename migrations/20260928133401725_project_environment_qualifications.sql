@@ -3,6 +3,7 @@
 -- +goose Up
 -- Qualification receipts are immutable assertions about an exact active
 -- release graph. Promotion checks freshness at read/execute time.
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -15,6 +16,7 @@ BEGIN
             UNIQUE (id, project_id, environment_slug);
     END IF;
 END $$;
+-- +goose StatementEnd
 
 CREATE TABLE IF NOT EXISTS project_environment_qualifications (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
