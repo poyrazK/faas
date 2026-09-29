@@ -892,6 +892,16 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// RegisterScenarioTest gives a run's developer sessions a private service
+// namespace before source deployment. Registration is create-only.
+func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
+	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+}
+
+func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
+}
+
 // RecordDevSync stores one safe edit-to-live receipt. Repeating a deployment
 // ID returns the original row, so a CLI retry cannot double-count a sync.
 func (c *Client) RecordDevSync(ctx context.Context, project string, req RecordDevSyncRequest) (DevSyncHistoryItem, error) {
@@ -2176,6 +2186,17 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 
 // Park and Wake toggle the app between cold-parked and live.
 func (c *Client) Park(ctx context.Context, slug string) error {
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park")
+}
+
+// ParkPreviewFresh drains an isolated preview and invalidates its snapshots
+// after the drain. The next customer request must take the artifact boot path.
+// The server rejects production apps before changing their state.
+func (c *Client) ParkPreviewFresh(ctx context.Context, slug string) error {
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true")
+}
+
+func (c *Client) park(ctx context.Context, slug, path string) error {
 	// The first POST commits evicted_cold before schedd snapshots the live
 	// instances. A multi-revision app can need more than the API's five-second
 	// drain wait; the resulting retryable 503 does not mean the park failed.
@@ -2185,7 +2206,7 @@ func (c *Client) Park(ctx context.Context, slug string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, maxDrainWait)
 	defer cancel()
 	for {
-		err := c.do(waitCtx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
+		err := c.do(waitCtx, "POST", path, nil, nil)
 		if err == nil {
 			return nil
 		}

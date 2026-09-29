@@ -1,4 +1,4 @@
-# ADR-366 · GitHub Actions immutable OIDC subject bootstrap
+# ADR-370 · GitHub Actions immutable OIDC subject bootstrap
 
 - **Status:** accepted
 - **Date:** 2026-09-28

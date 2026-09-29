@@ -133,7 +133,6 @@ DeleteAPIKeyReturning
 DeleteAccount
 DeleteAccountPassword
 DeleteAlertRule
-DeleteApp
 DeleteAppEnv
 DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs

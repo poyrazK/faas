@@ -250,6 +250,13 @@ func (j *previewJanitor) Run(ctx context.Context) {
 //     subscriber (pkg/sched/app_delete_subscriber.go).
 func (j *previewJanitor) sweepOnce(ctx context.Context) error {
 	now := j.now().UTC()
+	if pruner, ok := j.store.(interface {
+		PruneScenarioTestMembers(context.Context, int) (int, error)
+	}); ok {
+		if _, err := pruner.PruneScenarioTestMembers(ctx, PreviewJanitorMaxPerTick); err != nil {
+			return fmt.Errorf("preview janitor: prune scenario tests: %w", err)
+		}
+	}
 	rows, err := j.store.ListPreviewsForTeardown(ctx, now, PreviewJanitorMaxPerTick)
 	if err != nil {
 		return fmt.Errorf("preview janitor: list: %w", err)

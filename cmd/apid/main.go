@@ -2159,7 +2159,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the janitor outside that feature gate so disabling the gRPC listener in
 	// development or CI cannot strand expired preview applications.
 	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).
-		withResourceCleanup(srv.cleanupDevPostgres).Run(ctx)
+		withResourceCleanup(srv.cleanupDevSessionResources).Run(ctx)
 
 	// ADR-127 PR-B: gatewayd-internal → apid
 	// IncrementRequestTelemetry streaming RPC. This data-plane surface is

@@ -6287,6 +6287,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/dev/test-runs/{run_id}:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    put:
+      tags: [dev]
+      operationId: registerScenarioTest
+      summary: Register an isolated service namespace for a scenario test.
+      description: All members must be live developer sessions from this account and run. A missing sibling never resolves to production.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterScenarioTestRequest' }
+      responses:
+        '204': { description: Test workloads registered. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [dev]
+      operationId: deleteScenarioTest
+      summary: Release a scenario test namespace after all members are destroyed.
+      responses:
+        '204': { description: Test namespace released. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/dev/sessions/{project}/syncs:
     parameters:
       - name: project
@@ -8939,9 +8972,15 @@ paths:
       tags: [apps]
       operationId: parkApp
       summary: Manually park all running instances.
+      parameters:
+        - name: fresh
+          in: query
+          description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+          schema: { type: boolean, default: false }
       responses:
         '204': { description: Parked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -26769,6 +26808,25 @@ components:
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
         postgres:
           $ref: '#/components/schemas/DevPostgresRequest'
+
+    RegisterScenarioTestRequest:
+      description: Complete set of developer sessions in one isolated scenario run.
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioTestWorkload' }
+
+    ScenarioTestWorkload:
+      description: Logical service name and developer session app slug for a scenario run.
+      type: object
+      required: [workload, app_slug]
+      properties:
+        workload: { type: string, minLength: 3, maxLength: 40 }
+        app_slug: { type: string, minLength: 3, maxLength: 40 }
 
     DevPostgresRequest:
       description: Opts the developer environment into an isolated managed PostgreSQL database.

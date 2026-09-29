@@ -673,6 +673,17 @@ type DevSessionResponse struct {
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
 }
 
+// RegisterScenarioTestRequest binds developer sessions to one isolated run.
+// Workload is the logical .svc name seen by sibling applications.
+type RegisterScenarioTestRequest struct {
+	Members []ScenarioTestWorkload `json:"members"`
+}
+
+type ScenarioTestWorkload struct {
+	Workload string `json:"workload"`
+	AppSlug  string `json:"app_slug"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".

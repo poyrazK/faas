@@ -36,6 +36,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
+| [`test`](#test) | Run an application scenario with real VMs or a local simulation |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
@@ -1666,6 +1667,29 @@ Compare two named environments in the linked project
 | Flag | Meaning | |
 |---|---|---|
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
+
+
+## test
+
+Run an application scenario with real VMs or a local simulation
+
+`gregale test --scenario <NAME> [--engine <ENGINE>] [--profile <PROFILE>] [--manifest <PATH>] [--report <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scenario <NAME>` | scenario declared in gregale-test.yaml | required |
+| `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `simulated` |
+| `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
+| `--manifest <PATH>` | scenario manifest path |  |
+| `--report <PATH>` | write a JSON report |  |
+
+Examples:
+
+```sh
+gregale test --scenario customer-export
+gregale test --scenario customer-export --profile restored --report test-results.json
+gregale test --scenario customer-export --engine simulated
+```
 
 
 ## preview

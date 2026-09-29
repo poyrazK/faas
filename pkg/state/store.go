@@ -1829,6 +1829,16 @@ type Store interface {
 	// Developer sessions (preview_pr_number=0), production rows, and deleted
 	// previews are intentionally excluded.
 	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
+	// Scenario test members form an explicit, fail-closed service namespace.
+	// Registration accepts only live developer previews and is atomic.
+	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
+	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
+	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
+	// Membership is removed only after its apps are soft-deleted.
+	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
+	// PruneScenarioTestMembers removes abandoned namespaces only after every
+	// member app is soft-deleted by the preview janitor.
+	PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error)
 	// ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) lists
 	// every non-deleted preview row for the account, across all
 	// parents. Backs the new /dashboard/previews page (a global

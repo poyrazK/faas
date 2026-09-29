@@ -2420,8 +2420,25 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 // parkApp marks the app evicted_cold; schedd reacts and tears down live
 // instances.
 func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	fresh := false
+	if raw := r.URL.Query().Get("fresh"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("fresh must be true or false"))
+			return
+		}
+		fresh = parsed
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	// A customer test needs to distinguish a real artifact boot from snapshot
+	// restore. Keep this destructive snapshot invalidation scoped to expiring
+	// previews; ordinary production park semantics stay unchanged.
+	if fresh && app.PreviewOfSlug == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Preview required", "fresh park is available only for preview apps"))
 		return
 	}
 	st := state.AppEvictedCold
@@ -2458,6 +2475,15 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
 		return
+	}
+	if fresh {
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
+			return
+		}
+		s.audit.Emit(r.Context(), "preview.test_fresh_parked", &acct.ID, map[string]any{
+			"app_id": app.ID, "slug": app.Slug,
+		})
 	}
 	if durablePark != nil {
 		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {

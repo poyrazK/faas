@@ -6,6 +6,7 @@ import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
 import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
+import type { RegisterScenarioTestRequest } from '../models/RegisterScenarioTestRequest.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -82,6 +83,64 @@ export class DevService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Register an isolated service namespace for a scenario test.
+   * All members must be live developer sessions from this account and run. A missing sibling never resolves to production.
+   * @returns void
+   * @throws ApiError
+   */
+  public static registerScenarioTest({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     */
+    runId: string,
+    requestBody: RegisterScenarioTestRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/dev/test-runs/{run_id}',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Release a scenario test namespace after all members are destroyed.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteScenarioTest({
+    runId,
+  }: {
+    /**
+     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     */
+    runId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dev/test-runs/{run_id}',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
