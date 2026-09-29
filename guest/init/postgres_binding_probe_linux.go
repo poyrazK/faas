@@ -105,7 +105,7 @@ func runPostgresBindingProbe(ctx context.Context, report api.PostgresBindingProb
 		return report
 	}
 	report.Connection = api.PostgresBindingProbeCheck{Status: "passed", Detail: "authenticated database connection established"}
-	closeContext, cancelClose := context.WithTimeout(context.Background(), time.Second)
+	closeContext, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancelClose()
 	defer func() { _ = conn.Close(closeContext) }()
 	if err := conn.QueryRow(probeContext, "SELECT 1"); err != nil {
