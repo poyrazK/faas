@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/google/uuid"
 )
 
 func (m *MemStore) platformTenantInvocationAllowedLocked(inv Invocation) error {
@@ -30,6 +32,14 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 	InvocationByID(context.Context, string) (Invocation, error)
 	AppByID(context.Context, string) (App, error)
 }, appID string, inv Invocation) (Invocation, error) {
+	// Cron and trigger batches can use synthetic IDs that cannot address a
+	// durable UUID row. They remain unbound; a tenant identity requires a row.
+	if _, err := uuid.Parse(inv.ID); err != nil {
+		if inv.PlatformTenantID != "" {
+			return inv, fmt.Errorf("%w: tenant invocation ID must be a UUID", ErrConflict)
+		}
+		return inv, nil
+	}
 	stored, err := store.InvocationByID(ctx, inv.ID)
 	if err != nil {
 		if inv.PlatformTenantID == "" && errors.Is(err, ErrNotFound) {

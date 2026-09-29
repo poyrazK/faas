@@ -62,6 +62,8 @@ func templateDescription(name string) string {
 		return "Slack slash-command handler — bring your own tokens"
 	case "rest-api-postgres":
 		return "Postgres-backed REST API — bring your own connection string"
+	case "customer-platform":
+		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "cron-worker":
 		return "scheduled job worker with retries — bring your own schedule"
 	case "webhook-receiver":

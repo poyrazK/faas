@@ -30,6 +30,7 @@ func testPlatformTenantInvocationLifecycle(t *testing.T, store tenantInvocationS
 	if err != nil {
 		t.Fatal(err)
 	}
+	testLegacySyntheticInvocationAdmission(t, store, ctx, app.ID)
 	alice, _, err := store.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 250)
 	if err != nil {
 		t.Fatal(err)
@@ -122,5 +123,31 @@ func testPlatformTenantInvocationLifecycle(t *testing.T, store tenantInvocationS
 		if err == nil {
 			t.Fatalf("unsupported bound source %s accepted", source)
 		}
+	}
+}
+
+// adr: 376
+// Legacy cron and queue-trigger envelopes have synthetic IDs rather than
+// durable invocation UUIDs. They cannot carry a platform tenant identity.
+func testLegacySyntheticInvocationAdmission(t *testing.T, store tenantInvocationStore, ctx context.Context, appID string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, id string
+		source   state.InvocationSource
+	}{
+		{"cron", "cron-" + uuid.NewString(), state.InvocationCron},
+		{"queue-trigger", "trigger-" + uuid.NewString() + "-" + uuid.NewString(), "esm"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := state.Invocation{ID: tc.id, AppID: appID, Source: tc.source, Method: "POST", Path: "/_triggers/" + string(tc.source)}
+			admitted, err := state.AdmitPlatformTenantInvocation(ctx, store, appID, inv)
+			if err != nil || admitted.ID != inv.ID || admitted.Path != inv.Path {
+				t.Fatalf("legacy envelope admission: %+v %v", admitted, err)
+			}
+			inv.PlatformTenantID = uuid.NewString()
+			if _, err := state.AdmitPlatformTenantInvocation(ctx, store, appID, inv); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("tenant identity on synthetic ID: %v", err)
+			}
+		})
 	}
 }
