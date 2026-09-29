@@ -5142,6 +5142,25 @@ func (c *Client) ListOrgApps(ctx context.Context, slug string) (OrgAppListRespon
 	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/apps", nil, &out)
 }
 
+// ListOrgAppDeployments returns a page of safe deployment summaries for an
+// application attributed to the workspace. Actor attribution is available on
+// the org activity timeline; deployment details remain creator-scoped.
+func (c *Client) ListOrgAppDeployments(ctx context.Context, orgSlug, appSlug, before string, limit int) (OrgAppDeploymentListResponse, error) {
+	var out OrgAppDeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/orgs/" + orgSlug + "/apps/" + appSlug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // CreateOrgAppDeployment starts an image deployment for an app attributed to
 // the selected workspace. The app creator remains the billing/quota identity.
 func (c *Client) CreateOrgAppDeployment(ctx context.Context, orgSlug, appSlug string, req CreateDeploymentRequest) (DeploymentResponse, error) {

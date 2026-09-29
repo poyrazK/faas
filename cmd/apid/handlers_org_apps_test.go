@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -257,6 +258,86 @@ func TestListOrgAppsScopesToWorkspaceAndReturnsSafeSummary(t *testing.T) {
 			t.Errorf("app inventory leaked or included %q: %s", secret, rec.Body.String())
 		}
 	}
+}
+
+func TestListOrgAppDeploymentsAllowsWorkspaceViewerAndReturnsSafePagedStatus(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	org := seedSharedOrgWithOwner(t, e, "deploy-history-org", "Deploy History Org", api.PlanPro)
+	viewer, err := e.store.CreateAccount(ctx, "deploy-history-viewer@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount viewer: %v", err)
+	}
+	if err := e.store.AddOrgMember(ctx, org.ID, viewer.ID, state.OrgRoleViewer, nil); err != nil {
+		t.Fatalf("AddOrgMember viewer: %v", err)
+	}
+	plain, hash, _ := api.GenerateAPIKey()
+	if _, err := e.store.CreateAPIKey(ctx, viewer.ID, hash, "deployment-reader", api.ScopesAdminOnly); err != nil {
+		t.Fatalf("CreateAPIKey viewer: %v", err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, OrgID: org.ID, Slug: "shared-deploy-history"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	createdAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	for _, dep := range []state.Deployment{
+		{ID: strings.Repeat("a", 32), AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, Revision: 1, CreatedAt: createdAt, OverrideEnv: json.RawMessage(`{"TOKEN":"private-deploy-value"}`), SourceURL: "private-source-url", Error: "private-error-detail"},
+		{ID: strings.Repeat("b", 32), AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, Revision: 2, CreatedAt: createdAt.Add(time.Minute)},
+	} {
+		if _, err := e.store.CreateDeployment(ctx, dep); err != nil {
+			t.Fatalf("CreateDeployment %q: %v", dep.ID, err)
+		}
+	}
+	viewerEnv := e
+	viewerEnv.acct, viewerEnv.key = viewer, plain
+	path := "/v1/orgs/" + org.Slug + "/apps/" + app.Slug + "/deployments"
+	first := viewerEnv.do(t, http.MethodGet, path+"?limit=1", nil, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("list workspace deployments: status=%d body=%s", first.Code, first.Body.String())
+	}
+	var page api.OrgAppDeploymentListResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode workspace deployment page: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != strings.Repeat("b", 32) || page.Items[0].Revision != 2 || page.Items[0].Status != string(state.DeployPending) || page.NextBefore == "" {
+		t.Fatalf("first deployment page = %+v, want newest status and older-page cursor", page)
+	}
+	if strings.Contains(first.Body.String(), "private-deploy-value") || strings.Contains(first.Body.String(), "private-source-url") || strings.Contains(first.Body.String(), "private-error-detail") || strings.Contains(first.Body.String(), "override_env") {
+		t.Fatalf("workspace summary leaked creator-scoped deployment details: %s", first.Body.String())
+	}
+	second := viewerEnv.do(t, http.MethodGet, path+"?limit=1&before="+url.QueryEscape(page.NextBefore), nil, nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("list older workspace deployments: status=%d body=%s", second.Code, second.Body.String())
+	}
+	page = api.OrgAppDeploymentListResponse{}
+	if err := json.Unmarshal(second.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode older workspace deployment page: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != strings.Repeat("a", 32) || page.Items[0].Status != string(state.DeployLive) || page.NextBefore != "" {
+		t.Fatalf("older deployment page = %+v, want previous live revision", page)
+	}
+}
+
+func TestListOrgAppDeploymentsHidesAppsOutsidePathWorkspace(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	org := seedSharedOrgWithOwner(t, e, "deploy-history-scope", "Deploy History Scope", api.PlanPro)
+	foreign, err := e.store.CreateOrg(ctx, state.Org{Slug: "deploy-history-foreign", Name: "Foreign", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatalf("CreateOrg foreign: %v", err)
+	}
+	if err := e.store.AddOrgMember(ctx, foreign.ID, e.acct.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatalf("AddOrgMember foreign owner: %v", err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, OrgID: foreign.ID, Slug: "foreign-deploy-history"})
+	if err != nil {
+		t.Fatalf("CreateApp foreign: %v", err)
+	}
+	if _, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive}); err != nil {
+		t.Fatalf("CreateDeployment foreign: %v", err)
+	}
+	rec := e.do(t, http.MethodGet, "/v1/orgs/"+org.Slug+"/apps/"+app.Slug+"/deployments", nil, nil)
+	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestCreateAppIgnoresActiveOrgHintWithoutOrgRoute(t *testing.T) {

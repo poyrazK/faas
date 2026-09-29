@@ -226,6 +226,25 @@ type OrgAppListResponse struct {
 	Apps []OrgAppSummary `json:"apps"`
 }
 
+// OrgAppDeploymentSummary is the deliberately small deployment projection
+// visible to workspace members. Detailed deployment configuration and
+// diagnostics remain on creator-scoped deployment endpoints; actor attribution
+// is available from the organization activity timeline.
+type OrgAppDeploymentSummary struct {
+	ID        string `json:"id"`
+	Revision  int    `json:"revision,omitempty"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
+// OrgAppDeploymentListResponse is a newest-first page from
+// GET /v1/orgs/{slug}/apps/{app_slug}/deployments.
+type OrgAppDeploymentListResponse struct {
+	Items      []OrgAppDeploymentSummary `json:"items"`
+	NextBefore string                    `json:"next_before,omitempty"`
+}
+
 // ListOrgsResponse is the historic name; renamed to
 // OrgListResponse in PR 5 to match the spec schema. The alias
 // keeps existing call-sites working.

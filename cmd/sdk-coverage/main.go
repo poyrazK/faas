@@ -1048,6 +1048,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{slug}":                              "GetOrg",
 	"GET /v1/orgs/{slug}/activity":                     "ListOrgActivity",
 	"GET /v1/orgs/{slug}/apps":                         "ListOrgApps",
+	"GET /v1/orgs/{slug}/apps/{app_slug}/deployments":  "ListOrgAppDeployments",
 	"POST /v1/orgs/{slug}/apps":                        "CreateOrgApp",
 	"POST /v1/orgs/{slug}/apps/{app_slug}/deployments": "CreateOrgAppDeployment",
 	"PATCH /v1/orgs/{slug}":                            "PatchOrg",

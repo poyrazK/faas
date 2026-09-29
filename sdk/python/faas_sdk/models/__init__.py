@@ -1030,6 +1030,10 @@ from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
 from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
+from .org_app_deployment_list_response import OrgAppDeploymentListResponse
+from .org_app_deployment_summary import OrgAppDeploymentSummary
+from .org_app_deployment_summary_kind import OrgAppDeploymentSummaryKind
+from .org_app_deployment_summary_status import OrgAppDeploymentSummaryStatus
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
@@ -2809,6 +2813,10 @@ __all__ = (
     "OperatorRuntimeConfigStatus",
     "OrgActivityResponse",
     "OrgActivityResponseData",
+    "OrgAppDeploymentListResponse",
+    "OrgAppDeploymentSummary",
+    "OrgAppDeploymentSummaryKind",
+    "OrgAppDeploymentSummaryStatus",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",

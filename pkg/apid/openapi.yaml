@@ -20572,6 +20572,40 @@ paths:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
       - $ref: '#/components/parameters/OrgAppSlug'
+    get:
+      tags: [deployments]
+      operationId: listOrgAppDeployments
+      summary: List safe deployment status for a workspace app.
+      description: |
+        Returns newest-first deployment summaries for an active application
+        whose persisted `org_id` matches this workspace. Every active member
+        may read this projection (`org.view`). It contains only deployment id,
+        revision, kind, status, and creation time; detailed configuration and
+        diagnostics remain creator-scoped. Use the organization activity
+        timeline for captured actor attribution. `next_before` is an RFC3339Nano
+        cursor from the last row; pass it as `before` to fetch older deployments.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size (1–200; default 50).
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+          description: Creation timestamp cursor returned by the preceding workspace history page.
+      responses:
+        '200':
+          description: A paginated list of safe deployment summaries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAppDeploymentListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller is not an active member of this workspace.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [deployments]
       operationId: createOrgAppDeployment
@@ -38990,6 +39024,27 @@ components:
         apps:
           type: array
           items: { $ref: '#/components/schemas/OrgAppSummary' }
+
+    OrgAppDeploymentSummary:
+      description: Safe deployment status projection for an application shared in a workspace. Actor attribution is on the organization activity timeline; detailed deployment fields stay creator-scoped.
+      type: object
+      required: [id, kind, status, created_at]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        revision: { type: integer, minimum: 1, description: Per-app revision when available. }
+        kind: { type: string, enum: [image, tarball, dockerfile, github, preview], description: Deployment source kind. }
+        status: { type: string, enum: [pending, building, imaging, snapshotting, live, failed, superseded, cancelled], description: Current deployment lifecycle status. }
+        created_at: { type: string, format: date-time }
+
+    OrgAppDeploymentListResponse:
+      description: Newest-first paginated safe deployment history for one workspace app.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrgAppDeploymentSummary' }
+        next_before: { type: string, format: date-time, description: Cursor for the next older page; omitted when there are no more rows. }
 
     ActivityActorResponse:
       description: Captured identity responsible for an activity item.
