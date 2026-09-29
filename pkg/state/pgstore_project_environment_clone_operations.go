@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const projectEnvironmentCloneOperationColumns = `id, account_id, project_id, source_environment, target_environment,
@@ -95,6 +96,30 @@ func (s *PgStore) ProjectEnvironmentCloneOperationByIdempotencyKey(ctx context.C
 func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, accountID, projectID, id, expectedStatus, nextStatus string, expectedRevision int64, resources []ProjectEnvironmentCloneResource, errorCode string) (ProjectEnvironmentCloneOperation, error) {
 	if expectedRevision < 1 || !validCloneOperationTransition(expectedStatus, nextStatus) || !validCloneOperationErrorCode(errorCode) {
 		return ProjectEnvironmentCloneOperation{}, ErrInvalidProjectEnvironmentCloneOperation
+	}
+	current, err := s.ProjectEnvironmentCloneOperationByID(ctx, accountID, projectID, id)
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
+	if current.Status != expectedStatus || current.Revision != expectedRevision {
+		return ProjectEnvironmentCloneOperation{}, ErrConflict
+	}
+	if err := validateCloneResourceTransition(current, nextStatus, resources, errorCode); err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
+	if nextStatus == CloneOperationPublishing || nextStatus == CloneOperationReady {
+		rows, err := new(sqlc.Queries).ReadProjectEnvironmentCloneObjectCopyProofs(ctx, s.pool, mustPgUUID(id))
+		if err != nil {
+			return ProjectEnvironmentCloneOperation{}, mapErr(err)
+		}
+		proofs := make([]projectCloneObjectCopyProof, len(rows))
+		for i, row := range rows {
+			proofs[i] = projectCloneObjectCopyProof{sourceID: row.SourceBucketID, targetID: row.TargetBucketID, hash: row.ManifestHash,
+				capture: row.CapturedAtExact, objectCount: int(row.ObjectCount), entryCount: int(row.EntryCount), verifiedCount: int(row.VerifiedCount)}
+		}
+		if err := validateCloneObjectCopyProofs(resources, proofs); err != nil {
+			return ProjectEnvironmentCloneOperation{}, err
+		}
 	}
 	if resources == nil {
 		resources = []ProjectEnvironmentCloneResource{}

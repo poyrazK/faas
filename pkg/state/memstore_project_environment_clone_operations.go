@@ -91,6 +91,28 @@ func (m *MemStore) AdvanceProjectEnvironmentCloneOperation(_ context.Context, ac
 	if op.Status != expectedStatus || op.Revision != expectedRevision {
 		return ProjectEnvironmentCloneOperation{}, ErrConflict
 	}
+	if err := validateCloneResourceTransition(op, nextStatus, resources, errorCode); err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
+	if nextStatus == CloneOperationPublishing || nextStatus == CloneOperationReady {
+		var proofs []projectCloneObjectCopyProof
+		for _, manifest := range m.projectEnvironmentCloneObjectManifests {
+			if manifest.OperationID != op.ID {
+				continue
+			}
+			proof := projectCloneObjectCopyProof{sourceID: manifest.SourceBucketID, targetID: manifest.TargetBucketID,
+				hash: manifest.Hash, capture: manifest.CapturedAt.UTC().Format(time.RFC3339Nano), objectCount: len(manifest.Objects), entryCount: len(manifest.Objects)}
+			for _, object := range manifest.Objects {
+				if object.CopiedAt != nil && object.TargetETag != "" && validCloneObjectSHA256(object.VerifiedSHA256) {
+					proof.verifiedCount++
+				}
+			}
+			proofs = append(proofs, proof)
+		}
+		if err := validateCloneObjectCopyProofs(resources, proofs); err != nil {
+			return ProjectEnvironmentCloneOperation{}, err
+		}
+	}
 	op.Status = nextStatus
 	op.Revision++
 	op.Resources = append([]ProjectEnvironmentCloneResource(nil), resources...)

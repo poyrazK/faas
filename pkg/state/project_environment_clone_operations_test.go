@@ -69,7 +69,8 @@ func TestMemProjectEnvironmentCloneOperationPinsSourceAndFencesTransitions(t *te
 	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, created.ID, CloneOperationFailed, CloneOperationCompensating, 3, []ProjectEnvironmentCloneResource{resource}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, created.ID, CloneOperationCompensating, CloneOperationCompensated, 4, nil, ""); err != nil {
+	resource.Status = "compensated"
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, created.ID, CloneOperationCompensating, CloneOperationCompensated, 4, []ProjectEnvironmentCloneResource{resource}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, created.ID, CloneOperationCompensated, CloneOperationReady, 5, nil, ""); !errors.Is(err, ErrInvalidProjectEnvironmentCloneOperation) {

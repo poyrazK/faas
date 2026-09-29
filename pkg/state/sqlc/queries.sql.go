@@ -11783,6 +11783,58 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readProjectEnvironmentCloneObjectCopyProofs = `-- name: ReadProjectEnvironmentCloneObjectCopyProofs :many
+SELECT m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
+       m.manifest_hash, m.captured_at_exact, m.object_count,
+       count(e.object_key)::integer AS entry_count,
+       count(e.object_key) FILTER (WHERE e.copied_at IS NOT NULL AND e.target_etag <> ''
+                                  AND e.verified_sha256 ~ '^[a-f0-9]{64}$')::integer AS verified_count
+FROM project_environment_clone_object_manifests m
+LEFT JOIN project_environment_clone_object_entries e
+  ON e.operation_id = m.operation_id AND e.source_bucket_id = m.source_bucket_id
+WHERE m.operation_id = $1::uuid
+GROUP BY m.source_bucket_id, m.target_bucket_id, m.manifest_hash, m.captured_at_exact, m.object_count
+ORDER BY m.source_bucket_id
+`
+
+type ReadProjectEnvironmentCloneObjectCopyProofsRow struct {
+	SourceBucketID  string
+	TargetBucketID  string
+	ManifestHash    string
+	CapturedAtExact string
+	ObjectCount     int32
+	EntryCount      int32
+	VerifiedCount   int32
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ReadProjectEnvironmentCloneObjectCopyProofsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneObjectCopyProofs, operationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneObjectCopyProofsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneObjectCopyProofsRow
+		if err := rows.Scan(
+			&i.SourceBucketID,
+			&i.TargetBucketID,
+			&i.ManifestHash,
+			&i.CapturedAtExact,
+			&i.ObjectCount,
+			&i.EntryCount,
+			&i.VerifiedCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneProductionValueScope = `-- name: ReadProjectEnvironmentCloneProductionValueScope :one
 SELECT coalesce((CASE
   WHEN EXISTS (SELECT 1 FROM project_release_sets rs

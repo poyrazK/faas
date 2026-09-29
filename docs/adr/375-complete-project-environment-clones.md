@@ -288,3 +288,32 @@ and the coordinated PostgreSQL/object-storage barrier still require integration.
 Native acceptance has not run. A read-only check of the dedicated host configured
 in `e2e-native.yml` failed because GCP reports its project suspended; restored
 access or another designated native KVM host is required for that gate.
+
+### Resource inventory and publication fences (2026-09-30)
+
+Clone operation updates now retain every recorded resource identity. An assigned
+source/version/capture point or target cannot be replaced or cleared. The roster
+freezes after capture; later phases cannot add resources or erase them, including
+compensation. Duplicate resource keys and unknown status values reject updates.
+Declared resources must have a recognized strategy and a captured/ready status
+before the operation can enter its copy phase.
+
+Publication and readiness require the captured source revision marker, only
+recognized resource strategies, every resource ready, and no operation error.
+Physical data/workload resources require distinct source/target identities and a
+capture/version identity. Object-storage resources must match all stored bucket
+manifests, including the exact capture timestamp and manifest hash. Every entry
+must have a persisted verified copy receipt; an omitted manifest, an incomplete
+copy, or a claimed-ready bucket with no manifest rejects publication.
+
+Focused MemStore and real PostgreSQL contracts exercise omitted/rebound resource
+identities, duplicate keys, unsupported strategies, incomplete or missing object
+manifests, exact nanosecond capture identities, error-bearing readiness, and
+historical compensation receipts. Existing clone operation/object manifest
+contracts also pass through the temporary focused runner, and API environment
+contracts pass locally. The sqlc generation consistency check passes.
+
+The store gates do not establish inventory coverage by themselves. The capture
+worker must still enumerate the complete effective state, connect these operation
+and object-copy primitives to resource preparation, and publish a ready deployment
+graph. Those integration steps and native acceptance remain outstanding.

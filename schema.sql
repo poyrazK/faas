@@ -10826,3 +10826,80 @@ CREATE INDEX IF NOT EXISTS request_id_journal_app_request_received_idx
     ON request_id_journal (app_id, request_id, received_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS request_id_journal_expires_idx
     ON request_id_journal (expires_at);
+
+-- Clone operation schema (existing migration 20260929171700000_project_environment_clone_operations.sql).
+-- A complete environment clone is a resumable operation. The source identity
+-- and the target name are fixed before external data resources are prepared.
+CREATE TABLE project_environment_clone_operations (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_environment text NOT NULL,
+    target_environment text NOT NULL,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 255),
+    source_revision_hash text NOT NULL CHECK (source_revision_hash ~ '^[a-f0-9]{64}$'),
+    source_release_set_id uuid,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN
+        ('pending', 'capturing', 'copying', 'publishing', 'ready', 'failed', 'compensating', 'compensated')),
+	    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    -- Only resource identities, capture points, and status belong here.
+    -- Credentials and secret values must never enter this document.
+    resources jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(resources) = 'array'),
+    error_code text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT project_environment_clone_source_target_distinct
+        CHECK (source_environment <> target_environment),
+    CONSTRAINT project_environment_clone_idempotency_unique
+        UNIQUE (account_id, project_id, idempotency_key)
+);
+-- A completed clone remains in history even after its environment is removed.
+-- Only operations that can still create or publish a target reserve its name.
+CREATE UNIQUE INDEX project_environment_clone_active_target_uniq
+    ON project_environment_clone_operations (project_id, target_environment)
+    WHERE status IN ('pending', 'capturing', 'copying', 'publishing', 'failed', 'compensating');
+CREATE INDEX project_environment_clone_operations_status_idx
+    ON project_environment_clone_operations (status, updated_at)
+    WHERE status NOT IN ('ready', 'failed');
+
+
+-- Clone operation schema (existing migration 20260929171900000_project_environment_clone_object_manifests.sql).
+-- One immutable, complete manifest is committed before any object is copied.
+-- Bucket IDs are retained as historical identities after cleanup/deletion.
+CREATE TABLE project_environment_clone_object_manifests (
+    operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
+    source_bucket_id uuid NOT NULL,
+    target_bucket_id uuid NOT NULL,
+    captured_at timestamptz NOT NULL,
+    -- Preserve Go/provider timestamp precision for immutable replay checks.
+    captured_at_exact text NOT NULL,
+    manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[a-f0-9]{64}$'),
+    object_count integer NOT NULL CHECK (object_count >= 0),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (operation_id, source_bucket_id),
+    CHECK (source_bucket_id <> target_bucket_id)
+);
+
+CREATE TABLE project_environment_clone_object_entries (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    object_key text NOT NULL CHECK (length(object_key) BETWEEN 1 AND 1024),
+    source_version text NOT NULL CHECK (source_version <> ''),
+    -- Canonical source identity includes nanosecond timestamps. PostgreSQL's
+    -- timestamptz precision would otherwise change its hash on reload.
+    source_object jsonb NOT NULL,
+    copied_at timestamptz,
+    target_etag text NOT NULL DEFAULT '',
+    verified_sha256 text NOT NULL DEFAULT '' CHECK (verified_sha256 = '' OR verified_sha256 ~ '^[a-f0-9]{64}$'),
+    PRIMARY KEY (operation_id, source_bucket_id, object_key),
+    FOREIGN KEY (operation_id, source_bucket_id)
+        REFERENCES project_environment_clone_object_manifests(operation_id, source_bucket_id) ON DELETE CASCADE,
+    CHECK (jsonb_typeof(source_object) = 'object'),
+    CHECK (source_object->>'key' = object_key),
+    CHECK (source_object->>'version_id' = source_version),
+    CHECK ((copied_at IS NULL AND target_etag = '' AND verified_sha256 = '') OR
+           (copied_at IS NOT NULL AND verified_sha256 <> ''))
+);
+CREATE INDEX project_environment_clone_object_uncopied_idx
+    ON project_environment_clone_object_entries (operation_id, source_bucket_id, object_key)
+    WHERE copied_at IS NULL;

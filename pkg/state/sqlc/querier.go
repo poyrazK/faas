@@ -998,6 +998,7 @@ type Querier interface {
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ReadProjectEnvironmentCloneObjectCopyProofsRow, error)
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)
 	// Decode the explicit configuration fields in Go; delivery observations do

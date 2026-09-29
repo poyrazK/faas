@@ -1920,6 +1920,45 @@ type ProjectEnvironmentCleanupJob struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneObjectEntry struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	ObjectKey      string
+	SourceVersion  string
+	SourceObject   []byte
+	CopiedAt       pgtype.Timestamptz
+	TargetEtag     string
+	VerifiedSha256 string
+}
+
+type ProjectEnvironmentCloneObjectManifest struct {
+	OperationID     pgtype.UUID
+	SourceBucketID  pgtype.UUID
+	TargetBucketID  pgtype.UUID
+	CapturedAt      pgtype.Timestamptz
+	CapturedAtExact string
+	ManifestHash    string
+	ObjectCount     int32
+	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneOperation struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	SourceEnvironment  string
+	TargetEnvironment  string
+	IdempotencyKey     string
+	SourceRevisionHash string
+	SourceReleaseSetID pgtype.UUID
+	Status             string
+	Revision           int64
+	Resources          []byte
+	ErrorCode          string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type ProjectEnvironmentQualification struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

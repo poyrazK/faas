@@ -5,6 +5,19 @@ WHERE account_id = sqlc.arg(account_id)::uuid
   AND status <> 'deleted' AND preview_of_slug IS NULL
 ORDER BY id FOR UPDATE;
 
+-- name: ReadProjectEnvironmentCloneObjectCopyProofs :many
+SELECT m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
+       m.manifest_hash, m.captured_at_exact, m.object_count,
+       count(e.object_key)::integer AS entry_count,
+       count(e.object_key) FILTER (WHERE e.copied_at IS NOT NULL AND e.target_etag <> ''
+                                  AND e.verified_sha256 ~ '^[a-f0-9]{64}$')::integer AS verified_count
+FROM project_environment_clone_object_manifests m
+LEFT JOIN project_environment_clone_object_entries e
+  ON e.operation_id = m.operation_id AND e.source_bucket_id = m.source_bucket_id
+WHERE m.operation_id = sqlc.arg(operation_id)::uuid
+GROUP BY m.source_bucket_id, m.target_bucket_id, m.manifest_hash, m.captured_at_exact, m.object_count
+ORDER BY m.source_bucket_id;
+
 -- name: ReadProjectEnvironmentCloneVariables :many
 SELECT e.app_id::text AS app_id, e.scope, e.key, e.value
 FROM app_envs e JOIN apps a ON a.id = e.app_id
