@@ -73,6 +73,22 @@ on Darwin: the mandatory capability check requires `/proc/self/status`. They
 remain pending on Linux. The repository-pinned linter passed for gateway,
 gatewayd-internal and the acceptance package; the deadline ingress refactor
 and upgrade tests passed, and the operational verification script passed its
-shell syntax check. Deployment evidence remains required. The node admission,
-full policy snapshot and release
-evidence deliverables remain outstanding.
+shell syntax check. Deployment evidence remains required.
+
+Node HTTP admission is implemented at vmmd's forwarding boundary for both
+ordinary streams and raw Upgrade. The trusted wake plan determines the cap;
+client cancellation retains a permit until bridge completion or child reap.
+Retirement and generation fencing precede network/lease reuse. Actual cap,
+inflight, generation, plan and retiring status are reported in VM stats.
+Local tests passed for all four plans, cancellation retention, late release,
+replacement, cleanup, bridge acknowledgements and stale socket fencing. Two
+separate HTTP forwarder processes, replacement, the real gRPC vmmd handler
+and the reusable bridge binary preserved a cap of four and refused Upgrade
+before guest tunnelling. VM/network ownership was a fixture in that test.
+Full local fcvm, vmmdgrpc and gateway suites passed; the migration-drain
+regression, bridge-command, vmmd startup and daemon-unit suites passed too.
+The pinned linter and generated deployment-file check passed. The managed systemd unit
+has explicit bridge-group shutdown and a private socket directory. Linux
+parent-death/process-group tests were added but remain pending along with
+native VM lifecycle/restart/leak and load evidence. Full policy snapshot,
+nested deadline transport and release evidence are still outstanding.

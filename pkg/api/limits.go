@@ -24,6 +24,11 @@ import (
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond
 	TrafficRetryBudgetWindow       = 10 * time.Second
+	// Reusable bridges acknowledge exchange cleanup before node capacity is
+	// released. Failure fences and reaps the bridge process instead.
+	TrafficBridgeCompletionTimeout    = 5 * time.Second
+	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
 )
 
 // A restore hook is on the wake critical path. Keep its customer timeout

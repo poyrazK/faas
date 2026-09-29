@@ -90,6 +90,7 @@ type Unit struct {
 	ExecStartPre    []string // ordered (vmmd has 2; nobody else has any)
 	ExecStartPost   []string // ordered post-start fixups (vmmd runtime dir)
 	Restart         string
+	KillMode        string // explicit process fence for bridge-owning daemons
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
 	// WatchdogSec (ADR-190) is the systemd watchdog interval. A
@@ -200,6 +201,7 @@ func (u Unit) Render() []byte {
 		buf.WriteByte('\n')
 	}
 	writeStringKV(&buf, "Restart", u.Restart)
+	writeStringKV(&buf, "KillMode", u.KillMode)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "WatchdogSec", u.WatchdogSec)
@@ -496,6 +498,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.ExecStartPost = append(u.ExecStartPost, val)
 	case "[Service]/Restart":
 		u.Restart = val
+	case "[Service]/KillMode":
+		u.KillMode = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
 	case "[Service]/TimeoutStartSec":

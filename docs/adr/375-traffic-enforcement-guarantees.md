@@ -103,6 +103,47 @@ bounded batches, and app deletion removes them. Existing explicit Redis
 credentials still select the Redis backend and its startup/runtime posture
 from ADR-288. This supersedes ADR-288's implicit process-local default.
 
+## Node-owned HTTP admission
+
+vmmd derives each routed instance's cap from its schedd-authored wake plan.
+The same node gate covers `ForwardHTTPStream` and `ForwardRawStream`, including
+public, declared-service and managed synthetic HTTP callers. Missing/unknown
+plans or an unwired admission owner refuse forwarding. Jobs, disposable
+executions, task VMs and builders do not expose an ordinary routed listener.
+TCP service tunnels and background guest work are outside this HTTP cap.
+
+A permit is acquired before bridge creation or invocation hooks and remains
+held through the full exchange, including streaming bodies and upgraded
+sessions. Client cancellation never frees it by itself. The persistent v2
+bridge acknowledges completion on its protected local socket after its guest
+handler finishes cleanup. A missing, failed or timed-out acknowledgement
+fences and reaps that bridge before releasing the permit. Other exchanges on
+the uncertain bridge can fail; preserving verified capacity takes precedence
+over keeping that child alive. Per-RPC v2, raw and compatibility bridges reap
+their children before release; Linux cancellation also kills the compatibility
+shell's process group. Reusable bridge generations use distinct socket paths.
+
+Park, migration preparation, process exit and destruction retire admission
+and cancel active forward contexts. Network/lease recycling waits for real
+permit releases. Failed migration drains can resume the same VM while keeping
+its pending cancelled exchanges counted. Late releases cannot decrement a
+replacement's count. The live VM status reports enabled, actual plan/cap,
+inflight, generation and retirement state. A plan change takes effect on a
+new instance; status reports the plan actually used by a still-live VM.
+
+Existing gateway capacity estimates/queues remain hints before this final
+node gate. A racing full node returns `concurrency_throttled`/429 with a short
+retry hint; it does not add an unbounded node queue, evict a healthy placement,
+or trigger application replay. Unverified node admission returns
+`http_admission_unavailable`/503. Both outcomes occur before guest execution.
+
+The managed systemd unit explicitly uses `KillMode=control-group`. Linux
+bridge parent death uses SIGKILL so an old bridge cannot keep its former
+owner's exchanges alive through replacement. Before serving RPCs, vmmd checks
+its private bridge socket directory, removes only confirmed dead sockets and
+refuses startup when an old socket still accepts connections. These process
+and restart fences require native Linux acceptance and leak evidence.
+
 ## Delivery and verification
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.

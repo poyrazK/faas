@@ -136,7 +136,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 				netns:    netnsName,
 				port:     port,
 				protocol: streamBridgeProtocol(req),
-				socket:   streamBridgeSockPath(req.GetInstance()),
+				socket:   streamBridgeSockPathForRequest(req.GetInstance()),
 				ready:    make(chan struct{}),
 				starting: true,
 				lastUsed: m.now(),
@@ -225,7 +225,7 @@ func (m *streamBridgeManager) prewarm(req *vmmdpb.ForwardHTTPRequestInit, netnsN
 		netns:    netnsName,
 		port:     port,
 		protocol: protocol,
-		socket:   streamBridgeSockPath(req.GetInstance()),
+		socket:   streamBridgeSockPathForRequest(req.GetInstance()),
 		ready:    make(chan struct{}),
 		starting: true,
 		lastUsed: m.now(),
@@ -377,20 +377,18 @@ func (m *streamBridgeManager) release(entry *streamBridgeEntry) {
 	entry.lastUsed = m.now()
 }
 
-func (m *streamBridgeManager) invalidate(lease *streamBridgeLease) {
+func (m *streamBridgeManager) invalidate(ctx context.Context, lease *streamBridgeLease) {
 	if m == nil || lease == nil || lease.entry == nil {
 		return
 	}
 	entry := lease.entry
 	m.mu.Lock()
-	if current := m.entries[entry.instance]; current != entry {
-		m.mu.Unlock()
-		return
+	if current := m.entries[entry.instance]; current == entry {
+		delete(m.entries, entry.instance)
 	}
-	delete(m.entries, entry.instance)
 	entry.closed = true
 	m.mu.Unlock()
-	m.closeEntry(context.Background(), entry)
+	m.closeEntry(context.WithoutCancel(ctx), entry)
 }
 
 func (m *streamBridgeManager) closeEntry(ctx context.Context, entry *streamBridgeEntry) {

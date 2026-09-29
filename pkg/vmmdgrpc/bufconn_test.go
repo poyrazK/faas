@@ -85,6 +85,10 @@ type fakeVMM struct {
 	leased               int
 }
 
+func (f *fakeVMM) AcquireHTTPForward(ctx context.Context, _ string) (context.Context, func(), error) {
+	return ctx, func() {}, nil
+}
+
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
 	if f.wakeFn != nil {
 		return f.wakeFn(ctx, req)

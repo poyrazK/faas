@@ -522,6 +522,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
+			if writeNodeAdmissionRefusal(w, err) {
+				return
+			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTarget(r.Context())
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
@@ -883,6 +886,10 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// A detached upgrade ended because its client canceled or
 				// its independent idle/ceiling safety bound fired. The
 				// handshake is already committed, so close cleanly.
+				return
+			}
+			if !wroteHeader && writeNodeAdmissionRefusal(w, err) {
+				wsOutcome = WSOutcomeUpstreamUnavailable
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {

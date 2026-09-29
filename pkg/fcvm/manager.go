@@ -519,7 +519,8 @@ type Instance struct {
 	// needing to thread the plan through the vmm-side Lease type.
 	// The Lease stays allocator-owned and instance-id-keyed; the Plan
 	// is schedd-owned and recorded at Wake time.
-	Plan api.Plan
+	Plan                  api.Plan
+	httpForwardGeneration string
 
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
 	// override port copied from WakeRequest.Port. The vmmdgrpc
@@ -744,6 +745,9 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// Forwarding permits belong to the live instance generation, not a gateway
+	// process. Cleanup drains them before recycling its network or lease.
+	httpForwards map[string]*httpForwardGeneration
 	// appResolved is each app's recently resolved addresses on this node
 	// with their expiry (ADR-373), used to seed a new instance's
 	// egress_resolved set: a restored snapshot may reconnect to addresses
@@ -1735,6 +1739,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		// receipts remain owned by WaitJobExit and the stuck-task reaper.
 		return
 	}
+	m.retireHTTPForwards(inst.Lease)
 
 	// Stop the health loop before notifying schedd. Otherwise the
 	// dead process can produce a second, slower liveness failure while
@@ -4950,6 +4955,13 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
+	forwards := m.retireHTTPForwards(inst.Lease)
+	// Snapshot only after the old bridges have stopped forwarding. Cleanup
+	// remains owed even if the caller expires while waiting for that drain.
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		_ = m.Destroy(context.WithoutCancel(ctx), instance)
+		return SnapshotInfo{}, fmt.Errorf("park %s: drain forwarding: %w", instance, err)
+	}
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -5090,6 +5102,11 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
+	forwards := m.retireHTTPForwards(inst.Lease)
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		m.reopenHTTPForwards(inst)
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: drain forwarding: %w", instance, err)
+	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
 	m.cancelReadinessLoop(instance)
@@ -5105,6 +5122,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -5155,6 +5173,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -5232,6 +5251,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		// Unknown instance — match Destroy's idempotent shape.
 		return false, 0, nil
 	}
+	m.retireHTTPForwards(inst.Lease)
 	if inst.IsJob {
 		// Job workloads are children of guest-init, not host processes. Ask the
 		// guest supervisor to signal the workload process group; implementations
@@ -5297,6 +5317,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		code, err := m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 		return code, err
 	}
+	m.retireHTTPForwards(inst.Lease)
 	code, err := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	// Teardown uses a context detached from the caller's: if the caller's ctx
 	// has already expired (test deadline, caller gave up), we still owe the
@@ -7075,6 +7096,7 @@ func listPrivateNetworkHandle(ctx context.Context, cap CaptureRunner, netnsName,
 // network, and always release the lease. Errors are logged, never returned — a
 // cleanup that gives up would leak.
 func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) {
+	forwards := m.retireHTTPForwards(lease)
 	// A child can report its exit after an explicit Destroy/failed Wake
 	// removed the live entry but before Kill has finished. Do not let that
 	// expected exit poison a later Wake using the same instance id.
@@ -7100,6 +7122,12 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	}
 	if err := m.vmm.Kill(ctx, lease); err != nil {
 		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
+	}
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		// An uncertain bridge must retain its lease. Reusing the namespace or
+		// jail identity while it can still forward would violate isolation.
+		m.log.Error("cleanup: forwarding drain failed; retaining resources", "instance", lease.Instance, "err", err)
+		return
 	}
 	if !lease.Networkless {
 		m.unregisterEgressCircuitNetwork(lease.Instance)
@@ -7146,6 +7174,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	if err := m.alloc.Release(lease.Instance); err != nil {
 		m.log.Warn("cleanup: release lease", "instance", lease.Instance, "err", err)
 	}
+	m.forgetHTTPForwards(forwards)
 }
 
 // discard is an io.Writer sink for the nil-logger fallback.

@@ -52,6 +52,8 @@ func codeToGRPC(code string) codes.Code {
 		// the Code field on the Problem and dispatches the right
 		// HTTP status (503 vs 429).
 		return codes.ResourceExhausted
+	case api.CodeConcurrencyThrottled:
+		return codes.ResourceExhausted
 	case api.CodeBuildUndetected,
 		api.CodeValidation,
 		api.CodeInvalidRef:
@@ -72,7 +74,7 @@ func codeToGRPC(code string) codes.Code {
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
-	case api.CodeSourceRefUnavailable, api.CodeEgressCircuitUnavailable, api.CodeEgressCircuitDisabled:
+	case api.CodeHTTPAdmissionUnavailable, api.CodeSourceRefUnavailable, api.CodeEgressCircuitUnavailable, api.CodeEgressCircuitDisabled:
 		return codes.Unavailable
 	case api.CodeBeforeCheckpointFailed, api.CodeEgressCircuitRevision:
 		return codes.FailedPrecondition
