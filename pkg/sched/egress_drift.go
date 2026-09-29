@@ -227,7 +227,7 @@ func (e *EgressDriftSubscriber) reconcileApp(ctx context.Context, appID string) 
 }
 
 func (e *EgressDriftSubscriber) applyTarget(ctx context.Context, store state.AppEgressPolicyConvergenceStore, target state.AppEgressPolicyApplyTarget) {
-	applyErr := e.router.UpdateEgressAllowlist(ctx, target.NodeID, target.AppID, target.Allowlist)
+	applyErr := e.router.UpdateEgressAllowlist(ctx, target.NodeID, target.AppID, target.Allowlist, target.EgressPorts)
 	if err := store.RecordAppEgressPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
 		e.log.Warn("schedd: record app egress policy apply failed",
 			"app", target.AppID, "slug", target.Slug, "node", target.NodeID,
@@ -345,7 +345,7 @@ func (e *EgressDriftSubscriber) fanOut(ctx context.Context, appID, slug string) 
 			continue
 		}
 		seen[ins.NodeID] = struct{}{}
-		if err := e.router.UpdateEgressAllowlist(ctx, ins.NodeID, appID, allowlist); err != nil {
+		if err := e.router.UpdateEgressAllowlist(ctx, ins.NodeID, appID, allowlist, app.EgressPorts); err != nil {
 			// Log and continue. The next reconcile
 			// (next PATCH, or the watchdog's Park + ColdBoot
 			// on a stuck instance) re-anchors the vmmd's

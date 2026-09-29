@@ -162,7 +162,7 @@ func (v *statsFakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ i
 // drive the egress drift path; egress_drift_test.go covers it.
 // Returning nil keeps the sched.VMM contract satisfied for the
 // poller tests that wire statsFakeDialer.
-func (v *statsFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) error {
+func (v *statsFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix, []int) error {
 	return nil
 }
 

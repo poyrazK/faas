@@ -589,6 +589,10 @@ Show posture or configure deploy enforcement
 
 Inspect or update the outbound CIDR allowlist
 
+### app egress-ports
+
+Inspect or update the extra outbound TCP ports (Pro/Scale)
+
 ### app network
 
 Inspect networking or manage private-network attachments

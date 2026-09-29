@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -41,9 +42,10 @@ type recordingRouterVMM struct {
 }
 
 type recordedAllowlistCall struct {
-	NodeID    string
-	AppID     string
-	Allowlist []netip.Prefix
+	NodeID      string
+	AppID       string
+	Allowlist   []netip.Prefix
+	EgressPorts []int
 }
 
 // recordedStaticIPCall (ADR-119) is one UpdateStaticEgressIP
@@ -166,6 +168,7 @@ func (s *durableEgressTestStore) ListPendingAppEgressPolicyTargets(_ context.Con
 			continue
 		}
 		entry.Allowlist = append([]netip.Prefix(nil), entry.Allowlist...)
+		entry.EgressPorts = append([]int(nil), entry.EgressPorts...)
 		out = append(out, entry)
 		if len(out) >= limit {
 			break
@@ -215,7 +218,7 @@ func (s *durableEgressTestStore) ListServingAppEgressPolicyNodeStates(context.Co
 	return append([]state.AppEgressPolicyNodeState(nil), s.states...), nil
 }
 
-func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, appID string, allowlist []netip.Prefix) error {
+func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Copy the slice so a later mutation (or the caller's
@@ -224,9 +227,10 @@ func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, ap
 	cp := make([]netip.Prefix, len(allowlist))
 	copy(cp, allowlist)
 	r.calls = append(r.calls, recordedAllowlistCall{
-		NodeID:    nodeID,
-		AppID:     appID,
-		Allowlist: cp,
+		NodeID:      nodeID,
+		AppID:       appID,
+		Allowlist:   cp,
+		EgressPorts: append([]int(nil), egressPorts...),
 	})
 	if r.nodeErrors != nil {
 		if err, ok := r.nodeErrors[nodeID]; ok {
@@ -705,6 +709,56 @@ func TestEgressDrift_ReplaysMissedNotificationAndRetriesFailure(t *testing.T) {
 	if len(durable.entries) != 0 || len(durable.states) != 1 || durable.states[0].AppliedRevision != 3 || durable.states[0].LastError != "" {
 		t.Fatalf("durable state after retry = pending:%+v applied:%+v; want revision 3 applied", durable.entries, durable.states)
 	}
+}
+
+// TestEgressDrift_CarriesEgressPorts covers ADR-361: a port-only change
+// rides the same convergence path as the allowlist, from both the notify
+// fast path (the app row) and the durable replay (the apply target).
+func TestEgressDrift_CarriesEgressPorts(t *testing.T) {
+	t.Run("notify", func(t *testing.T) {
+		store := state.NewMemStore()
+		app, _ := seedEgressApp(t, store, "egress-owner-ports@example.com", []string{"node-A"})
+		if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+			EgressPorts: []int{5432, 6379}, SetEgressPorts: true,
+		}); err != nil {
+			t.Fatalf("UpdateApp: %v", err)
+		}
+		router := &recordingRouterVMM{}
+		engine := newEngine(t, store, router, &fakeNotifier{}, "")
+		sub := NewEgressDriftSubscriber(engine, router, silenceLog())
+		feed := newFakeNotify(1)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- sub.Run(ctx, feed.Channel()) }()
+		feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: `{"kind":"updated","app_id":"` + app.ID + `"}`})
+		if err := waitFor(func() bool { return router.snapshotLen() == 1 }, 2*time.Second); err != nil {
+			t.Fatalf("expected 1 call, got %d", router.snapshotLen())
+		}
+		if got := router.snapshot()[0].EgressPorts; !slices.Equal(got, []int{5432, 6379}) {
+			t.Fatalf("ports on the wire = %v, want [5432 6379]", got)
+		}
+		cancel()
+		<-done
+	})
+	t.Run("durable replay", func(t *testing.T) {
+		base := state.NewMemStore()
+		app, _ := seedEgressApp(t, base, "egress-owner-ports-durable@example.com", []string{"node-A"})
+		durable := &durableEgressTestStore{
+			MemStore: base,
+			entries: []state.AppEgressPolicyApplyTarget{{
+				AppID: app.ID, NodeID: "node-A", Slug: app.Slug, Revision: 2, EgressPorts: []int{8883},
+			}},
+		}
+		router := &recordingRouterVMM{}
+		engine := newEngine(t, durable, router, &fakeNotifier{}, "")
+		sub := NewEgressDriftSubscriber(engine, router, silenceLog())
+		sub.reconcilePending(context.Background())
+		calls := router.snapshot()
+		if len(calls) != 1 || !slices.Equal(calls[0].EgressPorts, []int{8883}) {
+			t.Fatalf("replayed calls = %+v, want one carrying [8883]", calls)
+		}
+	})
 }
 
 func TestAppCPUPolicy_ReplaysAndRetriesPerNodeApply(t *testing.T) {

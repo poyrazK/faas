@@ -306,6 +306,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			req.EgressAllowlist = &rewritten
 		}
 	}
+	// ADR-361: extra egress ports. Normalized in place so the store gets
+	// the canonical form (sorted, no base ports).
+	if req.EgressPorts != nil {
+		normalized, problem := api.NormalizeEgressPorts(acct.Plan, *req.EgressPorts)
+		if problem != nil {
+			return problem
+		}
+		req.EgressPorts = &normalized
+	}
 	// Issue #169 / #172: per-app reactive scale-up trigger. Plan
 	// gates run first (403 supersedes 422) so a Free account
 	// PATCHing an invalid value surfaces the gate error, not the
@@ -1226,6 +1235,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetMinInstances:    req.MinInstances != nil,
 		EgressAllowlist:    allowPrefixes,
 		SetEgressAllowlist: req.EgressAllowlist != nil,
+		EgressPorts:        derefIntSlice(req.EgressPorts),
+		SetEgressPorts:     req.EgressPorts != nil,
 		// Issue #169 / #172: autoscale trigger targets. Set bits
 		// distinguish "unset" from "explicit zero" (the disable
 		// signal). Plain nil-with-Set=false leaves the column
@@ -7200,4 +7211,12 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		})
 	}
 	return out
+}
+
+// derefIntSlice returns the pointed-to slice, or nil.
+func derefIntSlice(p *[]int) []int {
+	if p == nil {
+		return nil
+	}
+	return *p
 }

@@ -659,6 +659,11 @@ message AppSpec {
   // main_depends_on carries the primary workload's startup gates into the
   // guest workload roster. Empty preserves legacy startup behavior.
   repeated WorkloadDependency main_depends_on = 28;
+  // egress_ports (ADR-361) are the app's declared extra TCP destination
+  // ports on top of the base web ports every guest may reach. vmmd drops
+  // forbidden ports again before rendering the per-instance egress_ports
+  // set. Empty = base ports only.
+  repeated uint32 egress_ports = 29;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1298,6 +1303,11 @@ message HeartbeatResponse {}
 message UpdateEgressAllowlistRequest {
   string app_id = 1;
   repeated string egress_allowlist = 2;
+  // egress_ports (ADR-361) replaces the live instances' extra egress
+  // ports when egress_ports_set is true. The flag keeps an older schedd,
+  // which never sends ports, from clearing them during a rolling release.
+  repeated uint32 egress_ports = 3;
+  bool egress_ports_set = 4;
 }
 
 // UpdateEgressAllowlistAck is the empty success response. On

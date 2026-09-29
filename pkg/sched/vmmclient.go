@@ -103,7 +103,9 @@ type VMM interface {
 	// equal allowlist is a no-op) so a redelivered event is
 	// safe. Errors surface as the gRPC status (Unavailable /
 	// Internal) — the egress_drift subscriber logs and drops.
-	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	// egressPorts (ADR-361) are the app's declared extra egress ports; they
+	// always travel with the allowlist so one revision converges both.
+	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix, egressPorts []int) error
 	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
 	// static egress IP into vmmd's live-instance map without
 	// tearing the netns down. The wire is the vmmdpb
@@ -425,6 +427,7 @@ type AppSpec struct {
 	SealedEnv       []fcvm.SealedEnvEntry
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
+	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -957,7 +960,7 @@ func (c *VMMClient) StopInstance(ctx context.Context, instance string, signal in
 // bad patch never blocks the loop. Idempotent on the vmmd side
 // — redelivered identical allowlist is a no-op (set-equal
 // short-circuit).
-func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
+func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix, egressPorts []int) error {
 	// netip.Prefix → wire string round-trip. Use prefix.String()
 	// for canonical form (Masked() already applied at parse time
 	// upstream in apid's validateUpdateApp, so the renderer's
@@ -971,6 +974,8 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	if _, err := c.cli.UpdateEgressAllowlist(ctx, &vmmdpb.UpdateEgressAllowlistRequest{
 		AppId:           appID,
 		EgressAllowlist: ss,
+		EgressPorts:     egressPortsToWire(egressPorts),
+		EgressPortsSet:  true,
 	}); err != nil {
 		return liftErr(err)
 	}
@@ -1482,6 +1487,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		Sidecars:        sidecars,
 		MainDependsOn:   mainDependsOn,
 		EgressAllowlist: a.EgressAllowlist,
+		EgressPorts:     egressPortsToWire(a.EgressPorts),
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
@@ -1640,4 +1646,17 @@ func liftErr(err error) error {
 		return p
 	}
 	return err
+}
+
+// egressPortsToWire converts an app's extra egress ports to the proto shape.
+// Out-of-range values are dropped; apid and the column CHECK already refuse
+// them, and vmmd validates again.
+func egressPortsToWire(ports []int) []uint32 {
+	out := make([]uint32, 0, len(ports))
+	for _, p := range ports {
+		if p >= 1 && p <= 65535 {
+			out = append(out, uint32(p))
+		}
+	}
+	return out
 }

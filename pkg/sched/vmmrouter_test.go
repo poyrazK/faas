@@ -118,7 +118,7 @@ func (f *fakeRouterVMM) Close() error { return nil }
 // the egress drift path; the egress_drift_test.go suite does.
 // Records nothing. Returning nil keeps the gRPC VmmdAPI /
 // RoutedVMM contract satisfied.
-func (f *fakeRouterVMM) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix) error {
+func (f *fakeRouterVMM) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 

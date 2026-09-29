@@ -134,7 +134,7 @@ func (r *deploymentFilterFakeVMM) Ping(context.Context, string) (*PingOutcome, e
 func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*StatsSnapshot, error) {
 	return &StatsSnapshot{}, nil
 }
-func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix) error {
+func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix, []int) error {
 	return nil
 }
 func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string, string) error {

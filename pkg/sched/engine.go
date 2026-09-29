@@ -3352,6 +3352,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// effect on the next wake. Live instances keep their
 		// old netns — same contract as RAMMB and MaxConcurrency.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressPorts:                 app.EgressPorts,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -5311,6 +5312,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressPorts:                 app.EgressPorts,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -6043,6 +6045,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// its declared egress policy rather than awaiting a later
 		// wake.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressPorts:                 app.EgressPorts,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,

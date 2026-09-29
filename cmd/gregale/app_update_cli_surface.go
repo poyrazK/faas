@@ -53,6 +53,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"revision_pin_ttl_seconds":        {KnownGap: "no customer CLI setter; API-only today"},
 	"min_instances":                   {Path: "gregale app <slug> --min", AppFlags: []string{"min"}},
 	"egress_allowlist":                {Path: "gregale app <slug> egress-allowlist {add|remove|clear}"},
+	"egress_ports":                    {Path: "gregale app <slug> egress-ports {add|remove|clear}"},
 	"autoscale_target_rps":            {Path: "gregale app <slug> --autoscale-target-rps", AppFlags: []string{"autoscale-target-rps"}},
 	"autoscale_target_cpu_pct":        {Path: "gregale app <slug> --autoscale-target-cpu-pct", AppFlags: []string{"autoscale-target-cpu-pct"}},
 	"streaming_enabled":               {Path: "gregale app <slug> --streaming-enabled / --no-streaming-enabled", AppFlags: []string{"streaming-enabled", "no-streaming-enabled"}},

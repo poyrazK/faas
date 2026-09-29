@@ -93,7 +93,7 @@ func (f *fakeWakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error)
 // UpdateEgressAllowlist (tier-2 PR-B) — the cron loop tests
 // never drive the egress drift path. Records nothing; the
 // egress_drift subscriber's own tests wire a recording fake.
-func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix) error {
+func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 

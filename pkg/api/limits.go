@@ -503,6 +503,10 @@ type Limits struct {
 	// faas_egress_rate. Bounds scanning on the permitted web ports.
 	EgressNewConnPerSecond int
 	EgressNewConnBurst     int
+	// EgressExtraPortsMax caps the extra TCP destination ports an app may
+	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
+	// cannot declare any (Free/Hobby).
+	EgressExtraPortsMax int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
@@ -1813,6 +1817,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:             10,
 		EgressNewConnPerSecond: 10,
 		EgressNewConnBurst:     40,
+		EgressExtraPortsMax:    0,
 		SecretCountMax:         8,
 		SecretValueMaxBytes:    4 * 1024,
 		EnvVarsMax:             16,
@@ -2192,6 +2197,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:             25,
 		EgressNewConnPerSecond: 20,
 		EgressNewConnBurst:     80,
+		EgressExtraPortsMax:    0,
 		SecretCountMax:         25,
 		SecretValueMaxBytes:    8 * 1024,
 		EnvVarsMax:             32,
@@ -2596,6 +2602,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:             100,
 		EgressNewConnPerSecond: 50,
 		EgressNewConnBurst:     200,
+		EgressExtraPortsMax:    8,
 		SecretCountMax:         50,
 		SecretValueMaxBytes:    16 * 1024,
 		EnvVarsMax:             64,
@@ -2962,6 +2969,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:             250,
 		EgressNewConnPerSecond: 100,
 		EgressNewConnBurst:     400,
+		EgressExtraPortsMax:    32,
 		SecretCountMax:         100,
 		SecretValueMaxBytes:    32 * 1024,
 		EnvVarsMax:             256,
@@ -7546,3 +7554,36 @@ const (
 // DNS, which is pinned to the bridge resolver. Returned fresh so callers can
 // extend it with an app's declared ports without sharing state.
 func TenantEgressBasePorts() []uint16 { return []uint16{80, 443} }
+
+// EgressExtraPortsMax returns the number of extra TCP ports an app on this
+// plan may declare (ADR-361). Unknown plans get 0 (fail closed).
+func (p Plan) EgressExtraPortsMax() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.EgressExtraPortsMax
+}
+
+// tenantEgressForbiddenPorts are TCP ports an app may never add to its
+// egress (ADR-361), with the reason returned to the caller. SMTP stays
+// blocked for spam (spec §11); remote administration and SMB are the
+// classic targets of outbound scanning and brute force; IRC is botnet
+// command-and-control; the mining entries are common stratum pool ports;
+// DNS and DNS-over-TLS would bypass the pinned platform resolver.
+var tenantEgressForbiddenPorts = map[int]string{
+	25: "SMTP", 465: "SMTP", 587: "SMTP", 2525: "SMTP",
+	22: "remote administration", 23: "remote administration", 3389: "remote administration", 5900: "remote administration",
+	135: "Windows RPC/SMB", 137: "Windows RPC/SMB", 138: "Windows RPC/SMB", 139: "Windows RPC/SMB", 445: "Windows RPC/SMB",
+	6660: "IRC", 6661: "IRC", 6662: "IRC", 6663: "IRC", 6664: "IRC", 6665: "IRC", 6666: "IRC", 6667: "IRC", 6668: "IRC", 6669: "IRC", 6697: "IRC",
+	3333: "cryptocurrency mining", 4444: "cryptocurrency mining", 5555: "cryptocurrency mining", 7777: "cryptocurrency mining",
+	14433: "cryptocurrency mining", 14444: "cryptocurrency mining", 45700: "cryptocurrency mining",
+	53: "DNS is pinned to the platform resolver", 853: "DNS is pinned to the platform resolver",
+}
+
+// TenantEgressForbiddenPort reports whether an app may not declare port as
+// extra egress (ADR-361), and why.
+func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
+	reason, forbidden = tenantEgressForbiddenPorts[port]
+	return reason, forbidden
+}

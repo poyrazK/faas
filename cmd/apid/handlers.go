@@ -898,6 +898,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		AllowedServiceCallers:     allowedCallers,
 		AllowedServiceCallScopes:  allowedCallScopes,
 		EgressAllowlist:           ea,
+		EgressPorts:               append([]int{}, a.EgressPorts...),
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive
 		// scale-up runs in pkg/sched/scaleup; the trigger reads

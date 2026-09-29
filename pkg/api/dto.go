@@ -773,6 +773,11 @@ type UpdateAppRequest struct {
 	// chain policy). The non-/0 contract is enforced by the DB
 	// trigger `apps_egress_allowlist_cidr` (migration 00033).
 	EgressAllowlist *[]string `json:"egress_allowlist,omitempty"`
+	// EgressPorts (ADR-361) replaces the app's extra TCP egress ports on
+	// top of 80/443. Pro and Scale only (plan cap
+	// Plan.EgressExtraPortsMax); SMTP, remote-admin, IRC, mining and DNS
+	// ports are refused. An empty list clears them.
+	EgressPorts *[]int `json:"egress_ports,omitempty"`
 	// AutoscaleTargetRPS is the per-instance RPS target for the
 	// reactive scale-up trigger (issue #169 / #172 / pkg/sched/scaleup).
 	// When measured RPS / live_instance_count exceeds this value,
@@ -1578,6 +1583,9 @@ type AppResponse struct {
 	// order matches insertion order. NOT in `required:` because the
 	// empty-slice case is the contract.
 	EgressAllowlist []string `json:"egress_allowlist"`
+	// EgressPorts (ADR-361) are the extra TCP ports the app's guests may
+	// reach on top of 80/443. Always an array, never null.
+	EgressPorts []int `json:"egress_ports"`
 	// AutoscaleTargetRPS / AutoscaleTargetCPUPct are the per-app
 	// reactive scale-up targets (issue #169 / #172 / pkg/sched/scaleup).
 	// Each is 0 when unset ("disabled") and > 0 when configured.

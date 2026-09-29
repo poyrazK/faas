@@ -264,6 +264,11 @@ type AppSpec struct {
 	// main_depends_on carries the primary workload's startup gates into the
 	// guest workload roster. Empty preserves legacy startup behavior.
 	MainDependsOn []*WorkloadDependency `protobuf:"bytes,28,rep,name=main_depends_on,json=mainDependsOn,proto3" json:"main_depends_on,omitempty"`
+	// egress_ports (ADR-361) are the app's declared extra TCP destination
+	// ports on top of the base web ports every guest may reach. vmmd drops
+	// forbidden ports again before rendering the per-instance egress_ports
+	// set. Empty = base ports only.
+	EgressPorts   []uint32 `protobuf:"varint,29,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -490,6 +495,13 @@ func (x *AppSpec) GetDisableStartupCpuBoost() bool {
 func (x *AppSpec) GetMainDependsOn() []*WorkloadDependency {
 	if x != nil {
 		return x.MainDependsOn
+	}
+	return nil
+}
+
+func (x *AppSpec) GetEgressPorts() []uint32 {
+	if x != nil {
+		return x.EgressPorts
 	}
 	return nil
 }
@@ -3175,8 +3187,13 @@ type UpdateEgressAllowlistRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AppId           string                 `protobuf:"bytes,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
 	EgressAllowlist []string               `protobuf:"bytes,2,rep,name=egress_allowlist,json=egressAllowlist,proto3" json:"egress_allowlist,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// egress_ports (ADR-361) replaces the live instances' extra egress
+	// ports when egress_ports_set is true. The flag keeps an older schedd,
+	// which never sends ports, from clearing them during a rolling release.
+	EgressPorts    []uint32 `protobuf:"varint,3,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
+	EgressPortsSet bool     `protobuf:"varint,4,opt,name=egress_ports_set,json=egressPortsSet,proto3" json:"egress_ports_set,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *UpdateEgressAllowlistRequest) Reset() {
@@ -3221,6 +3238,20 @@ func (x *UpdateEgressAllowlistRequest) GetEgressAllowlist() []string {
 		return x.EgressAllowlist
 	}
 	return nil
+}
+
+func (x *UpdateEgressAllowlistRequest) GetEgressPorts() []uint32 {
+	if x != nil {
+		return x.EgressPorts
+	}
+	return nil
+}
+
+func (x *UpdateEgressAllowlistRequest) GetEgressPortsSet() bool {
+	if x != nil {
+		return x.EgressPortsSet
+	}
+	return false
 }
 
 // UpdateEgressAllowlistAck is the empty success response. On
@@ -8004,7 +8035,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb8\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdb\n" +
 	"\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -8039,7 +8070,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1dprivate_network_allowed_cidrs\x18\x16 \x03(\tR\x1aprivateNetworkAllowedCidrs\x12t\n" +
 	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\x129\n" +
 	"\x19disable_startup_cpu_boost\x18\x18 \x01(\bR\x16disableStartupCpuBoost\x12O\n" +
-	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\"\x92\b\n" +
+	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\x12!\n" +
+	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
@@ -8261,10 +8293,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\x12\n" +
 	"\x10HeartbeatRequest\"\x13\n" +
-	"\x11HeartbeatResponse\"`\n" +
+	"\x11HeartbeatResponse\"\xad\x01\n" +
 	"\x1cUpdateEgressAllowlistRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12)\n" +
-	"\x10egress_allowlist\x18\x02 \x03(\tR\x0fegressAllowlist\"\x1a\n" +
+	"\x10egress_allowlist\x18\x02 \x03(\tR\x0fegressAllowlist\x12!\n" +
+	"\fegress_ports\x18\x03 \x03(\rR\vegressPorts\x12(\n" +
+	"\x10egress_ports_set\x18\x04 \x01(\bR\x0eegressPortsSet\"\x1a\n" +
 	"\x18UpdateEgressAllowlistAck\"t\n" +
 	"\x18UpdateAppCPULimitRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12%\n" +

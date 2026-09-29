@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -113,7 +114,7 @@ func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) 
 		return preparedNetworkPolicy{}, false
 	}
 	var egress netns.Config
-	applyTenantEgressPolicy(&egress, req.Plan)
+	applyTenantEgressPolicy(&egress, req.Plan, nil)
 	return preparedNetworkPolicy{egressMbit: req.EgressMbit, conntrackCap: m.conntrackCap, baseIP: hostIPForSlot(0),
 		egressConnRate: egress.EgressConnRate, egressConnBurst: egress.EgressConnBurst}, true
 }
@@ -296,15 +297,18 @@ func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepare
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}
-	if prepared != nil && preparedNetworkDiffersOnlyInPort(prepared.config, nc) {
-		// No VMM has started and the namespace never carried traffic, so
-		// only the DNAT target is wrong. One nft transaction replaces it —
-		// milliseconds, against 40-110 ms to rebuild the namespace.
-		err := m.runNftCommands(ctx, nc.Netns, nc.RetargetAppPortCommands())
-		if err == nil {
-			return true, nil
+	if prepared != nil {
+		if cmds, ok := preparedNetworkRetargetCommands(prepared.config, nc); ok {
+			// No VMM has started and the namespace never carried traffic,
+			// so only the DNAT target and/or the egress port set are
+			// wrong. One nft transaction replaces them — milliseconds,
+			// against 40-110 ms to rebuild the namespace.
+			err := m.runNftCommands(ctx, nc.Netns, cmds)
+			if err == nil {
+				return true, nil
+			}
+			m.log.Warn("prepared network retarget failed; rebuilding", "instance", nc.Instance, "err", err)
 		}
-		m.log.Warn("prepared network port retarget failed; rebuilding", "instance", nc.Instance, "err", err)
 	}
 	// A bundle reload may change the policy after claim. setupNetwork destroys
 	// the unused network and installs the complete validated current policy.
@@ -339,12 +343,62 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 }
 
 // applyTenantEgressPolicy sets the ADR-361 guest egress policy on a tenant
-// network plan: the base TCP ports every plan may reach and the plan's
-// new-connection rate limit. An unknown plan keeps a zero rate (no limit)
-// but still gets the port policy; Wake rejects invalid plans before this.
-func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan) {
-	nc.EgressPorts = api.TenantEgressBasePorts()
+// network plan: the base TCP ports every plan may reach plus the app's
+// declared extra ports, and the plan's new-connection rate limit. An
+// unknown plan keeps a zero rate (no limit) but still gets the port policy;
+// Wake rejects invalid plans before this.
+func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
+	nc.EgressPorts = tenantEgressPorts(plan, extra)
 	if lim, ok := api.LimitsFor(plan); ok {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
 	}
+}
+
+// tenantEgressPorts is the base web ports plus the app's extra ports, with
+// port 0, duplicates and forbidden ports (SMTP, remote admin, mining, DNS,
+// ...) dropped and the extras capped at the plan's allowance. apid refuses
+// those already; vmmd re-checks because it is the component that enforces
+// the policy, and because a plan downgrade leaves the stored list in place.
+func tenantEgressPorts(plan api.Plan, extra []uint16) []uint16 {
+	ports := api.TenantEgressBasePorts()
+	base, allowance := len(ports), plan.EgressExtraPortsMax()
+	for _, p := range extra {
+		if len(ports)-base >= allowance {
+			break
+		}
+		if p == 0 || slices.Contains(ports, p) {
+			continue
+		}
+		if _, forbidden := api.TenantEgressForbiddenPort(int(p)); forbidden {
+			continue
+		}
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// preparedNetworkRetargetCommands returns the nft commands that turn an
+// unused prepared namespace into the requested one when they differ only in
+// the guest app port (ADR-149) and/or the egress port set (ADR-361). ok is
+// false when anything else differs or nothing needs to change.
+func preparedNetworkRetargetCommands(prepared, requested netns.Config) ([][]string, bool) {
+	aligned := withEgressPorts(prepared, requested.EgressPorts)
+	var cmds [][]string
+	switch {
+	case preparedNetworkConfigMatches(aligned, requested):
+		// The app port is already equivalent; only the port set may differ.
+	case preparedNetworkDiffersOnlyInPort(aligned, requested):
+		cmds = append(cmds, requested.RetargetAppPortCommands()...)
+	default:
+		return nil, false
+	}
+	if !slices.Equal(prepared.EgressPorts, requested.EgressPorts) {
+		cmds = append(cmds, requested.EgressPortsUpdateCommands()...)
+	}
+	return cmds, len(cmds) > 0
+}
+
+func withEgressPorts(c netns.Config, ports []uint16) netns.Config {
+	c.EgressPorts = ports
+	return c
 }

@@ -91,6 +91,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		APIEnv: appendPlatformIdentity(e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
+		EgressPorts:         app.EgressPorts,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
 		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: staticEgressIPString(app.StaticEgressIP),

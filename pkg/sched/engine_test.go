@@ -427,7 +427,7 @@ func (f *fakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error) {
 // the egress drift path; the egress_drift_test.go suite does.
 // Records nothing. Returning nil keeps the gRPC VmmdAPI /
 // RoutedVMM contract satisfied for tests that wire newEngine().
-func (f *fakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix) error {
+func (f *fakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 

@@ -5898,6 +5898,14 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetRequestRateLimitBurst {
 		a.RequestRateLimitBurst = positiveIntPointer(p.RequestRateLimitBurst)
 	}
+	// ADR-361: extra egress ports; empty clears, mirroring PgStore's
+	// nil-for-empty scan.
+	if p.SetEgressPorts {
+		a.EgressPorts = nil
+		if len(p.EgressPorts) > 0 {
+			a.EgressPorts = append([]int(nil), p.EgressPorts...)
+		}
+	}
 	// ADR-119: per-app static egress IP. SetStaticEgressIP
 	// distinguishes "don't touch" (false) from "explicit set or
 	// clear" (true). Apid gates the plan and the IPv4-only

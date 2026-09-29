@@ -1180,6 +1180,11 @@ const (
 	//     too long; not a billing failure).
 	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
 	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
+	// ADR-361 per-app extra egress ports: 403 when the plan has no
+	// allowance, 400 over the cap or for a forbidden/out-of-range port.
+	CodePlanEgressPortsNotAllowed = "plan_egress_ports_not_allowed"
+	CodeEgressPortsTooMany        = "egress_ports_too_many"
+	CodeInvalidEgressPort         = "invalid_egress_port"
 
 	// Issue #477 / ADR-118 — per-app ingress IP allowlist (extends
 	// the reserved 'ip_allowlist' enum value, ADR-079). Same shape
@@ -1831,7 +1836,7 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
@@ -1842,6 +1847,7 @@ func StatusForCode(code string) int {
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeLogArchiveInvalidQuery, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
+		CodeEgressPortsTooMany, CodeInvalidEgressPort,
 		CodePrivateNetworkInvalid,
 		CodeOpenAPIPolicyConfirmationRequired, CodeRequestBodyReadFailed:
 		return http.StatusBadRequest

@@ -785,6 +785,24 @@ func (c Config) EgressPortElements() string {
 	return strings.Join(out, ",")
 }
 
+// EgressPortsUpdateCommands replaces the egress_ports set contents in both
+// families with c.EgressPorts (ADR-361). Run them as one `nft -f`
+// transaction so the guest never sees an empty set. Used to update a live
+// instance and to retarget an unused prepared namespace.
+func (c Config) EgressPortsUpdateCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	elems := c.EgressPortElements()
+	var cmds [][]string
+	for _, family := range []string{"ip", "ip6"} {
+		cmds = append(cmds, nft("flush", "set", family, "faas", EgressPortsSet))
+		if elems != "" {
+			cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
+		}
+	}
+	return cmds
+}
+
 // egressRateRule drops guest-originated new flows over EgressConnRate.
 func (c Config) egressRateRule(nft func(...string) []string, family string) [][]string {
 	if c.EgressConnRate <= 0 {

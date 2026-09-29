@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,14 @@ type fakeVMM struct {
 	appTaskWake        fcvm.AppTaskWakeRequest
 	appTaskExecute     apptaskproto.Request
 	appTaskStreamCalls int
+	egressPortsCalls   [][]uint16
+}
+
+// UpdateEgressPorts (ADR-361) records the live extra-port updates vmmd
+// receives through UpdateEgressAllowlist.
+func (f *fakeVMM) UpdateEgressPorts(_ context.Context, _ string, extra []uint16) error {
+	f.egressPortsCalls = append(f.egressPortsCalls, append([]uint16(nil), extra...))
+	return nil
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -449,5 +458,30 @@ func TestVMMClient_Wake_ErrorLiftsToProblem(t *testing.T) {
 func TestDialVMM_EmptyPath(t *testing.T) {
 	if _, err := sched.DialVMM(""); err == nil {
 		t.Fatal("expected error for empty socket path")
+	}
+}
+
+// ADR-361: an app's declared extra ports cross the schedd -> vmmd wire on
+// both the boot request and the live convergence RPC.
+func TestVMMClient_EgressPortsCrossTheWire(t *testing.T) {
+	var booted []uint16
+	fake := &fakeVMM{wakeFn: func(_ context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
+		booted = append([]uint16(nil), req.EgressPorts...)
+		return &fcvm.Instance{Net: netns.NewConfig("i-e", "fc-i-e", "vh", "vp", netip.MustParseAddr("10.100.0.2"))}, nil
+	}}
+	c := newClient(t, fake)
+	if _, err := c.CreateColdBoot(context.Background(), "i-e", sched.AppSpec{
+		BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 512, EgressPorts: []int{5432, 6379},
+	}); err != nil {
+		t.Fatalf("CreateColdBoot: %v", err)
+	}
+	if !reflect.DeepEqual(booted, []uint16{5432, 6379}) {
+		t.Fatalf("boot request egress ports = %v, want [5432 6379]", booted)
+	}
+	if err := c.UpdateEgressAllowlist(context.Background(), "app-e", nil, []int{8883}); err != nil {
+		t.Fatalf("UpdateEgressAllowlist: %v", err)
+	}
+	if !reflect.DeepEqual(fake.egressPortsCalls, [][]uint16{{8883}}) {
+		t.Fatalf("live updates = %v, want [[8883]]", fake.egressPortsCalls)
 	}
 }

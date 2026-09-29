@@ -4082,7 +4082,8 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   retry_policy = case when $76 then $77::jsonb else retry_policy end,
 			   security_policy = case when $78 then $79::text else security_policy end,
 			   request_rate_limit_rps = case when $80 then nullif($81, 0) else request_rate_limit_rps end,
-			   request_rate_limit_burst = case when $82 then nullif($83, 0) else request_rate_limit_burst end
+			   request_rate_limit_burst = case when $82 then nullif($83, 0) else request_rate_limit_burst end,
+			   egress_ports = case when $84 then $85::integer[] else egress_ports end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -4213,7 +4214,8 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		p.SetRetryPolicy, retryPolicyBytes,
 		p.SetSecurityPolicy, appSecurityPolicyValue(p.SecurityPolicy),
 		p.SetRequestRateLimitRPS, intOrZero(p.RequestRateLimitRPS),
-		p.SetRequestRateLimitBurst, intOrZero(p.RequestRateLimitBurst))
+		p.SetRequestRateLimitBurst, intOrZero(p.RequestRateLimitBurst),
+		p.SetEgressPorts, egressPortsParam(p.EgressPorts))
 	return scanApp(row)
 }
 
@@ -24065,6 +24067,7 @@ func scanApps(rows pgx.Rows) ([]App, error) {
 // a column only touches the const + the App struct + this function.
 func scanAppInto(a *App, row pgx.Row) error {
 	var typeStr, statusStr string
+	var egressPorts []int32
 	var manifestBytes []byte
 	var allowlistText string
 	var publicAuthIPAllowlistText string
@@ -24197,9 +24200,10 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
-		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst); err != nil {
+		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts); err != nil {
 		return mapErr(err)
 	}
+	a.EgressPorts = egressPortsFromDB(egressPorts)
 	if overflowNodeStr != "" {
 		s := overflowNodeStr
 		a.OverflowNode = &s
@@ -24391,7 +24395,9 @@ const appsSelectColumns = `
 	-- app columns remain stable for every caller of this projection.
 	coalesce(security_policy, 'off'),
 	coalesce(org_id::text, ''),
-	request_rate_limit_rps, request_rate_limit_burst`
+	request_rate_limit_rps, request_rate_limit_burst,
+	-- ADR-361: extra egress ports, appended to keep positional scans stable.
+	egress_ports`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -32215,4 +32221,27 @@ func (s *PgStore) CountOpenUploadSessionsByAccountApp(ctx context.Context, in sq
 // spool budget check.
 func (s *PgStore) SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error) {
 	return s.uploadSessionQueries().SumOpenUploadSessionBytesByAccount(ctx, s.pool, accountID)
+}
+
+// egressPortsParam converts an app's extra egress ports to the integer[]
+// parameter shape; nil becomes an empty array so the column stays NOT NULL.
+func egressPortsParam(ports []int) []int32 {
+	out := make([]int32, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, int32(p)) //nolint:gosec // ports are 1..65535, validated by apid and the column CHECK
+	}
+	return out
+}
+
+// egressPortsFromDB converts the scanned integer[] back to App.EgressPorts,
+// keeping nil for an empty column so the PG and memory stores agree.
+func egressPortsFromDB(ports []int32) []int {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]int, len(ports))
+	for i, p := range ports {
+		out[i] = int(p)
+	}
+	return out
 }

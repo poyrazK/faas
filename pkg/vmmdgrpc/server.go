@@ -1426,6 +1426,22 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	if err := s.vmm.UpdateEgressAllowlist(ctx, req.GetAppId(), allowlist); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	// ADR-361: the same revision carries the app's extra egress ports. The
+	// presence flag keeps an older schedd, which never sends ports, from
+	// clearing them during a rolling release.
+	if req.GetEgressPortsSet() {
+		updater, ok := s.vmm.(interface {
+			UpdateEgressPorts(ctx context.Context, appID string, extra []uint16) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+				"Egress ports unavailable", "this vmmd cannot update egress ports on live instances").
+				WithDocs(wire.DocsBaseURL + "/vmmd#update-egress-allowlist")))
+		}
+		if err := updater.UpdateEgressPorts(ctx, req.GetAppId(), egressPortsFromWire(req.GetEgressPorts())); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+	}
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 

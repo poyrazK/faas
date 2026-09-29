@@ -284,6 +284,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// vmmd translates CIDRs into netns.Config.EgressAllowlist on
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
+		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -447,6 +448,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-031: see toWakeRequest for the rationale; cold-boot
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
+		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -870,6 +872,19 @@ func privateNetworkFirewallRulesFromProto(raw []*vmmdpb.PrivateNetworkFirewallRu
 			Direction: rule.GetDirection(), Protocol: rule.GetProtocol(),
 			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
 		})
+	}
+	return out
+}
+
+// egressPortsFromWire converts the proto extra egress ports (ADR-361),
+// dropping values that cannot be TCP ports. Forbidden ports are filtered
+// again where the policy is rendered.
+func egressPortsFromWire(ports []uint32) []uint16 {
+	out := make([]uint16, 0, len(ports))
+	for _, p := range ports {
+		if p >= 1 && p <= 65535 {
+			out = append(out, uint16(p))
+		}
 	}
 	return out
 }

@@ -3170,6 +3170,10 @@ type WakeRequest struct {
 	// never get here; Hobby ≤ 8; Pro ≤ 16; Scale ≤ 64. The
 	// caller (apid) is responsible for size + per-plan gating.
 	EgressAllowlist []string
+	// EgressPorts (ADR-361) are the app's declared extra TCP egress ports
+	// on top of api.TenantEgressBasePorts. Forbidden ports are dropped
+	// again when the policy is applied.
+	EgressPorts []uint16
 	// PrivateNetworkCIDRs contains provider-verified VPC destinations. Empty
 	// means the attachment is pending/error (or not configured); vmmd keeps the
 	// default RFC1918 deny in that case. Ready CIDRs are validated again here
@@ -3375,6 +3379,8 @@ type ColdBootRequest struct {
 	APIEnvEntries []APIEnvEntry
 	// EgressAllowlist (ADR-031) — same shape as WakeRequest.
 	EgressAllowlist []string
+	// EgressPorts (ADR-361) — same shape as WakeRequest.
+	EgressPorts []uint16
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
 	PrivateNetworkCIDRs         []string
@@ -3450,6 +3456,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
 		APIEnvEntries:               req.APIEnvEntries,
 		EgressAllowlist:             req.EgressAllowlist,
+		EgressPorts:                 req.EgressPorts,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
@@ -3830,7 +3837,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	if !req.ExecutionOnly {
-		applyTenantEgressPolicy(&nc, req.Plan)
+		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
@@ -7210,4 +7217,46 @@ func layerKeyForColdBoot(req WakeRequest) string {
 		return ""
 	}
 	return req.LayerKey
+}
+
+// UpdateEgressPorts replaces the extra egress ports (ADR-361) on every live
+// instance of appID: the per-instance egress_ports set is swapped in one nft
+// transaction per instance. New wakes read the ports from their request.
+// Instances whose set already matches are skipped.
+func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []uint16) error {
+	if appID == "" {
+		return fmt.Errorf("fcvm: UpdateEgressPorts: empty app_id")
+	}
+	type target struct {
+		id string
+		nc netns.Config
+	}
+	var targets []target
+	m.mu.Lock()
+	for id, inst := range m.live {
+		if inst.AppID != appID || inst.Net.Netns == "" {
+			continue
+		}
+		ports := tenantEgressPorts(inst.Plan, extra)
+		if slices.Equal(inst.Net.EgressPorts, ports) {
+			continue
+		}
+		nc := inst.Net
+		nc.EgressPorts = ports
+		targets = append(targets, target{id: id, nc: nc})
+	}
+	m.mu.Unlock()
+	var errs []error
+	for _, t := range targets {
+		if err := m.runNftCommands(ctx, t.nc.Netns, t.nc.EgressPortsUpdateCommands()); err != nil {
+			errs = append(errs, fmt.Errorf("fcvm: update egress ports for %s: %w", t.id, err))
+			continue
+		}
+		m.mu.Lock()
+		if inst, ok := m.live[t.id]; ok {
+			inst.Net.EgressPorts = t.nc.EgressPorts
+		}
+		m.mu.Unlock()
+	}
+	return errors.Join(errs...)
 }

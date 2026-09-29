@@ -138,7 +138,7 @@ type RoutedVMM interface {
 	// *api.Problem Capacity on an unknown nodeID (no target_url
 	// to dial), or the wrapped gRPC error / vmmd-typed problem
 	// on patch failure.
-	UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix) error
+	UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error
 	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
 	// static egress IP into vmmd's live-instance map. The
 	// router resolves the per-node vmmd by nodeID and
@@ -763,12 +763,12 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 // (gRPC status / typed problem); the subscriber logs + drops so a
 // bad patch never blocks the loop — the next reconcile on the
 // next event (or a watchdog-driven Park + ColdBoot) re-syncs.
-func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix) error {
+func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return err
 	}
-	return cli.UpdateEgressAllowlist(ctx, appID, allowlist)
+	return cli.UpdateEgressAllowlist(ctx, appID, allowlist, egressPorts)
 }
 
 // UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept

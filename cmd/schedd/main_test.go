@@ -327,7 +327,7 @@ func (stubVMM) FrameworkReady(context.Context, string, int64) error {
 // the egress drift path. Returns nil so the VMM contract is
 // satisfied when schedd's deps.subscribeEgressDrift is left
 // nil (the production subscriber is not started in these tests).
-func (stubVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) error {
+func (stubVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix, []int) error {
 	return nil
 }
 

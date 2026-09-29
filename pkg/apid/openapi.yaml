@@ -24264,6 +24264,14 @@ components:
             type: string
             pattern: '^[0-9a-fA-F:./]+$'
             example: 1.2.3.0/24
+        egress_ports:
+          description: "Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared."
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            example: 5432
         # Issue #169 / #172: per-instance reactive scale-up
         # trigger targets. 0 = "disabled" (the trigger skips
         # this app). autoscale is enabled iff at least one of
@@ -26499,6 +26507,14 @@ components:
             type: string
             pattern: '^[0-9a-fA-F:./]+$'
             example: 1.2.3.0/24
+        egress_ports:
+          description: "Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the stored list. An empty array clears the extra ports."
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            example: 5432
         # Issue #169 / #172: per-app reactive scale-up trigger
         # targets. PATCH semantics mirror the wire DTO: omitted
         # → no change; 0 → explicit disable. Plan gates run

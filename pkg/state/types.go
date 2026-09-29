@@ -1006,6 +1006,11 @@ type App struct {
 	// plan_egress_allowlist_not_allowed); Pro max 16 entries; Scale
 	// max 64 entries — see pkg/api/limits.go.
 	EgressAllowlist []netip.Prefix
+	// EgressPorts (ADR-361) are the extra TCP destination ports the app
+	// declared on top of api.TenantEgressBasePorts, in canonical form
+	// (sorted, no base ports). Empty for Free/Hobby; Pro and Scale are
+	// capped by api.Plan.EgressExtraPortsMax.
+	EgressPorts []int
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
 	// the app's egress traffic presents on the wire. NULL => no
 	// static IP — egress exits with the host's primary IP (the
@@ -5784,6 +5789,11 @@ type UpdateAppParams struct {
 	SetRequestRateLimitRPS   bool
 	RequestRateLimitBurst    *int
 	SetRequestRateLimitBurst bool
+	// EgressPorts (ADR-361) replaces the app's extra egress ports when
+	// SetEgressPorts is true; an empty slice clears them. apid has already
+	// normalized and plan-checked the list.
+	EgressPorts    []int
+	SetEgressPorts bool
 }
 
 // AppPublicAuthUpdate (issue #477 / ADR-079) is the

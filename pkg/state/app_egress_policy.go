@@ -23,6 +23,9 @@ type AppEgressPolicyApplyTarget struct {
 	Slug      string
 	Revision  int64
 	Allowlist []netip.Prefix
+	// EgressPorts (ADR-361) are the app's declared extra egress ports; the
+	// same revision covers them, so one apply converges both.
+	EgressPorts []int
 }
 
 // AppEgressPolicyNodeState is the last durable acknowledgement for one live
@@ -81,7 +84,8 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 		       i.node_id::text,
 		       a.slug,
 		       a.egress_allowlist_revision,
-		       a.egress_allowlist::text
+		       a.egress_allowlist::text,
+		       a.egress_ports
 		FROM apps a
 	JOIN instances i ON i.app_id = a.id
 	LEFT JOIN app_egress_policy_node_status p
@@ -94,7 +98,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	       COALESCE(p.applied_revision, 0) < a.egress_allowlist_revision
 	       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second')
 	  )
-	GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist, p.observed_at
+	GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist, a.egress_ports, p.observed_at
 	ORDER BY COALESCE(p.observed_at, 'epoch'::timestamptz), a.id, i.node_id
 	LIMIT $3
 	`, appID, staleAfter.Seconds(), limit)
@@ -107,10 +111,12 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	for rows.Next() {
 		var target AppEgressPolicyApplyTarget
 		var allowlistText string
-		if err := rows.Scan(&target.AppID, &target.NodeID, &target.Slug, &target.Revision, &allowlistText); err != nil {
+		var egressPorts []int32
+		if err := rows.Scan(&target.AppID, &target.NodeID, &target.Slug, &target.Revision, &allowlistText, &egressPorts); err != nil {
 			return nil, fmt.Errorf("state: scan pending app egress policy target: %w", err)
 		}
 		target.Allowlist = cidrTextToPrefixes(allowlistText)
+		target.EgressPorts = egressPortsFromDB(egressPorts)
 		targets = append(targets, target)
 	}
 	if err := rows.Err(); err != nil {

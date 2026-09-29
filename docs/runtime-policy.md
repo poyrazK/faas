@@ -21,6 +21,8 @@ Traffic-weight replay loads live targets before publishing the new weights.
 Schedd treats the app row's egress allowlist revision as desired state,
 reconciles live app/node pairs at startup and periodically, and records a
 per-node acknowledgement only after vmmd's in-place nftables update succeeds.
+The revision also covers the app's extra egress ports (ADR-361), so a port
+change converges on live instances the same way.
 Scaling inputs likewise live on the app row: schedd observes the current
 scaling-policy revision after an `app_changed` wake and on a periodic repair
 pass. That observation confirms the scheduler loaded the configuration; it
