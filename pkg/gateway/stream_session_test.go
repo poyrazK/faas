@@ -62,6 +62,25 @@ func TestNewStreamSessionIdleTimeoutResetsOnActivity(t *testing.T) {
 	}
 }
 
+func TestNewStreamSessionCeilingSurvivesDetach(t *testing.T) {
+	budgetCtx, budgetCancel, _ := reqbudget.WithRemaining(context.Background(), 20*time.Millisecond, time.Second, "forward", "GET:/stream")
+	defer budgetCancel()
+	ctx, detach, _, cancel := newStreamSession(budgetCtx, 100*time.Millisecond, time.Second)
+	defer cancel()
+	detach()
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < 50*time.Millisecond {
+		t.Fatalf("transport deadline = %v, present=%v; want independent ceiling", deadline, ok)
+	}
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("session error = %v, want ceiling expiry", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached session lost its independent ceiling")
+	}
+}
+
 func TestIsLongLivedResponse(t *testing.T) {
 	for _, tc := range []struct {
 		statusCode int

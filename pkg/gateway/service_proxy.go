@@ -1160,6 +1160,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.URL.RawPath = ""
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
+	request.Header.Del("x-faas-stream")
 	request.Header.Del(ServiceProxyCallerAppHeader)
 	// An override applies only to this resolved binding. Forwarding it would
 	// unintentionally pin a later service hop to this app's deployment ID.

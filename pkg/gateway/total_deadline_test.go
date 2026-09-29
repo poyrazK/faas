@@ -133,3 +133,27 @@ func TestExecutionStampKeepsTotalRuleAndCancelsBothTimers(t *testing.T) {
 		t.Fatal("a budget timer was not cancelled on handler return")
 	}
 }
+
+func TestTotalDeadlineRejectsClientStreamControls(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.setLegacyHot()
+	setTotalBudget(h, backend.app, 250)
+	forwarded := false
+	h.WithForwarding(func(Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			forwarded = true
+			if isLongLivedForward(r) {
+				t.Fatal("public stream controls escaped the platform decision")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+	r := httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil)
+	r.Header.Set("x-faas-stream", "true")
+	r.Header.Set("x-faas-protocol", "grpc")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if !forwarded || rec.Code != http.StatusNoContent {
+		t.Fatalf("forwarded=%v status=%d; want ordinary successful exchange", forwarded, rec.Code)
+	}
+}

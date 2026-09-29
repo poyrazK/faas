@@ -114,3 +114,16 @@ microbenchmark measured 22.4 microseconds and 12.1 KB per request on this Mac.
 Owner-aware compile refusal was added to prevent another account's broken
 wildcard/preset rule from blocking an unrelated tenant.
 The repository-pinned linter passed for gateway and internal-gateway code.
+
+The real gRPC forwarding regression verifies ordinary HTTP/1 and HTTP/2
+deadline expiry after headers, explicit-stream/gRPC handshake detachment,
+and failed-stream body cancellation. Raw gRPC coverage verifies successful
+101 detachment, a non-101 body remaining bounded, and 504 on handshake expiry.
+Session ceilings now remain active after detachment and are independent of
+gRPC's remote handshake timeout. Public and service forwarding clear
+caller-supplied stream controls. These checks use real gRPC and local HTTP
+transports; VM ownership and native acceptance remain pending.
+The final full gateway suite passed in 52.420 seconds. The API/gateway lint
+invocation hit temporary local disk exhaustion while compiling the API test
+dependency; this is recorded separately from code verification.
+The narrowed gateway lint run then passed with zero findings.

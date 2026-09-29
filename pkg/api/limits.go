@@ -3978,7 +3978,10 @@ const (
 	// sent. It is independent of the request budget: active sessions may
 	// outlive the 3/30-second request budget, but a silent session must not
 	// pin gateway resources forever.
-	StreamingIdleTimeoutDefault   = 60 * time.Minute
+	StreamingIdleTimeoutDefault = 60 * time.Minute
+	// HTTPForwardSessionTimeout preserves the bridge's complete exchange
+	// ceiling after a long-lived response detaches its handshake budget.
+	HTTPForwardSessionTimeout     = 910 * time.Second
 	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-047)
 	StreamingFlushIntervalDefault = 200 * time.Millisecond
 

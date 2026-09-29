@@ -73,6 +73,14 @@ rule is pinned for the later execution budget, so rewrite/wake cannot change
 its deadline. Deadline expiry during upload returns the same 504 problem as
 admission or forwarding expiry. Both timers are released on every exit.
 
+The bidi gRPC framing used for every HTTP exchange does not make an ordinary
+response a long-lived stream. Only the trusted streaming decision or the app's
+gRPC protocol detaches a successful response from its handshake budget. An
+ordinary body remains bounded after headers; expiry aborts its transport so a
+partial success body cannot appear complete. A detachable session exposes its
+independent ceiling to gRPC, while its context cancellation bounds the handshake.
+This prevents gRPC's remote timeout from retaining a detached handshake deadline.
+
 Streaming/upgrade handshake time is bounded until successful response
 commitment, after which the established idle/session contract applies. An
 expired waiter may leave bounded shared wake work running for other waiters.

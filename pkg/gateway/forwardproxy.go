@@ -327,13 +327,11 @@ func fwdStreamOnce(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient
 // emitted on the first downstream byte (the Response Init
 // frame's WriteHeader). nil events opts out (pre-PR-C fixtures).
 //
-// ADR-093 follow-up: when the inbound request carries an end-to-end
-// budget, it governs admission and the response headers. Once the
-// headers are committed, newStreamSession detaches that budget and
-// the stream is bounded by activity, the 910 s hop ceiling, and the
-// independent idle timer.
+// ADR-375: ordinary responses retain their budget through the full body.
+// Explicit streams and gRPC detach after successful headers, retaining the
+// independent session ceiling, idle bound and client cancellation.
 func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform) {
-	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), 910*time.Second, streamIdleTimeout)
+	ctx, detachBudget, touch, cancel := newHTTPForwardSession(r.Context(), isLongLivedForward(r))
 	defer cancel()
 
 	// ADR-126: Handler.ServeHTTP stamps the app's wire-protocol choice
@@ -485,6 +483,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// straight to w.Write (which the statusRecorder
 	// intercepts to fire maybeFlush → onFlush).
 	wroteHeader := false
+	budgetDetached := false
 	for {
 		frame, err := stream.Recv()
 		touch()
@@ -497,11 +496,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if wroteHeader && !budgetDetached && (streamErr != nil || requestBudgetExpired(r.Context())) {
+				// A partial ordinary response must be visibly truncated,
+				// never terminated as a complete short body.
+				panic(http.ErrAbortHandler)
+			}
 			if streamErr != nil && wroteHeader {
-				// A detached stream ended because its client canceled or
-				// its independent idle/ceiling safety bound fired. The
-				// response is already committed, so close cleanly without
-				// attempting to write a second error response.
 				return
 			}
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
@@ -554,12 +554,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
-			// The initial response headers are the first response byte for
-			// budget purposes. From this point onward, the stream is governed
-			// by activity plus the independent idle timer, not the ordinary
-			// 3/30-second request budget.
+			// Only an explicit long-lived response may detach its handshake
+			// budget. Ordinary HTTP uses the same RPC framing but stays bounded.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
+				budgetDetached = isLongLivedForward(r)
 			}
 			touch()
 			// issue #517 / PR-C / ADR-064 — emit
@@ -722,6 +721,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 
 	stream, err := cli.ForwardRawStream(ctx)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
@@ -870,6 +872,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// raw path guarantees the H2C DATA frame emits even when
 	// the chunk is below the 32 KiB maybeFlush threshold).
 	wroteHeader := false
+	upgradeEstablished := false
 	for {
 		frame, err := stream.Recv()
 		touch()
@@ -882,10 +885,16 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if wroteHeader && !upgradeEstablished && (streamErr != nil || requestBudgetExpired(r.Context())) {
+				panic(http.ErrAbortHandler)
+			}
 			if streamErr != nil && wroteHeader {
 				// A detached upgrade ended because its client canceled or
 				// its independent idle/ceiling safety bound fired. The
 				// handshake is already committed, so close cleanly.
+				return
+			}
+			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
 			}
 			if !wroteHeader && writeNodeAdmissionRefusal(w, err) {
@@ -919,11 +928,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
-			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
+			if init.GetStatus() == http.StatusSwitchingProtocols {
 				// The upgrade response has started. Drop only the ordinary
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
+				upgradeEstablished = true
 			}
 			touch()
 			// Mirror fwdStreamOnceWithEvents: emit

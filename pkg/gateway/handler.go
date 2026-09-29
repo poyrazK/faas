@@ -5544,6 +5544,11 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// These forwarding controls are authored below from the pinned app and
+	// streaming decision. A public header cannot turn ordinary HTTP into a
+	// detachable response and escape its deadline.
+	r.Header.Del("x-faas-stream")
+	r.Header.Del("x-faas-protocol")
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
