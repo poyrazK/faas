@@ -52,6 +52,49 @@ type testHTTPRequestEvidence struct {
 }
 
 func validateTestHTTPRequests(scenario testScenario) error {
+	return validateTestHTTPRequestsWithData(scenario, nil)
+}
+
+// Unselected scenarios may require a different data file. Still validate their
+// reference syntax, without binding those fields to the selected scenario's rows.
+func testHTTPDataFields(scenario testScenario) []string {
+	fields := make(map[string]bool)
+	var collect func(any)
+	collect = func(value any) {
+		switch value := value.(type) {
+		case string:
+			for _, match := range testSecretReferencePattern.FindAllString(value, -1) {
+				key := match[2 : len(match)-1]
+				if field, ok := strings.CutPrefix(key, "data."); ok && testTriggerKeyPattern.MatchString(field) {
+					fields[field] = true
+				}
+			}
+		case map[string]any:
+			for _, item := range value {
+				collect(item)
+			}
+		case []any:
+			for _, item := range value {
+				collect(item)
+			}
+		}
+	}
+	for _, step := range append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...) {
+		collect(step.Path)
+		for _, value := range step.Headers {
+			collect(value)
+		}
+		collect(step.JSON)
+		collect(step.Expect.JSON)
+	}
+	result := make([]string, 0, len(fields))
+	for field := range fields {
+		result = append(result, field)
+	}
+	return result
+}
+
+func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string) error {
 	if len(scenario.Requests)+len(scenario.Checks) > 100 {
 		return fmt.Errorf("at most 100 HTTP steps may be declared")
 	}
@@ -60,6 +103,9 @@ func validateTestHTTPRequests(scenario testScenario) error {
 		consumers[consumer.Name] = true
 	}
 	known := map[string]string{"run.id": "example-run-id"}
+	for _, field := range dataFields {
+		known["data."+field] = "example-value"
+	}
 	names := make(map[string]bool)
 	captureNames := make(map[string]bool)
 	beforeWaitCaptures := make(map[string]bool)
@@ -142,6 +188,9 @@ func validateTestHTTPRequests(scenario testScenario) error {
 }
 
 func expandTestHTTPTemplate(input string, values map[string]string, escape func(string) string) (string, error) {
+	if strings.Contains(testSecretReferencePattern.ReplaceAllString(input, ""), "${") {
+		return "", fmt.Errorf("invalid template reference")
+	}
 	var expansionErr error
 	result := testSecretReferencePattern.ReplaceAllStringFunc(input, func(match string) string {
 		key := match[2 : len(match)-1]
@@ -157,9 +206,6 @@ func expandTestHTTPTemplate(input string, values map[string]string, escape func(
 	})
 	if expansionErr != nil {
 		return "", expansionErr
-	}
-	if strings.Contains(result, "${") {
-		return "", fmt.Errorf("invalid template reference")
 	}
 	return result, nil
 }
@@ -188,13 +234,24 @@ func expandTestHTTPPath(path string, values map[string]string) (string, error) {
 }
 
 func expandTestHTTPJSON(value any, values map[string]string) (any, error) {
+	return expandTestHTTPJSONWithData(value, values, nil)
+}
+
+func expandTestHTTPJSONWithData(value any, values map[string]string, data map[string]any) (any, error) {
 	switch value := value.(type) {
 	case string:
+		// An exact data reference keeps JSON numbers and booleans typed. A
+		// reference embedded in other text remains string interpolation.
+		if strings.HasPrefix(value, "${data.") && strings.HasSuffix(value, "}") {
+			if actual, exists := data[value[7:len(value)-1]]; exists {
+				return actual, nil
+			}
+		}
 		return expandTestHTTPTemplate(value, values, nil)
 	case map[string]any:
 		result := make(map[string]any, len(value))
 		for key, item := range value {
-			expanded, err := expandTestHTTPJSON(item, values)
+			expanded, err := expandTestHTTPJSONWithData(item, values, data)
 			if err != nil {
 				return nil, err
 			}
@@ -204,7 +261,7 @@ func expandTestHTTPJSON(value any, values map[string]string) (any, error) {
 	case []any:
 		result := make([]any, len(value))
 		for i, item := range value {
-			expanded, err := expandTestHTTPJSON(item, values)
+			expanded, err := expandTestHTTPJSONWithData(item, values, data)
 			if err != nil {
 				return nil, err
 			}
@@ -217,11 +274,18 @@ func expandTestHTTPJSON(value any, values map[string]string) (any, error) {
 }
 
 func runTestHTTPRequests(ctx context.Context, baseURL, runID string, consumerEnv []string, steps []testHTTPRequest, captures map[string]string) ([]testHTTPRequestEvidence, error) {
+	return runTestHTTPRequestsWithData(ctx, baseURL, runID, consumerEnv, steps, captures, nil)
+}
+
+func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, consumerEnv []string, steps []testHTTPRequest, captures map[string]string, data map[string]any) ([]testHTTPRequestEvidence, error) {
 	if len(steps) == 0 {
 		return nil, nil
 	}
 	values := make(map[string]string, len(captures)+1)
 	values["run.id"] = runID
+	for key, value := range data {
+		values["data."+key] = fmt.Sprint(value)
+	}
 	for key, value := range captures {
 		if strings.HasPrefix(key, "steps.") {
 			values[key] = value
@@ -239,7 +303,7 @@ func runTestHTTPRequests(ctx context.Context, baseURL, runID string, consumerEnv
 	for _, step := range steps {
 		result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0]}
 		started := time.Now()
-		err := runOneTestHTTPRequest(ctx, client, baseURL, step, values, consumerKeys, captures, &result)
+		err := runOneTestHTTPRequest(ctx, client, baseURL, step, values, consumerKeys, captures, data, &result)
 		result.DurationMS = time.Since(started).Milliseconds()
 		result.Passed = err == nil
 		if err != nil {
@@ -253,14 +317,14 @@ func runTestHTTPRequests(ctx context.Context, baseURL, runID string, consumerEnv
 	return evidence, nil
 }
 
-func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, evidence *testHTTPRequestEvidence) error {
+func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, data map[string]any, evidence *testHTTPRequestEvidence) error {
 	path, err := expandTestHTTPPath(step.Path, values)
 	if err != nil {
 		return err
 	}
 	var body io.Reader
 	if step.JSON != nil {
-		expanded, err := expandTestHTTPJSON(step.JSON, values)
+		expanded, err := expandTestHTTPJSONWithData(step.JSON, values, data)
 		if err != nil {
 			return err
 		}
@@ -336,7 +400,7 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 		if !ok {
 			return fmt.Errorf("expected JSON pointer %q is missing", pointer)
 		}
-		expanded, err := expandTestHTTPJSON(expected, values)
+		expanded, err := expandTestHTTPJSONWithData(expected, values, data)
 		if err != nil {
 			return err
 		}

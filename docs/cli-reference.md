@@ -36,7 +36,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`test`](#test) | Run an application scenario with real VMs or a local simulation |
+| [`test`](#test) | Run an application scenario with real VMs, local HTTP, or simulation |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
@@ -1671,18 +1671,20 @@ Compare two named environments in the linked project
 
 ## test
 
-Run an application scenario with real VMs or a local simulation
+Run an application scenario with real VMs, local HTTP, or simulation
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scenario <NAME>` | scenario declared in gregale-test.yaml |  |
 | `--validate` | validate local scenario sources without a platform login |  |
 | `--preflight` | check account entitlements and developer app capacity |  |
-| `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `simulated` |
+| `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `local` · `simulated` |
+| `--base-url <URL>` | HTTP loopback origin for the local engine |  |
+| `--data <PATH>` | JSON or CSV case data for the local engine |  |
 | `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
-| `--repeat <N>` | independent runs per lifecycle profile (1..20) |  |
+| `--repeat <N>` | runs per lifecycle profile or local case (1..20) |  |
 | `--max-workload-minutes <N>` | abort if the estimated VM workload-minute ceiling exceeds N |  |
 | `--manifest <PATH>` | scenario manifest path |  |
 | `--report <PATH>` | write a JSON report |  |
@@ -1695,6 +1697,7 @@ gregale test init --from openapi.yaml --project my-api
 gregale test --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
+gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json
 gregale test --scenario customer-export --engine simulated
 ```
 

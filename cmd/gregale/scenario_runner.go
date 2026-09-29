@@ -167,6 +167,7 @@ type testRunReceipt struct {
 	Scenario     string                             `json:"scenario"`
 	Profile      string                             `json:"profile"`
 	Engine       string                             `json:"engine"`
+	Case         string                             `json:"case,omitempty"`
 	Attempt      int                                `json:"attempt"`
 	StartedAt    time.Time                          `json:"started_at"`
 	FinishedAt   time.Time                          `json:"finished_at"`
@@ -200,9 +201,11 @@ func cmdTest(args []string) int {
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
 	preflightOnly := fs.Bool("preflight", false, "check account capacity before provisioning")
-	engine := fs.String("engine", "real-vm", "real-vm or simulated")
+	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
+	baseURL := fs.String("base-url", "", "HTTP loopback origin for the local engine")
+	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
-	repeat := fs.Int("repeat", 1, "independent runs per selected profile (1..20)")
+	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
 	maxWorkloadMinutes := fs.Int("max-workload-minutes", 0, "maximum estimated VM workload-minutes for this command (0 disables guard)")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest path")
 	reportPath := fs.String("report", "", "write a JSON report to this path")
@@ -211,7 +214,7 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|simulated] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
 		return 1
 	}
 	if *repeat < 1 || *repeat > 20 {
@@ -226,6 +229,9 @@ func cmdTest(args []string) int {
 	if *scenarioName == "" && !*validateOnly {
 		return printErr("Scenario required", errors.New("pass --scenario NAME"))
 	}
+	if *engine != "local" && (*baseURL != "" || *dataPath != "") {
+		return printErr("Invalid local test options", errors.New("--base-url and --data apply only to --engine local"))
+	}
 	var profiles []string
 	switch *engine {
 	case "real-vm":
@@ -234,21 +240,37 @@ func cmdTest(args []string) int {
 		if err != nil {
 			return printErr("Invalid profile", err)
 		}
-	case "simulated":
+	case "simulated", "local":
 		explicitProfile := false
 		fs.Visit(func(selected *flag.Flag) { explicitProfile = explicitProfile || selected.Name == "profile" })
 		if explicitProfile {
 			return printErr("Invalid profile", errors.New("--profile applies only to real-vm tests"))
 		}
+		if *engine == "local" {
+			if *maxWorkloadMinutes > 0 {
+				return printErr("Invalid local test options", errors.New("--max-workload-minutes applies only to real-vm tests"))
+			}
+			if *baseURL != "" || (!*validateOnly && !*preflightOnly) {
+				resolvedURL, err := validateLocalTestURL(*baseURL)
+				if err != nil {
+					return printErr("Invalid local test URL", err)
+				}
+				*baseURL = resolvedURL
+			}
+		}
 	default:
-		return printErr("Invalid engine", fmt.Errorf("engine %q is invalid; use real-vm or simulated", *engine))
+		return printErr("Invalid engine", fmt.Errorf("engine %q is invalid; use real-vm, local, or simulated", *engine))
 	}
-	scenarios, sourceDir, err := readTestManifest(*manifestPath)
+	cases, dataFields, err := readTestData(*dataPath)
+	if err != nil {
+		return printErr("Invalid test case data", err)
+	}
+	scenarios, sourceDir, err := readTestManifestForScenario(*manifestPath, *scenarioName, dataFields)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
 	if *validateOnly {
-		return validateTestManifest(scenarios, sourceDir, *scenarioName)
+		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine)
 	}
 	if *preflightOnly {
 		if *engine != "real-vm" {
@@ -282,18 +304,48 @@ func cmdTest(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-	} else if len(scenario.Simulation) == 0 {
+	} else if *engine == "simulated" && len(scenario.Simulation) == 0 {
 		return printErr("No simulation", fmt.Errorf("scenario %q has no simulation command", *scenarioName))
+	} else if *engine == "local" {
+		if err := validateLocalTestScenario(scenario); err != nil {
+			return printErr("Invalid local scenario", err)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	results := make([]testRunReceipt, 0, (len(profiles)+1)*(*repeat))
+	results := make([]testRunReceipt, 0, (len(profiles)+len(cases))*(*repeat))
 	failed := false
 runLoop:
 	for attempt := 1; attempt <= *repeat; attempt++ {
 		if ctx.Err() != nil {
 			failed = true
 			break
+		}
+		if *engine == "local" {
+			for _, testCase := range cases {
+				if ctx.Err() != nil {
+					failed = true
+					break runLoop
+				}
+				receipt := runLocalTest(ctx, *scenarioName, scenario, sourceDir, *baseURL, testCase)
+				receipt.Attempt = attempt
+				results = append(results, receipt)
+				failed = failed || receipt.Status != "passed"
+				if !jsonOutput {
+					caseLabel := ""
+					if receipt.Case != "" {
+						caseLabel = ", " + receipt.Case
+					}
+					_, _ = fmt.Fprintf(osStdout, "%s: %s (local%s, attempt %d/%d)\n", receipt.Scenario, receipt.Status, caseLabel, attempt, *repeat)
+					if receipt.Error != "" {
+						_, _ = fmt.Fprintln(osStderr, receipt.Error)
+					}
+					if receipt.CleanupError != "" {
+						_, _ = fmt.Fprintln(osStderr, receipt.CleanupError)
+					}
+				}
+			}
+			continue
 		}
 		if *engine == "simulated" {
 			receipt := runSimulatedTest(ctx, *scenarioName, scenario, sourceDir)
@@ -362,7 +414,11 @@ func selectedTestProfiles(profile string) ([]string, error) {
 	}
 }
 
-func readTestManifest(path string) (map[string]testScenario, string, error) {
+func readTestManifest(path string, dataFields ...string) (map[string]testScenario, string, error) {
+	return readTestManifestForScenario(path, "", dataFields)
+}
+
+func readTestManifestForScenario(path, selected string, dataFields []string) (map[string]testScenario, string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, "", err
@@ -397,7 +453,11 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		if len(scenario.Command) > 0 && scenario.Command[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q has an empty assertion command", name)
 		}
-		if err := validateTestHTTPRequests(scenario); err != nil {
+		fields := dataFields
+		if selected != "" && name != selected {
+			fields = testHTTPDataFields(scenario)
+		}
+		if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {

@@ -56,10 +56,10 @@ type testValidationResult struct {
 	SimulationAvailable bool   `json:"simulation_available"`
 }
 
-// Validation uses the same source and app-shape checks as real deployment,
-// before a scenario consumes plan capacity or authenticates to the platform.
-func validateTestManifest(scenarios map[string]testScenario, manifestDir, selected string) int {
-	results, err := collectTestValidation(scenarios, manifestDir, selected)
+// Real-VM validation checks deployable app shapes. Local validation checks the
+// command directory and rejects waits that require platform evidence.
+func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) int {
+	results, err := collectTestValidationForEngine(scenarios, manifestDir, selected, engine)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
@@ -70,6 +70,10 @@ func validateTestManifest(scenarios map[string]testScenario, manifestDir, select
 		return 0
 	}
 	for _, result := range results {
+		if engine == "local" {
+			_, _ = fmt.Fprintf(osStdout, "%s: valid (local HTTP scenario)\n", result.Scenario)
+			continue
+		}
 		_, _ = fmt.Fprintf(osStdout, "%s: valid (%d workloads, %d buckets, %d consumers; simulation %s)\n",
 			result.Scenario, result.Workloads, result.Buckets, result.Consumers,
 			map[bool]string{true: "available", false: "unavailable"}[result.SimulationAvailable])
@@ -78,6 +82,10 @@ func validateTestManifest(scenarios map[string]testScenario, manifestDir, select
 }
 
 func collectTestValidation(scenarios map[string]testScenario, manifestDir, selected string) ([]testValidationResult, error) {
+	return collectTestValidationForEngine(scenarios, manifestDir, selected, "real-vm")
+}
+
+func collectTestValidationForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) ([]testValidationResult, error) {
 	names := make([]string, 0, len(scenarios))
 	if selected != "" {
 		if _, ok := scenarios[selected]; !ok {
@@ -100,15 +108,24 @@ func collectTestValidation(scenarios map[string]testScenario, manifestDir, selec
 		if source == "" {
 			source = "."
 		}
-		if err := validateTestSource(manifestDir, source); err != nil {
-			return nil, fmt.Errorf("scenario %q: %w", name, err)
-		}
-		for service, spec := range scenario.Services {
-			if spec.Source == "" {
-				continue // built-in fixture, validated by readTestManifest
+		if engine == "local" {
+			if err := validateLocalTestScenario(scenario); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
 			}
-			if err := validateTestSource(manifestDir, spec.Source); err != nil {
-				return nil, fmt.Errorf("scenario %q service %q: %w", name, service, err)
+			if _, err := resolveDeploySourceDir(manifestDir, source); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
+			}
+		} else {
+			if err := validateTestSource(manifestDir, source); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
+			}
+			for service, spec := range scenario.Services {
+				if spec.Source == "" {
+					continue // built-in fixture, validated by readTestManifest
+				}
+				if err := validateTestSource(manifestDir, spec.Source); err != nil {
+					return nil, fmt.Errorf("scenario %q service %q: %w", name, service, err)
+				}
 			}
 		}
 		results = append(results, testValidationResult{
@@ -162,8 +179,12 @@ func writeTestJUnit(path string, receipts []testRunReceipt) error {
 			return err
 		}
 		failureText := strings.TrimSpace(strings.Join([]string{receipt.Error, receipt.CleanupError}, "; "))
+		caseName := receipt.Scenario + "/" + receipt.Profile
+		if receipt.Case != "" {
+			caseName += "/" + receipt.Case
+		}
 		caseResult := testJUnitCase{
-			Name:      fmt.Sprintf("%s/%s#%d", receipt.Scenario, receipt.Profile, receipt.Attempt),
+			Name:      fmt.Sprintf("%s#%d", caseName, receipt.Attempt),
 			ClassName: "gregale.scenario." + receipt.Engine,
 			Time:      fmt.Sprintf("%.3f", float64(receipt.DurationMS)/1000),
 			SystemOut: string(body),

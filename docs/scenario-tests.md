@@ -1,6 +1,6 @@
 # Application scenario tests
 
-`gregale test` deploys source into expiring developer sessions and runs
+By default, `gregale test` deploys source into expiring developer sessions and runs
 declarative HTTP checks or repository-owned assertion commands through its
 public Gregale URL. Each lifecycle
 profile gets a distinct run and, when requested, isolated managed PostgreSQL
@@ -123,8 +123,8 @@ has a 30-second timeout within the scenario timeout.
 
 An asynchronous request may capture an invocation ID under the name used by
 `wait_for.invocations[].trigger_key`. The existing object, delivery, and queue
-wait conditions then run before `checks`. Native request steps run only with
-the `real-vm` engine; a local `--engine simulated` run still needs its own
+wait conditions then run before `checks`. Native request steps run with
+`real-vm` or `local`. A `--engine simulated` run still needs its own
 `simulation` command.
 
 To create a small starting manifest from an OpenAPI document:
@@ -139,6 +139,113 @@ parameters and a declared 2xx response. It adds status and JSON content-type
 checks where applicable, skips other operations, and never overwrites an
 existing manifest. Review the generated requests, then add authentication,
 fixtures, ownership, idempotency, and business assertions explicitly.
+
+## Local HTTP tests and case data
+
+Start your application with its normal local development command, then run the
+same native requests and checks against it:
+
+```sh
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000
+gregale test --scenario customer-export --engine local --base-url http://localhost:3000 \
+  --data cases.json --repeat 2 --report results.json --junit results.xml
+```
+
+The `local` engine sends real HTTP requests to an already running local app.
+It requires no platform login and provisions no Gregale resources. `--base-url`
+must be an HTTP origin on `localhost` or a loopback IP address, with no path,
+credentials, query, or fragment. Redirects are not followed. Execution order is
+`setup`, `trigger`, `requests`, `checks`, assertion `command`, then `cleanup`.
+Cleanup runs after failures and interruption. The scenario's `source` directory
+is the working directory for commands; it need not contain a deployable app.
+
+Local runs do not deploy `services`, create PostgreSQL databases or buckets,
+apply `secrets` or consumer authentication policy, or create consumers. Configure
+your local app and its dependencies beforehand, or use `setup` and `cleanup`
+commands. For a step with `as: customer-a`, provide the existing local test key
+in `GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY`; an optional
+`GREGALE_TEST_CONSUMER_CUSTOMER_A_ID` is also passed to commands. Missing keys
+fail before setup. These keys remain owned by your local fixtures.
+
+Platform `wait_for` conditions are rejected by the local engine. Use `real-vm`
+for queue, invocation, delivery, object, and lifecycle evidence. `--profile`,
+`--preflight`, and `--max-workload-minutes` apply only to real-VM tests. Reports
+label local runs with `engine: local` and `profile: local` and contain no VM wake
+evidence. A local HTTP test and a simulated test do not establish that an app
+behaves correctly after being parked and restored.
+
+### Run the same scenario for JSON or CSV rows
+
+`--data` currently applies to the local engine. A JSON data file is an array of
+objects with the same fields in every row:
+
+```json
+[
+  {"format": "csv", "limit": 10, "include_archived": false},
+  {"format": "json", "limit": 25, "include_archived": true}
+]
+```
+
+Reference these fields in paths, queries, headers, JSON bodies, or expectations:
+
+```yaml
+requests:
+  - name: submit
+    method: POST
+    path: /exports
+    json:
+      format: '${data.format}'
+      limit: '${data.limit}'
+      include_archived: '${data.include_archived}'
+      run: '${run.id}'
+    expect: {status: 202}
+    capture: {export_id: '/id'}
+checks:
+  - name: read
+    method: GET
+    path: /exports/${steps.submit.export_id}?format=${data.format}
+    expect:
+      status: 200
+      json: {'/format': '${data.format}', '/limit': '${data.limit}'}
+```
+
+An exact `${data.limit}` or `${data.include_archived}` JSON value preserves the
+number or boolean type. Embedded references such as `limit-${data.limit}`
+produce text. CSV uses a header row and treats every value as a string:
+
+```csv
+format,label
+csv,small-export
+json,large-export
+```
+
+Data files are limited to 1 MiB, 1–100 rows, and 1–32 fields. Field names begin
+with a lowercase letter and contain lowercase letters, digits, and underscores
+(at most 64 characters). JSON fields accept strings, numbers, and booleans;
+nested values and null are rejected. Unknown `${data.*}` references fail
+manifest validation for the selected scenario. Add `--scenario NAME` when other
+scenarios need a different data file. Validate before sending requests with:
+
+```sh
+gregale test --validate --engine local --data cases.json
+```
+
+Each row runs the whole scenario with a fresh run ID and capture map. Cases run
+in file order; `--repeat N` repeats all rows N times. All rows use the same
+running local app, so use run IDs or fixture cleanup to avoid shared state.
+An assertion failure is reported for its row; remaining rows continue, and the
+command exits unsuccessfully if any row fails. Interruption stops new rows.
+Commands receive `GREGALE_TEST_CASE` (`row-1`, `row-2`, etc.) and
+`GREGALE_TEST_DATA_JSON`, plus the local URL, run ID, engine, profile, and scenario
+name. Without a data file, there is one unnamed case with empty `{}` data.
+The CLI strips its `FAAS_TOKEN` account credential from command environments.
+Command output goes to stderr under `--json`.
+
+JSON and JUnit reports identify the row and attempt, including request evidence
+and cleanup failures. They omit data values and captures. JUnit names such as
+`customer-export/local/row-1#2` distinguish the second run of the first row.
+
+## Real-VM lifecycle tests
 
 Run all three profiles, or select one:
 
@@ -182,7 +289,7 @@ acceptance workflow uploads both the JSON and JUnit reports even on failure.
 It receives `GREGALE_TEST_ENGINE=simulated`,
 `GREGALE_TEST_PROFILE=simulated`, and `GREGALE_TEST_SCENARIO`. The report omits
 VM wake evidence and labels its engine `simulated`. VM lifecycle profiles only
-apply to `real-vm`, and passing `--profile` with `--engine simulated` is an
+apply to `real-vm`, and passing `--profile` with `--engine local` or `simulated` is an
 error. A simulation can test application logic quickly, while the real-VM runs
 prove the platform lifecycle path.
 Keep application behavior assertions in a shared module when both engines can
