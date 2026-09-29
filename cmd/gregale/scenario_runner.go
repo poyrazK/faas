@@ -212,9 +212,9 @@ func cmdTest(args []string) int {
 		results = append(results, receipt)
 		failed = receipt.Status != "passed"
 		if !jsonOutput {
-			fmt.Fprintf(osStdout, "%s: %s (simulated)\n", receipt.Scenario, receipt.Status)
+			_, _ = fmt.Fprintf(osStdout, "%s: %s (simulated)\n", receipt.Scenario, receipt.Status)
 			if receipt.Error != "" {
-				fmt.Fprintln(osStderr, receipt.Error)
+				_, _ = fmt.Fprintln(osStderr, receipt.Error)
 			}
 		}
 	}
@@ -229,12 +229,12 @@ func cmdTest(args []string) int {
 			failed = true
 		}
 		if !jsonOutput {
-			fmt.Fprintf(osStdout, "%s: %s (%s, app %s)\n", receipt.Scenario, receipt.Status, receipt.Profile, receipt.AppSlug)
+			_, _ = fmt.Fprintf(osStdout, "%s: %s (%s, app %s)\n", receipt.Scenario, receipt.Status, receipt.Profile, receipt.AppSlug)
 			if receipt.Error != "" {
-				fmt.Fprintln(osStderr, receipt.Error)
+				_, _ = fmt.Fprintln(osStderr, receipt.Error)
 			}
 			if receipt.CleanupError != "" {
-				fmt.Fprintln(osStderr, receipt.CleanupError)
+				_, _ = fmt.Fprintln(osStderr, receipt.CleanupError)
 			}
 		}
 	}
@@ -284,7 +284,7 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		return nil, "", err
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, "", errors.New("scenario manifest must contain exactly one YAML document")
 	}
 	if manifest.Version != 1 {
@@ -594,7 +594,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
 	registered := false
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cleanupCancel()
 		allDestroyed := true
 		for i := len(workloads) - 1; i >= 0; i-- {
@@ -673,7 +673,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	consumerIDs := make([]string, 0, len(scenario.Consumers))
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, id := range consumerIDs {
 			if _, err := client.RevokeAPIConsumer(cleanupCtx, session.App.Slug, id); err != nil {
@@ -818,7 +818,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, command := range scenario.Cleanup {
 			if err := runTestCommand(cleanupCtx, sourceDir, env, command); err != nil {

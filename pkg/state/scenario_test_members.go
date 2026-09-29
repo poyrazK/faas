@@ -53,7 +53,7 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 	if err != nil {
 		return fmt.Errorf("begin scenario test registration: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, member := range members {
 		var eligible bool
 		err := tx.QueryRow(ctx, `select account_id = $2 and preview_of_slug is not null and preview_pr_number = 0
@@ -154,10 +154,17 @@ func (m *MemStore) ScenarioTestAppByWorkload(_ context.Context, accountID, runID
 func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	found := false
 	for _, member := range m.scenarioTestMembers {
-		if member.AccountID == accountID && member.RunID == runID && m.apps[member.AppID].Status != AppDeleted {
-			return ErrConflict
+		if member.AccountID == accountID && member.RunID == runID {
+			found = true
+			if m.apps[member.AppID].Status != AppDeleted {
+				return ErrConflict
+			}
 		}
+	}
+	if !found {
+		return ErrNotFound
 	}
 	for appID, member := range m.scenarioTestMembers {
 		if member.AccountID == accountID && member.RunID == runID {
@@ -178,8 +185,14 @@ func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runI
 	if active {
 		return ErrConflict
 	}
-	_, err := s.pool.Exec(ctx, `delete from scenario_test_members where account_id = $1 and run_id = $2`, accountID, runID)
-	return err
+	result, err := s.pool.Exec(ctx, `delete from scenario_test_members where account_id = $1 and run_id = $2`, accountID, runID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error) {

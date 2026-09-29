@@ -62,6 +62,10 @@ func (s *server) deleteScenarioTest(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Test environment is active", "destroy its developer sessions before deleting the environment"))
 			return
 		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such test environment")
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("delete test environment"))
 		return
 	}

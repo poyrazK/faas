@@ -19,3 +19,38 @@ scenarios:
     command: [node, test/assert.mjs]
     simulation: [node, --test, test/app.test.mjs]
     timeout: 10m
+  customer-export:
+    project: scenario-export
+    source: ./export-api
+    consumer_auth_mode: required
+    consumers:
+      - name: customer-a
+      - name: customer-b
+    services:
+      worker:
+        source: ./export-worker
+        secrets:
+          TEST_RUN_ID: ${run.id}
+          NOTIFICATION_URL: ${service.notifications.url}/deliver
+      notifications:
+        fixture: delivery-sink
+        fail_first: 1
+    buckets:
+      - name: exports
+        service: worker
+        prefix: EXPORT_STORAGE
+        permission: read_write
+    trigger: [node, test/trigger.mjs]
+    wait_for:
+      deliveries:
+        - service: notifications
+          min_attempts: 2
+          last_status: 200
+      objects:
+        - bucket: exports
+          prefix: reports/${GREGALE_TEST_RUN_ID}/
+          min_count: 1
+          min_total_bytes: 1
+    command: [node, test/assert.mjs]
+    simulation: [node, --test, test/app.test.mjs]
+    timeout: 15m

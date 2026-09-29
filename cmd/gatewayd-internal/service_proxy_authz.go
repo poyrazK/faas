@@ -55,7 +55,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		var callerTest, targetTest state.ScenarioTestMember
-		var callerTestErr, targetTestErr error = state.ErrNotFound, state.ErrNotFound
+		var callerTestErr, targetTestErr = state.ErrNotFound, state.ErrNotFound
 		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
 			callerTest, callerTestErr = store.ScenarioTestMemberByApp(ctx, caller.ID)
 		}
