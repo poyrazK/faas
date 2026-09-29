@@ -69,6 +69,11 @@ event_triggers:
     work_action: cancel_pending
 ```
 
+An event captures its subscription work selector and action when it is
+published. Updating the binding later affects new events; accepted events
+keep their original routing. The policy revision is recorded when the
+resulting invocation is admitted.
+
 The same operation is available at
 `POST /v1/apps/{slug}/work-policies/{name}/cancel-pending` with a JSON `key`.
 It returns the number of pending rows cancelled. A replay of the same event

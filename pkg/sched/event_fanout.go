@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 const eventInvocationMethod = "POST"
@@ -201,6 +202,15 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 	}
 	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
 	invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	if !requireActiveApp || !row.WorkSnapshotCaptured {
+		if cancellations, ok := l.engine.store.(state.WorkCancellationStore); ok {
+			if _, lookupErr := cancellations.WorkCancellationByID(ctx, invocationID); lookupErr == nil {
+				return true, nil
+			} else if !errors.Is(lookupErr, state.ErrNotFound) {
+				return true, eventWorkRouteError(row.ID, "look up prior cancellation", lookupErr, true)
+			}
+		}
+	}
 	producerHeaders := map[string]string{
 		"traceparent": envelope.Traceparent,
 		"tracestate":  envelope.Tracestate,
@@ -220,12 +230,16 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 			code: state.EventFanoutFailureCodeInternal, err: err,
 		})
 	}
-	_, err = l.engine.store.EnqueueInvocation(ctx, state.Invocation{
+	invocation := state.Invocation{
 		ID: invocationID, AppID: row.AppID, AccountID: row.AccountID,
 		Source: state.InvocationAsyncInvoke, State: state.InvocationPending,
 		Method: eventInvocationMethod, Path: eventInvocationPath,
 		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
-	})
+	}
+	if handled, routeErr := l.routeBoundEventWork(ctx, row, invocation, requireActiveApp && row.WorkSnapshotCaptured); handled || routeErr != nil {
+		return true, routeErr
+	}
+	_, err = l.engine.store.EnqueueInvocation(ctx, invocation)
 	if err != nil && !errors.Is(err, state.ErrConflict) {
 		return true, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, &eventFanoutRouteError{
 			code: state.EventFanoutFailureCodeInvocationEnqueueFailed, retryable: true, err: err,
@@ -234,6 +248,101 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 	if err == nil && l.pool != nil {
 		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
 			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
+	}
+	return true, nil
+}
+
+func eventWorkRouteError(subscriptionID, operation string, err error, retryable bool) error {
+	code := state.EventFanoutFailureCodeInvalidSubscription
+	if retryable {
+		code = state.EventFanoutFailureCodeInvocationEnqueueFailed
+	}
+	return fmt.Errorf("subscription %s: %s: %w", subscriptionID, operation,
+		&eventFanoutRouteError{code: code, retryable: retryable, err: err})
+}
+
+// routeBoundEventWork applies the same app-scoped policy used by explicit
+// invocations. A receipt or existing invocation wins over changed selectors
+// when an event is replayed.
+func (l *Loop) routeBoundEventWork(ctx context.Context, row state.PublishedEventRecipient, invocation state.Invocation, useSnapshot bool) (bool, error) {
+	var binding state.PublishedEventWorkBindingSnapshot
+	if useSnapshot {
+		if row.Work == nil {
+			return false, nil
+		}
+		binding = *row.Work
+	} else {
+		bindings, ok := l.engine.store.(state.EventWorkBindingStore)
+		if !ok {
+			return false, nil
+		}
+		byID, err := bindings.EventWorkBindingsByIDs(ctx, []string{row.ID})
+		if err != nil {
+			return true, eventWorkRouteError(row.ID, "load work binding", err, true)
+		}
+		live, ok := byID[row.ID]
+		if !ok {
+			return false, nil
+		}
+		binding = state.PublishedEventWorkBindingSnapshot{
+			PolicyName: live.PolicyName, KeySelector: live.KeySelector,
+			FairnessSelector: live.FairnessSelector, Action: live.Action,
+		}
+	}
+	if _, err := l.engine.store.InvocationByID(ctx, invocation.ID); err == nil {
+		return true, nil
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return true, eventWorkRouteError(row.ID, "look up prior delivery", err, true)
+	}
+	selector, err := workpolicy.ParseSelector(binding.KeySelector)
+	if err != nil {
+		return true, eventWorkRouteError(row.ID, "parse work key selector", err, false)
+	}
+	key, err := selector.Resolve(invocation.Payload)
+	if err != nil {
+		return true, eventWorkRouteError(row.ID, "resolve work key", err, false)
+	}
+	if binding.Action == state.EventWorkCancelPending {
+		cancellations, ok := l.engine.store.(state.WorkCancellationStore)
+		if !ok {
+			return true, eventWorkRouteError(row.ID, "work cancellation store unavailable", errors.New("store capability unavailable"), true)
+		}
+		_, err := cancellations.CancelPendingKeyedInvocations(ctx, row.AppID, binding.PolicyName, key, invocation.ID)
+		if err != nil {
+			return true, eventWorkRouteError(row.ID, "cancel pending work", err, true)
+		}
+		return true, nil
+	}
+	policies, ok := l.engine.store.(state.AppWorkPolicyStore)
+	if !ok {
+		return true, eventWorkRouteError(row.ID, "work policy store unavailable", errors.New("store capability unavailable"), true)
+	}
+	record, err := policies.AppWorkPolicyByName(ctx, row.AppID, binding.PolicyName)
+	if err != nil {
+		return true, eventWorkRouteError(row.ID, "load work policy", err, !errors.Is(err, state.ErrNotFound))
+	}
+	invocation.WorkPolicyRevision = record.Revision
+	var fairness []string
+	if binding.FairnessSelector != "" {
+		selector, parseErr := workpolicy.ParseSelector(binding.FairnessSelector)
+		if parseErr != nil {
+			return true, eventWorkRouteError(row.ID, "parse fairness selector", parseErr, false)
+		}
+		fairnessKey, resolveErr := selector.Resolve(invocation.Payload)
+		if resolveErr != nil {
+			return true, eventWorkRouteError(row.ID, "resolve fairness key", resolveErr, false)
+		}
+		fairness = append(fairness, fairnessKey)
+	}
+	if _, err := l.engine.store.EnqueueKeyedInvocation(ctx, invocation, record.Policy, key, fairness...); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return true, nil
+		}
+		return true, eventWorkRouteError(row.ID, "enqueue keyed invocation", err, true)
+	}
+	if l.pool != nil {
+		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
+			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocation.ID, row.AppID, state.InvocationAsyncInvoke))
 	}
 	return true, nil
 }

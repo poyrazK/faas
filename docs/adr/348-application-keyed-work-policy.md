@@ -51,6 +51,12 @@ optional version watermark is required if an old producer retry could enqueue
 work after the completion event. Cancellation by key without such a watermark
 only describes work present at the instant of the transaction.
 
+Event fanout snapshots the subscription's work binding when the event is
+accepted. A later selector or action change cannot redirect that accepted
+event. Receipts created before binding snapshots retain live-binding lookup
+for backward compatibility. The effective policy revision is still recorded
+when the invocation enters the work ledger.
+
 ## Durable transitions
 
 1. `apid` remains the owner of policy configuration. Strict manifest/API

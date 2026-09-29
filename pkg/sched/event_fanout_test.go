@@ -561,7 +561,8 @@ func TestRoutePublishedEventCancelsPendingWorkOnce(t *testing.T) {
 	if _, err := store.SetEventWorkBinding(ctx, app.ID, reminder.ID, policy.Name, "data.order_id"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetEventWorkBinding(ctx, app.ID, completion.ID, policy.Name, "data.order_id", state.EventWorkCancelPending); err != nil {
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, completion.ID, policy.Name, "data.order_id",
+		state.EventWorkBindingOptions{Action: state.EventWorkCancelPending}); err != nil {
 		t.Fatal(err)
 	}
 	loop := &Loop{engine: &Engine{store: store}}
@@ -594,6 +595,184 @@ func TestRoutePublishedEventCancelsPendingWorkOnce(t *testing.T) {
 	rows, err := store.ListInvocationsForApp(ctx, app.ID)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("invocations = %+v, %v", rows, err)
+	}
+}
+
+func TestRoutePublishedEventUsesApplicationWorkLane(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "events-work-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "events-work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := workpolicy.Policy{Name: "document-index", MaxRunningPerKey: 1,
+		MaxRunningPerFairnessKey: 2, PendingUpdates: workpolicy.PendingKeepLatest}
+	if _, err := store.UpsertAppWorkPolicy(ctx, accountID, app.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "documents", "document.edited", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name,
+		"data.document_id", state.EventWorkBindingOptions{
+			Action: state.EventWorkInvoke, FairnessSelector: "data.tenant_id"}); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: store}}
+	ids := make([]string, 0, 3)
+	var firstPayload string
+	for index, documentID := range []string{"doc-1", "doc-1", "doc-2"} {
+		envelope := events.Envelope{SpecVersion: events.CloudEventsSpecVersion, ID: uuid.NewString(), Source: "documents", Type: "document.edited", Time: time.Now().UTC(), DataContentType: events.JSONDataContentType, Data: json.RawMessage(`{"document_id":"` + documentID + `","tenant_id":"tenant-1"}`), AccountID: accountID}
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := loop.routePublishedEvent(ctx, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			firstPayload = string(payload)
+		}
+		if err := loop.routePublishedEvent(ctx, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+		identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, subscription.ID})
+		ids = append(ids, uuid.NewSHA1(uuid.NameSpaceURL, identity).String())
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name, "data.missing"); err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.routePublishedEvent(ctx, firstPayload); err != nil {
+		t.Fatalf("replay after selector change: %v", err)
+	}
+	first, err := store.InvocationByID(ctx, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.InvocationByID(ctx, ids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.InvocationByID(ctx, ids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State != state.InvocationSuperseded || second.State != state.InvocationPending || other.State != state.InvocationPending {
+		t.Fatalf("states = %s, %s, %s", first.State, second.State, other.State)
+	}
+	if !bytes.Equal(first.WorkKeyDigest, second.WorkKeyDigest) || bytes.Equal(first.WorkKeyDigest, other.WorkKeyDigest) || second.WorkSequence != 2 || other.WorkSequence != 1 || second.WorkPolicyRevision != 1 {
+		t.Fatalf("lanes = %+v, %+v, %+v", first, second, other)
+	}
+	if !bytes.Equal(second.WorkFairnessDigest, other.WorkFairnessDigest) || second.WorkFairnessLimit != 2 {
+		t.Fatalf("fairness groups = %+v, %+v", second, other)
+	}
+	key, err := workpolicy.CanonicalScalar(json.RawMessage(`"doc-1"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: accountID,
+		Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/", DueAt: time.Now().UTC()},
+		policy, key, "s:tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ = store.InvocationByID(ctx, ids[1])
+	if second.State != state.InvocationSuperseded || explicit.WorkSequence != 3 || !bytes.Equal(explicit.WorkKeyDigest, second.WorkKeyDigest) {
+		t.Fatalf("explicit invocation did not share event lane: event=%+v explicit=%+v", second, explicit)
+	}
+}
+
+func TestEventFanoutKeepsWorkBindingAtAcceptance(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "event-work-snapshot-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-work-snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := workpolicy.Policy{Name: "index-document", MaxRunningPerKey: 1, MaxRunningPerFairnessKey: 2}
+	if _, err := store.UpsertAppWorkPolicy(ctx, accountID, app.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	bound, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "documents", "edited", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "documents", "*", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, bound.ID, policy.Name, "data.document_id",
+		state.EventWorkBindingOptions{FairnessSelector: "data.tenant_id"}); err != nil {
+		t.Fatal(err)
+	}
+	envelope := events.Envelope{SpecVersion: events.CloudEventsSpecVersion, ID: uuid.NewString(),
+		Source: "documents", Type: "edited", Time: time.Now().UTC(),
+		DataContentType: events.JSONDataContentType,
+		Data:            json.RawMessage(`{"document_id":"doc-1","tenant_id":"tenant-1"}`), AccountID: accountID}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, bound.ID, policy.Name, "data.missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, late.ID, policy.Name, "data.document_id"); err != nil {
+		t.Fatal(err)
+	}
+	(&Loop{engine: &Engine{store: store}}).runEventFanoutSweep(ctx)
+	invocationID := func(subscriptionID string) string {
+		identity, _ := json.Marshal([4]string{accountID, envelope.Source, envelope.ID, subscriptionID})
+		return uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	}
+	keyed, err := store.InvocationByID(ctx, invocationID(bound.ID))
+	if err != nil || keyed.WorkPolicyName != policy.Name || keyed.WorkFairnessLimit != 2 {
+		t.Fatalf("accepted binding invocation = %+v, err=%v", keyed, err)
+	}
+	unbound, err := store.InvocationByID(ctx, invocationID(late.ID))
+	if err != nil || unbound.WorkPolicyName != "" {
+		t.Fatalf("late binding invocation = %+v, err=%v", unbound, err)
+	}
+	cancellation, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "documents", "completed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, cancellation.ID, policy.Name, "data.document_id",
+		state.EventWorkBindingOptions{Action: state.EventWorkCancelPending}); err != nil {
+		t.Fatal(err)
+	}
+	completion := envelope
+	completion.ID = uuid.NewString()
+	completion.Type = "completed"
+	completionPayload, _ := json.Marshal(completion)
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, completionPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, cancellation.ID, policy.Name, "data.document_id"); err != nil {
+		t.Fatal(err)
+	}
+	(&Loop{engine: &Engine{store: store}}).runEventFanoutSweep(ctx)
+	cancellationIdentity, _ := json.Marshal([4]string{accountID, completion.Source, completion.ID, cancellation.ID})
+	cancellationID := uuid.NewSHA1(uuid.NameSpaceURL, cancellationIdentity).String()
+	receipt, err := store.WorkCancellationByID(ctx, cancellationID)
+	if err != nil || receipt.CancelledCount == 0 {
+		t.Fatalf("accepted cancellation action = %+v, err=%v", receipt, err)
+	}
+	if _, err := store.InvocationByID(ctx, cancellationID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cancellation event was invoked: %v", err)
 	}
 }
 

@@ -35,12 +35,24 @@ type PublishedEventWork struct {
 // PublishedEventRecipient is an immutable source/type candidate captured when
 // the event was accepted. The data filter is evaluated by the scheduler.
 type PublishedEventRecipient struct {
-	ID        string          `json:"id"`
-	AccountID string          `json:"account_id"`
-	AppID     string          `json:"app_id"`
-	Source    string          `json:"source"`
-	Type      string          `json:"type"`
-	Filter    json.RawMessage `json:"filter"`
+	ID                   string                             `json:"id"`
+	AccountID            string                             `json:"account_id"`
+	AppID                string                             `json:"app_id"`
+	Source               string                             `json:"source"`
+	Type                 string                             `json:"type"`
+	Filter               json.RawMessage                    `json:"filter"`
+	WorkSnapshotCaptured bool                               `json:"work_snapshot_captured,omitempty"`
+	Work                 *PublishedEventWorkBindingSnapshot `json:"work,omitempty"`
+}
+
+// PublishedEventWorkBindingSnapshot keeps event routing stable when a binding
+// changes after the event was accepted. Old snapshots have no captured flag
+// and continue to use the live binding for backward compatibility.
+type PublishedEventWorkBindingSnapshot struct {
+	PolicyName       string `json:"policy_name"`
+	KeySelector      string `json:"key_selector"`
+	FairnessSelector string `json:"fairness_selector,omitempty"`
+	Action           string `json:"action"`
 }
 
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
@@ -695,8 +707,16 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	})
 	recipients := make([]PublishedEventRecipient, 0, len(candidates))
 	for _, row := range candidates {
-		recipients = append(recipients, PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
-			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter)})
+		recipient := PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
+			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter),
+			WorkSnapshotCaptured: true}
+		if binding, ok := m.eventWorkBindings[row.ID]; ok {
+			recipient.Work = &PublishedEventWorkBindingSnapshot{
+				PolicyName: binding.PolicyName, KeySelector: binding.KeySelector,
+				FairnessSelector: binding.FairnessSelector, Action: binding.Action,
+			}
+		}
+		recipients = append(recipients, recipient)
 	}
 	m.eventFanoutNextID++
 	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
@@ -743,6 +763,10 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	for i, recipient := range chosen.RecipientSnapshot {
 		copy.RecipientSnapshot[i] = recipient
 		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
+		if recipient.Work != nil {
+			binding := *recipient.Work
+			copy.RecipientSnapshot[i].Work = &binding
+		}
 	}
 	copy.RecipientProgress = make(map[string]PublishedEventRecipientProgress, len(chosen.RecipientProgress))
 	for id, progress := range chosen.RecipientProgress {
