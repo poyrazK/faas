@@ -60,6 +60,7 @@ type gcsBucketSpec struct {
 
 type gcsBucketState struct {
 	Location, ManagedLabel string
+	VersioningEnabled      bool
 }
 
 type gcsObjectState struct {
@@ -67,6 +68,9 @@ type gcsObjectState struct {
 	ETag         string
 	Size         int64
 	LastModified time.Time
+	Version      int64
+	MetaVersion  int64
+	ValidUntil   time.Time
 	Metadata     map[string]string
 }
 
@@ -76,10 +80,12 @@ type gcsStore interface {
 	ReconcileBucket(context.Context, string, gcsBucketSpec) error
 	DeleteBucket(context.Context, string) error
 	ListObjects(context.Context, string, string, string, string, int32) ([]gcsObjectState, []string, string, error)
+	ListObjectVersions(context.Context, string, string, int32) ([]gcsObjectState, string, error)
 	DeleteObject(context.Context, string, string) error
 	ObjectState(context.Context, string, string) (gcsObjectState, error)
 	UpdateObjectMetadata(context.Context, string, string, map[string]string) (gcsObjectState, error)
 	CopyObject(context.Context, string, string, string, string, ObjectMetadata, string) (gcsObjectState, error)
+	CopyObjectVersion(context.Context, string, string, string, string, int64, int64) (gcsObjectState, error)
 }
 
 type googleGCSStore struct {
@@ -171,7 +177,7 @@ func (s *googleGCSStore) BucketState(ctx context.Context, bucket string) (gcsBuc
 	if err != nil {
 		return gcsBucketState{}, err
 	}
-	return gcsBucketState{Location: attrs.Location, ManagedLabel: attrs.Labels[gcsManagedLabel]}, nil
+	return gcsBucketState{Location: attrs.Location, ManagedLabel: attrs.Labels[gcsManagedLabel], VersioningEnabled: attrs.VersioningEnabled}, nil
 }
 
 func (s *googleGCSStore) ReconcileBucket(ctx context.Context, bucket string, spec gcsBucketSpec) error {
@@ -206,9 +212,28 @@ func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimi
 			prefixes = append(prefixes, attr.Prefix)
 			continue
 		}
-		objects = append(objects, gcsObjectState{Key: attr.Name, ETag: attr.Etag, Size: attr.Size, LastModified: attr.Updated, Metadata: attr.Metadata})
+		objects = append(objects, gcsObjectState{Key: attr.Name, ETag: attr.Etag, Size: attr.Size, LastModified: attr.Updated, Version: attr.Generation, Metadata: attr.Metadata})
 	}
 	return objects, prefixes, next, nil
+}
+
+func (s *googleGCSStore) ListObjectVersions(ctx context.Context, bucket, cursor string, limit int32) ([]gcsObjectState, string, error) {
+	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Versions: true, Projection: storage.ProjectionNoACL})
+	pager := iterator.NewPager(iter, int(limit), cursor)
+	var attrs []*storage.ObjectAttrs
+	next, err := pager.NextPage(&attrs)
+	if err != nil {
+		return nil, "", err
+	}
+	objects := make([]gcsObjectState, 0, len(attrs))
+	for _, attr := range attrs {
+		objects = append(objects, gcsObjectState{
+			Key: attr.Name, ETag: attr.Etag, Size: attr.Size,
+			LastModified: attr.Created, ValidUntil: attr.Deleted,
+			Version: attr.Generation, MetaVersion: attr.Metageneration, Metadata: attr.Metadata,
+		})
+	}
+	return objects, next, nil
 }
 
 func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -291,6 +316,18 @@ func (s *googleGCSStore) CopyObject(ctx context.Context, sourceBucket, destinati
 		return gcsObjectState{}, ErrUnavailable
 	}
 	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Metadata: attrs.Metadata}, nil
+}
+
+func (s *googleGCSStore) CopyObjectVersion(ctx context.Context, sourceBucket, destinationBucket, source, destination string, generation, metaVersion int64) (gcsObjectState, error) {
+	attrs, err := s.client.Bucket(destinationBucket).Object(destination).CopierFrom(
+		s.client.Bucket(sourceBucket).Object(source).Generation(generation).If(storage.Conditions{MetagenerationMatch: metaVersion})).Run(ctx)
+	if err != nil {
+		return gcsObjectState{}, err
+	}
+	if attrs == nil {
+		return gcsObjectState{}, ErrUnavailable
+	}
+	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Version: attrs.Generation, Metadata: attrs.Metadata}, nil
 }
 
 func gcsCreateBucketAttrs(spec gcsBucketSpec) *storage.BucketAttrs {
@@ -459,6 +496,11 @@ func (p *GCS) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destin
 		// read/merge/update sequence that is not atomic on every GCS backend.
 		return CopyObjectResult{}, ErrUnsupported
 	}
+	if r.SourceVersion != "" && (r.MetadataDirective != "COPY" || r.TaggingDirective != "COPY") {
+		// The version-pinned path must preserve metadata from that exact
+		// generation; the live-key metadata merge below cannot do so.
+		return CopyObjectResult{}, ErrUnsupported
+	}
 	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
 		return CopyObjectResult{}, ErrInvalid
 	}
@@ -483,7 +525,21 @@ func (p *GCS) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destin
 		}
 		r.Metadata.Tags = tags
 	}
-	object, err := p.store.CopyObject(ctx, sourceBucket, destinationBucket, r.SourceKey, r.DestinationKey, r.Metadata, r.MetadataDirective)
+	var object gcsObjectState
+	var err error
+	if r.SourceVersion != "" {
+		generation, parseErr := strconv.ParseInt(r.SourceVersion, 10, 64)
+		if parseErr != nil || generation <= 0 {
+			return CopyObjectResult{}, ErrInvalid
+		}
+		metaVersion, metaErr := strconv.ParseInt(r.SourceMetadataVersion, 10, 64)
+		if metaErr != nil || metaVersion <= 0 {
+			return CopyObjectResult{}, ErrInvalid
+		}
+		object, err = p.store.CopyObjectVersion(ctx, sourceBucket, destinationBucket, r.SourceKey, r.DestinationKey, generation, metaVersion)
+	} else {
+		object, err = p.store.CopyObject(ctx, sourceBucket, destinationBucket, r.SourceKey, r.DestinationKey, r.Metadata, r.MetadataDirective)
+	}
 	if err != nil {
 		return CopyObjectResult{}, normalizeGCS(err)
 	}

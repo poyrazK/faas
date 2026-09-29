@@ -178,9 +178,16 @@ func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destina
 	if err != nil {
 		return CopyObjectResult{}, err
 	}
+	if len(r.SourceVersion) > 1024 || r.SourceMetadataVersion != "" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	copySource := url.PathEscape(sourceBucket + "/" + r.SourceKey)
+	if r.SourceVersion != "" {
+		copySource += "?versionId=" + url.QueryEscape(r.SourceVersion)
+	}
 	in := &s3.CopyObjectInput{
 		Bucket:             aws.String(destinationBucket),
-		CopySource:         aws.String(url.PathEscape(sourceBucket + "/" + r.SourceKey)),
+		CopySource:         aws.String(copySource),
 		Key:                aws.String(r.DestinationKey),
 		Metadata:           r.Metadata.Metadata,
 		ContentType:        stringPtrOrNil(r.Metadata.ContentType),
