@@ -35,11 +35,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -62,7 +63,7 @@ type queuePoller struct {
 	// subsequent Poll sees consistent state while the durable row
 	// transition is committed.
 	mu            sync.Mutex
-	itemsInFlight map[string]struct{}
+	itemsInFlight map[string]int
 }
 
 // newQueuePoller constructs the queue poller for a kind=queue
@@ -81,7 +82,7 @@ func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger, ops *wire.OpsMetrics) (t
 		pool:          pool,
 		source:        t.Source.String,
 		ops:           ops,
-		itemsInFlight: map[string]struct{}{},
+		itemsInFlight: map[string]int{},
 	}
 	return q, nil
 }
@@ -92,13 +93,152 @@ func (q *queuePoller) Kind() string { return "queue" }
 
 // Poll reads the next batch of `invocations` rows whose (app_id,
 // source) matches this trigger, ordered by created_at ASC. The
-// dispatcher honours batch_size_max AFTER this returns — we
-// always pull up to the broker-natural default of 256 (matches the
-// old queue receive batch size from drain.go).
+// named queue poller caps claims at batch_size_max so a record excluded by
+// closeBatch does not hold a work-lane or fairness slot. The delayed-task
+// compatibility poller retains the older 256-row maximum.
 //
 // Returned SourceRecord.ItemIdentifier is the invocation id (a
 // UUID); the dispatch tick uses it for the durable Ack/Nack transition.
 func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
+	if q.source == "queue" && t.Slug != "" {
+		return q.pollNamedQueue(ctx, t)
+	}
+	return q.pollLegacyQueue(ctx, t)
+}
+
+// A named queue may mix keyed and ordinary rows in one trigger batch. Read
+// candidates without row locks, then claim each through the store so keyed
+// rows acquire the same lane/fairness locks as the generic invocation drain.
+// ClaimQueueTriggerInvocation also serializes the queue binding cap.
+func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollResult {
+	pollLimit := 256
+	if t.BatchSizeMax > 0 && int(t.BatchSizeMax) < pollLimit {
+		pollLimit = int(t.BatchSizeMax)
+	}
+	const candidateLimit = 1024
+	rows, err := q.pool.Query(ctx, `select i.id::text from invocations i
+		left join trigger_records tr on tr.trigger_id = $3
+		  and tr.item_identifier = i.id::text
+		where i.app_id = $1 and i.source = 'queue' and i.state = 'pending'
+		  and i.due_at <= clock_timestamp()
+		  and (tr.id is null
+		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from invocations older
+		      where older.app_id = i.app_id
+		        and older.work_policy_name = i.work_policy_name
+		        and older.work_key_digest = i.work_key_digest
+		        and older.work_sequence < i.work_sequence
+		        and older.state in ('pending','dispatching')))
+		  and (i.work_fairness_limit is null or (
+		      select count(*) from invocations active
+		      where active.app_id = i.app_id
+		        and active.work_policy_name = i.work_policy_name
+		        and active.work_fairness_digest = i.work_fairness_digest
+		        and active.state = 'dispatching'
+		        and active.lease_expires_at > clock_timestamp()
+		  ) < i.work_fairness_limit)
+		  and (i.queue_name = $2 or (i.queue_name = ''
+		      and i.work_policy_name is null and not exists (
+		      select 1 from triggers other where other.app_id = $1
+		        and other.kind = 'queue' and other.enabled and other.source = 'queue'
+		        and other.id <> $3)))
+		order by i.created_at, i.id limit $4`, t.AppID, t.Slug, t.ID, candidateLimit)
+	if err != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", err)}
+	}
+	ids := make([]string, 0, candidateLimit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return PollResult{Error: fmt.Errorf("poller_queue: scan named candidate: %w", err)}
+		}
+		ids = append(ids, id)
+	}
+	readErr := rows.Err()
+	rows.Close()
+	if readErr != nil {
+		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", readErr)}
+	}
+	store := state.NewPgStore(q.pool)
+	out := make([]SourceRecord, 0, min(pollLimit, len(ids)))
+	claimedAttempts := make(map[string]int, min(pollLimit, len(ids)))
+	totalPayloadBytes := 0
+	for _, id := range ids {
+		claimed, err := store.ClaimQueueTriggerInvocation(ctx, id, t.ID.String(), t.AppID.String(), t.Slug, 600)
+		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if errors.Is(err, state.ErrQuotaExceeded) {
+			if q.ops != nil {
+				q.ops.ObserveQueueBindingConcurrencyThrottled(t.AppID.String(), t.Slug)
+			}
+			break
+		}
+		if err != nil {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			releaseErr := q.releaseNamedClaims(releaseCtx, claimedAttempts, t)
+			cancel()
+			if releaseErr != nil {
+				err = errors.Join(err, releaseErr)
+			}
+			return PollResult{Error: fmt.Errorf("poller_queue: claim named candidate %s: %w", id, err)}
+		}
+		if t.PayloadMaxBytes > 0 && totalPayloadBytes+len(claimed.Payload) > int(t.PayloadMaxBytes) && len(out) > 0 {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			releaseErr := q.releaseNamedClaims(releaseCtx, map[string]int{claimed.ID: claimed.Attempts}, t)
+			cancel()
+			if releaseErr != nil {
+				return PollResult{Error: releaseErr}
+			}
+			break
+		}
+		out = append(out, SourceRecord{
+			ItemIdentifier: claimed.ID, Payload: claimed.Payload,
+			Headers:  parseJSONHeaders(string(claimed.Headers)),
+			Metadata: map[string]any{}, ReceivedAt: claimed.CreatedAt,
+		})
+		claimedAttempts[claimed.ID] = claimed.Attempts
+		totalPayloadBytes += len(claimed.Payload)
+		if len(out) == pollLimit {
+			break
+		}
+	}
+	q.mu.Lock()
+	for _, record := range out {
+		q.itemsInFlight[record.ItemIdentifier] = claimedAttempts[record.ItemIdentifier]
+	}
+	q.mu.Unlock()
+	return PollResult{Records: out}
+}
+
+// Poll has not handed these claims to the dispatcher yet. Release a partial
+// batch on a later claim error so those rows can be offered again promptly.
+func (q *queuePoller) releaseNamedClaims(ctx context.Context, attemptsByID map[string]int, t sqlc.Trigger) error {
+	if len(attemptsByID) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(attemptsByID))
+	attempts := make([]int, 0, len(attemptsByID))
+	for id, attempt := range attemptsByID {
+		ids = append(ids, id)
+		attempts = append(attempts, attempt)
+	}
+	_, err := q.pool.Exec(ctx, `with targets as (
+		select * from unnest($1::text[], $2::int[]) as target(id, attempt)
+	) update invocations i set state = 'pending', lease_expires_at = null
+	  from targets where i.id::text = targets.id and i.attempts = targets.attempt
+	    and i.app_id = $3 and i.source = 'queue' and i.queue_name in ($4, '')
+	    and i.state = 'dispatching'`, ids, attempts, t.AppID, t.Slug)
+	if err != nil {
+		return fmt.Errorf("poller_queue: release partial named claims: %w", err)
+	}
+	return nil
+}
+
+func (q *queuePoller) pollLegacyQueue(ctx context.Context, t sqlc.Trigger) PollResult {
 	const pollLimit = 256
 	tx, err := q.pool.Begin(ctx)
 	if err != nil {
@@ -106,46 +246,6 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	limit := pollLimit
-	if q.source == "queue" && t.Slug != "" {
-		var maxConcurrency int
-		err := tx.QueryRow(ctx, `
-			select max_concurrency
-			  from queue_bindings
-			 where app_id = $1
-			   and queue_name = $2
-			   and enabled
-			 for update`, t.AppID, t.Slug).Scan(&maxConcurrency)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return PollResult{Error: fmt.Errorf("poller_queue: query binding cap: %w", err)}
-		}
-		if err == nil {
-			var active int64
-			if err := tx.QueryRow(ctx, `
-				select count(*)
-				  from invocations
-				 where app_id = $1
-				   and source = $2
-				   and queue_name = $3
-				   and state = 'dispatching'
-				   and lease_expires_at is not null
-				   and lease_expires_at > now()`, t.AppID, q.source, t.Slug).Scan(&active); err != nil {
-				return PollResult{Error: fmt.Errorf("poller_queue: count binding leases: %w", err)}
-			}
-			remaining := maxConcurrency - int(active)
-			if remaining <= 0 {
-				if err := tx.Commit(ctx); err != nil {
-					return PollResult{Error: fmt.Errorf("poller_queue: commit throttled claim: %w", err)}
-				}
-				if q.ops != nil {
-					q.ops.ObserveQueueBindingConcurrencyThrottled(t.AppID.String(), t.Slug)
-				}
-				return PollResult{Records: []SourceRecord{}}
-			}
-			if remaining < limit {
-				limit = remaining
-			}
-		}
-	}
 	rows, err := tx.Query(ctx,
 		`with claimed as (
 			select i.id
@@ -183,10 +283,10 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			       attempts = i.attempts + 1
 			  from claimed c
 			 where i.id = c.id
-			 returning i.id::text, i.payload::text, i.headers::text,
-			           '{}'::text as metadata, i.created_at
+			returning i.id::text, i.payload::text, i.headers::text,
+			           '{}'::text as metadata, i.created_at, i.attempts
 		)
-		select id, payload, headers, metadata, created_at
+		select id, payload, headers, metadata, created_at, attempts
 		  from updated
 		 order by created_at asc, id asc`,
 		t.ID, t.AppID, q.source, limit, t.Slug,
@@ -196,6 +296,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	}
 	defer rows.Close()
 	out := make([]SourceRecord, 0, limit)
+	claimedAttempts := make(map[string]int, limit)
 	for rows.Next() {
 		var (
 			idStr     string
@@ -203,8 +304,9 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			headers   string
 			metadata  string
 			createdAt pgtype.Timestamptz
+			attempts  int
 		)
-		if err := rows.Scan(&idStr, &payload, &headers, &metadata, &createdAt); err != nil {
+		if err := rows.Scan(&idStr, &payload, &headers, &metadata, &createdAt, &attempts); err != nil {
 			return PollResult{Error: fmt.Errorf("poller_queue: scan: %w", err)}
 		}
 		out = append(out, SourceRecord{
@@ -214,6 +316,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			Metadata:       parseJSONMetadata(metadata),
 			ReceivedAt:     createdAt.Time,
 		})
+		claimedAttempts[idStr] = attempts
 	}
 	if err := rows.Err(); err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: rows iter: %w", err)}
@@ -225,7 +328,7 @@ func (q *queuePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	// trigger sees a consistent set.
 	q.mu.Lock()
 	for _, r := range out {
-		q.itemsInFlight[r.ItemIdentifier] = struct{}{}
+		q.itemsInFlight[r.ItemIdentifier] = claimedAttempts[r.ItemIdentifier]
 	}
 	q.mu.Unlock()
 	return PollResult{Records: out}
@@ -276,33 +379,49 @@ func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []st
 	return q.Nack(ctx, t, ids, reason)
 }
 
+func (q *queuePoller) currentClaims(ids []string) ([]string, []int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	claimedIDs := make([]string, 0, len(ids))
+	attempts := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if attempt := q.itemsInFlight[id]; attempt > 0 {
+			claimedIDs = append(claimedIDs, id)
+			attempts = append(attempts, attempt)
+		}
+	}
+	return claimedIDs, attempts
+}
+
 func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string) error {
-	if len(ids) == 0 {
+	claimedIDs, attempts := q.currentClaims(ids)
+	if len(claimedIDs) == 0 {
 		return nil
 	}
 	_, err := q.pool.Exec(ctx, `
-		with finalized_records as (
-			update trigger_records
-			   set state = $1,
-			       attempts = attempts + case when $1 = 'dead_letter' and state <> 'dead_letter' then 1 else 0 end,
-			       last_error = case when $1 = 'dead_letter' then nullif($9, '') else last_error end,
-			       last_dispatched_at = now()
-			 where trigger_id = $2
-			   and item_identifier = any($3::text[])
-			   and state <> $1
-			 returning id
-		)
-		update invocations
+		with targets as (
+			select * from unnest($3::text[], $10::int[]) as target(id, attempt)
+		), finalized_invocations as (
+		update invocations i
 		   set state = $4,
 		       outcome = $5,
 		       result = $6::jsonb,
 		       completed_at = now(),
 		       lease_expires_at = null,
 		       last_error = $9
-		 where id::text = any($3::text[])
-		   and app_id = $7
-		   and source = $8
-		   and state = 'dispatching'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, lastError)
+		  from targets
+		 where i.id::text = targets.id and i.attempts = targets.attempt
+		   and i.app_id = $7 and i.source = $8 and i.state = 'dispatching'
+		 returning i.id::text
+		)
+		update trigger_records tr
+		   set state = $1,
+		       attempts = tr.attempts + case when $1 = 'dead_letter' and tr.state <> 'dead_letter' then 1 else 0 end,
+		       last_error = case when $1 = 'dead_letter' then nullif($9, '') else tr.last_error end,
+		       last_dispatched_at = now()
+		  from finalized_invocations finalized
+		 where tr.trigger_id = $2 and tr.item_identifier = finalized.id
+		   and tr.state <> $1`, recordState, t.ID, claimedIDs, invocationState, outcome, result, t.AppID, q.source, lastError, attempts)
 	if err != nil {
 		return fmt.Errorf("poller_queue: finish invocations: %w", err)
 	}
@@ -310,10 +429,14 @@ func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids
 }
 
 func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
-	if len(ids) == 0 {
+	claimedIDs, attempts := q.currentClaims(ids)
+	if len(claimedIDs) == 0 {
 		return nil
 	}
 	_, err := q.pool.Exec(ctx, `
+		with targets as (
+			select * from unnest($2::text[], $6::int[]) as target(id, attempt)
+		)
 		update invocations i
 		   set state = 'pending',
 		       outcome = null,
@@ -326,10 +449,11 @@ func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids 
 		       ), now() + interval '1 second'),
 		       lease_expires_at = null,
 		       last_error = $4
-		 where i.id::text = any($2::text[])
+		  from targets
+		 where i.id::text = targets.id and i.attempts = targets.attempt
 		   and i.app_id = $3
 		   and i.source = $5
-		   and i.state = 'dispatching'`, t.ID, ids, t.AppID, reason, q.source)
+		   and i.state = 'dispatching'`, t.ID, claimedIDs, t.AppID, reason, q.source, attempts)
 	if err != nil {
 		return fmt.Errorf("poller_queue: retry invocations: %w", err)
 	}

@@ -432,7 +432,31 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		return state.Invocation{}, "", problem
 	}
 	if work != nil && resolvedQueueName != "" {
-		return state.Invocation{}, "", api.ErrValidation("work policies require an unnamed queue without an active queue consumer")
+		// A named keyed row is owned by the queue trigger poller. Require an
+		// enabled push consumer so it cannot be accepted into an arbitrary name
+		// that the generic invocation drain deliberately excludes.
+		bound := false
+		bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
+		if err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("look up queue binding")
+		}
+		for _, binding := range bindings {
+			bound = bound || (binding.Enabled && binding.Mode == "push" && binding.QueueName == resolvedQueueName)
+		}
+		if !bound {
+			triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
+			if err != nil {
+				return state.Invocation{}, "", api.ErrCapacity("look up queue consumer")
+			}
+			for _, trigger := range triggers {
+				bound = bound || (trigger.Enabled && trigger.Kind == string(api.TriggerKindQueue) &&
+					trigger.Source.Valid && trigger.Source.String == string(state.InvocationQueue) &&
+					trigger.Slug == resolvedQueueName)
+			}
+		}
+		if !bound {
+			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
+		}
 	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)
 	if err != nil {

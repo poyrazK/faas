@@ -163,7 +163,26 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	bound := e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d6"`)},
 	}, nil)
-	assertProblem(t, bound, http.StatusBadRequest, api.CodeValidation)
+	if bound.Code != http.StatusCreated {
+		t.Fatalf("named keyed queue send = %d %s", bound.Code, bound.Body.String())
+	}
+	var boundReceipt api.QueueSendResponse
+	if err := json.Unmarshal(bound.Body.Bytes(), &boundReceipt); err != nil {
+		t.Fatal(err)
+	}
+	boundRow, err := e.store.InvocationByID(context.Background(), boundReceipt.ID)
+	if err != nil || boundRow.QueueName != "documents" || boundRow.WorkPolicyName != "document-index" {
+		t.Fatalf("named keyed queue row = %+v, err=%v", boundRow, err)
+	}
+	if _, err := e.store.CreateQueueBinding(context.Background(), state.QueueBinding{
+		AccountID: e.acct.ID, AppID: app, Name: "manual", QueueName: "manual",
+		Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertProblem(t, e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+		QueueName: "manual", Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d7"`)},
+	}, nil), http.StatusBadRequest, api.CodeValidation)
 	bad := e.do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`{"not":"scalar"}`)},
 	}, nil)

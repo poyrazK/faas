@@ -15090,7 +15090,7 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '' or i.work_policy_name is not null)
+		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
@@ -15165,7 +15165,7 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '' or i.work_policy_name is not null)
+		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t

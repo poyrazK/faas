@@ -32,13 +32,13 @@ gregale invoke my-app --async --payload '{"document_id":"d1"}' \
 
 The `work.key` API field and CLI `--work-key` accept a bounded JSON string,
 number, or boolean. Types are distinct: `"1"` and `1` use different lanes.
-Unnamed queue sends and application inbox messages accept the same `work`
-field. Use `gregale queue send` or `gregale send` with `--work-policy`,
-`--work-key`, and optional `--work-fairness-key` to coordinate those messages
-with other work in the same lane. These messages use the keyed invocation
-dispatcher and are delivered individually. A nonempty `queue_name` or an
-active queue consumer rejects a keyed send; named queue trigger batching
-needs a shared claim ledger before it can use work policies.
+Queue sends and application inbox messages accept the same `work` field. Use
+`gregale queue send` or `gregale send` with `--work-policy`, `--work-key`, and
+optional `--work-fairness-key` to coordinate those messages with other work in
+the same lane. Unnamed messages use the keyed invocation dispatcher and are
+delivered individually. Named messages require an enabled push queue consumer;
+the queue poller shares lane and fairness reservations with the dispatcher
+while preserving the consumer's batch and retry behavior.
 
 `POST /v1/apps/{slug}/delayed-tasks` also accepts `work` with the same
 `policy`, `key`, and optional `fairness_key` fields. Its scheduled time remains
@@ -112,6 +112,6 @@ side effects with an application idempotency key, version predicate, or
 external fencing mechanism. Delivery remains at least once.
 
 This release applies keyed policies to explicit async invocations, delayed
-tasks, internal event subscriptions, and unnamed queue or inbox sends.
-Named queue consumers, broker producers, and independent app tasks still
-use their existing execution behavior.
+tasks, internal event subscriptions, and queue or inbox sends. External broker
+producers and independent app tasks still use their existing execution
+behavior.

@@ -1,6 +1,6 @@
 # ADR-348 · Application-keyed background work policies
 
-- **Status:** accepted; invocation, event, and unnamed queue producers implemented; trigger adapters pending
+- **Status:** accepted; invocation, event, and internal queue producers implemented; broker and job adapters pending
 - **Date:** 2026-09-28
 - **Decision:** Define one named, app-scoped work policy for durable invocation
   producers. Producers resolve an application key at admission and persist the
@@ -69,8 +69,10 @@ when the invocation enters the work ledger.
    the new row and its `available_at`/`expires_at` in one transaction. A replay
    of the same event must not supersede newer work.
 3. Claim locks the same lane, checks the lane and optional fairness cap, then
-   atomically reserves the existing account async quota and changes the chosen
-   row to `dispatching`. Every claim mints a token or increments a generation.
+   atomically reserves the relevant dispatcher capacity and changes the chosen
+   row to `dispatching`. The generic drain uses the account async quota;
+   named queue consumers use their binding concurrency cap. Every claim mints
+   a token or increments a generation.
    Completion, retry, and failure require that claim identity. A stale receipt
    is rejected without changing a newer claim or releasing its capacity.
 4. Terminal, retry, and expired-lease transitions release all reservations in
@@ -113,15 +115,16 @@ Policy-tagged delayed tasks use the invocation drain, including when a queue
 trigger is bound to delayed tasks. The queue poller excludes these rows, so it
 cannot bypass the keyed claim gate. These tasks are delivered individually.
 
-Unnamed queue-send and application-inbox messages now enter the keyed
-invocation ledger and use its claim gate. The API rejects a work policy when
-a named queue is requested or an active queue consumer selects a named queue.
-Those messages retain their existing trigger and batch contracts. An active
-consumer added after a keyed message is admitted does not take over that row;
-the invocation drain continues to own it.
+Unnamed queue-send and application-inbox messages enter the keyed invocation
+ledger and use its generic claim gate. An active consumer added after an
+unnamed keyed message is admitted does not take over that row; the invocation
+drain continues to own it. Named queue messages also enter that ledger, but
+the queue poller claims them with the same lane and fairness locks before
+forming a trigger batch. The binding concurrency cap still applies. Queue
+acknowledgements and retries are fenced by the invocation claim attempt.
 
-Named queue-trigger messages and external broker records need a shared
-work-item claim ledger before policy fields can be exposed on those producers.
+External broker records need a shared work-item claim ledger before policy
+fields can be exposed on those producers.
 The trigger path now persists a claim generation and a ten-minute lease on
 `trigger_records`; retry, completion, and dead-letter transitions for broker
 records reject an expired or superseded claim. Queue polling can recover an
