@@ -805,6 +805,7 @@ type MemStore struct {
 	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments                  map[string]ProjectEnvironment
 	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
+	projectEnvironmentCloneOperations    map[string]ProjectEnvironmentCloneOperation
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
@@ -1305,6 +1306,7 @@ func NewMemStore() *MemStore {
 		projectReleaseSets:                   map[string]ProjectReleaseSet{},
 		activeProjectReleaseSets:             map[string]string{},
 		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
+		projectEnvironmentCloneOperations:    map[string]ProjectEnvironmentCloneOperation{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
