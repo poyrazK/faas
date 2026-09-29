@@ -48,6 +48,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if securityQuarantineErr(dep) != nil {
+		return ResolvedAppTaskRuntime{}, fmt.Errorf("%w: deployment is security quarantined", state.ErrAppTaskDeploymentUnavailable)
+	}
 	acct, err := e.store.AccountByID(ctx, request.AccountID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)

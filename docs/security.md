@@ -237,6 +237,9 @@ decisions without putting IP addresses or paths in metric labels.
 
 When an enforce-policy app is parked after live security evidence regresses,
 `GET /v1/apps/{slug}/security` reports the quarantined deployment and digest.
+While it is quarantined, the deployment does not boot from any source: public
+traffic, service-to-service calls, crons, warm floors, prewarm, warm pools and
+app tasks are all refused with `security_posture_blocked`.
 After deploying a newer image, use `POST /v1/apps/{slug}/security/recover` with
 that deployment id. Recovery restores traffic only when every live canary has
 fresh, complete, digest-matched scan evidence with zero high, critical, or

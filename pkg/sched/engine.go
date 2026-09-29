@@ -2723,6 +2723,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		dep = explicitDep
 	}
+	if err := securityQuarantineErr(dep); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if mode == "" || mode == string(state.InstanceModeNormal) {
 		mode = instanceModeForApp(app)
 	}
@@ -5884,6 +5888,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
+	}
+	if err := securityQuarantineErr(dep); err != nil {
+		return err
 	}
 	primeLayer := layerKey(dep.RootfsKey, dep.ID)
 	if executionModeForApp(app) == api.ExecutionModeJob {
