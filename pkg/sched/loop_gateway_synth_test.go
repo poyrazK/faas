@@ -23,15 +23,16 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 			t.Fatalf("path = %q, want dispatch route", r.URL.Path)
 		}
 		var got struct {
-			InvocationID string            `json:"invocation_id"`
-			AppID        string            `json:"app_id"`
-			Headers      map[string]string `json:"headers"`
-			BodyB64      string            `json:"body_b64"`
+			PlatformTenantID string            `json:"platform_tenant_id"`
+			InvocationID     string            `json:"invocation_id"`
+			AppID            string            `json:"app_id"`
+			Headers          map[string]string `json:"headers"`
+			BodyB64          string            `json:"body_b64"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if got.InvocationID != "inv-1" || got.AppID != "app-1" {
+		if got.InvocationID != "inv-1" || got.AppID != "app-1" || got.PlatformTenantID != "tenant-1" {
 			t.Fatalf("identity = %#v", got)
 		}
 		if got.Headers["content-type"] != "application/json" {
@@ -47,13 +48,14 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 
 	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
 	got, err := h.Invoke(context.Background(), "app-1", state.Invocation{
-		ID:      "inv-1",
-		AppID:   "app-1",
-		Source:  state.InvocationAsyncInvoke,
-		Method:  http.MethodPost,
-		Path:    "/e2e",
-		Headers: json.RawMessage(`{"content-type":"application/json"}`),
-		Payload: []byte(`{"hello":"world"}`),
+		PlatformTenantID: "tenant-1",
+		ID:               "inv-1",
+		AppID:            "app-1",
+		Source:           state.InvocationAsyncInvoke,
+		Method:           http.MethodPost,
+		Path:             "/e2e",
+		Headers:          json.RawMessage(`{"content-type":"application/json"}`),
+		Payload:          []byte(`{"hello":"world"}`),
 	})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)

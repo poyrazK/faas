@@ -112,7 +112,7 @@ func (b *tenantIngressBackend) Lookup(ctx context.Context, _ string) (gateway.Ap
 	return gateway.App{ID: app.ID, AccountID: app.AccountID, Plan: account.Plan,
 		RequireAuthn: app.RequireAuthn, PlatformTenantRequired: app.PlatformTenantRequired,
 		ConsumerAuthMode: string(app.ConsumerAuthMode), PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode},
-		MaxConcurrency: 1}, true
+		MaxConcurrency: 1, RequestInvocationsEnabled: app.AcceptsRequestInvocations()}, true
 }
 
 func (b *tenantIngressBackend) Pick(string) gateway.PickResult {

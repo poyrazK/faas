@@ -5449,6 +5449,77 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/platform-tenant-self/invocations/{id}:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfInvocation
+      summary: Read this tenant's invocation status and result.
+      description: Requires a tenant-bound token with platform_tenant:invocations:read. Returns this customer's status and guest result without original request headers, payload or owner metadata. Foreign, unbound and missing invocations return the same 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Invocation whose status and result are requested.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current status and result for the authenticated customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantInvocationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/invocations/{id}/cancel:
+    post:
+      tags: [platform-tenants]
+      operationId: cancelPlatformTenantSelfInvocation
+      summary: Cancel this tenant's pending or dispatching invocation.
+      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Cancels this customer's pending or dispatching invocation; repeated cancellation is safe. An already running request may finish and its side effects cannot be undone. Foreign, unbound and missing invocations return the same 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Invocation to cancel for the authenticated customer.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Invocation state after the cancellation request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantInvocationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/invocations/{id}/replay:
+    post:
+      tags: [platform-tenants]
+      operationId: replayPlatformTenantSelfInvocation
+      summary: Replay this tenant's failed or dead-lettered invocation.
+      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Original failed or dead-lettered invocation to replay.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          description: Optional key scoped to this tenant and original invocation.
+          schema: { type: string }
+      responses:
+        '202':
+          description: Durable replay acceptance with a tenant-self status URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/platform-tenant-self/usage:
     get:
       tags: [platform-tenants]
@@ -25901,6 +25972,22 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    PlatformTenantInvocationResponse:
+      description: Status and result for customer work; omits account, deployment, original payload and headers.
+      type: object
+      required: [id, state, method, path, attempts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        method: { type: string }
+        path: { type: string }
+        attempts: { type: integer }
+        result: { description: JSON result returned by the guest, when available. }
+        last_error: { type: string }
+        outcome: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+
     PlatformTenantListResponse:
       description: A bounded page of account-level customers.
       type: object
@@ -25922,7 +26009,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -25936,7 +26023,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -25953,7 +26040,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -39079,6 +39166,7 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        platform_tenant_id: { type: string, format: uuid, description: Immutable verified downstream customer identity for async HTTP work. }
         account_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         source: { type: string, enum: [async_invoke, inbound_webhook, queue, delayed_task, cron, replay] }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue." }

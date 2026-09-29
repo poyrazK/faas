@@ -141,6 +141,7 @@ func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 		t.Fatal("usage response is not scoped to Alice")
 	}
 	request("DELETE", path, aliceV2, "", nil, http.StatusOK)
+	testCustomerPlatformQueuedWork(t, e, backend, address, alice, bob, aliceV2, bobKey)
 }
 
 type starterOperator struct {

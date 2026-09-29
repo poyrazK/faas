@@ -452,6 +452,11 @@ func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.
 // the HTTP response; that response becomes the Invocation.Result the
 // caller writes back via Store.CompleteInvocation.
 func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	var err error
+	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
+	if err != nil {
+		return inv, err
+	}
 	if isDebugMirrorReplayInvocation(inv) {
 		out, _, err := a.replayMirror(ctx, appID, inv)
 		return out, err
@@ -467,6 +472,11 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 }
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	var err error
+	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	if isDebugMirrorReplayInvocation(inv) {
 		return a.replayMirror(ctx, appID, inv)
 	}
@@ -698,6 +708,11 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	var err error
+	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	if target.InstanceID == "" || target.NodeID == "" {
 		return inv, 0, fmt.Errorf("gateway synth: pre-woken target is incomplete")
 	}
@@ -789,6 +804,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	// invocation identity (or any deployment claim).
 	identity := target.PlatformIdentity("", inv.ID)
 	identity.AppID = inv.AppID
+	identity.PlatformTenantID = inv.PlatformTenantID
 	identity.ApplyGuestHeaders(req.Header)
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))

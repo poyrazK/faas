@@ -1168,6 +1168,8 @@ from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_hostname_policy_response import PlatformTenantHostnamePolicyResponse
 from .platform_tenant_hostname_verified_webhook_payload import PlatformTenantHostnameVerifiedWebhookPayload
+from .platform_tenant_invocation_response import PlatformTenantInvocationResponse
+from .platform_tenant_invocation_response_state import PlatformTenantInvocationResponseState
 from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_offboarding_apply_response import PlatformTenantOffboardingApplyResponse
 from .platform_tenant_offboarding_plan_actions import PlatformTenantOffboardingPlanActions
@@ -3031,6 +3033,8 @@ __all__ = (
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantHostnamePolicyResponse",
     "PlatformTenantHostnameVerifiedWebhookPayload",
+    "PlatformTenantInvocationResponse",
+    "PlatformTenantInvocationResponseState",
     "PlatformTenantListResponse",
     "PlatformTenantOffboardingApplyResponse",
     "PlatformTenantOffboardingPlanActions",

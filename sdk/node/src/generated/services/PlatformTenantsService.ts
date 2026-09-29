@@ -15,6 +15,7 @@ import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhook
 import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
+import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePlatformTenantAccessTokenRequest.js';
@@ -36,6 +37,7 @@ import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformT
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
+import type { PlatformTenantInvocationResponse } from '../models/PlatformTenantInvocationResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformTenantOffboardingApplyResponse.js';
 import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
@@ -1900,6 +1902,96 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's invocation status and result.
+   * Requires a tenant-bound token with platform_tenant:invocations:read. Returns this customer's status and guest result without original request headers, payload or owner metadata. Foreign, unbound and missing invocations return the same 404.
+   * @returns PlatformTenantInvocationResponse Current status and result for the authenticated customer.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfInvocation({
+    id,
+  }: {
+    /**
+     * Invocation whose status and result are requested.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantInvocationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/invocations/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Cancel this tenant's pending or dispatching invocation.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage. Cancels this customer's pending or dispatching invocation; repeated cancellation is safe. An already running request may finish and its side effects cannot be undone. Foreign, unbound and missing invocations return the same 404.
+   * @returns PlatformTenantInvocationResponse Invocation state after the cancellation request.
+   * @throws ApiError
+   */
+  public static cancelPlatformTenantSelfInvocation({
+    id,
+  }: {
+    /**
+     * Invocation to cancel for the authenticated customer.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantInvocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/invocations/{id}/cancel',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replay this tenant's failed or dead-lettered invocation.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+   * @returns AsyncInvokeResponse Durable replay acceptance with a tenant-self status URL.
+   * @throws ApiError
+   */
+  public static replayPlatformTenantSelfInvocation({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Original failed or dead-lettered invocation to replay.
+     */
+    id: string,
+    /**
+     * Optional key scoped to this tenant and original invocation.
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AsyncInvokeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/invocations/{id}/replay',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
       },

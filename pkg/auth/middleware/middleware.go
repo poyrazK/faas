@@ -765,6 +765,16 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if strings.HasPrefix(suffix, "invocations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" && (parts[2] == "cancel" || parts[2] == "replay") {
+			return method == http.MethodPost
+		}
+		return false
+	}
 	if method == http.MethodPost && suffix == "hostnames" {
 		return true
 	}

@@ -603,6 +603,7 @@ export type { PlatformTenantCustomerLifecycleWebhookPayload } from './PlatformTe
 export type { PlatformTenantDetailResponse } from './PlatformTenantDetailResponse.js';
 export type { PlatformTenantHostnamePolicyResponse } from './PlatformTenantHostnamePolicyResponse.js';
 export type { PlatformTenantHostnameVerifiedWebhookPayload } from './PlatformTenantHostnameVerifiedWebhookPayload.js';
+export type { PlatformTenantInvocationResponse } from './PlatformTenantInvocationResponse.js';
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
 export type { PlatformTenantOffboardingApplyResponse } from './PlatformTenantOffboardingApplyResponse.js';
 export type { PlatformTenantOffboardingPlanActions } from './PlatformTenantOffboardingPlanActions.js';

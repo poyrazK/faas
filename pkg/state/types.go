@@ -3909,11 +3909,13 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID         string           `json:"id"`
-	AppID      string           `json:"app_id"`
-	AccountID  string           `json:"account_id"`
-	InstanceID string           `json:"instance_id,omitempty"`
-	Source     InvocationSource `json:"source"`
+	ID        string `json:"id"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	// PlatformTenantID is immutable admission identity, never read from guest headers.
+	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
+	InstanceID       string           `json:"instance_id,omitempty"`
+	Source           InvocationSource `json:"source"`
 	// QueueName scopes queue-source invocations to a first-class queue
 	// binding. Empty preserves the legacy single per-app queue behavior.
 	QueueName      string          `json:"queue_name,omitempty"`

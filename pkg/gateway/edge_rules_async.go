@@ -62,6 +62,7 @@ type AsyncEdgeRuleMatcher interface {
 // Headers has already had credentials, hop-by-hop, and platform-owned fields
 // removed before it crosses this interface.
 type AsyncRouteRequest struct {
+	PlatformTenantID string
 	AppID            string
 	AccountID        string
 	OnSuccessWebhook string
@@ -149,6 +150,7 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
 		AppID:            app.ID,
 		AccountID:        app.AccountID,
+		PlatformTenantID: authenticatedFrom(r.Context()).PlatformTenantID,
 		OnSuccessWebhook: rule.OnSuccessWebhook,
 		OnFailureWebhook: rule.OnFailureWebhook,
 		RetryPolicy:      retryPolicy,
@@ -162,6 +164,10 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		switch {
+		case errors.Is(err, state.ErrPlatformTenantSuspended):
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before accepting new work"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
 		case errors.Is(err, state.ErrInvalidArgument):
 			status = http.StatusBadRequest
 		case errors.Is(err, state.ErrNotFound):
@@ -182,6 +188,9 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	}
 
 	statusURL := "/v1/invocations/" + accepted.ID
+	if authenticatedFrom(r.Context()).PlatformTenantID != "" {
+		statusURL = "/v1/platform-tenant-self/invocations/" + accepted.ID
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
 	if accepted.ReleaseID != "" {

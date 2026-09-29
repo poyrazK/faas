@@ -6985,7 +6985,7 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.override_readiness_probe, d.override_main_depends_on, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -7013,9 +7013,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.CreatedAt,
 			&i.Kind,
 			&i.SourcePath,
-			&i.SourceRoot,
 			&i.SourceBytes,
-			&i.SourceSha256,
 			&i.Handler,
 			&i.LogPath,
 			&i.ErrorCode,
@@ -7034,9 +7032,6 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.ScanStatus,
 			&i.ScannedAt,
 			&i.OverrideLivenessProbe,
-			&i.SecretReloadSignal,
-			&i.OverrideReadinessProbe,
-			&i.OverrideMainDependsOn,
 			&i.ParkedReason,
 			&i.ParkedAt,
 			&i.TrafficPercent,
@@ -7057,7 +7052,6 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.DeployedBy,
 			&i.PrNumber,
 			&i.RollbackOn5xx,
-			&i.DisableStartupCpuBoost,
 			&i.FirstWakeAt,
 			&i.First5xxWindowEndsAt,
 			&i.First5xxCount,
@@ -7085,9 +7079,24 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.SnapshotMissCount,
 			&i.SnapshotMissLastAt,
 			&i.SnapshotMissBackoffUntil,
+			&i.Workflows,
+			&i.SourceRoot,
+			&i.FullRootfsAllowAuto,
+			&i.FullRootfsOverride,
+			&i.SourceSha256,
 			&i.ApiHostingReceipt,
 			&i.InferredProfile,
+			&i.TrafficPercentExplicit,
 			&i.Revision,
+			&i.ServiceRolloutHandoff,
+			&i.ReleaseCommand,
+			&i.ReleaseCommandShell,
+			&i.DisableStartupCpuBoost,
+			&i.OverrideMainDependsOn,
+			&i.OverrideReadinessProbe,
+			&i.SecretReloadSignal,
+			&i.GithubSourceRef,
+			&i.GithubInstallationID,
 		); err != nil {
 			return nil, err
 		}
@@ -9743,7 +9752,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','aborting')
 `
@@ -9773,7 +9782,6 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.PartSizeBytes,
 		&i.PartCount,
 		&i.ContentType,
-		&i.ObjectMetadata,
 		&i.ProviderUploadID,
 		&i.CompletionParts,
 		&i.State,
@@ -9785,6 +9793,7 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ObjectMetadata,
 	)
 	return i, err
 }
@@ -9810,7 +9819,7 @@ AND (
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length($4::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
 `
 
 type ObjectMultipartClaimParams struct {
@@ -9848,7 +9857,6 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.PartSizeBytes,
 		&i.PartCount,
 		&i.ContentType,
-		&i.ObjectMetadata,
 		&i.ProviderUploadID,
 		&i.CompletionParts,
 		&i.State,
@@ -9860,6 +9868,7 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ObjectMetadata,
 	)
 	return i, err
 }
@@ -9877,7 +9886,7 @@ func (q *Queries) ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pg
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -9903,7 +9912,6 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.PartSizeBytes,
 			&i.PartCount,
 			&i.ContentType,
-			&i.ObjectMetadata,
 			&i.ProviderUploadID,
 			&i.CompletionParts,
 			&i.State,
@@ -9915,6 +9923,7 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.LastErrorCode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ObjectMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -9948,7 +9957,7 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -9977,7 +9986,6 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.PartSizeBytes,
 		&i.PartCount,
 		&i.ContentType,
-		&i.ObjectMetadata,
 		&i.ProviderUploadID,
 		&i.CompletionParts,
 		&i.State,
@@ -9989,6 +9997,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ObjectMetadata,
 	)
 	return i, err
 }
@@ -9996,7 +10005,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
 (id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
 `
 
 type ObjectMultipartInsertParams struct {
@@ -10038,7 +10047,6 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.PartSizeBytes,
 		&i.PartCount,
 		&i.ContentType,
-		&i.ObjectMetadata,
 		&i.ProviderUploadID,
 		&i.CompletionParts,
 		&i.State,
@@ -10050,12 +10058,13 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ObjectMetadata,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, object_metadata, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -10093,7 +10102,6 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.PartSizeBytes,
 			&i.PartCount,
 			&i.ContentType,
-			&i.ObjectMetadata,
 			&i.ProviderUploadID,
 			&i.CompletionParts,
 			&i.State,
@@ -10105,6 +10113,7 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.LastErrorCode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ObjectMetadata,
 		); err != nil {
 			return nil, err
 		}

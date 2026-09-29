@@ -609,6 +609,7 @@ export type { PlatformTenantCustomerLifecycleWebhookPayload } from './models/Pla
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
 export type { PlatformTenantHostnamePolicyResponse } from './models/PlatformTenantHostnamePolicyResponse.js';
 export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/PlatformTenantHostnameVerifiedWebhookPayload.js';
+export type { PlatformTenantInvocationResponse } from './models/PlatformTenantInvocationResponse.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantOffboardingApplyResponse } from './models/PlatformTenantOffboardingApplyResponse.js';
 export type { PlatformTenantOffboardingPlanActions } from './models/PlatformTenantOffboardingPlanActions.js';

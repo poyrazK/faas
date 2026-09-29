@@ -12,6 +12,14 @@ cp -R "$task_root/cmd/gregale/templates/customer-platform/." "$starter_dir/"
 export GREGALE_CUSTOMER_PLATFORM_DIR="$starter_dir"
 cd "$task_root"
 "${GO:-go}" test -p 1 ./pkg/state -count=1 \
-  -run 'TestPg(CreateAppPersistsPlatformTenantRequired|ProjectPlatformTenantPolicyLifecycle|ApplyProjectPlanPersistsPlatformTenantPolicy|PlatformTenantCrossAppLifecycle)$'
+  -run 'Test(MemPlatformTenantInvocationLifecycle|PgPlatformTenantInvocationLifecycle|PgPlatformTenantInvocationIdentityImmutable|PgCreateAppPersistsPlatformTenantRequired|PgProjectPlatformTenantPolicyLifecycle|PgApplyProjectPlanPersistsPlatformTenantPolicy|PgPlatformTenantCrossAppLifecycle)$'
 "${GO:-go}" test -p 1 ./cmd/apid -count=1 \
-  -run '^TestCustomerPlatformStarterTwoCustomerAcceptance$'
+  -run '^Test(CustomerPlatformStarterTwoCustomerAcceptance|PlatformTenantInvocationSelfService)$'
+
+"${GO:-go}" test -p 1 ./pkg/gateway ./cmd/gatewayd-internal -count=1 \
+  -run 'Test(ApplyEdgeRuleAsync|AsyncRoute|SynthAdapter)'
+"${GO:-go}" test -p 1 ./pkg/sched -count=1 \
+  -run '^Test(HTTPGatewaySynth|Drain_PlatformTenantSuspensionAndRetry)'
+
+"${GO:-go}" test -p 1 ./pkg/auth/middleware -count=1 \
+  -run 'Test(PlatformTenantInvocationPathsAllowed|RequireSession_PlatformTenantAccessTokenIsTenantSelfOnly)'

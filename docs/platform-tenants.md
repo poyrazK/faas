@@ -338,3 +338,45 @@ The project flag overrides the Compose declaration for the workloads selected by
 The tenant policy adds a gate to existing authentication settings. Project deploys retain the plan's operator-authentication defaults; configure the separate app gate with `gregale app my-api --no-require-authn` when customers should authenticate using their linked keys, hostnames, or JWTs. The project deploy command does not accept `--no-require-authn`.
 
 Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Account-scoped platform-tenant management requires the same MFA-gated account scopes as API consumer management; tenant-self read tokens are separate and remain limited to the tenant's own usage and finalized statements. Free plans do not expose the feature.
+
+
+## Tenant-aware background requests
+
+An existing `kind=async` edge rule can queue a customer-platform HTTP route
+(such as `POST /documents`) and return `202` before waking the app. The guest
+uses the same verified `x-faas-platform-tenant-id` and PostgreSQL tenant
+transaction as a synchronous request. No tenant ID belongs in the payload.
+An `Idempotency-Key` is scoped to app and verified tenant, so two customers may
+use the same key without sharing a job.
+
+The acceptance returns an invocation ID and a relative control API
+`status_url`. Use that URL on the Gregale control API origin with a separate
+tenant-bound access token. The `ck_...` app credential is used for enqueue;
+it does not authorize the control API. The owner issues these capabilities
+through the existing tenant access-token endpoint:
+
+| Capability | Endpoint |
+|---|---|
+| `platform_tenant:invocations:read` | `GET /v1/platform-tenant-self/invocations/{id}` |
+| `platform_tenant:invocations:manage` | `POST /v1/platform-tenant-self/invocations/{id}/cancel` |
+| `platform_tenant:invocations:manage` | `POST /v1/platform-tenant-self/invocations/{id}/replay` |
+
+A read response includes state, attempts, result and failure information. It
+omits the original payload, headers and owner metadata and is never cacheable.
+Missing, foreign and unbound invocations return the same 404. Replay accepts
+only failed or dead-lettered work, creates a fresh invocation with the original
+tenant and request, and supports an `Idempotency-Key` scoped to that original
+invocation. Automatic retries keep the same identity.
+
+Suspended customers may read and cancel existing work, but cannot enqueue or replay new work. Suspension holds new claims without using attempts or async quota. Resume makes
+pending work eligible on the next scheduler tick. Maximum-age deadlines still
+apply while suspended. Work already claimed may finish; cancellation of a
+running request cannot undo side effects. Applications should make repeated
+worker execution safe: a durable queue can redeliver after a lost response.
+
+This support covers deferred HTTP requests. Tenant-bound named queue batches,
+OCI Jobs and AppTasks are not supported by this delivery contract. The
+`test-customer-platform` gate exercises two real customers, queued requests,
+results, retry, replay, cancellation and suspension against PostgreSQL and the
+Node starter with a warm guest substitute. Native KVM delivery acceptance is
+still outstanding. See [ADR-376](adr/376-platform-tenant-async-invocations.md).

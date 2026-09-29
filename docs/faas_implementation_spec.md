@@ -1402,6 +1402,15 @@ on this PR landing.
 
 ---
 
+### 6.H. Customer platform deferred requests (ADR-376)
+
+Async HTTP ingress stores verified platform tenant identity separately from
+payload and headers. App-and-tenant idempotency, immutable ledger identity,
+tenant suspension at claim, synthetic delivery validation and tenant-self
+status/cancel/replay preserve the customer boundary through deferred execution.
+Work admitted before suspension may finish; pending work retains its existing
+maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md).
+
 ## 7. Networking
 
 - Public: the upstream Caddy/Cloudflare edge owns :80/:443; `gatewayd-public`

@@ -3473,13 +3473,14 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	}
 	dispatchCtx := pkgtrace.ExtractHeaders(ctx, headers)
 	dispatch := map[string]any{
-		"invocation_id": inv.ID,
-		"app_id":        appID,
-		"source":        string(inv.Source),
-		"method":        inv.Method,
-		"path":          inv.Path,
-		"headers":       headers,
-		"body_b64":      base64.StdEncoding.EncodeToString(inv.Payload),
+		"platform_tenant_id": inv.PlatformTenantID,
+		"invocation_id":      inv.ID,
+		"app_id":             appID,
+		"source":             string(inv.Source),
+		"method":             inv.Method,
+		"path":               inv.Path,
+		"headers":            headers,
+		"body_b64":           base64.StdEncoding.EncodeToString(inv.Payload),
 	}
 	if wake != nil {
 		dispatch["instance_id"] = wake.InstanceID

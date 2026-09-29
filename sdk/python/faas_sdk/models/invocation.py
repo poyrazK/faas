@@ -32,6 +32,8 @@ class Invocation:
     source: InvocationSource
     state: InvocationState
     created_at: datetime.datetime
+    platform_tenant_id: UUID | Unset = UNSET
+    """Immutable verified downstream customer identity for async HTTP work."""
     queue_name: str | Unset = UNSET
     """Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue."""
     method: str | Unset = UNSET
@@ -91,6 +93,10 @@ class Invocation:
         state: str = self.state
 
         created_at = self.created_at.isoformat()
+
+        platform_tenant_id: str | Unset = UNSET
+        if not isinstance(self.platform_tenant_id, Unset):
+            platform_tenant_id = str(self.platform_tenant_id)
 
         queue_name = self.queue_name
 
@@ -242,6 +248,8 @@ class Invocation:
                 "created_at": created_at,
             }
         )
+        if platform_tenant_id is not UNSET:
+            field_dict["platform_tenant_id"] = platform_tenant_id
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
         if method is not UNSET:
@@ -312,6 +320,13 @@ class Invocation:
         state = check_invocation_state(d.pop("state"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
+        platform_tenant_id: UUID | Unset
+        if isinstance(_platform_tenant_id, Unset):
+            platform_tenant_id = UNSET
+        else:
+            platform_tenant_id = UUID(_platform_tenant_id)
 
         queue_name = d.pop("queue_name", UNSET)
 
@@ -584,6 +599,7 @@ class Invocation:
             source=source,
             state=state,
             created_at=created_at,
+            platform_tenant_id=platform_tenant_id,
             queue_name=queue_name,
             method=method,
             path=path,

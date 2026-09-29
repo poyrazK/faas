@@ -6,6 +6,8 @@ CreatePlatformTenantAccessTokenResponseScopesItem = Literal[
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
     "platform_tenant:hostnames:manage",
+    "platform_tenant:invocations:manage",
+    "platform_tenant:invocations:read",
     "platform_tenant:statements:read",
     "platform_tenant:usage:read",
 ]
@@ -18,6 +20,8 @@ CREATE_PLATFORM_TENANT_ACCESS_TOKEN_RESPONSE_SCOPES_ITEM_VALUES: set[
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
     "platform_tenant:hostnames:manage",
+    "platform_tenant:invocations:manage",
+    "platform_tenant:invocations:read",
     "platform_tenant:statements:read",
     "platform_tenant:usage:read",
 }

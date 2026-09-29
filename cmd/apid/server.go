@@ -1476,6 +1476,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
+	mux.HandleFunc("GET /v1/platform-tenant-self/invocations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.getPlatformTenantSelfInvocation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.cancelPlatformTenantSelfInvocation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/replay", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.replayPlatformTenantSelfInvocation)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/usage", s.authLimited(s.requireScope(api.ScopesPlatformTenantUsageReadSurface...)(s.getPlatformTenantSelfUsage)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/activation", s.authLimited(s.requireScope(api.ScopesPlatformTenantActivationReadSurface...)(s.getPlatformTenantSelfActivation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/hostnames", s.authLimited(s.requireScope(api.ScopesPlatformTenantHostnamesManageSurface...)(s.createPlatformTenantSelfHostname)))

@@ -366,12 +366,15 @@ func TestHandleInvocationDispatch_RequiresPost(t *testing.T) {
 func TestHandleInvocationDispatch_DispatchesOnValidRequest(t *testing.T) {
 	srv, d := newSynthServer(t)
 	w := httptest.NewRecorder()
-	body := `{"invocation_id":"inv-2","app_id":"app-2"}`
+	body := `{"invocation_id":"inv-2","app_id":"app-2","platform_tenant_id":"tenant-2"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	srv.handleInvocationDispatch(w, r)
 	if len(d.invs) != 1 {
 		t.Fatalf("invocations = %d, want 1", len(d.invs))
+	}
+	if d.invs[0].PlatformTenantID != "tenant-2" {
+		t.Fatal("synthetic transport dropped tenant identity")
 	}
 	if w.Code != http.StatusOK {
 		t.Errorf("code = %d, want 200", w.Code)

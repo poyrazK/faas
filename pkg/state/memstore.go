@@ -12205,6 +12205,9 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
+	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
+		return Invocation{}, err
+	}
 	if inv.ID == "" {
 		inv.ID = newID()
 	}
@@ -12354,6 +12357,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, ErrConflict
+	}
+	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
+		return Invocation{}, ErrNotFound
 	}
 	now := time.Now()
 	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
@@ -24561,6 +24567,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	defer m.mu.Unlock()
 	inv, ok := m.invocations[id]
 	if !ok {
+		return Invocation{}, ErrNotFound
+	}
+	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, ErrNotFound
 	}
 	row, ok := m.accountAsyncQuota[inv.AccountID]

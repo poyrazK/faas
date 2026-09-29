@@ -15014,7 +15014,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15084,13 +15084,13 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 			 on_success_destination_id, on_failure_destination_id,
 			 work_policy_name, work_key_digest, work_expires_at,
 			 work_sequence, work_policy_revision, work_fairness_digest,
-			 work_fairness_limit)
+			 work_fairness_limit, platform_tenant_id)
 		values
 			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
 			 coalesce(nullif($6,''),'pending'), $7, $8,
 			 $9, $10, $11, $12, $13,
 			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27)
+			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid)
 		returning `+invocationSelectCols,
 		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
@@ -15099,7 +15099,7 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
 		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
 		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
-		nullableWorkFairnessLimit(inv.WorkFairnessLimit))
+		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID)
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -16317,6 +16317,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workPolicyRevision *int64
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
+	var platformTenantID *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16325,11 +16326,14 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID,
 	); err != nil {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
+	if platformTenantID != nil {
+		inv.PlatformTenantID = *platformTenantID
+	}
 	inv.QueueName = queueName
 	if workPolicyName != nil {
 		inv.WorkPolicyName = *workPolicyName
@@ -25430,6 +25434,13 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
+				return ErrPlatformTenantSuspended
+			}
+			if pgErr.ConstraintName == "invocation_platform_tenant_identity" ||
+				pgErr.ConstraintName == "invocation_platform_tenant_source" {
+				return ErrInvalidArgument
+			}
 			if pgErr.ConstraintName == "app_has_object_buckets" ||
 				pgErr.ConstraintName == "app_secret_managed_postgres_owner" {
 				return ErrConflict

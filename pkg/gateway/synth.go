@@ -442,12 +442,13 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 // function can branch on shape without re-parsing the dispatch
 // response.
 type invocationDispatchRequest struct {
-	InvocationID string            `json:"invocation_id"`
-	AppID        string            `json:"app_id"`
-	Source       string            `json:"source"` // async_invoke|queue|delayed_task|cron
-	Method       string            `json:"method"`
-	Path         string            `json:"path"`
-	Headers      map[string]string `json:"headers,omitempty"`
+	PlatformTenantID string            `json:"platform_tenant_id,omitempty"`
+	InvocationID     string            `json:"invocation_id"`
+	AppID            string            `json:"app_id"`
+	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method           string            `json:"method"`
+	Path             string            `json:"path"`
+	Headers          map[string]string `json:"headers,omitempty"`
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
@@ -519,13 +520,14 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
-		ID:      req.InvocationID,
-		AppID:   req.AppID,
-		Source:  state.InvocationSource(req.Source),
-		Method:  method,
-		Path:    path,
-		Payload: payload,
-		Headers: jsonOrEmpty(req.Headers),
+		PlatformTenantID: req.PlatformTenantID,
+		ID:               req.InvocationID,
+		AppID:            req.AppID,
+		Source:           state.InvocationSource(req.Source),
+		Method:           method,
+		Path:             path,
+		Payload:          payload,
+		Headers:          jsonOrEmpty(req.Headers),
 	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
