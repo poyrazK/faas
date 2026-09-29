@@ -138,11 +138,6 @@ jobs:
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false  # managed by the restore/save steps below
-
       # golangci-lint replaces bare gofmt + go vet with a curated set of
       # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
       # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
@@ -167,6 +162,14 @@ jobs:
           restore-keys: |
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
+      # Restore the module cache before setup-go downloads the requested
+      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
+      # a cache hit untar over the toolchain's existing files.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
       # repository accumulates baseline coverage; the table identifies tests
