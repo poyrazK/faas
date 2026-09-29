@@ -65,8 +65,11 @@ func testHTTPDataFields(scenario testScenario) []string {
 		case string:
 			for _, match := range testSecretReferencePattern.FindAllString(value, -1) {
 				key := match[2 : len(match)-1]
-				if field, ok := strings.CutPrefix(key, "data."); ok && testTriggerKeyPattern.MatchString(field) {
-					fields[field] = true
+				if field, ok := strings.CutPrefix(key, "data."); ok {
+					field = strings.TrimSuffix(field, ".string")
+					if testTriggerKeyPattern.MatchString(field) {
+						fields[field] = true
+					}
 				}
 			}
 		case map[string]any:
@@ -105,6 +108,7 @@ func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string
 	known := map[string]string{"run.id": "example-run-id"}
 	for _, field := range dataFields {
 		known["data."+field] = "example-value"
+		known["data."+field+".string"] = "example-value"
 	}
 	names := make(map[string]bool)
 	captureNames := make(map[string]bool)
@@ -285,6 +289,7 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 	values["run.id"] = runID
 	for key, value := range data {
 		values["data."+key] = fmt.Sprint(value)
+		values["data."+key+".string"] = fmt.Sprint(value)
 	}
 	for key, value := range captures {
 		if strings.HasPrefix(key, "steps.") {

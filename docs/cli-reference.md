@@ -1694,6 +1694,7 @@ Examples:
 
 ```sh
 gregale test init --from openapi.yaml --project my-api
+gregale test import --from collection.json --project my-api
 gregale test --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
@@ -1717,6 +1718,27 @@ Examples:
 
 ```sh
 gregale test init --from openapi.yaml --project my-api --source .
+```
+
+### test import
+
+Create draft native requests from a local Postman Collection v2.1 export
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <PATH>` | local Postman Collection v2.1 JSON export | required |
+| `--project <SLUG>` | Gregale project slug | required |
+| `--source <DIR>` | command working directory |  |
+| `--scenario <NAME>` | scenario name (default api-collection) |  |
+| `--output <PATH>` | new manifest path |  |
+| `--requests-only` | explicitly omit Postman scripts; add their assertions and setup as native steps |  |
+| `--status <CODE>` | fallback expected status without a unique saved response (default 200) |  |
+
+Examples:
+
+```sh
+gregale test import --from collection.json --project my-api
+gregale test import --from collection.json --project my-api --requests-only --status 202
 ```
 
 

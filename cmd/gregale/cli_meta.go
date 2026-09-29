@@ -1223,13 +1223,21 @@ var cliCommands = []cliCommand{
 		Name:     "test",
 		DocSlug:  "test",
 		Short:    "Run an application scenario with real VMs, local HTTP, or simulation",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario customer-export --engine simulated"},
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
+		}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
+			{Name: "from", Short: "local Postman Collection v2.1 JSON export", Value: "PATH", Req: true},
+			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
+			{Name: "source", Short: "command working directory", Value: "DIR"},
+			{Name: "scenario", Short: "scenario name (default api-collection)", Value: "NAME"},
+			{Name: "output", Short: "new manifest path", Value: "PATH"},
+			{Name: "requests-only", Short: "explicitly omit Postman scripts; add their assertions and setup as native steps"},
+			{Name: "status", Short: "fallback expected status without a unique saved response (default 200)", Value: "CODE"},
 		}}},
 		Flags: []cliFlag{
 			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Value: "NAME"},

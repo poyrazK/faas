@@ -210,7 +210,8 @@ checks:
 ```
 
 An exact `${data.limit}` or `${data.include_archived}` JSON value preserves the
-number or boolean type. Embedded references such as `limit-${data.limit}`
+number or boolean type. `${data.limit.string}` forces a string even for a
+numeric input. Embedded references such as `limit-${data.limit}`
 produce text. CSV uses a header row and treats every value as a string:
 
 ```csv
@@ -244,6 +245,99 @@ Command output goes to stderr under `--json`.
 JSON and JUnit reports identify the row and attempt, including request evidence
 and cleanup failures. They omit data values and captures. JUnit names such as
 `customer-export/local/row-1#2` distinguish the second run of the first row.
+
+## Import a Postman collection
+
+Create a native scenario from a local [Postman Collection v2.1 JSON
+export](https://schema.postman.com/json/collection/v2.1.0/docs/index.html):
+
+```sh
+gregale test import --from collection.json --project export-api
+```
+
+The command creates `gregale-test.yaml` with an `api-collection` scenario. Use
+`--source`, `--scenario`, and `--output` to change those defaults. Import is local
+and never sends collection requests, downloads a runner, or requires a platform
+login. The new manifest has private file permissions and cannot overwrite an
+existing file.
+
+This is a request scaffold. Review its expected statuses and add native
+`expect.json`, `capture`, `checks`, or assertion commands for business behavior.
+A request with one distinct saved response status uses that code. Requests with
+no saved status default to `200`; `--status CODE` changes the fallback. Multiple
+distinct saved codes require an explicit `--status CODE`. Saved examples supply
+draft expectations; they do not establish what the original test asserted.
+
+### Supported conversion
+
+- Requests keep their order through nested folders; duplicate names get unique
+  native step names.
+- Enabled structured headers and query parameters are copied. Disabled entries
+  are omitted, repeated query parameters are preserved, and literal structured
+  query values are URL encoded.
+- Raw JSON bodies are converted to native `json` bodies. Quoted `{{count}}`
+  references become `${data.count.string}` to keep their string type; unquoted
+  references become `${data.count}` and use the case input's JSON type. Literal
+  numbers are preserved or the import fails with a request for a case input.
+- `noauth` and bearer authentication follow collection, folder, and request
+  inheritance. A bearer token must be a complete named variable such as
+  `{{token}}`. Literal bearer tokens and literal `Authorization`, `Cookie`, and
+  `X-Api-Key` credentials are rejected.
+- URL strings and structured URL objects are supported. Declared `:id` path
+  parameters become case inputs.
+
+All requests must share one origin. The original host is removed so execution
+targets the local app or isolated Gregale app. A leading origin variable such
+as `{{baseUrl}}` is removed too. If its exported value includes a path prefix
+such as `https://api.example/v1`, `/v1` is retained in the native paths. An
+undefined origin variable is assumed to represent an origin with no path prefix.
+Review that prefix if an environment supplied a different URL. A collection that
+calls multiple external services must be split into separate scenarios.
+
+Other `{{variable}}` references become runtime `${data.field}` inputs.
+Camel case names are converted to lowercase with underscores, so `customerId`
+becomes `customer_id`. Import prints the required variable-to-field mappings;
+colliding names are rejected. Exported values for these inputs are omitted.
+Supply fresh test values in the existing JSON/CSV case file:
+
+```json
+[{"customer_id": "customer-a", "count": 10, "token": "local-test-token"}]
+```
+
+```sh
+gregale test --validate --scenario api-collection --engine local --data cases.json
+gregale test --scenario api-collection --engine local \
+  --base-url http://localhost:3000 --data cases.json --junit results.xml
+```
+
+The importer does not read Postman environment files or reproduce variable
+default values and scope changes. Supply those values as case inputs or explicit
+native fixtures. Imported scenarios that use `${data.*}` currently run with the
+local engine; real-VM case data is not supported yet.
+
+### Scripts and unsupported features
+
+An enabled collection, folder, or request script stops import by default.
+To deliberately generate only the requests:
+
+```sh
+gregale test import --from collection.json --project export-api --requests-only
+```
+
+The import summary reports how many scripts were omitted. Port their assertions,
+response captures, setup, and execution order changes into native steps before
+using the scenario as a replacement for the collection's tests. Scripts are
+never executed, even with `--requests-only`. That option does not allow other
+unsupported request features.
+
+Form data, files, binary and GraphQL bodies, variables in JSON object keys,
+dynamic and vault variables, authentication types other than bearer/noauth,
+custom proxies and certificates, and protocol profile options are rejected.
+Native requests do not reproduce Postman's cookie jar or automatic redirects.
+Collections are limited to 5 MiB, 100 requests, 16 folder levels, and 32 required
+case fields. Import errors leave no partial manifest. `gregale --json test import`
+returns request counts, fallback status counts, omitted script counts, and input
+field mappings without copying variable values or script contents.
 
 ## Real-VM lifecycle tests
 
