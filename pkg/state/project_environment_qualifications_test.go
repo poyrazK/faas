@@ -42,7 +42,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 		{Name: "health", Status: "passed", Results: []state.ProjectEnvironmentQualificationResult{passingResult}},
 	}
 	configHash := api.EmptyProjectEnvironmentConfigHash()
-	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, active.Members[0].AppID, "production", "TOKEN", "age1test", "not-used-by-qualification", []byte("sealed-v1")); err != nil {
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, active.Members[0].AppID, "production", "TOKEN", "age1test", "0123456789abcdef", []byte("sealed-v1")); err != nil {
 		t.Fatal(err)
 	}
 	secretRevisionHash, err := api.ProjectEnvironmentSecretRevisionHash([]api.ProjectEnvironmentSecretRevision{{Key: "TOKEN", Version: 1}})
@@ -66,7 +66,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 	if err != nil || latest.ID != created.ID || latest.Checks[0].Status != "passed" || latest.Checks[0].Results[0].WorkloadSlug != "release-read-api" {
 		t.Fatalf("latest qualification = %+v, %v", latest, err)
 	}
-	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, active.Members[0].AppID, "production", "TOKEN", "age1test", "also-not-used", []byte("sealed-v2")); err != nil {
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, active.Members[0].AppID, "production", "TOKEN", "age1test", "fedcba9876543210", []byte("sealed-v2")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks); !errors.Is(err, state.ErrConflict) {
