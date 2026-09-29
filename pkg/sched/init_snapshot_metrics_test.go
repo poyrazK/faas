@@ -1,6 +1,6 @@
 package sched
 
-// adr: 343 — terminal init capture is distinct from snapshot reuse and has
+// adr: 351 — terminal init capture is distinct from snapshot reuse and has
 // a stable before_checkpoint failure reason on both prime and later park.
 
 import (

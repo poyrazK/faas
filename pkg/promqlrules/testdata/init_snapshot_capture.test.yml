@@ -1,4 +1,4 @@
-# adr: 343 — terminal capture failures are distinct from customer callback
+# adr: 351 — terminal capture failures are distinct from customer callback
 # failures and from reuse; only repeated platform outcomes raise this warning.
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
