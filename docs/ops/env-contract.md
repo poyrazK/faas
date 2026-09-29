@@ -415,6 +415,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TCPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TENANT_EGRESS_IFACE` | vmmd | `dropin` |  |  | `` | ADR-372 vmmd egress drop-in; set only when the manifest declares egress.tenant_gateway, same value the Ansible nftables policy renders |
 | `FAAS_TENANT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_TENANT_SURFACES_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_TEST_BUILDER_BASE_PATH` | shared | `dev-only` |  |  | `` | must never be set on a production host |

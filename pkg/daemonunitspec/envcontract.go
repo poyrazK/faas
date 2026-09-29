@@ -494,6 +494,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TCPD_VMMD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_CERT_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_KEY_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TENANT_EGRESS_IFACE", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-372 vmmd egress drop-in; set only when the manifest declares egress.tenant_gateway, same value the Ansible nftables policy renders"},
 	{Name: "FAAS_TENANT_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_TENANT_SURFACES_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_TEST_BUILDER_BASE_PATH", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
