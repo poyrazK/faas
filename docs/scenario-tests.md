@@ -116,6 +116,12 @@ VM wake evidence and labels its engine `simulated`. VM lifecycle profiles only
 apply to `real-vm`, and passing `--profile` with `--engine simulated` is an
 error. A simulation can test application logic quickly, while the real-VM runs
 prove the platform lifecycle path.
+Keep application behavior assertions in a shared module when both engines can
+exercise them. The checked-in customer-export fixture uses one contract for
+duplicate submission, ownership, unauthorized reads, direct worker access,
+and notification delivery in both engines. Its simulation separately checks
+the local queue model; the real-VM runner separately checks platform invocation
+and wake evidence.
 
 The assertion command receives `GREGALE_TEST_URL`,
 `GREGALE_TEST_APP_SLUG`, `GREGALE_TEST_RUN_ID`, `GREGALE_TEST_PROFILE`, and

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import { test } from "node:test";
 import { createExportAPI } from "../server.js";
 import { createWorker } from "../../export-worker/server.js";
 import { createDeliverySink } from "../../../../cmd/gregale/scenario_fixtures/delivery-sink/server.js";
+import { assertCustomerExport, submitCustomerExport } from "./contract.mjs";
 
 async function listen(t, server) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -56,34 +57,17 @@ test("export crosses gateway, worker, object store and retrying notification", a
     response.end(await result.text());
   }));
   const appURL = await listen(t, createExportAPI({ workerURL: ingressURL, workerToken: "simulated-secret" }));
-  const headers = (key) => ({ Authorization: `Bearer ${key}`, "Content-Type": "application/json" });
-  const body = JSON.stringify({ idempotency_key: "same-input", report: "Customer A report" });
-  const submit = () => fetch(`${appURL}/exports`, { method: "POST", headers: headers("customer-a-key"), body });
-
-  const first = await submit();
-  assert.equal(first.status, 202);
-  const created = await first.json();
-  assert.equal(created.created, true);
+  const runID = "simulated-run";
+  const customerA = "customer-a-key";
+  const customerB = "customer-b-key";
+  const created = await submitCustomerExport({ url: appURL, runID, customerA });
   await Promise.all(pending);
   assert.equal([...queued.values()][0].state, "completed");
   assert.equal([...queued.values()][0].attempts, 2);
-  const duplicate = await submit();
-  assert.equal(duplicate.status, 202);
-  assert.deepEqual(await duplicate.json(), created);
+  await assertCustomerExport({
+    url: appURL, workerURL, sinkURL, sinkToken: "fixture-token",
+    runID, customerA, customerB, invocationID: created.invocation_id,
+  });
   assert.equal(queued.size, 1);
   assert.equal([...objects.keys()].filter((key) => key.startsWith("reports/")).length, 1);
-
-  const owned = await fetch(`${appURL}/exports/${created.id}`, { headers: headers("customer-a-key") });
-  assert.equal(owned.status, 200);
-  assert.deepEqual(await owned.json(), { id: created.id, report: "Customer A report", run_id: "simulated-run" });
-  assert.equal((await fetch(`${appURL}/exports/${created.id}`, { headers: headers("customer-b-key") })).status, 403);
-  assert.equal((await fetch(`${appURL}/exports/${created.id}`)).status, 401);
-  const owner = createHash("sha256").update("customer-a-key").digest("hex");
-  assert.equal((await fetch(`${workerURL}/result/${created.id}`, { headers: { "x-owner-digest": owner } })).status, 401);
-
-  const evidence = await fetch(`${sinkURL}/__gregale_test__/attempts`, {
-    headers: { Authorization: "Bearer fixture-token" },
-  });
-  assert.equal(evidence.status, 200);
-  assert.deepEqual((await evidence.json()).attempts.map(({ status }) => status), [503, 200]);
 });

@@ -11,6 +11,9 @@ its first attempt and persists a marker in the isolated bucket; the platform
 must retry the same invocation before it can complete. Assertions reject a
 direct worker request without the per-run shared secret. The real VM runner
 also checks warm, cold, and restored evidence for every workload.
+The simulation and real VM assertion command call the same export contract in
+`export-api/test/contract.mjs`; the simulation additionally checks its local
+queue attempt count and object count.
 
 Run the fast local simulation from the repository root. It starts the app and
 delivery sink as local HTTP servers and checks the retry and recorded payload:
