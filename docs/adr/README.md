@@ -55,7 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
-| 366 | [Resumable managed realtime channels](366-resumable-managed-realtime-channels.md) | proposed | Ordered outbound channel log, retention floor, versioned client replay, acknowledgements, and channel grants |
+| 369 | [Resumable managed realtime channels](369-resumable-managed-realtime-channels.md) | proposed | Ordered outbound channel log, retention floor, versioned client replay, acknowledgements, and channel grants |
 | 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
 | 354 | [Confirmed platform-tenant reconciliation apply](354-platform-tenant-confirmed-reconciliation-apply.md) | accepted | Apply only a current ownership-aware plan atomically; detach managed links, remove managed declared hostnames, preserve unmanaged resources |
 | 362 | [Durable platform-tenant reconciliation receipts](362-platform-tenant-reconciliation-receipts.md) | accepted | Persist secret-free, immutable outcomes atomically and expose tenant-scoped recovery and audit reads |
