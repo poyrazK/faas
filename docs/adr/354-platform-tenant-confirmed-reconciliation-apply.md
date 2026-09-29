@@ -1,4 +1,4 @@
-# ADR-342 · Confirmed platform-tenant reconciliation apply
+# ADR-354 · Confirmed platform-tenant reconciliation apply
 
 - **Status:** accepted
 - **Date:** 2026-09-28
@@ -6,4 +6,3 @@
 - **Why:** A preview is useful to an operator, but platforms need to automate safe convergence across many customers. Requiring a reviewed digest prevents a plan from silently acting on state that changed after preview, while one transaction prevents partial onboarding and cleanup.
 - **Consequences:** An apply response reports created, linked, detached, and removed changes. A stale plan returns 409 and must be previewed and reviewed again. Consumers, surfaces, API credentials, usage history, and billing statements are not deleted or revoked by this operation. A hostname removed from a declared surface stops resolving through that tenant surface; hostnames on an omitted surface are not implicitly removed. Retrying the same request with the same idempotency key replays the original response.
 - **Rejected alternatives:** Automatically applying removal candidates during preview is unsafe. Deleting managed consumer or surface rows would erase app-local identity or routing state beyond the tenant link. Accepting an unguarded apply request would allow concurrent changes to invalidate the operator's review.
-
