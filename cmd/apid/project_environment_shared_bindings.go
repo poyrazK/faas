@@ -52,20 +52,28 @@ func cleanupProjectEnvironmentBindingClone(ctx context.Context, cleanup []func(c
 	return cleanupErr
 }
 
-func (s *server) captureProjectEnvironmentValueScopes(ctx context.Context, acct state.Account, project state.Project, source string) ([]state.App, map[string]string, error) {
+func (s *server) captureProjectEnvironmentValues(ctx context.Context, acct state.Account, project state.Project, source string) ([]state.App, state.ProjectEnvironmentCloneValuesSnapshot, error) {
+	store, ok := s.store.(state.ProjectEnvironmentCloneValuesStore)
+	if !ok {
+		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, errors.New("project environment value capture is unavailable")
+	}
 	apps, err := s.store.AppsForProject(ctx, acct.ID, project.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list project workloads for resource clone: %w", err)
+		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, fmt.Errorf("list project workloads for resource clone: %w", err)
 	}
-	scopes := make(map[string]string, len(apps))
+	snapshot, err := store.CaptureProjectEnvironmentCloneValues(ctx, acct.ID, project.ID, source)
+	if err != nil {
+		return nil, snapshot, err
+	}
+	if len(snapshot.ValueScopes) != len(apps) {
+		return nil, snapshot, state.ErrConflict
+	}
 	for _, app := range apps {
-		scope, err := state.ProjectEnvironmentCloneValueScope(ctx, s.store, acct.ID, app.ID, source)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve source value scope for workload %q: %w", app.Slug, err)
+		if snapshot.ValueScopes[app.ID] == "" {
+			return nil, snapshot, state.ErrConflict
 		}
-		scopes[app.ID] = scope
 	}
-	return apps, scopes, nil
+	return apps, snapshot, nil
 }
 
 func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct state.Account, apps []state.App, sourceScopes map[string]string, shareResources bool) ([]projectEnvironmentBindingClone, error) {

@@ -15,7 +15,8 @@ import (
 
 type environmentClonePostgresProvider struct {
 	sourceRefManagedPostgresProvider
-	restores []managedpostgres.RestoreRequest
+	restores  []managedpostgres.RestoreRequest
+	onRestore func() error
 }
 
 func (p *environmentClonePostgresProvider) Capabilities() managedpostgres.Capabilities {
@@ -27,6 +28,11 @@ func (p *environmentClonePostgresProvider) Capabilities() managedpostgres.Capabi
 
 func (p *environmentClonePostgresProvider) Restore(_ context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
 	p.restores = append(p.restores, request)
+	if p.onRestore != nil {
+		if err := p.onRestore(); err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+	}
 	return managedpostgres.ObservedDatabase{ProviderResourceID: "restore-" + request.ResourceID,
 		Status: managedpostgres.ProviderStatusReady, ComputeState: managedpostgres.ComputeStateActive, Spec: request.Spec}, nil
 }
@@ -104,17 +110,47 @@ func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testin
 			t.Fatalf("workloads lost shared data topology or share credentials: %+v", binding)
 		}
 	}
-	apps, scopes, err := srv.captureProjectEnvironmentValueScopes(ctx, acct, project, "production")
+	apps, snapshot, err := srv.captureProjectEnvironmentValues(ctx, acct, project, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := srv.planProjectEnvironmentBindingClones(ctx, acct, apps, scopes, false)
+	plans, err := srv.planProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, cleanup, err := srv.prepareIsolatedProjectEnvironmentBindings(req, acct, project, "staging", plans)
 	if err != nil || len(cleanup) != 0 || len(provider.restores) != 1 {
 		t.Fatalf("retry recreated resources or adopted deletion ownership: cleanup=%d restores=%d err=%v", len(cleanup), len(provider.restores), err)
+	}
+	// A source edit while provider restoration is underway rejects the clone
+	// and compensates only its new copy and bindings, leaving staging intact.
+	provider.onRestore = func() error {
+		return store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, "default", "MODE", "changed-during-restore")
+	}
+	changedReq, changedRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"changing","from_environment":"production"}`))
+	srv.createProjectEnvironment(changedRec, changedReq, acct)
+	if changedRec.Code != http.StatusConflict {
+		t.Fatalf("source edit during data copy accepted: status=%d body=%s", changedRec.Code, changedRec.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "changing"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected data copy left an environment: %v", err)
+	}
+	for _, workload := range []state.App{app, worker} {
+		rows, err := store.ListAppSecretsInScope(ctx, acct.ID, workload.ID, "changing")
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("rejected data copy leaked managed credentials: count=%d err=%v", len(rows), err)
+		}
+	}
+	if len(provider.restores) != 2 {
+		t.Fatalf("expected one new copy for rejected preparation: restores=%d", len(provider.restores))
+	}
+	failedCopy, err := service.Get(ctx, acct.ID, provider.restores[1].ResourceID)
+	if err != nil || failedCopy.State != managedpostgres.StateDeleted {
+		t.Fatalf("rejected data copy leaked its database: %+v, %v", failedCopy, err)
+	}
+	retained, err := service.Get(ctx, acct.ID, targetDatabaseID)
+	if err != nil || retained.State != managedpostgres.StateReady {
+		t.Fatalf("compensation changed the previously created stage: %+v, %v", retained, err)
 	}
 	cleanupPlan, err := srv.planProjectEnvironmentManagedResourceCleanup(ctx, acct, project, "staging")
 	if err != nil || len(cleanupPlan.postgres) != 2 {

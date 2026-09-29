@@ -29,6 +29,7 @@ type ProjectEnvironmentClone struct {
 	// Optional preparation fence. Each source workload's effective runtime
 	// value scope is checked again before any target configuration is written.
 	ExpectedSourceValueScopes map[string]string
+	ExpectedSourceValuesHash  string
 	sourceValueScopesJSON     []byte
 }
 
@@ -93,6 +94,15 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	valueScopes, err := m.projectCloneValueScopesLocked(apps, clone)
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if clone.ExpectedSourceValuesHash != "" {
+		hash, err := m.projectCloneValuesHashLocked(valueScopes)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if hash != clone.ExpectedSourceValuesHash {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
 	}
 	for _, env := range m.envs {
 		if _, ok := apps[env.AppID]; ok && env.Scope == clone.TargetSlug {

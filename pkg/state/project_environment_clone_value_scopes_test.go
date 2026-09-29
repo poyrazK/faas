@@ -13,6 +13,7 @@ import (
 type cloneValueScopeStore interface {
 	state.Store
 	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
+	state.ProjectEnvironmentCloneValuesStore
 }
 
 func TestMemCloneCapturesEffectiveProductionValueScopes(t *testing.T) {
@@ -62,8 +63,8 @@ func testCloneEffectiveProductionValueScopes(t *testing.T, store cloneValueScope
 		if err := store.UpsertAppEnvInScope(ctx, account.ID, app.ID, tc.values, "MODE", tc.values); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, tc.values,
-			"TOKEN", "age1-test", "1111111111111111", []byte("sealed-"+tc.values)); err != nil {
+		if err := store.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, tc.values,
+			"TOKEN", "age1-test", "1111111111111111", state.SecretClassEphemeral, []byte("sealed-"+tc.values)); err != nil {
 			t.Fatal(err)
 		}
 		scope, err := state.ProjectEnvironmentCloneValueScope(ctx, store, account.ID, app.ID, "production")
@@ -80,8 +81,12 @@ func testCloneEffectiveProductionValueScopes(t *testing.T, store cloneValueScope
 	if err := store.UpsertAppEnvInScope(ctx, account.ID, preview.ID, "production", "PREVIEW", "preview-only"); err != nil {
 		t.Fatal(err)
 	}
+	snapshot, err := store.CaptureProjectEnvironmentCloneValues(ctx, account.ID, project.ID, "production")
+	if err != nil || len(snapshot.Hash) != 64 || len(snapshot.ValueScopes) != len(expectedScopes) {
+		t.Fatalf("capture source values: %+v, %v", snapshot, err)
+	}
 	clone := state.ProjectEnvironmentClone{AccountID: account.ID, ProjectID: project.ID,
-		SourceSlug: "production", TargetSlug: "staging", ExpectedSourceValueScopes: expectedScopes}
+		SourceSlug: "production", TargetSlug: "staging", ExpectedSourceValueScopes: expectedScopes, ExpectedSourceValuesHash: snapshot.Hash}
 	_, result, err := store.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(api.PlanPro))
 	if err != nil || result.VariablesCopied != 4 || result.SecretsCopied != 4 || result.WorkloadsCopied != 4 {
 		t.Fatalf("clone lost effective values or copied previews: %+v, %v", result, err)
@@ -92,12 +97,47 @@ func testCloneEffectiveProductionValueScopes(t *testing.T, store cloneValueScope
 			t.Fatalf("%s cloned values = %+v, %v", app.Slug, values, err)
 		}
 		secrets, err := store.ListAppSecretsInScope(ctx, account.ID, app.ID, "staging")
-		if err != nil || len(secrets) != 1 || string(secrets[0].Ciphertext) != "sealed-"+expectedScopes[app.ID] {
+		if err != nil || len(secrets) != 1 || string(secrets[0].Ciphertext) != "sealed-"+expectedScopes[app.ID] || secrets[0].SecretClass != state.SecretClassEphemeral {
 			t.Fatalf("%s cloned secrets = %+v, %v", app.Slug, secrets, err)
 		}
 	}
 	if values, err := store.ListAppEnvInScope(ctx, account.ID, preview.ID, "staging"); err != nil || len(values) != 0 {
 		t.Fatalf("preview entered project clone: %+v, %v", values, err)
+	}
+	// Target writes and changes outside the serving namespaces are irrelevant.
+	if err := store.UpsertAppEnvInScope(ctx, account.ID, apps[1].ID, "default", "UNSELECTED", "changed"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.CaptureProjectEnvironmentCloneValues(ctx, account.ID, project.ID, "production")
+	if err != nil || again.Hash != snapshot.Hash {
+		t.Fatalf("target or unselected values invalidated capture: %+v, %v", again, err)
+	}
+	for _, mutation := range []struct {
+		name string
+		edit func() error
+	}{
+		{"variable-edit", func() error {
+			return store.UpsertAppEnvInScope(ctx, account.ID, apps[0].ID, "default", "MODE", "changed")
+		}},
+		{"secret-rotation", func() error {
+			return store.UpsertAppSecretWithClassInScope(ctx, account.ID, apps[1].ID, "production", "TOKEN", "age1-test", "2222222222222222", state.SecretClassPersistent, []byte("sealed-rotated"))
+		}},
+		{"variable-delete", func() error { return store.DeleteAppEnvInScope(ctx, account.ID, apps[2].ID, "production", "MODE") }},
+	} {
+		captured, err := store.CaptureProjectEnvironmentCloneValues(ctx, account.ID, project.ID, "production")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := mutation.edit(); err != nil {
+			t.Fatal(err)
+		}
+		clone.ExpectedSourceValuesHash, clone.TargetSlug = captured.Hash, mutation.name
+		if _, _, err := store.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("%s was not fenced: %v", mutation.name, err)
+		}
+		if _, err := store.ProjectEnvironmentBySlug(ctx, account.ID, project.ID, clone.TargetSlug); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("rejected %s clone left a target: %v", mutation.name, err)
+		}
 	}
 	// Cutover after provider preparation invalidates the captured scope roster.
 	cutover, err := store.CreateDeployment(ctx, state.Deployment{AppID: apps[0].ID, Scope: "production",

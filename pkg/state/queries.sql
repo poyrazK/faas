@@ -5,6 +5,24 @@ WHERE account_id = sqlc.arg(account_id)::uuid
   AND status <> 'deleted' AND preview_of_slug IS NULL
 ORDER BY id FOR UPDATE;
 
+-- name: ReadProjectEnvironmentCloneVariables :many
+SELECT e.app_id::text AS app_id, e.scope, e.key, e.value
+FROM app_envs e JOIN apps a ON a.id = e.app_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+  AND e.scope = (sqlc.arg(value_scopes)::jsonb ->> a.id::text)
+ORDER BY e.app_id, e.key;
+
+-- name: ReadProjectEnvironmentCloneSecrets :many
+-- Decode the explicit configuration fields in Go; delivery observations do
+-- not enter the fingerprint. No encrypted content leaves the store boundary.
+SELECT to_jsonb(s)::jsonb AS secret
+FROM app_secrets s JOIN apps a ON a.id = s.app_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+  AND s.scope = (sqlc.arg(value_scopes)::jsonb ->> a.id::text)
+ORDER BY s.app_id, s.key;
+
 -- name: ReadProjectEnvironmentCloneProductionValueScope :one
 -- Empty scope means that an active graph has an invalid or missing member.
 SELECT coalesce((CASE

@@ -236,8 +236,8 @@ preparation. Both stores recheck that roster before committing target state, so
 a scope cutover or roster change rejects the clone. Focused MemStore and real
 PostgreSQL contracts cover legacy/named/undeployed values, secrets, previews, and
 cutover rejection. API contracts cover legacy managed bindings and binding-plan
-scope reuse. This fence does not freeze same-scope edits or resource versions;
-the complete mode still requires the durable source capture and barrier above.
+scope reuse. The value fence below also rejects same-scope edits. Provider data
+versions still require the durable source capture and barrier above.
 
 ### Shared database topology and retry ownership (2026-09-30)
 
@@ -259,3 +259,32 @@ credentials, retry reuse, compensation ownership, mismatched captures, legacy
 adoption, and cleanup without source mutation. A common recovery time does not
 establish cross-provider application consistency; the source write barrier and
 durable complete-clone orchestration remain required.
+
+### Source value fingerprint and secret lifecycle (2026-09-30)
+
+Clone preparation now captures the effective value-scope roster and a canonical
+fingerprint of source variables, encrypted customer secrets, lifecycle classes,
+secret revisions, and managed binding/credential identities. It returns only the
+scopes and hash. Both stores compare that fingerprint before writing target
+configuration; same-scope edits, deletion, rotation, or binding changes reject
+the clone. Delivery observations and timestamps do not affect the fingerprint.
+Other scopes and preview apps are excluded.
+
+PostgreSQL capture and clone run at repeatable-read isolation, so the scope check,
+fingerprint, quotas, and copied rows observe one database snapshot. Source row
+lock serialization failures surface as conflicts. The copy retains ephemeral
+secret classes as well as customer revision identities; a clone cannot silently
+make an ephemeral secret eligible for persistent VM snapshots.
+
+Focused MemStore and real PostgreSQL contracts cover stable captures, irrelevant
+scope changes, variable edits/deletions, secret rotation, and lifecycle class
+preservation. The API verifies rejection after source edits during preparation,
+compensation of the new data copy/credentials, and preservation of an existing
+stage. API environment/qualification/promotion and OpenAPI checks pass locally.
+This is an optimistic preparation fence, not the complete environment revision
+or durable resource capture. Deployment artifacts, remaining settings/resources,
+and the coordinated PostgreSQL/object-storage barrier still require integration.
+
+Native acceptance has not run. A read-only check of the dedicated host configured
+in `e2e-native.yml` failed because GCP reports its project suspended; restored
+access or another designated native KVM host is required for that gate.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -68,9 +69,9 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	apps, scopes, err := srv.captureProjectEnvironmentValueScopes(ctx, acct, project, "production")
-	if err != nil || scopes[app.ID] != "default" {
-		t.Fatalf("capture legacy values: %v, %v", scopes, err)
+	apps, snapshot, err := srv.captureProjectEnvironmentValues(ctx, acct, project, "production")
+	if err != nil || snapshot.ValueScopes[app.ID] != "default" {
+		t.Fatalf("capture legacy values: %v, %v", snapshot.ValueScopes, err)
 	}
 	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Status: state.DeployPending, TrafficPercent: 100})
 	if err != nil {
@@ -79,7 +80,32 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.planProjectEnvironmentBindingClones(ctx, acct, apps, scopes, false); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if _, err := srv.planProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, false); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("binding preparation skipped the captured legacy binding after cutover: %v", err)
+	}
+}
+
+type cloneValuesChangingStore struct {
+	*state.MemStore
+	appID string
+}
+
+func (s *cloneValuesChangingStore) CloneProjectEnvironment(ctx context.Context, clone state.ProjectEnvironmentClone, limits api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error) {
+	if err := s.UpsertAppEnvInScope(ctx, clone.AccountID, s.appID, "default", "MODE", "changed-during-preparation"); err != nil {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+	}
+	return s.MemStore.CloneProjectEnvironment(ctx, clone, limits)
+}
+
+func TestProjectEnvironmentCloneRejectsValuesChangedAfterCapture(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv.store = &cloneValuesChangingStore{MemStore: store, appID: app.ID}
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.createProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("changed source values were accepted: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentBySlug(context.Background(), acct.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected clone left target: %v", err)
 	}
 }

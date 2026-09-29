@@ -11821,6 +11821,90 @@ func (q *Queries) ReadProjectEnvironmentCloneProductionValueScope(ctx context.Co
 	return source_scope, err
 }
 
+const readProjectEnvironmentCloneSecrets = `-- name: ReadProjectEnvironmentCloneSecrets :many
+SELECT to_jsonb(s)::jsonb AS secret
+FROM app_secrets s JOIN apps a ON a.id = s.app_id
+WHERE a.account_id = $1::uuid AND a.project_id = $2::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+  AND s.scope = ($3::jsonb ->> a.id::text)
+ORDER BY s.app_id, s.key
+`
+
+type ReadProjectEnvironmentCloneSecretsParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	ValueScopes []byte
+}
+
+// Decode the explicit configuration fields in Go; delivery observations do
+// not enter the fingerprint. No encrypted content leaves the store boundary.
+func (q *Queries) ReadProjectEnvironmentCloneSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneSecrets, arg.AccountID, arg.ProjectID, arg.ValueScopes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var secret []byte
+		if err := rows.Scan(&secret); err != nil {
+			return nil, err
+		}
+		items = append(items, secret)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneVariables = `-- name: ReadProjectEnvironmentCloneVariables :many
+SELECT e.app_id::text AS app_id, e.scope, e.key, e.value
+FROM app_envs e JOIN apps a ON a.id = e.app_id
+WHERE a.account_id = $1::uuid AND a.project_id = $2::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+  AND e.scope = ($3::jsonb ->> a.id::text)
+ORDER BY e.app_id, e.key
+`
+
+type ReadProjectEnvironmentCloneVariablesParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	ValueScopes []byte
+}
+
+type ReadProjectEnvironmentCloneVariablesRow struct {
+	AppID string
+	Scope string
+	Key   string
+	Value string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneVariables(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneVariablesParams) ([]ReadProjectEnvironmentCloneVariablesRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneVariables, arg.AccountID, arg.ProjectID, arg.ValueScopes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneVariablesRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneVariablesRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Scope,
+			&i.Key,
+			&i.Value,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
         'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(

@@ -10,17 +10,26 @@ import (
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockProjectEnvironmentCloneSource(ctx, tx, clone); err != nil {
-		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
 	}
 	clone.sourceValueScopesJSON, err = projectCloneValueScopesTx(ctx, tx, clone)
 	if err != nil {
-		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+	}
+	if clone.ExpectedSourceValuesHash != "" {
+		hash, err := projectCloneValuesHashTx(ctx, tx, clone)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if hash != clone.ExpectedSourceValuesHash {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
 	}
 	if clone.ManagedBindingsPrepared {
 		if err := checkPreparedProjectEnvironmentBindings(ctx, tx, clone); err != nil {
@@ -50,7 +59,7 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", err)
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", mapProjectCloneSnapshotErr(err))
 	}
 	return created, result, nil
 }
@@ -299,8 +308,8 @@ func copyProjectEnvironmentScopedValues(ctx context.Context, tx pgx.Tx, clone Pr
 		return 0, 0, mapErr(err)
 	}
 	secretTag, err := tx.Exec(ctx, `
-		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version)
-		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version
+		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version, secret_class)
+		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version, s.secret_class
 		  from app_secrets s join apps a on a.id = s.app_id
 		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
 		   and s.scope = ($3::jsonb ->> a.id::text)
