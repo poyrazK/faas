@@ -27,9 +27,9 @@ func (s *observedHistoryStore) ObserveManagedRealtimeHistoryStorage(context.Cont
 
 func TestManagedRealtimeHistoryMetricsKeepLastGoodStorageSample(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := newManagedRealtimeHistoryMetrics(registry, "apid")
+	_ = newManagedRealtimeHistoryMetrics(registry, "apid")
 	// A second server sharing the registry must reuse the same collectors.
-	metrics = newManagedRealtimeHistoryMetrics(registry, "apid")
+	metrics := newManagedRealtimeHistoryMetrics(registry, "apid")
 	at := time.Unix(1_800_000_000, 0)
 	metrics.observeStorage(state.ManagedRealtimeHistoryStorageStats{
 		HeadsRelationBytes: 12_288, MessagesRelationBytes: 32_768,

@@ -190,8 +190,9 @@ func resumeBearerFromProtocols(protocols []string) (token string, present, inval
 				break
 			}
 			for _, char := range part {
-				if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-					(char >= '0' && char <= '9') || char == '-' || char == '_') {
+				valid := (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+					(char >= '0' && char <= '9') || char == '-' || char == '_'
+				if !valid {
 					invalid = true
 					break
 				}

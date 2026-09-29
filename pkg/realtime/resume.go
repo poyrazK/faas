@@ -154,7 +154,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 			OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence})
 		return
 	}
-	subCtx, subCancel := context.WithCancel(m.ctx)
+	subCtx, subCancel := context.WithCancel(ctx)
 	subscription := &resumeSubscription{cancel: subCancel, lastSent: frame.After, lastAck: frame.After}
 	c.mu.Lock()
 	c.resumeSubs[frame.Channel] = subscription
