@@ -122,6 +122,10 @@ drain continues to own it. Named queue messages also enter that ledger, but
 the queue poller claims them with the same lane and fairness locks before
 forming a trigger batch. The binding concurrency cap still applies. Queue
 acknowledgements and retries are fenced by the invocation claim attempt.
+The invocation state is authoritative for pending replacement, cancellation,
+and expiry. A trigger receipt from an earlier failed delivery may retain its
+`retry` state after its invocation becomes terminal; reconciling that receipt
+for operator views remains follow-up work.
 
 External broker records need a shared work-item claim ledger before policy
 fields can be exposed on those producers.
