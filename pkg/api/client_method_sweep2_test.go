@@ -279,6 +279,10 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.CreateOrgApp(ctx, "o", CreateAppRequest{Slug: "x"})
 			return err
 		}},
+		{"CreateOrgAppDeployment", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.CreateOrgAppDeployment(ctx, "o", "a", CreateDeploymentRequest{Image: "example@sha256:abc"})
+			return err
+		}},
 		{"DeleteOrg", obj.URL, func(t *testing.T, c *Client) error {
 			return c.DeleteOrg(ctx, "o")
 		}},
