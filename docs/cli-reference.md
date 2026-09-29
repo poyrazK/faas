@@ -36,7 +36,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`test`](#test) | Run an application scenario with real VMs, local HTTP, or simulation |
+| [`test`](#test) | Run application scenarios and bounded local HTTP load tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
@@ -1671,9 +1671,9 @@ Compare two named environments in the linked project
 
 ## test
 
-Run an application scenario with real VMs, local HTTP, or simulation
+Run application scenarios and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--iterations <N>] [--duration <DURATION>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1683,6 +1683,10 @@ Run an application scenario with real VMs, local HTTP, or simulation
 | `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `local` · `simulated` |
 | `--base-url <URL>` | HTTP loopback origin for the local engine |  |
 | `--data <PATH>` | JSON or CSV case data for the local engine |  |
+| `--load` | repeat native HTTP journeys concurrently with the local engine |  |
+| `--vus <N>` | concurrent users for --load (1..50, default 1) |  |
+| `--iterations <N>` | total journeys for --load (1..10000, default 100) |  |
+| `--duration <DURATION>` | schedule journeys for this duration with --load (1s..5m) |  |
 | `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
 | `--repeat <N>` | runs per lifecycle profile or local case (1..20) |  |
 | `--max-workload-minutes <N>` | abort if the estimated VM workload-minute ceiling exceeds N |  |
@@ -1699,6 +1703,7 @@ gregale test --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s
 gregale test --scenario customer-export --engine simulated
 ```
 

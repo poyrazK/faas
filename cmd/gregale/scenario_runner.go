@@ -53,6 +53,7 @@ type testScenario struct {
 	Buckets          []testBucket           `yaml:"buckets"`
 	WaitFor          testWaitFor            `yaml:"wait_for"`
 	Timeout          string                 `yaml:"timeout"`
+	Load             *testLoadSpec          `yaml:"load"`
 }
 
 type testService struct {
@@ -191,6 +192,7 @@ type testRunReceipt struct {
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
+	Load         *testLoadEvidence                  `json:"load,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -207,6 +209,10 @@ func cmdTest(args []string) int {
 	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
 	baseURL := fs.String("base-url", "", "HTTP loopback origin for the local engine")
 	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
+	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
+	vus := fs.Int("vus", 0, "concurrent users for --load (1..50, default 1)")
+	iterations := fs.Int("iterations", 0, "total journeys for --load (1..10000, default 100)")
+	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
 	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
 	maxWorkloadMinutes := fs.Int("max-workload-minutes", 0, "maximum estimated VM workload-minutes for this command (0 disables guard)")
@@ -217,8 +223,25 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
 		return 1
+	}
+	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Duration: *duration}
+	fs.Visit(func(selected *flag.Flag) {
+		switch selected.Name {
+		case "vus":
+			loadOverrides.VUsSet = true
+		case "iterations":
+			loadOverrides.IterationsSet = true
+		case "duration":
+			loadOverrides.DurationSet = true
+		}
+	})
+	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.DurationSet) {
+		return printErr("Invalid load options", errors.New("--vus, --iterations, and --duration require --load"))
+	}
+	if *load && *engine != "local" {
+		return printErr("Invalid load engine", errors.New("--load currently requires --engine local"))
 	}
 	if *repeat < 1 || *repeat > 20 {
 		return printErr("Invalid repeat count", errors.New("--repeat must be between 1 and 20"))
@@ -271,6 +294,19 @@ func cmdTest(args []string) int {
 	scenarios, sourceDir, err := readTestManifestForScenario(*manifestPath, *scenarioName, dataFields)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
+	}
+	loadConfigs := make(map[string]*testLoadConfig)
+	if *load {
+		for name, scenario := range scenarios {
+			if *scenarioName != "" && name != *scenarioName {
+				continue
+			}
+			cfg, err := resolveTestLoadConfig(scenario, loadOverrides)
+			if err != nil {
+				return printErr("Invalid load scenario", fmt.Errorf("scenario %q: %w", name, err))
+			}
+			loadConfigs[name] = cfg
+		}
 	}
 	if *validateOnly {
 		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine)
@@ -330,16 +366,33 @@ runLoop:
 					failed = true
 					break runLoop
 				}
-				receipt := runLocalTest(ctx, *scenarioName, scenario, sourceDir, *baseURL, testCase)
+				if cfg := loadConfigs[*scenarioName]; cfg != nil && !jsonOutput {
+					budget := fmt.Sprintf("%d total journeys", cfg.Iterations)
+					if cfg.Duration > 0 {
+						budget = cfg.Duration.String()
+					}
+					label := *scenarioName
+					if testCase.Name != "" {
+						label += "/" + testCase.Name
+					}
+					_, _ = fmt.Fprintf(osStdout, "%s: starting local load (%d VUs, %s, attempt %d/%d)\n", label, cfg.VUs, budget, attempt, *repeat)
+				}
+				receipt := runLocalTestWithLoad(ctx, *scenarioName, scenario, sourceDir, *baseURL, testCase, loadConfigs[*scenarioName])
 				receipt.Attempt = attempt
 				results = append(results, receipt)
 				failed = failed || receipt.Status != "passed"
 				if !jsonOutput {
 					caseLabel := ""
+					if receipt.Load != nil {
+						caseLabel = ", load"
+					}
 					if receipt.Case != "" {
-						caseLabel = ", " + receipt.Case
+						caseLabel += ", " + receipt.Case
 					}
 					_, _ = fmt.Fprintf(osStdout, "%s: %s (local%s, attempt %d/%d)\n", receipt.Scenario, receipt.Status, caseLabel, attempt, *repeat)
+					if receipt.Load != nil {
+						printTestLoadSummary(osStdout, receipt.Load)
+					}
 					if receipt.Error != "" {
 						_, _ = fmt.Fprintln(osStderr, receipt.Error)
 					}
@@ -461,6 +514,9 @@ func readTestManifestForScenario(path, selected string, dataFields []string) (ma
 			fields = testHTTPDataFields(scenario)
 		}
 		if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
+			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLoadSpec(scenario.Load); err != nil {
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {

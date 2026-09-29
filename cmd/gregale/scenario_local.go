@@ -67,7 +67,14 @@ func localTestConsumerEnv(scenario testScenario) ([]string, error) {
 }
 
 func runLocalTest(parent context.Context, name string, scenario testScenario, manifestDir, baseURL string, data testDataCase) (receipt testRunReceipt) {
+	return runLocalTestWithLoad(parent, name, scenario, manifestDir, baseURL, data, nil)
+}
+
+func runLocalTestWithLoad(parent context.Context, name string, scenario testScenario, manifestDir, baseURL string, data testDataCase, load *testLoadConfig) (receipt testRunReceipt) {
 	receipt = testRunReceipt{Scenario: name, Profile: "local", Engine: "local", Case: data.Name, Status: "failed", StartedAt: time.Now().UTC()}
+	if load != nil {
+		receipt.Load = newTestLoadEvidence(load)
+	}
 	phases := newTestPhaseRecorder("setup")
 	defer func() {
 		receipt.Phases = phases.finish(receipt.Status)
@@ -129,6 +136,15 @@ func runLocalTest(parent context.Context, name string, scenario testScenario, ma
 		"GREGALE_TEST_CASE="+data.Name,
 		"GREGALE_TEST_DATA_JSON="+string(dataJSON),
 	)
+	if load != nil {
+		env = append(env,
+			"GREGALE_TEST_LOAD=1",
+			"GREGALE_TEST_LOAD_VUS="+strconv.Itoa(load.VUs),
+			"GREGALE_TEST_LOAD_MODE="+receipt.Load.Mode,
+			"GREGALE_TEST_LOAD_ITERATIONS="+strconv.Itoa(load.Iterations),
+			"GREGALE_TEST_LOAD_DURATION="+load.Duration.String(),
+		)
+	}
 	defer func() {
 		phases.advance("cleanup", receipt.Status)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
@@ -152,19 +168,32 @@ func runLocalTest(parent context.Context, name string, scenario testScenario, ma
 			return
 		}
 	}
-	captures := make(map[string]string)
-	requestEvidence, err := runTestHTTPRequestsWithData(ctx, baseURL, receipt.RunID, consumerEnv, scenario.Requests, captures, data.Values)
-	receipt.Requests = append(receipt.Requests, requestEvidence...)
-	if err != nil {
-		receipt.Error = fmt.Sprintf("local request: %v", err)
-		return
-	}
-	phases.advance("checks", "passed")
-	requestEvidence, err = runTestHTTPRequestsWithData(ctx, baseURL, receipt.RunID, consumerEnv, scenario.Checks, captures, data.Values)
-	receipt.Requests = append(receipt.Requests, requestEvidence...)
-	if err != nil {
-		receipt.Error = fmt.Sprintf("local check: %v", err)
-		return
+	if load != nil {
+		phases.advance("load", "passed")
+		steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
+		receipt.Load, err = runTestLoad(ctx, baseURL, receipt.RunID, consumerEnv, steps, data.Values, load)
+		loadJSON, _ := json.Marshal(receipt.Load)
+		env = append(env, "GREGALE_TEST_LOAD_JSON="+string(loadJSON))
+		if err != nil {
+			receipt.Error = err.Error()
+			return
+		}
+		phases.advance("checks", "passed")
+	} else {
+		captures := make(map[string]string)
+		requestEvidence, err := runTestHTTPRequestsWithData(ctx, baseURL, receipt.RunID, consumerEnv, scenario.Requests, captures, data.Values)
+		receipt.Requests = append(receipt.Requests, requestEvidence...)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("local request: %v", err)
+			return
+		}
+		phases.advance("checks", "passed")
+		requestEvidence, err = runTestHTTPRequestsWithData(ctx, baseURL, receipt.RunID, consumerEnv, scenario.Checks, captures, data.Values)
+		receipt.Requests = append(receipt.Requests, requestEvidence...)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("local check: %v", err)
+			return
+		}
 	}
 	if len(scenario.Command) > 0 {
 		if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {

@@ -180,6 +180,9 @@ func writeTestJUnit(path string, receipts []testRunReceipt) error {
 		}
 		failureText := strings.TrimSpace(strings.Join([]string{receipt.Error, receipt.CleanupError}, "; "))
 		caseName := receipt.Scenario + "/" + receipt.Profile
+		if receipt.Load != nil {
+			caseName += "/load"
+		}
 		if receipt.Case != "" {
 			caseName += "/" + receipt.Case
 		}

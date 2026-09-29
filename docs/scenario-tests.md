@@ -246,6 +246,92 @@ JSON and JUnit reports identify the row and attempt, including request evidence
 and cleanup failures. They omit data values and captures. JUnit names such as
 `customer-export/local/row-1#2` distinguish the second run of the first row.
 
+## Native local load tests
+
+Run the same HTTP workflow under concurrent load without installing a separate
+test tool:
+
+```sh
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 \
+  --load --vus 5 --iterations 100 --report load.json --junit load.xml
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 \
+  --load --vus 5 --duration 30s
+```
+
+Each user runs a journey consisting of `requests` followed by `checks`, in order,
+then immediately starts the next journey. Users share the total iteration budget;
+`--iterations 100 --vus 5` runs 100 journeys in total. This is a closed concurrency
+model: throughput depends on the app's response speed. It does not promise a
+fixed arrival rate. Captures start empty for every journey. `${run.id}` becomes
+`<run-ID>-<iteration-number>` so requests can create distinct resources. Cleanup
+commands receive the parent `GREGALE_TEST_RUN_ID` and can remove resources by
+that prefix.
+
+Keep defaults and CI thresholds in the scenario:
+
+```yaml
+load:
+  vus: 5
+  iterations: 100
+  thresholds:
+    p95: 250ms
+    error_rate: 0.01
+```
+
+This optional block configures `--load`; it does not enable load for a normal
+test. Replace `iterations` with `duration: 30s` to choose a timed run. CLI flags
+override the manifest; selecting `--duration` clears its iteration setting and
+selecting `--iterations` clears its duration. Without configuration, `--load`
+uses one user and 100 journeys. `--vus`, `--iterations`, and `--duration` require
+`--load`. Validate the configuration without contacting the app:
+
+```sh
+gregale test --validate --scenario api-smoke --engine local --load
+```
+
+`setup` and `trigger` run once before load. The assertion `command` runs once
+after successful load and thresholds. `cleanup` runs once after each run,
+including a failure or interruption. With `--data`, every row gets a separate
+load run and fixture lifecycle; rows run sequentially. `--repeat` repeats those
+runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
+`GREGALE_TEST_LOAD_VUS`, `GREGALE_TEST_LOAD_ITERATIONS`, and
+`GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
+aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
+
+A failed request or assertion ends that journey; other journeys continue.
+`error_rate` is failed HTTP steps divided by all attempted HTTP steps, as a
+fraction from 0 to 1. An expected 403 passes. The default error threshold is zero;
+there is no default latency threshold. Configured limits are inclusive. Crossing
+either threshold fails the receipt and exits with status 1. No samples, canceled
+runs, time limits, incomplete runs caused by the request budget, and failed
+cleanup also fail, regardless of the error tolerance.
+
+The terminal summary shows throughput, p95 latency, failure counts, thresholds,
+and the first error for up to ten failed steps. The JSON `load` object reports
+started, completed, failed, and interrupted journeys, peak concurrency,
+HTTP-step throughput, response status counts, error rate, and
+min/mean/p50/p95/p99/max latency. Each step gets its own metrics and up to five
+distinct error examples. Status `0` means no HTTP response
+was received. Latency is client-observed step time, including template expansion,
+request encoding, the full bounded response read, and assertions. Percentiles
+use the nearest-rank method; they describe these client timings, not isolated
+server processing time. Throughput uses the entire load phase, including draining
+in-flight work. Receipts contain aggregate evidence rather than one entry per
+journey. JUnit names contain `/local/load/` to distinguish load cases; response
+bodies, request headers, data values, and captures are not added to reports.
+
+Load currently requires `--engine local` and an already running HTTP app on
+loopback. It uses native Go HTTP requests, with no k6 or Postman runtime download.
+Limits are 50 users, 10,000 journeys for an iteration run, 5 minutes of scheduling,
+and 100,000 HTTP-step attempts per case/run. Iteration configurations that could
+exceed the HTTP-step budget are rejected before execution. Timed runs fail if
+they exhaust it. Timed runs stop starting journeys at the requested duration and
+allow up to 30 additional seconds for in-flight work; iteration runs have a
+5-minute execution deadline. The scenario timeout covers setup, trigger, load,
+and assertions and can shorten these limits. Each request has a 30-second
+timeout, responses are capped at 1 MiB, redirects are not followed, and connections
+are reused. Cleanup has its own 45-second deadline.
+
 ## Import a Postman collection
 
 Create a native scenario from a local [Postman Collection v2.1 JSON

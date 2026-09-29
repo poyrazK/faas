@@ -285,24 +285,8 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 	if len(steps) == 0 {
 		return nil, nil
 	}
-	values := make(map[string]string, len(captures)+1)
-	values["run.id"] = runID
-	for key, value := range data {
-		values["data."+key] = fmt.Sprint(value)
-		values["data."+key+".string"] = fmt.Sprint(value)
-	}
-	for key, value := range captures {
-		if strings.HasPrefix(key, "steps.") {
-			values[key] = value
-		}
-	}
-	consumerKeys := make(map[string]string)
-	for _, entry := range consumerEnv {
-		key, value, ok := strings.Cut(entry, "=")
-		if ok && strings.HasPrefix(key, "GREGALE_TEST_CONSUMER_") && strings.HasSuffix(key, "_KEY") {
-			consumerKeys[strings.TrimSuffix(strings.TrimPrefix(key, "GREGALE_TEST_CONSUMER_"), "_KEY")] = value
-		}
-	}
+	values := testHTTPValues(runID, captures, data)
+	consumerKeys := testHTTPConsumerKeys(consumerEnv)
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	evidence := make([]testHTTPRequestEvidence, 0, len(steps))
 	for _, step := range steps {
@@ -322,7 +306,39 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 	return evidence, nil
 }
 
+func testHTTPValues(runID string, captures map[string]string, data map[string]any) map[string]string {
+	values := make(map[string]string, len(captures)+1)
+	values["run.id"] = runID
+	for key, value := range data {
+		values["data."+key] = fmt.Sprint(value)
+		values["data."+key+".string"] = fmt.Sprint(value)
+	}
+	for key, value := range captures {
+		if strings.HasPrefix(key, "steps.") {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+func testHTTPConsumerKeys(consumerEnv []string) map[string]string {
+	consumerKeys := make(map[string]string)
+	for _, entry := range consumerEnv {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(key, "GREGALE_TEST_CONSUMER_") && strings.HasSuffix(key, "_KEY") {
+			consumerKeys[strings.TrimSuffix(strings.TrimPrefix(key, "GREGALE_TEST_CONSUMER_"), "_KEY")] = value
+		}
+	}
+	return consumerKeys
+}
+
 func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, data map[string]any, evidence *testHTTPRequestEvidence) error {
+	return runOneTestHTTPRequestWithBody(ctx, client, baseURL, step, values, consumerKeys, captures, data, evidence, false)
+}
+
+// Load timings include bounded response consumption, even for status-only steps.
+// This also allows the load transport to reuse connections between journeys.
+func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, data map[string]any, evidence *testHTTPRequestEvidence, fullBody bool) error {
 	path, err := expandTestHTTPPath(step.Path, values)
 	if err != nil {
 		return err
@@ -374,6 +390,13 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 	}
 	defer func() { _ = response.Body.Close() }()
 	evidence.Status = response.StatusCode
+	var responseBody []byte
+	if fullBody {
+		responseBody, err = readTestHTTPResponse(response.Body)
+		if err != nil {
+			return err
+		}
+	}
 	if response.StatusCode != step.Expect.Status {
 		return fmt.Errorf("expected status %d, received %d", step.Expect.Status, response.StatusCode)
 	}
@@ -387,12 +410,11 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 	if len(step.Expect.JSON) == 0 && len(step.Capture) == 0 {
 		return nil
 	}
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, testHTTPBodyLimit+1))
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-	if len(responseBody) > testHTTPBodyLimit {
-		return fmt.Errorf("response JSON exceeds 1 MiB")
+	if !fullBody {
+		responseBody, err = readTestHTTPResponse(response.Body)
+		if err != nil {
+			return err
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(responseBody))
 	decoder.UseNumber()
@@ -441,6 +463,17 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 		values["steps."+step.Name+"."+name] = value
 	}
 	return nil
+}
+
+func readTestHTTPResponse(body io.Reader) ([]byte, error) {
+	responseBody, err := io.ReadAll(io.LimitReader(body, testHTTPBodyLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(responseBody) > testHTTPBodyLimit {
+		return nil, errors.New("response body exceeds 1 MiB")
+	}
+	return responseBody, nil
 }
 
 func testJSONPointerParts(pointer string) ([]string, error) {
