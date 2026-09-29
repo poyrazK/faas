@@ -2,14 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -256,59 +252,12 @@ func validateManagedPostgresEnvironmentClonePlan(acct state.Account, database ma
 	return nil
 }
 
-func projectEnvironmentDatabaseCloneName(project state.Project, target string, app state.App, sourceDatabaseID string) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{project.ID, target, app.ID, sourceDatabaseID}, "\x00")))
-	return "env-" + target + "-" + hex.EncodeToString(sum[:6])
-}
-
-func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct state.Account, project state.Project, target string, plan projectEnvironmentBindingClone, cleanup *[]func(context.Context) error) (managedpostgres.Database, error) {
-	if s.managedPostgres == nil {
-		return managedpostgres.Database{}, managedpostgres.ErrUnavailable
-	}
-	name := projectEnvironmentDatabaseCloneName(project, target, plan.app, plan.database.ID)
-	databases, err := s.managedPostgres.List(ctx, acct.ID)
-	if err != nil {
-		return managedpostgres.Database{}, err
-	}
-	var existing *managedpostgres.Database
-	for i := range databases {
-		if databases[i].Name == name {
-			existing = &databases[i]
-			break
-		}
-	}
-	pointInTime := time.Now().UTC().Add(-time.Second)
-	if existing != nil {
-		if existing.RestoreSourceDatabaseID != plan.database.ID || existing.Spec != plan.database.Spec ||
-			existing.State == managedpostgres.StateDeleting || existing.State == managedpostgres.StateDeleted {
-			return managedpostgres.Database{}, managedpostgres.ErrConflict
-		}
-		pointInTime = existing.RestorePointInTime
-	}
-	cloned, err := s.managedPostgres.Restore(ctx, managedpostgres.RestoreDatabaseRequest{
-		AccountID: acct.ID, SourceDatabaseID: plan.database.ID, Name: name, PointInTime: pointInTime,
-	})
-	if err != nil {
-		// Restore persists its intent before provider I/O. Keep that durable row
-		// so a retry can resume it; deleting a row discovered after an error
-		// could race with another request that adopted the same deterministic
-		// clone name.
-		return managedpostgres.Database{}, err
-	}
-	if existing == nil {
-		cloneID := cloned.ID
-		*cleanup = append(*cleanup, func(cleanupCtx context.Context) error {
-			_, deleteErr := s.managedPostgres.Delete(cleanupCtx, acct.ID, cloneID)
-			return deleteErr
-		})
-	}
-	if cloned.State != managedpostgres.StateReady || cloned.ID == plan.database.ID || cloned.RestoreSourceDatabaseID != plan.database.ID {
-		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL clone for workload %q is not ready", plan.app.Slug)
-	}
-	return cloned, nil
-}
-
 func (s *server) prepareIsolatedProjectEnvironmentBindings(r *http.Request, acct state.Account, project state.Project, target string, plans []projectEnvironmentBindingClone) ([]string, int, []func(context.Context) error, error) {
+	databaseCopies, err := s.planProjectEnvironmentDatabaseCopies(r.Context(), acct, project, target, plans)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	databases := make(map[string]managedpostgres.Database, len(databaseCopies))
 	cleanup := make([]func(context.Context) error, 0, len(plans)*2)
 	rollback := func(ctx context.Context, cause error) error {
 		cleanupCtx := context.WithoutCancel(ctx)
@@ -323,9 +272,14 @@ func (s *server) prepareIsolatedProjectEnvironmentBindings(r *http.Request, acct
 	for _, plan := range plans {
 		switch plan.kind {
 		case "managed_postgres":
-			database, err := s.ensureProjectEnvironmentDatabaseClone(r.Context(), acct, project, target, plan, &cleanup)
-			if err != nil {
-				return nil, 0, nil, rollback(r.Context(), fmt.Errorf("create isolated PostgreSQL database for workload %q: %w", plan.app.Slug, err))
+			database, ok := databases[plan.database.ID]
+			if !ok {
+				var err error
+				database, err = s.ensureProjectEnvironmentDatabaseClone(r.Context(), acct, databaseCopies[plan.database.ID], &cleanup)
+				if err != nil {
+					return nil, 0, nil, rollback(r.Context(), fmt.Errorf("create isolated PostgreSQL database for workload %q: %w", plan.app.Slug, err))
+				}
+				databases[plan.database.ID] = database
 			}
 			binding, created, err := s.managedPostgresBindings.CreateWithResult(r.Context(), managedpostgres.CreateBindingRequest{
 				AccountID: acct.ID, DatabaseID: database.ID, AppID: plan.app.ID,

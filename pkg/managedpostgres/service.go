@@ -207,62 +207,70 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 // identity and timestamp before provider I/O, so a worker crash can safely
 // resume the same restore intent.
 func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (Database, error) {
+	database, _, err := s.RestoreWithResult(ctx, request)
+	return database, err
+}
+
+// RestoreWithResult also reports whether this invocation reserved the target.
+// Callers must compensate only resources they created, never adopted restores.
+func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	if !s.provisioningEnabled() {
-		return Database{}, ErrUnavailable
+		return Database{}, false, ErrUnavailable
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
-		return Database{}, ErrInvalid
+		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, ErrUnavailable
+		return Database{}, false, ErrUnavailable
 	}
 	source, err := s.store.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if source.State != StateReady || source.ProviderResourceID == "" {
-		return Database{}, ErrConflict
+		return Database{}, false, ErrConflict
 	}
 	now := s.now()
 	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, ErrInvalid
+		return Database{}, false, ErrInvalid
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
-			return Database{}, ErrConflict
+			return Database{}, false, ErrConflict
 		}
 		if existing.State == StateReady {
-			return existing, nil
+			return existing, false, nil
 		}
-		return s.Reconcile(ctx, request.AccountID, existing.ID)
+		database, err := s.Reconcile(ctx, request.AccountID, existing.ID)
+		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if s.admit != nil {
 		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, err
+			return Database{}, false, err
 		}
 	}
 	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if !backend.Capabilities.PointInTimeRestore {
-		return Database{}, ErrUnsupported
+		return Database{}, false, ErrUnsupported
 	}
 	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
-		return Database{}, ErrUnsupported
+		return Database{}, false, ErrUnsupported
 	}
 	if err := backend.Capabilities.Supports(source.Spec); err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
-	database, _, err := s.store.Reserve(ctx, Database{
+	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
 		Name:                    request.Name,
@@ -278,15 +286,19 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 		UpdatedAt:               now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
-		return Database{}, ErrConflict
+		return Database{}, false, ErrConflict
 	}
 	if database.State == StateReady {
-		return database, nil
+		return database, created, nil
 	}
-	return s.Reconcile(ctx, request.AccountID, database.ID)
+	ready, err := s.Reconcile(ctx, request.AccountID, database.ID)
+	if err != nil {
+		return database, created, err
+	}
+	return ready, created, nil
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {

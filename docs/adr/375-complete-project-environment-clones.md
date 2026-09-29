@@ -238,3 +238,24 @@ PostgreSQL contracts cover legacy/named/undeployed values, secrets, previews, an
 cutover rejection. API contracts cover legacy managed bindings and binding-plan
 scope reuse. This fence does not freeze same-scope edits or resource versions;
 the complete mode still requires the durable source capture and barrier above.
+
+### Shared database topology and retry ownership (2026-09-30)
+
+Isolated binding preparation now restores each source database once per target
+environment, preserving sharing across workloads while issuing distinct scoped
+credentials for each binding. All database copies in a preparation use one
+microsecond-precision recovery time. Retries adopt the recorded time from an
+existing restore intent; incompatible provider identities, specs, or recovery
+times reject preparation before further restore calls. One matching legacy
+copy can be adopted. Multiple existing copies of a shared source are a blocker.
+
+The restore service reports whether the caller reserved a new target, including
+the reservation-race path. Compensation never acquires ownership of an adopted
+copy. Environment cleanup recognizes both database-level and legacy app-level
+names and revokes all bindings before deleting each owned database once.
+
+Focused provider/service and API contracts cover shared topology, distinct
+credentials, retry reuse, compensation ownership, mismatched captures, legacy
+adoption, and cleanup without source mutation. A common recovery time does not
+establish cross-provider application consistency; the source write barrier and
+durable complete-clone orchestration remain required.
