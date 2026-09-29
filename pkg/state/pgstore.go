@@ -17248,7 +17248,7 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	if err != nil {
 		return Snapshot{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var appID string
 	err = tx.QueryRow(ctx, `select a.id::text from apps a join deployments d on d.app_id = a.id
 		where d.id = $1 for update of a`, snap.DeploymentID).Scan(&appID)

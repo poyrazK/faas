@@ -127,22 +127,6 @@ jobs:
           # scans every commit subject for fix-shaped changes.
           fetch-depth: 0
 
-      # S4 PR-4a: a fix claim must carry a changed Go regression test. The
-      # script reads title/body/labels from GITHUB_EVENT_PATH and is a no-op
-      # for pushes and local invocations. Intentional exceptions require the
-      # no-regression-test label plus a non-empty Why no test: explanation.
-      - name: fix-shaped changes require regression tests
-        run: make fix-has-test-check
-      - name: fix-has-test checker tests
-        run: make fix-has-test-check-test
-      - name: CVE monitor parser and issue-payload tests
-        run: scripts/ci/cve-monitor_test.sh
-
-      # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
-      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
-      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
-      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
       # to finish after a go.sum bump wins and every later job restores its
@@ -170,6 +154,22 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
 
+      # S4 PR-4a: a fix claim must carry a changed Go regression test. The
+      # script reads title/body/labels from GITHUB_EVENT_PATH and is a no-op
+      # for pushes and local invocations. Intentional exceptions require the
+      # no-regression-test label plus a non-empty Why no test: explanation.
+      - name: fix-shaped changes require regression tests
+        run: make fix-has-test-check
+      - name: fix-has-test checker tests
+        run: make fix-has-test-check-test
+      - name: CVE monitor parser and issue-payload tests
+        run: scripts/ci/cve-monitor_test.sh
+
+      # golangci-lint replaces bare gofmt + go vet with a curated set of
+      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
+      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
+      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
+      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
       # repository accumulates baseline coverage; the table identifies tests
