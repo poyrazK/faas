@@ -35,6 +35,7 @@ type ServiceDiscoveryDNSHandler struct {
 	allowAlias    ServiceAliasAllowed
 	blocklist     *DNSBlocklist
 	onBlocked     func(category string)
+	onResolved    ResolvedEgressHook
 }
 
 // WithBlocklist makes the resolver answer NXDOMAIN for names on the ADR-373
@@ -70,6 +71,46 @@ func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dn
 		return true
 	}
 	return false
+}
+
+// ResolvedEgressHook is told the addresses an upstream answer gave a guest
+// before the resolver replies (ADR-370 DNS-gated egress). remoteAddr is the
+// query's source; ttl is the answer's smallest record TTL.
+type ResolvedEgressHook func(ctx context.Context, remoteAddr string, addrs []netip.Addr, ttl time.Duration) error
+
+// WithResolvedEgressHook installs the ADR-370 hook. A hook error is logged
+// and the answer is still returned; the guest's connection then fails
+// closed at the egress gate instead of the lookup failing.
+func (h *ServiceDiscoveryDNSHandler) WithResolvedEgressHook(hook ResolvedEgressHook) *ServiceDiscoveryDNSHandler {
+	h.onResolved = hook
+	return h
+}
+
+// answerAddresses returns the A and AAAA addresses in an answer and the
+// smallest TTL among them.
+func answerAddresses(resp *dns.Msg) ([]netip.Addr, time.Duration) {
+	var addrs []netip.Addr
+	var ttl uint32
+	for _, rr := range resp.Answer {
+		var ip net.IP
+		switch r := rr.(type) {
+		case *dns.A:
+			ip = r.A
+		case *dns.AAAA:
+			ip = r.AAAA
+		default:
+			continue
+		}
+		a, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		if len(addrs) == 0 || rr.Header().Ttl < ttl {
+			ttl = rr.Header().Ttl
+		}
+		addrs = append(addrs, a.Unmap())
+	}
+	return addrs, time.Duration(ttl) * time.Second
 }
 
 // NewServiceDiscoveryDNSHandler constructs a resolver for a private bridge
@@ -214,6 +255,17 @@ func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg)
 		resp, _, err := client.ExchangeContext(ctx, req, upstream)
 		if err != nil {
 			continue
+		}
+		if h.onResolved != nil {
+			if addrs, ttl := answerAddresses(resp); len(addrs) > 0 {
+				remote := ""
+				if addr := w.RemoteAddr(); addr != nil {
+					remote = addr.String()
+				}
+				if hookErr := h.onResolved(ctx, remote, addrs, ttl); hookErr != nil {
+					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "addresses", len(addrs), "err", hookErr)
+				}
+			}
 		}
 		if err := w.WriteMsg(resp); err != nil {
 			h.log.Debug("forwarded DNS response failed", "upstream", upstream, "err", err)

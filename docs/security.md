@@ -233,6 +233,14 @@ a suitable threshold.
 `failure_central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
+## Outbound connections and DNS
+
+Workloads reach the internet by name. Outbound TCP is allowed only to addresses
+the workload resolved through the platform's DNS resolver in the last 10 to 60
+minutes, depending on the record's TTL. To connect to a fixed IP address (for
+example a database without a hostname), add it to the app's egress allowlist.
+Lookups of known abuse infrastructure, such as mining pools, return NXDOMAIN.
+
 ## Quarantine recovery
 
 When an enforce-policy app is parked after live security evidence regresses,

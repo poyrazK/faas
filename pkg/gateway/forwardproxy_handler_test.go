@@ -187,6 +187,10 @@ func (s *stubVmmdClient) Ping(context.Context, *vmmdpb.PingRequest, ...grpc.Call
 // doesn't drive the in-place patch; schedd's egress_drift
 // subscriber does. Returns success so the gRPC VmmdClient
 // interface stays satisfied.
+func (s *stubVmmdClient) AllowResolvedEgress(context.Context, *vmmdpb.AllowResolvedEgressRequest, ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
+	return &vmmdpb.AllowResolvedEgressAck{}, nil
+}
+
 func (s *stubVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEgressAllowlistRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressAllowlistAck, error) {
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }

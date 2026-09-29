@@ -4230,6 +4230,16 @@ const (
 	// that a clean restart fixes; a repeat means the account's own code.
 	EgressFanoutHoldRecycles      = 2
 	EgressFanoutHoldWindowSeconds = 3600
+	// ADR-370 DNS-gated egress: a resolved address stays reachable for its
+	// DNS TTL clamped to [DNSGatedEgressMinTTLSeconds,
+	// DNSGatedEgressMaxTTLSeconds]. The floor covers clients that cache
+	// answers past their TTL (the JVM, connection pools); the ceiling
+	// bounds how long a stale address stays open.
+	DNSGatedEgressMinTTLSeconds = 600
+	DNSGatedEgressMaxTTLSeconds = 3600
+	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
+	// keeps per app to seed new instances of that app.
+	DNSGatedEgressAppSeedMax = 4096
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,

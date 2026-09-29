@@ -102,6 +102,7 @@ var aggregateDenyCounters = []struct {
 }{
 	{netns.EgressDenyCounterSMTP, netns.EgressDenyClassSMTP},
 	{netns.EgressFloodCounter, netns.EgressDenyClassFlood},
+	{netns.EgressUnresolvedCounter, netns.EgressDenyClassUnresolved},
 	{netns.EgressDenyCounterAllowlist, netns.EgressDenyClassAllowlist},
 	{netns.EgressDenyCounterPolicy, netns.EgressDenyClassPortPolicy},
 	{netns.EgressDenyCounterRate, netns.EgressDenyClassRateLimit},

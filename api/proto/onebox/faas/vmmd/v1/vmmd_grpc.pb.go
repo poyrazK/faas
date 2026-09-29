@@ -44,6 +44,7 @@ const (
 	Vmmd_Ping_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Ping"
 	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_AllowResolvedEgress_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
 	Vmmd_UpdateAppCPULimit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
 	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
 	Vmmd_UpdateEgressCircuit_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
@@ -232,6 +233,11 @@ type VmmdClient interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(ctx context.Context, in *UpdateEgressAllowlistRequest, opts ...grpc.CallOption) (*UpdateEgressAllowlistAck, error)
+	// AllowResolvedEgress (ADR-370): the node's bridge resolver reports the
+	// addresses a guest just resolved; vmmd lets that guest open TCP to them
+	// for the answer's TTL before the resolver replies. source_ip is the
+	// query's source, the instance's host-side address.
+	AllowResolvedEgress(ctx context.Context, in *AllowResolvedEgressRequest, opts ...grpc.CallOption) (*AllowResolvedEgressAck, error)
 	// UpdateAppCPULimit changes the host cgroup CPU ceiling for every live VM
 	// belonging to an app. CPU quota is a cgroup policy and can be changed
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
@@ -725,6 +731,16 @@ func (c *vmmdClient) UpdateEgressAllowlist(ctx context.Context, in *UpdateEgress
 	return out, nil
 }
 
+func (c *vmmdClient) AllowResolvedEgress(ctx context.Context, in *AllowResolvedEgressRequest, opts ...grpc.CallOption) (*AllowResolvedEgressAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AllowResolvedEgressAck)
+	err := c.cc.Invoke(ctx, Vmmd_AllowResolvedEgress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) UpdateAppCPULimit(ctx context.Context, in *UpdateAppCPULimitRequest, opts ...grpc.CallOption) (*UpdateAppCPULimitAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateAppCPULimitAck)
@@ -1109,6 +1125,11 @@ type VmmdServer interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error)
+	// AllowResolvedEgress (ADR-370): the node's bridge resolver reports the
+	// addresses a guest just resolved; vmmd lets that guest open TCP to them
+	// for the answer's TTL before the resolver replies. source_ip is the
+	// query's source, the instance's host-side address.
+	AllowResolvedEgress(context.Context, *AllowResolvedEgressRequest) (*AllowResolvedEgressAck, error)
 	// UpdateAppCPULimit changes the host cgroup CPU ceiling for every live VM
 	// belonging to an app. CPU quota is a cgroup policy and can be changed
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
@@ -1429,6 +1450,9 @@ func (UnimplementedVmmdServer) Heartbeat(context.Context, *HeartbeatRequest) (*H
 }
 func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateEgressAllowlist not implemented")
+}
+func (UnimplementedVmmdServer) AllowResolvedEgress(context.Context, *AllowResolvedEgressRequest) (*AllowResolvedEgressAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method AllowResolvedEgress not implemented")
 }
 func (UnimplementedVmmdServer) UpdateAppCPULimit(context.Context, *UpdateAppCPULimitRequest) (*UpdateAppCPULimitAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateAppCPULimit not implemented")
@@ -1893,6 +1917,24 @@ func _Vmmd_UpdateEgressAllowlist_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_AllowResolvedEgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AllowResolvedEgressRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).AllowResolvedEgress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_AllowResolvedEgress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).AllowResolvedEgress(ctx, req.(*AllowResolvedEgressRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_UpdateAppCPULimit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UpdateAppCPULimitRequest)
 	if err := dec(in); err != nil {
@@ -2299,6 +2341,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateEgressAllowlist",
 			Handler:    _Vmmd_UpdateEgressAllowlist_Handler,
+		},
+		{
+			MethodName: "AllowResolvedEgress",
+			Handler:    _Vmmd_AllowResolvedEgress_Handler,
 		},
 		{
 			MethodName: "UpdateAppCPULimit",

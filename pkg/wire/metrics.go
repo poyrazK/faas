@@ -3555,7 +3555,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"cidr", "family"})
 	egressDenied := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_egress_denied_total",
-		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, allowlist, port_policy (undeclared TCP port or non-TCP, ADR-361), rate_limit (new flows over the per-VM rate, ADR-361) or flood (new flows over the per-destination rate, ADR-361); app is the app id.",
+		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, allowlist, port_policy (undeclared TCP port or non-TCP, ADR-361), rate_limit (new flows over the per-VM rate, ADR-361), flood (new flows over the per-destination rate, ADR-361) or unresolved (TCP to an address the guest never resolved through the bridge resolver, ADR-370); app is the app id.",
 	}, []string{"app", "class"})
 	egressNewDestinations := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_egress_new_destinations_total",
@@ -5035,7 +5035,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, e := range netns.NewDefaultDenySet().Entries {
 		egressDeny.WithLabelValues(e.CounterName, e.Family.String())
 	}
-	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist", "port_policy", "rate_limit", "flood"} {
+	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist", "port_policy", "rate_limit", "flood", "unresolved"} {
 		egressDenied.WithLabelValues("", class)
 	}
 	egressNewDestinations.WithLabelValues("")
