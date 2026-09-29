@@ -52,7 +52,9 @@ func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
 			t.Errorf("dashboard missing %q", want)
 		}
 	}
-	if strings.Contains(body, "999") || strings.Contains(body, "target_digest") {
+	// Match the rendered count cell, not a bare "999": the page embeds random
+	// hex ids and nonces that contain it by chance.
+	if strings.Contains(body, ">999</td>") || strings.Contains(body, "target_digest") {
 		t.Fatalf("dashboard exposed foreign observation or digest")
 	}
 }
