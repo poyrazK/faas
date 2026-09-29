@@ -218,6 +218,7 @@
     - faas-schedd
     - faas-apid
     - faas-meterd
+    - faas-outboundd
 
 - name: control_plane_service — set public-beta billing mode
   notify:
